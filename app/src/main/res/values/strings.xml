@@ -1,3 +1,30 @@
 <resources>
     <string name="app_name">DormPanel</string>
+    <string name="home_eyebrow">DORMPANEL</string>
+    <string name="home_title">Home</string>
+    <string name="home_description">Your dashboard foundation is ready.</string>
+    <string name="home_apps_hint">↑  Apps</string>
+    <string name="home_control_center_hint">↓  Control Center</string>
+    <string name="home_calendar_hint">←  Calendar</string>
+    <string name="home_control_hint">Home Control  →</string>
+
+    <string name="apps_eyebrow">UP FROM HOME</string>
+    <string name="apps_title">Apps</string>
+    <string name="apps_description">A lightweight app surface will be added in a future update.</string>
+    <string name="apps_return_hint">↓  Swipe down to return Home</string>
+
+    <string name="control_center_eyebrow">DOWN FROM HOME</string>
+    <string name="control_center_title">Control Center</string>
+    <string name="control_center_description">Quick system controls will live here.</string>
+    <string name="control_center_return_hint">↑  Swipe up to return Home</string>
+
+    <string name="calendar_eyebrow">LEFT FROM HOME</string>
+    <string name="calendar_title">Calendar</string>
+    <string name="calendar_description">Calendar content will arrive in a later feature PR.</string>
+    <string name="calendar_return_hint">Swipe right to return Home  →</string>
+
+    <string name="home_control_eyebrow">RIGHT FROM HOME</string>
+    <string name="home_control_title">Home Control</string>
+    <string name="home_control_description">Home Assistant controls will connect through a separate state layer.</string>
+    <string name="home_control_return_hint">←  Swipe left to return Home</string>
 </resources>
