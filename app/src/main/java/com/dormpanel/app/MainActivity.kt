@@ -6,29 +6,42 @@ import android.view.View
 import android.view.WindowInsets
 import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import com.dormpanel.app.dashboard.DashboardViewModel
 import com.dormpanel.app.navigation.NavigationRouter
 import com.dormpanel.app.navigation.PanelPage
 import com.dormpanel.app.navigation.SwipeDirection
 import com.dormpanel.app.navigation.SwipeGestureDetector
 import com.dormpanel.app.ui.PanelPageViewFactory
+import com.dormpanel.app.ui.PageInteraction
 
 class MainActivity : AppCompatActivity() {
     private val router = NavigationRouter.default()
+    private val dashboardViewModel: DashboardViewModel by viewModels()
     private lateinit var pageContainer: FrameLayout
     private lateinit var pageViewFactory: PanelPageViewFactory
     private lateinit var swipeGestureDetector: SwipeGestureDetector
     private var currentPage = PanelPage.HOME
     private var transitionInProgress = false
+    private var activePageInteraction: PageInteraction? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         pageContainer = findViewById(R.id.page_container)
-        pageViewFactory = PanelPageViewFactory(layoutInflater)
+        pageViewFactory = PanelPageViewFactory(
+            inflater = layoutInflater,
+            dashboardStateHolder = dashboardViewModel.stateHolder,
+            cardRegistry = dashboardViewModel.registry,
+            onPageGestureClaimed = {
+                swipeGestureDetector.cancel()
+            },
+        )
         swipeGestureDetector = SwipeGestureDetector(this, ::navigate)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (activePageInteraction?.handleBack() == true) return
                 if (currentPage == router.initialPage) {
                     finish()
                     return
@@ -47,7 +60,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        swipeGestureDetector.onTouchEvent(event)
+        if (activePageInteraction?.shouldObservePageSwipe(event) != false) {
+            swipeGestureDetector.onTouchEvent(event)
+        } else if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            swipeGestureDetector.cancel()
+        }
         return super.dispatchTouchEvent(event)
     }
 
@@ -77,6 +94,7 @@ class MainActivity : AppCompatActivity() {
     private fun showPage(page: PanelPage, direction: SwipeDirection?, animate: Boolean) {
         val previousView = pageContainer.getChildAt(pageContainer.childCount - 1)
         val nextView = pageViewFactory.create(page, pageContainer)
+        activePageInteraction = nextView as? PageInteraction
         currentPage = page
 
         if (!animate || previousView == null || direction == null) {

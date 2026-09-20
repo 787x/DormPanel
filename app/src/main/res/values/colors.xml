@@ -8,4 +8,5 @@
     <color name="panel_primary_text">#F2F6FA</color>
     <color name="panel_secondary_text">#A7B1BE</color>
     <color name="panel_accent">#76B7FF</color>
+    <color name="dashboard_card_surface">#F21A202A</color>
 </resources>
