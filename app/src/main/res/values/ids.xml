@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="card_eyebrow" type="id" />
+    <item name="card_body" type="id" />
+    <item name="tag_claims_page_gesture" type="id" />
+</resources>

@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import android.os.SystemClock
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -19,6 +20,14 @@ class SwipeGestureDetector(
 
     fun onTouchEvent(event: MotionEvent) {
         detector.onTouchEvent(event)
+    }
+
+    fun cancel() {
+        val now = SystemClock.uptimeMillis()
+        MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0f, 0f, 0).also { event ->
+            detector.onTouchEvent(event)
+            event.recycle()
+        }
     }
 
     override fun onDown(event: MotionEvent): Boolean = true
