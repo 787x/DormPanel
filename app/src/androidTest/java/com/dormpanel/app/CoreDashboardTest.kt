@@ -15,9 +15,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.appearance.*
 import com.dormpanel.app.dashboard.DashboardViewModel
-import com.dormpanel.app.dashboard.card.CoreCardView
+import com.dormpanel.app.dashboard.card.DashboardCardView
 import com.dormpanel.app.dashboard.card.millisUntilNextMinute
 import com.dormpanel.app.dashboard.model.CardSize
+import com.dormpanel.app.dashboard.persistence.*
+import com.dormpanel.app.dashboard.DashboardStateHolder
+import org.junit.Before
+import org.junit.After
 import org.hamcrest.Matchers.allOf
 import org.hamcrest.Matchers.containsString
 import org.junit.Assert.*
@@ -26,8 +30,37 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class CoreDashboardTest {
+    private lateinit var database: DashboardDatabase
+    private var savedCards = emptyList<DashboardCardEntity>()
+    private var savedState: DashboardStateEntity? = null
+    private var savedAppearance = AppearanceState()
+    private var lastHolder: DashboardStateHolder? = null
+    @Before fun isolateDashboardFixture() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        database = DashboardDatabase.getInstance(context)
+        savedCards = database.dashboardDao().getCards()
+        savedState = database.dashboardDao().getState()
+        savedAppearance = PreferencesAppearanceStore(context).read()
+        database.clearAllTables()
+        PreferencesAppearanceStore(context).write(AppearanceState())
+    }
+    @After fun restoreDashboardFixture() {
+        // Drain committed async writes before restoring the emulator's pre-test layout.
+        val holder = lastHolder
+        if (holder != null) {
+            val expected = holder.state.cards.map { DashboardCardEntity(it.id, it.providerType, it.column, it.row, it.size.columnSpan, it.size.rowSpan, it.configurationJson) }.toSet()
+            val deadline = System.currentTimeMillis() + 5000
+            while (database.dashboardDao().getCards().toSet() != expected && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        }
+        database.runInTransaction {
+            database.clearAllTables()
+            if (savedCards.isNotEmpty()) database.dashboardDao().insertCards(savedCards)
+            savedState?.let { database.dashboardDao().putState(it) }
+        }
+        PreferencesAppearanceStore(InstrumentationRegistry.getInstrumentation().targetContext).write(savedAppearance)
+    }
     private fun model(activity: MainActivity) = ViewModelProvider(activity)[DashboardViewModel::class.java]
-    private fun card(name: String) = allOf(isAssignableFrom(CoreCardView::class.java), withContentDescription(containsString(name)))
+    private fun card(name: String) = allOf(isAssignableFrom(DashboardCardView::class.java), withContentDescription(containsString(name)))
     private fun swipe(fromX: Float, fromY: Float, toX: Float, toY: Float) = GeneralSwipeAction(
         Swipe.FAST,
         { view -> val pos = IntArray(2); view.getLocationOnScreen(pos); floatArrayOf(pos[0] + view.width * fromX, pos[1] + view.height * fromY) },
@@ -41,7 +74,7 @@ class CoreDashboardTest {
         val until = System.currentTimeMillis() + 5000
         var loaded = false
         while (!loaded && System.currentTimeMillis() < until) {
-            scenario.onActivity { loaded = model(it).stateHolder.state.loaded }
+            scenario.onActivity { lastHolder = model(it).stateHolder; loaded = model(it).stateHolder.state.loaded }
             if (!loaded) Thread.sleep(20)
         }
         assertTrue(loaded)
@@ -74,7 +107,7 @@ class CoreDashboardTest {
             onView(withText("Done")).perform(ViewActions.click())
             onView(withId(R.id.dashboard_edit)).perform(ViewActions.click())
             scenario.onActivity {
-                val view = descendants(it.findViewById(R.id.dashboard_grid)).filterIsInstance<CoreCardView>().first { card -> card.contentDescription.contains("Desk light") }
+                val view = descendants(it.findViewById(R.id.dashboard_grid)).filterIsInstance<DashboardCardView>().first { card -> card.contentDescription.contains("Desk light") }
                 val original = model(it).dataSource.state
                 assertFalse(view.isClickable)
                 assertFalse(view.isLongClickable)
@@ -108,7 +141,7 @@ class CoreDashboardTest {
                 model(it).appearance.setCardOpacity(0f)
                 assertEquals(Color.BLACK, (root.background as ColorDrawable).color)
                 assertEquals(Color.BLACK, (root.getChildAt(root.childCount - 1).background as ColorDrawable).color)
-                descendants(root).filterIsInstance<CoreCardView>().forEach { view ->
+                descendants(root).filterIsInstance<DashboardCardView>().forEach { view ->
                     assertEquals(1f, view.alpha)
                     val fill = ((view.parent as View).background as android.graphics.drawable.GradientDrawable).color!!.defaultColor
                     assertEquals(0, Color.alpha(fill))
@@ -131,13 +164,15 @@ class CoreDashboardTest {
     @Test fun responsiveCardsKeepTheirViewsAndRenderCompactContent() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             waitForCards(scenario)
+            onView(allOf(withText(R.string.temperature), isDescendantOfA(card("Room climate")))).check(matches(isDisplayed()))
+            onView(allOf(withText(R.string.humidity), isDescendantOfA(card("Room climate")))).check(matches(isDisplayed()))
             scenario.onActivity { activity ->
                 val holder = model(activity).stateHolder
                 val originals = holder.state.cards
                 val grid = activity.findViewById<ViewGroup>(R.id.dashboard_grid)
-                val views = descendants(grid).filterIsInstance<CoreCardView>().toList()
+                val views = descendants(grid).filterIsInstance<DashboardCardView>().toList()
                 originals.forEach { holder.resize(it.id, CardSize(2, 1)) }
-                assertEquals(views, descendants(grid).filterIsInstance<CoreCardView>().toList())
+                assertEquals(views, descendants(grid).filterIsInstance<DashboardCardView>().toList())
                 assertTrue(views.first().contentDescription.toString().contains(Regex("[0-9]+:[0-9]{2}")))
                 assertFalse(views.first().contentDescription.contains("LOCAL TIME"))
                 val sensor = views.first { it.contentDescription.contains("Room climate") }
@@ -196,13 +231,107 @@ class CoreDashboardTest {
         } finally { store.write(original) }
     }
 
+    @Test fun categorizedPickerCreatesDistinctDevicesAndResponsiveInlineControls() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCards(scenario)
+            captureReview("01-seed-dark")
+            scenario.onActivity { activity -> model(activity).stateHolder.state.cards.toList().forEach { model(activity).stateHolder.delete(it.id) } }
+            onView(withId(R.id.dashboard_edit)).perform(ViewActions.click())
+            listOf("Bedside light", "Ceiling light", "Room climate", "Desk climate").forEachIndexed { index, name ->
+                onView(withId(R.id.dashboard_add)).perform(ViewActions.click())
+                onView(withText("Information")).check(matches(isDisplayed()))
+                if (index == 0) captureReview("02-picker-information-dark")
+                onView(withText("Home")).perform(ViewActions.click())
+                if (index == 0) captureReview("03-picker-home-dark")
+                onView(withContentDescription("Add $name")).perform(ViewActions.click())
+            }
+            onView(withId(R.id.dashboard_done)).perform(ViewActions.click())
+            onView(card("Bedside light")).perform(ViewActions.click())
+            scenario.onActivity {
+                val vm = model(it)
+                assertTrue(vm.dataSource.state.lights.getValue("bedside").isOn)
+                assertFalse(vm.dataSource.state.lights.getValue("ceiling").isOn)
+                assertEquals(setOf("{\"lightId\":\"bedside\"}", "{\"lightId\":\"ceiling\"}", "{\"sensorId\":\"room\"}", "{\"sensorId\":\"desk\"}"), vm.stateHolder.state.cards.map { c -> c.configurationJson }.toSet())
+            }
+            onView(card("Room climate")).check(matches(withContentDescription(containsString("23.6"))))
+            onView(card("Desk climate")).check(matches(withContentDescription(containsString("24.1"))))
+            captureReview("04-distinct-instances")
+            scenario.onActivity { activity ->
+                val vm = model(activity)
+                vm.stateHolder.state.cards.toList().forEach { vm.stateHolder.delete(it.id) }
+                listOf("clock", "weather", "sensor:room", "light:desk").forEach { id ->
+                    assertTrue(vm.stateHolder.add(vm.catalog.candidates.first { c -> c.candidateId == id }) is com.dormpanel.app.dashboard.layout.LayoutMutationResult.Success)
+                }
+                vm.stateHolder.state.cards.filter { it.providerType == "sensor" || it.providerType == "light" }.forEach {
+                    assertTrue(vm.stateHolder.resize(it.id, CardSize(4, 3)) is com.dormpanel.app.dashboard.layout.LayoutMutationResult.Success)
+                }
+            }
+            onView(withContentDescription("Inline brightness")).perform(swipe(.2f,.5f,.8f,.5f))
+            onView(withContentDescription("Inline color temperature")).perform(swipe(.2f,.5f,.85f,.5f))
+            onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
+            scenario.onActivity {
+                val light = model(it).dataSource.state.lights.getValue("desk")
+                assertTrue(light.brightness >= 75)
+                assertTrue(light.colorTemperature >= 5700)
+            }
+            captureReview("05-large-dark")
+            scenario.onActivity { model(it).appearance.setTheme(ThemeMode.LIGHT) }
+            captureReview("06-large-light")
+            onView(withId(R.id.dashboard_edit)).perform(ViewActions.click())
+            onView(withContentDescription("Inline brightness")).check(matches(org.hamcrest.Matchers.not(isEnabled())))
+            onView(withContentDescription("Inline color temperature")).check(matches(org.hamcrest.Matchers.not(isEnabled())))
+            onView(withId(R.id.dashboard_add)).perform(ViewActions.click())
+            onView(withText("Home")).perform(ViewActions.click())
+            captureReview("07-picker-home-light")
+            onView(withText(android.R.string.cancel)).perform(ViewActions.click())
+            onView(withId(R.id.dashboard_done)).perform(ViewActions.click())
+            onView(card("Desk light")).perform(GeneralClickAction(Tap.LONG,
+                { v -> val p = IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0] + v.width / 2f, p[1] + 30f) }, Press.FINGER))
+            onView(withContentDescription("Light brightness")).check(matches(isDisplayed()))
+            captureReview("08-light-dialog")
+            onView(withText("Done")).perform(ViewActions.click())
+            scenario.onActivity { activity ->
+                val vm = model(activity)
+                vm.appearance.setTheme(ThemeMode.DARK)
+                vm.stateHolder.state.cards.toList().forEach { vm.stateHolder.resize(it.id, CardSize(2, 1)) }
+                vm.stateHolder.state.cards.toList().forEachIndexed { index, card -> vm.stateHolder.move(card.id, index * 2, 0) }
+            }
+            captureReview("09-compact-dark")
+            scenario.onActivity { activity ->
+                val holder = model(activity).stateHolder
+                val light = holder.state.cards.first { it.providerType == "light" }
+                holder.move(light.id, 4, 3)
+                holder.resize(light.id, CardSize(3, 2))
+                holder.state.cards.first { it.providerType == "sensor" }.let { holder.resize(it.id, CardSize(3, 2)) }
+            }
+            onView(withContentDescription("Inline brightness")).check(matches(isDisplayed())).perform(swipe(.8f,.5f,.3f,.5f))
+            onView(withContentDescription("Inline color temperature")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+            onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
+            captureReview("10-wide-sensor-and-light")
+            scenario.onActivity { activity -> model(activity).stateHolder.let { holder -> holder.resize(holder.state.cards.first { it.providerType == "light" }.id, CardSize(3, 3)) } }
+            onView(withContentDescription("Inline color temperature")).check(matches(isDisplayed()))
+            captureReview("11-light-3x3")
+        }
+    }
+
+    private fun captureReview(name: String) {
+        if (InstrumentationRegistry.getArguments().getString("reviewScreenshots") != "true") return
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.waitForIdleSync()
+        Thread.sleep(250) // Allow layout/transition presentation before capturing the actual emulator surface.
+        val directory = java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "pr3-review").apply { mkdirs() }
+        val bitmap = instrumentation.uiAutomation.takeScreenshot()
+        java.io.File(directory, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+    }
+
     @Test fun clockCrossesMinuteBoundaryAndStopsWhenDetached() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             waitForCards(scenario)
-            var clock: CoreCardView? = null
+            var clock: DashboardCardView? = null
             var before = ""
             scenario.onActivity {
-                clock = descendants(it.findViewById(R.id.dashboard_grid)).filterIsInstance<CoreCardView>().first { view -> view.contentDescription.contains("LOCAL TIME") }
+                clock = descendants(it.findViewById(R.id.dashboard_grid)).filterIsInstance<DashboardCardView>().first { view -> view.contentDescription.contains("LOCAL TIME") }
                 before = clock!!.contentDescription.toString()
             }
             Thread.sleep(millisUntilNextMinute(System.currentTimeMillis()) + 150)

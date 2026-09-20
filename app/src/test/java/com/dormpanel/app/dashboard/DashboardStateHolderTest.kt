@@ -74,6 +74,20 @@ class DashboardStateHolderTest {
         assertEquals(1, store.savedSnapshots.size)
     }
 
+    @Test fun `candidate configuration is preserved and duplicate devices get distinct card ids`() {
+        val store = FakeStore(StoredDashboard(true, 1, emptyList()))
+        val holder = DashboardStateHolder(registry(), store)
+        val bedside = com.dormpanel.app.dashboard.catalog.CardAddCandidate("light:bedside", com.dormpanel.app.dashboard.catalog.CardCategory.HOME,
+            "light", "Bedside", "Dimmable", "{\"lightId\":\"bedside\"}")
+        assertTrue(holder.add(bedside) is LayoutMutationResult.Success)
+        assertTrue(holder.add(bedside) is LayoutMutationResult.Success)
+        val ceiling = bedside.copy(candidateId = "light:ceiling", configurationJson = "{\"lightId\":\"ceiling\"}")
+        assertTrue(holder.add(ceiling) is LayoutMutationResult.Success)
+        assertEquals(listOf(bedside.configurationJson, bedside.configurationJson, ceiling.configurationJson), holder.state.cards.map { it.configurationJson })
+        assertEquals(3, holder.state.cards.map { it.id }.distinct().size)
+        assertEquals(holder.state.cards, store.savedSnapshots.last())
+    }
+
     private fun registry() = coreCardRegistry(FakeDashboardDataSource(), AppearanceController(object : AppearanceStore {
         override fun read() = AppearanceState()
         override fun write(state: AppearanceState) = Unit

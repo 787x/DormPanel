@@ -9,6 +9,7 @@ import com.dormpanel.app.dashboard.model.DashboardGridPolicy
 import com.dormpanel.app.dashboard.model.PlacedCard
 import com.dormpanel.app.dashboard.persistence.DashboardStore
 import java.util.UUID
+import com.dormpanel.app.dashboard.catalog.CardAddCandidate
 
 data class DashboardUiState(
     val cards: List<PlacedCard> = emptyList(),
@@ -38,8 +39,8 @@ class DashboardStateHolder(
         listeners -= listener
     }
 
-    fun add(providerType: String): LayoutMutationResult {
-        val provider = registry.provider(providerType)
+    fun add(candidate: CardAddCandidate): LayoutMutationResult {
+        val provider = registry.provider(candidate.providerType)
             ?: return LayoutMutationResult.Failure(LayoutFailureReason.UNKNOWN_PROVIDER, state.cards)
         val newCard = PlacedCard(
             id = UUID.randomUUID().toString(),
@@ -47,7 +48,7 @@ class DashboardStateHolder(
             column = 0,
             row = 0,
             size = provider.defaultSize,
-            configurationJson = provider.defaultConfigurationJson,
+            configurationJson = candidate.configurationJson,
         )
         return commit(engine.addFirstAvailable(state.cards, newCard))
     }

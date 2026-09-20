@@ -1,6 +1,7 @@
 package com.dormpanel.app.appearance
 
 import android.content.Context
+import androidx.core.content.edit
 
 class PreferencesAppearanceStore(context: Context) : AppearanceStore {
     private val preferences = context.applicationContext.getSharedPreferences("appearance", Context.MODE_PRIVATE)
@@ -12,7 +13,9 @@ class PreferencesAppearanceStore(context: Context) : AppearanceStore {
     } catch (_: ClassCastException) { AppearanceState() }
 
     override fun write(state: AppearanceState) {
-        preferences.edit().putString("theme", state.themeMode.name)
-            .putFloat("card_opacity", state.cardSurfaceOpacity).apply()
+        preferences.edit {
+            putString("theme", state.themeMode.name)
+            putFloat("card_opacity", state.cardSurfaceOpacity)
+        }
     }
 }

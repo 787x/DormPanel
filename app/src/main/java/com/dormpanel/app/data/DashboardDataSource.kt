@@ -2,9 +2,12 @@ package com.dormpanel.app.data
 
 enum class Availability { AVAILABLE, UNAVAILABLE, STALE }
 
+/** Forecast timestamps and typed values can map directly from a future weather service. */
+data class WeatherForecast(val timeEpochMillis: Long, val condition: String, val low: Int, val high: Int)
+
 data class WeatherState(
     val condition: String, val temperature: Int, val humidity: Int,
-    val low: Int, val high: Int, val forecast: String,
+    val low: Int, val high: Int, val forecast: List<WeatherForecast>,
     val availability: Availability = Availability.AVAILABLE,
 )
 
@@ -47,7 +50,11 @@ interface DashboardDataSource {
 
 class FakeDashboardDataSource : DashboardDataSource {
     override var state = DashboardData(
-        WeatherState("Partly cloudy", 24, 58, 19, 27, "Later today · Clear skies\nTomorrow · 20–26°"),
+        WeatherState("Partly cloudy", 24, 58, 19, 27, listOf(
+            WeatherForecast(1790035200000L, "Clear", 20, 26),
+            WeatherForecast(1790121600000L, "Cloudy", 19, 25),
+            WeatherForecast(1790208000000L, "Light rain", 18, 23),
+        )),
         listOf(
             SensorState("room", "Room climate", 23.6, 54),
             SensorState("desk", "Desk climate", 24.1, 51, Availability.STALE),

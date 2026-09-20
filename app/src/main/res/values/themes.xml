@@ -40,4 +40,10 @@
         <item name="android:textSize">15sp</item>
         <item name="android:textStyle">bold</item>
     </style>
+    <style name="Widget.DormPanel.EdgeHint" parent="@android:style/Widget.TextView">
+        <item name="android:textSize">16sp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">@color/panel_secondary_text</item>
+        <item name="android:background">@android:color/transparent</item>
+    </style>
 </resources>

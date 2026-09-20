@@ -11,7 +11,12 @@ import com.dormpanel.app.dashboard.model.PlacedCard
 data class CardDisplayMetadata(
     val name: String,
     val description: String,
-)
+    val nameResource: Int? = null,
+    val descriptionResource: Int? = null,
+) {
+    fun name(context: Context) = nameResource?.let(context::getString) ?: name
+    fun description(context: Context) = descriptionResource?.let(context::getString) ?: description
+}
 
 class CardInteractionScope(
     val enabled: Boolean,

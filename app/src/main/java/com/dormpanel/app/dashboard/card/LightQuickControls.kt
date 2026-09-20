@@ -1,8 +1,10 @@
 package com.dormpanel.app.dashboard.card
 
+import com.dormpanel.app.R
 import android.app.Dialog
+import com.dormpanel.app.ui.hidePanelSystemBars
 import android.content.Context
-import android.graphics.drawable.ColorDrawable
+import androidx.core.graphics.drawable.toDrawable
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -33,12 +35,12 @@ class LightQuickControls(
         setPadding(padding, padding, padding, padding)
     }
     private val title = TextView(context).apply { textSize = 24f }
-    private val status = TextView(context).apply { textSize = 16f }
+    private val status = TextView(context).apply { textSize = DashboardTypography.SECONDARY }
     private val toggle = Button(context)
-    private val brightnessLabel = TextView(context).apply { textSize = 18f }
-    private val brightness = ClaimingSeekBar(context, interactions::claimGesture).apply { max = 100; contentDescription = "Light brightness" }
-    private val temperatureLabel = TextView(context).apply { textSize = 18f }
-    private val temperature = ClaimingSeekBar(context, interactions::claimGesture).apply { contentDescription = "Light color temperature" }
+    private val brightnessLabel = TextView(context).apply { textSize = DashboardTypography.SECONDARY }
+    private val brightness = ClaimingSeekBar(context, interactions::claimGesture).apply { max = 100; contentDescription = context.getString(R.string.light_brightness) }
+    private val temperatureLabel = TextView(context).apply { textSize = DashboardTypography.SECONDARY }
+    private val temperature = ClaimingSeekBar(context, interactions::claimGesture).apply { contentDescription = context.getString(R.string.light_temperature) }
     private val dataListener: (DashboardData) -> Unit = { bind() }
     private val appearanceListener: (AppearanceState) -> Unit = {
         content.setBackgroundColor(PanelPalette.forMode(it.themeMode).background)
@@ -48,7 +50,7 @@ class LightQuickControls(
     init {
         requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         listOf(title, status, toggle, brightnessLabel, brightness, temperatureLabel, temperature).forEach { content.addView(it) }
-        content.addView(Button(context).apply { text = "Done"; setOnClickListener { dismiss() } })
+        content.addView(Button(context).apply { setText(R.string.dashboard_done); setOnClickListener { dismiss() } })
         setContentView(content)
         toggle.setOnClickListener { source.toggleLight(lightId) }
         brightness.onUserProgress { source.setBrightness(lightId, it) }
@@ -68,7 +70,8 @@ class LightQuickControls(
 
     override fun show() {
         super.show()
-        window?.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+        window?.hidePanelSystemBars()
+        window?.setBackgroundDrawable(android.graphics.Color.TRANSPARENT.toDrawable())
         val width = minOf((520 * context.resources.displayMetrics.density).toInt(), context.resources.displayMetrics.widthPixels - 48)
         window?.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
         source.addListener(dataListener)
@@ -77,17 +80,17 @@ class LightQuickControls(
 
     private fun bind() {
         val light = source.state.lights[lightId]
-        title.text = light?.name ?: "Light unavailable"
-        status.text = "Sample device · ${(light?.availability ?: Availability.UNAVAILABLE).label()}"
+        title.text = light?.name ?: context.getString(R.string.light_unavailable)
+        status.text = context.getString(R.string.sample_device_status, (light?.availability ?: Availability.UNAVAILABLE).label(context))
         val available = light?.availability == Availability.AVAILABLE
-        toggle.text = if (light?.isOn == true) "Turn off" else "Turn on"
+        toggle.text = context.getString(if (light?.isOn == true) R.string.light_turn_off else R.string.light_turn_on)
         toggle.isEnabled = available
         brightness.isEnabled = available
         temperature.isEnabled = available
         val hasBrightness = light?.capabilities?.brightness == true
         brightness.visibility = if (hasBrightness) View.VISIBLE else View.GONE
         brightnessLabel.visibility = brightness.visibility
-        brightnessLabel.text = "Brightness · ${light?.brightness ?: 0}%"
+        brightnessLabel.text = context.getString(R.string.brightness_value, light?.brightness ?: 0)
         brightness.progress = light?.brightness ?: 0
         val range = light?.capabilities?.colorTemperature
         temperature.visibility = if (range != null) View.VISIBLE else View.GONE
@@ -95,7 +98,7 @@ class LightQuickControls(
         if (range != null) {
             temperature.max = range.last - range.first
             temperature.progress = light.colorTemperature - range.first
-            temperatureLabel.text = "Color temperature · ${light.colorTemperature} K"
+            temperatureLabel.text = context.getString(R.string.color_temperature_value, light.colorTemperature)
         }
     }
 }

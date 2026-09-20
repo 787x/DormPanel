@@ -3,7 +3,6 @@ package com.dormpanel.app
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowInsets
 import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
@@ -15,6 +14,7 @@ import com.dormpanel.app.navigation.SwipeDirection
 import com.dormpanel.app.navigation.SwipeGestureDetector
 import com.dormpanel.app.ui.PanelPageViewFactory
 import com.dormpanel.app.ui.PageInteraction
+import com.dormpanel.app.ui.hidePanelSystemBars
 import com.dormpanel.app.appearance.AppearanceState
 import com.dormpanel.app.appearance.PanelPalette
 import com.dormpanel.app.appearance.applyAppearanceTree
@@ -42,6 +42,7 @@ class MainActivity : AppCompatActivity() {
             dashboardStateHolder = dashboardViewModel.stateHolder,
             cardRegistry = dashboardViewModel.registry,
             appearance = dashboardViewModel.appearance,
+            catalog = dashboardViewModel.catalog,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
             },
@@ -146,23 +147,7 @@ class MainActivity : AppCompatActivity() {
         applyAppearanceTree(view, state)
     }
 
-    @Suppress("DEPRECATION")
-    private fun enterImmersiveMode() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            window.insetsController?.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-            window.insetsController?.systemBarsBehavior =
-                android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        } else {
-            window.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                    View.SYSTEM_UI_FLAG_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                )
-        }
-    }
+    private fun enterImmersiveMode() = window.hidePanelSystemBars()
 
     private fun SwipeDirection.offset(distance: Float): Pair<Float, Float> = when (this) {
         SwipeDirection.LEFT -> distance to 0f

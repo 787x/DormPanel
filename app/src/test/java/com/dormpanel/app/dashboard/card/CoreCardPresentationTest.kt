@@ -21,9 +21,36 @@ class CoreCardPresentationTest {
             assertTrue(it.sizePolicy.allows(CardSize(3, 3)))
             assertFalse(it.sizePolicy.allows(CardSize(1, 1)))
         }
-        assertEquals(CardDensity.COMPACT, cardDensity(CardSize(4, 1)))
-        assertEquals(CardDensity.STANDARD, cardDensity(CardSize(2, 3)))
-        assertEquals(CardDensity.EXPANDED, cardDensity(CardSize(3, 3)))
+        assertTrue(registry.provider("light")!!.sizePolicy.allows(CardSize(4, 3)))
+    }
+    @Test fun `clock layout uses both width and height`() {
+        assertFalse(clockPresentation(CardSize(2, 1)).date)
+        assertTrue(clockPresentation(CardSize(2, 2)).date)
+        assertFalse(clockPresentation(CardSize(2, 3)).calendarDetail)
+        assertTrue(clockPresentation(CardSize(4, 3)).calendarDetail)
+        assertTrue(clockPresentation(CardSize(4, 3)).timeSp >= 100)
+        assertTrue(clockPresentation(CardSize(4, 3)).timeSp > clockPresentation(CardSize(4, 1)).timeSp)
+    }
+    @Test fun `weather and climate change structure independently`() {
+        assertEquals(0, weatherPresentation(CardSize(4, 1)).forecastColumns)
+        assertFalse(weatherPresentation(CardSize(2, 2)).horizontal)
+        assertEquals(3, weatherPresentation(CardSize(4, 3)).forecastColumns)
+        assertEquals(2, weatherPresentation(CardSize(3, 3)).forecastColumns)
+        assertFalse(sensorPresentation(CardSize(2, 2)).sideBySide)
+        assertTrue(sensorPresentation(CardSize(3, 2)).sideBySide)
+        assertTrue(sensorPresentation(CardSize(3, 3)).status)
+        assertTrue(sensorPresentation(CardSize(3, 3)).valueSp >= 60)
+    }
+    @Test fun `light controls require both sufficient area and device capability`() {
+        val full = com.dormpanel.app.data.LightCapabilities(true, 2700..6500)
+        assertFalse(lightPresentation(CardSize(2, 1), full).inlineBrightness)
+        assertFalse(lightPresentation(CardSize(2, 3), full).inlineTemperature)
+        assertTrue(lightPresentation(CardSize(3, 2), full).inlineBrightness)
+        assertFalse(lightPresentation(CardSize(3, 2), full).inlineTemperature)
+        assertTrue(lightPresentation(CardSize(3, 3), full).inlineTemperature)
+        assertTrue(lightPresentation(CardSize(4, 3), full).inlineTemperature)
+        assertFalse(lightPresentation(CardSize(4, 3), com.dormpanel.app.data.LightCapabilities()).inlineBrightness)
+        assertFalse(lightPresentation(CardSize(4, 3), full.copy(colorTemperature = null)).inlineTemperature)
     }
     @Test fun `clock schedules next minute boundary rather than each second`() {
         assertEquals(60000L, millisUntilNextMinute(120000L))

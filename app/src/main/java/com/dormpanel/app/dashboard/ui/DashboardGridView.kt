@@ -141,8 +141,8 @@ class DashboardGridView @JvmOverloads constructor(
             entry.resize.visibility = if (
                 registry.hasAlternativeSize(card.providerType, card.size, maximumSize)
             ) VISIBLE else GONE
-            entry.resize.contentDescription = context.getString(R.string.dashboard_resize_card, provider.displayMetadata.name)
-            entry.delete.contentDescription = context.getString(R.string.dashboard_delete_card, provider.displayMetadata.name)
+            entry.resize.contentDescription = context.getString(R.string.dashboard_resize_card, provider.displayMetadata.name(context))
+            entry.delete.contentDescription = context.getString(R.string.dashboard_delete_card, provider.displayMetadata.name(context))
             entry.chrome.visibility = if (editMode) VISIBLE else GONE
             entry.container.background = cardBackground(editMode)
         }

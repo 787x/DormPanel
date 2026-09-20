@@ -7,6 +7,7 @@ import android.widget.SeekBar
 import com.dormpanel.app.R
 
 /** Owns the whole stream, including before a horizontal slider movement crosses swipe slop. */
+@android.annotation.SuppressLint("ViewConstructor") // Created with a navigation owner, never inflated from XML.
 class ClaimingSeekBar(context: Context, private val claim: () -> Unit) : androidx.appcompat.widget.AppCompatSeekBar(context) {
     init {
         setTag(R.id.tag_claims_page_gesture, true)

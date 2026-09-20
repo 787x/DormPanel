@@ -34,8 +34,11 @@ fun applyAppearanceTree(view: View, state: AppearanceState) {
         view.progressTintList = ColorStateList.valueOf(palette.accent)
         view.thumbTintList = ColorStateList.valueOf(palette.accent)
     }
-    if (view.id in intArrayOf(R.id.apps_hint, R.id.calendar_hint, R.id.home_control_hint,
-            R.id.control_center_hint, R.id.return_hint, R.id.dashboard_edit_toolbar, R.id.dashboard_message)) {
+    if (view.id in intArrayOf(R.id.apps_hint, R.id.calendar_hint, R.id.home_control_hint, R.id.control_center_hint, R.id.dashboard_edit)) {
+        if (view is TextView) view.setTextColor(palette.secondary)
+        view.setBackgroundColor(Color.TRANSPARENT)
+    }
+    if (view.id in intArrayOf(R.id.return_hint, R.id.dashboard_edit_toolbar, R.id.dashboard_message)) {
         view.background = GradientDrawable().apply { cornerRadius = 24f; setColor(palette.surface) }
     }
     if (view is ViewGroup) for (index in 0 until view.childCount) applyAppearanceTree(view.getChildAt(index), state)
