@@ -17,8 +17,10 @@ class AppearanceController(private val store: AppearanceStore) {
 
     fun addListener(listener: (AppearanceState) -> Unit) { listeners += listener; listener(state) }
     fun removeListener(listener: (AppearanceState) -> Unit) { listeners -= listener }
-    fun setTheme(mode: ThemeMode) = update(state.copy(themeMode = mode))
-    fun setCardOpacity(opacity: Float) = update(state.copy(cardSurfaceOpacity = opacity))
+    var themeCommand: ((ThemeMode) -> Boolean)? = null
+    var opacityCommand: ((Float) -> Boolean)? = null
+    fun setTheme(mode: ThemeMode) { if (mode != state.themeMode && themeCommand?.invoke(mode) != true) update(state.copy(themeMode = mode)) }
+    fun setCardOpacity(opacity: Float) { if (opacity != state.cardSurfaceOpacity && opacityCommand?.invoke(opacity) != true) update(state.copy(cardSurfaceOpacity = opacity)) }
     fun update(value: AppearanceState) {
         val next = normalize(value)
         if (next == state) return

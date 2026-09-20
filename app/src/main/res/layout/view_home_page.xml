@@ -6,6 +6,17 @@
     android:background="@drawable/panel_background">
 
     <TextView
+        android:id="@+id/ha_connection_hint"
+        style="@style/Widget.DormPanel.EdgeHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="48dp"
+        android:layout_marginTop="12dp"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
         android:id="@+id/apps_hint"
         style="@style/Widget.DormPanel.EdgeHint"
         android:layout_width="wrap_content"

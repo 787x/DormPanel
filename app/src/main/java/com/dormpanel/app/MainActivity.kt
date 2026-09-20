@@ -43,6 +43,7 @@ class MainActivity : AppCompatActivity() {
             cardRegistry = dashboardViewModel.registry,
             appearance = dashboardViewModel.appearance,
             catalog = dashboardViewModel.catalog,
+            backend = dashboardViewModel.dataSource,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
             },

@@ -9,11 +9,14 @@ data class WeatherState(
     val condition: String, val temperature: Int, val humidity: Int,
     val low: Int, val high: Int, val forecast: List<WeatherForecast>,
     val availability: Availability = Availability.AVAILABLE,
+    val temperatureUnit: String = "°C",
 )
 
 data class SensorState(
     val id: String, val name: String, val temperature: Double?, val humidity: Int?,
     val availability: Availability = Availability.AVAILABLE,
+    val temperatureUnit: String = "°C",
+    val humidityUnit: String = "%",
 )
 
 data class LightCapabilities(
