@@ -9,6 +9,7 @@ import com.dormpanel.app.dashboard.model.DashboardGridPolicy
 import com.dormpanel.app.dashboard.model.PlacedCard
 import com.dormpanel.app.dashboard.persistence.DashboardStore
 import java.util.UUID
+import com.dormpanel.app.dashboard.catalog.CardAddCandidate
 
 data class DashboardUiState(
     val cards: List<PlacedCard> = emptyList(),
@@ -38,8 +39,8 @@ class DashboardStateHolder(
         listeners -= listener
     }
 
-    fun add(providerType: String): LayoutMutationResult {
-        val provider = registry.provider(providerType)
+    fun add(candidate: CardAddCandidate): LayoutMutationResult {
+        val provider = registry.provider(candidate.providerType)
             ?: return LayoutMutationResult.Failure(LayoutFailureReason.UNKNOWN_PROVIDER, state.cards)
         val newCard = PlacedCard(
             id = UUID.randomUUID().toString(),
@@ -47,7 +48,7 @@ class DashboardStateHolder(
             column = 0,
             row = 0,
             size = provider.defaultSize,
-            configurationJson = provider.defaultConfigurationJson,
+            configurationJson = candidate.configurationJson,
         )
         return commit(engine.addFirstAvailable(state.cards, newCard))
     }
@@ -120,9 +121,11 @@ class DashboardStateHolder(
     private fun notifyListeners() = listeners.toList().forEach { it(state) }
 
     private fun seededCards(): List<PlacedCard> = listOf(
-        PlacedCard("seed-focus", "mock.focus", 0, 0, CardSize(3, 2)),
-        PlacedCard("seed-status", "mock.status", 4, 0, CardSize(2, 2)),
-        PlacedCard("seed-shortcuts", "mock.shortcuts", 6, 0, CardSize(2, 1)),
-        PlacedCard("seed-shortcuts-wide", "mock.shortcuts", 0, 2, CardSize(4, 1)),
+        PlacedCard("seed-clock", "clock", 0, 0, CardSize(4, 3)),
+        PlacedCard("seed-weather", "weather", 4, 0, CardSize(4, 3)),
+        PlacedCard("seed-sensor", "sensor", 0, 3, CardSize(2, 2), "{\"sensorId\":\"room\"}"),
+        PlacedCard("seed-light", "light", 2, 3, CardSize(2, 2), "{\"lightId\":\"desk\"}"),
+        PlacedCard("seed-bedside", "light", 4, 3, CardSize(2, 2), "{\"lightId\":\"bedside\"}"),
+        PlacedCard("seed-ceiling", "light", 6, 3, CardSize(2, 2), "{\"lightId\":\"ceiling\"}"),
     )
 }

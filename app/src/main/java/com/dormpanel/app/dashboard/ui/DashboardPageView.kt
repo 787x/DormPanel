@@ -8,7 +8,8 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
+import com.dormpanel.app.appearance.AppearanceController
+import com.dormpanel.app.dashboard.catalog.CardCatalog
 import androidx.constraintlayout.widget.ConstraintLayout
 import com.dormpanel.app.R
 import com.dormpanel.app.dashboard.DashboardStateHolder
@@ -22,7 +23,9 @@ class DashboardPageView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : ConstraintLayout(context, attrs), PageInteraction {
     private lateinit var stateHolder: DashboardStateHolder
-    private lateinit var registry: DashboardCardRegistry
+    private lateinit var catalog: CardCatalog
+    private lateinit var appearance: AppearanceController
+    private var picker: CardPickerDialog? = null
     private lateinit var gridView: DashboardGridView
     private lateinit var editToolbar: View
     private lateinit var addButton: Button
@@ -56,9 +59,12 @@ class DashboardPageView @JvmOverloads constructor(
         stateHolder: DashboardStateHolder,
         registry: DashboardCardRegistry,
         onGestureClaimed: () -> Unit,
+        catalog: CardCatalog,
+        appearance: AppearanceController,
     ) {
         this.stateHolder = stateHolder
-        this.registry = registry
+        this.catalog = catalog
+        this.appearance = appearance
         this.onGestureClaimed = {
             gestureClaimed = true
             onGestureClaimed()
@@ -88,6 +94,7 @@ class DashboardPageView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        picker?.dismiss(); picker = null
         if (bound) stateHolder.removeListener(stateListener)
         super.onDetachedFromWindow()
     }
@@ -142,21 +149,14 @@ class DashboardPageView @JvmOverloads constructor(
     }
 
     private fun showAddCardDialog() {
-        val providers = registry.providers
-        val labels = providers.map {
-            "${it.displayMetadata.name}\n${it.displayMetadata.description}"
-        }.toTypedArray()
-        AlertDialog.Builder(context)
-            .setTitle(R.string.dashboard_add_card)
-            .setItems(labels) { dialog, index ->
-                val result = stateHolder.add(providers[index].typeKey)
-                if (result is LayoutMutationResult.Failure) {
-                    Toast.makeText(context, R.string.dashboard_no_space, Toast.LENGTH_SHORT).show()
-                }
-                dialog.dismiss()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        picker?.dismiss()
+        picker = CardPickerDialog(context, catalog, appearance) { candidate ->
+            val result = stateHolder.add(candidate)
+            if (result is LayoutMutationResult.Failure) {
+                Toast.makeText(context, R.string.dashboard_no_space, Toast.LENGTH_SHORT).show()
+                false
+            } else true
+        }.also { it.show() }
     }
 
     /** Future sliders/scrolling controls opt in by setting tag_claims_page_gesture=true. */
