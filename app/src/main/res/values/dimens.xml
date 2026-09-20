@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="page_edge_margin">32dp</dimen>
+    <dimen name="page_transition_distance">36dp</dimen>
+</resources>
