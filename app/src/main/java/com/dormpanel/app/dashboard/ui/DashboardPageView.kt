@@ -27,9 +27,10 @@ class DashboardPageView @JvmOverloads constructor(
     private lateinit var editToolbar: View
     private lateinit var addButton: Button
     private lateinit var doneButton: Button
+    private lateinit var editButton: Button
     private lateinit var message: TextView
     private var navigationHints = emptyList<View>()
-    private var onEditModeChanged: (Boolean) -> Unit = {}
+    private var onGestureClaimed: () -> Unit = {}
     private var editing = false
     private var bound = false
     private var gestureClaimed = false
@@ -41,6 +42,7 @@ class DashboardPageView @JvmOverloads constructor(
         editToolbar = findViewById(R.id.dashboard_edit_toolbar)
         addButton = findViewById(R.id.dashboard_add)
         doneButton = findViewById(R.id.dashboard_done)
+        editButton = findViewById(R.id.dashboard_edit)
         message = findViewById(R.id.dashboard_message)
         navigationHints = listOf(
             findViewById(R.id.apps_hint),
@@ -53,21 +55,29 @@ class DashboardPageView @JvmOverloads constructor(
     fun bind(
         stateHolder: DashboardStateHolder,
         registry: DashboardCardRegistry,
-        onEditModeChanged: (Boolean) -> Unit,
+        onGestureClaimed: () -> Unit,
     ) {
         this.stateHolder = stateHolder
         this.registry = registry
-        this.onEditModeChanged = onEditModeChanged
+        this.onGestureClaimed = {
+            gestureClaimed = true
+            onGestureClaimed()
+        }
         gridView.bind(
             stateHolder = stateHolder,
             registry = registry,
             onEnterEditMode = ::enterEditMode,
+            onGestureClaimed = this.onGestureClaimed,
             onOperationRejected = {
                 Toast.makeText(context, R.string.dashboard_operation_rejected, Toast.LENGTH_SHORT).show()
             },
         )
         addButton.setOnClickListener { showAddCardDialog() }
         doneButton.setOnClickListener { leaveEditMode() }
+        editButton.setOnClickListener {
+            this.onGestureClaimed()
+            enterEditMode()
+        }
         bound = true
         if (isAttachedToWindow) stateHolder.addListener(stateListener)
     }
@@ -116,18 +126,19 @@ class DashboardPageView @JvmOverloads constructor(
         if (editing) return
         editing = true
         editToolbar.visibility = VISIBLE
+        editButton.visibility = GONE
         navigationHints.forEach { it.visibility = GONE }
         gridView.setEditMode(true)
-        onEditModeChanged(true)
     }
 
     private fun leaveEditMode() {
         if (!editing) return
         editing = false
         editToolbar.visibility = GONE
+        editButton.visibility = VISIBLE
         navigationHints.forEach { it.visibility = VISIBLE }
         gridView.setEditMode(false)
-        onEditModeChanged(false)
+        gestureClaimed = false
     }
 
     private fun showAddCardDialog() {

@@ -12,10 +12,13 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.TextView
+import androidx.appcompat.widget.AppCompatTextView
 import com.dormpanel.app.R
 import com.dormpanel.app.dashboard.DashboardStateHolder
+import com.dormpanel.app.dashboard.card.CardInteractionScope
 import com.dormpanel.app.dashboard.card.DashboardCardRegistry
 import com.dormpanel.app.dashboard.layout.LayoutMutationResult
+import com.dormpanel.app.dashboard.model.CardSize
 import com.dormpanel.app.dashboard.model.DashboardGridPolicy
 import com.dormpanel.app.dashboard.model.PlacedCard
 import kotlin.math.roundToInt
@@ -33,22 +36,33 @@ class DashboardGridView @JvmOverloads constructor(
     private lateinit var stateHolder: DashboardStateHolder
     private lateinit var registry: DashboardCardRegistry
     private var onEnterEditMode: () -> Unit = {}
+    private var onGestureClaimed: () -> Unit = {}
     private var onOperationRejected: (String) -> Unit = {}
     private var editMode = false
     private var cellWidth = 0f
     private var cellHeight = 0f
     private var dragSession: DragSession? = null
+    private var resizeSession: ActiveResizeSession? = null
 
     fun bind(
         stateHolder: DashboardStateHolder,
         registry: DashboardCardRegistry,
         onEnterEditMode: () -> Unit,
+        onGestureClaimed: () -> Unit,
         onOperationRejected: (String) -> Unit,
     ) {
         this.stateHolder = stateHolder
         this.registry = registry
         this.onEnterEditMode = onEnterEditMode
+        this.onGestureClaimed = onGestureClaimed
         this.onOperationRejected = onOperationRejected
+        isClickable = true
+        isLongClickable = true
+        setOnLongClickListener {
+            this.onGestureClaimed()
+            this.onEnterEditMode()
+            true
+        }
     }
 
     fun submitCards(cards: List<PlacedCard>) {
@@ -64,7 +78,7 @@ class DashboardGridView @JvmOverloads constructor(
             entry.chrome.visibility = if (editing) VISIBLE else GONE
             entry.container.background = cardBackground(editing)
         }
-        if (!editing) cancelDrag()
+        if (!editing) cancelInteractions() else applyDisplayedCards(committedCards)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -106,8 +120,14 @@ class DashboardGridView @JvmOverloads constructor(
                 entries[card.id] = it
                 addView(it.container)
             }
-            provider.bind(entry.content, card)
-            entry.resize.visibility = if (provider.supportedSizes.size > 1) VISIBLE else GONE
+            provider.bind(entry.content, card, cardInteractions())
+            val maximumSize = CardSize(
+                definition.columns - card.column,
+                definition.rows - card.row,
+            )
+            entry.resize.visibility = if (
+                registry.hasAlternativeSize(card.providerType, card.size, maximumSize)
+            ) VISIBLE else GONE
             entry.resize.contentDescription = context.getString(R.string.dashboard_resize_card, provider.displayMetadata.name)
             entry.delete.contentDescription = context.getString(R.string.dashboard_delete_card, provider.displayMetadata.name)
             entry.chrome.visibility = if (editMode) VISIBLE else GONE
@@ -122,10 +142,6 @@ class DashboardGridView @JvmOverloads constructor(
             isFocusable = true
             clipToOutline = true
             background = cardBackground(editMode)
-            setOnLongClickListener {
-                onEnterEditMode()
-                true
-            }
         }
         val content = provider.createView(context)
         container.addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -157,7 +173,7 @@ class DashboardGridView @JvmOverloads constructor(
                 rightMargin = 12.dp
             },
         )
-        val delete = editButton("×").apply {
+        val delete = editButton("×", TextView(context)).apply {
             setOnClickListener {
                 val result = stateHolder.delete(card.id)
                 reportFailure(result)
@@ -171,13 +187,11 @@ class DashboardGridView @JvmOverloads constructor(
                 marginEnd = 8.dp
             },
         )
-        val resize = editButton("↘").apply {
-            setOnClickListener {
-                val current = committedCards.firstOrNull { it.id == card.id } ?: return@setOnClickListener
-                val sizes = registry.provider(current.providerType)?.supportedSizes.orEmpty()
-                if (sizes.size < 2) return@setOnClickListener
-                val nextSize = sizes[(sizes.indexOf(current.size) + 1).mod(sizes.size)]
-                reportFailure(stateHolder.resize(current.id, nextSize))
+        val resize = editButton("◢", ResizeHandleView(context)).apply {
+            setOnTouchListener { view, event ->
+                val handled = handleResizeTouch(card.id, view, event)
+                if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+                handled
             }
         }
         chrome.addView(
@@ -193,9 +207,11 @@ class DashboardGridView @JvmOverloads constructor(
     }
 
     private fun handleDragTouch(cardId: String, touchedView: View, event: MotionEvent): Boolean {
+        if (resizeSession != null) return false
         val card = committedCards.firstOrNull { it.id == cardId } ?: return false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                onGestureClaimed()
                 dragSession = DragSession(
                     cardId = cardId,
                     startRawX = event.rawX,
@@ -233,8 +249,7 @@ class DashboardGridView @JvmOverloads constructor(
                     targetRow,
                 )) {
                     is LayoutMutationResult.Success -> {
-                        displayedCards = preview.cards
-                        requestLayout()
+                        applyDisplayedCards(preview.cards)
                     }
                     is LayoutMutationResult.Failure -> Unit
                 }
@@ -248,37 +263,127 @@ class DashboardGridView @JvmOverloads constructor(
                 if (session != null && session.dragging) {
                     reportFailure(stateHolder.move(cardId, session.targetColumn, session.targetRow))
                 } else {
-                    displayedCards = committedCards
-                    requestLayout()
+                    applyDisplayedCards(committedCards)
                 }
                 return true
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 touchedView.alpha = 1f
-                cancelDrag()
+                cancelMove()
                 return true
             }
         }
         return false
     }
 
-    private fun cancelDrag() {
+    private fun handleResizeTouch(cardId: String, touchedView: View, event: MotionEvent): Boolean {
+        val card = committedCards.firstOrNull { it.id == cardId } ?: return false
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val provider = registry.provider(card.providerType) ?: return false
+                onGestureClaimed()
+                cancelMove()
+                resizeSession = ActiveResizeSession(
+                    cardId = cardId,
+                    initialSize = card.size,
+                    lastValidSize = card.size,
+                    gesture = ResizeGestureSession(
+                        pointerOriginX = event.rawX,
+                        pointerOriginY = event.rawY,
+                        initialSize = card.size,
+                        maximumSize = CardSize(
+                            definition.columns - card.column,
+                            definition.rows - card.row,
+                        ),
+                        sizePolicy = provider.sizePolicy,
+                    ),
+                )
+                requestDisallowInterceptTouchEvent(true)
+                touchedView.alpha = 0.72f
+                return true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val session = resizeSession?.takeIf { it.cardId == cardId } ?: return false
+                val snappedSize = session.gesture.update(
+                    pointerX = event.rawX,
+                    pointerY = event.rawY,
+                    columnStepPx = cellWidth + gapPx,
+                    rowStepPx = cellHeight + gapPx,
+                ) ?: return true
+                when (val preview = stateHolder.previewResize(committedCards, cardId, snappedSize)) {
+                    is LayoutMutationResult.Success -> {
+                        session.lastValidSize = snappedSize
+                        applyDisplayedCards(preview.cards)
+                    }
+                    is LayoutMutationResult.Failure -> Unit
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                val session = resizeSession?.takeIf { it.cardId == cardId }
+                resizeSession = null
+                requestDisallowInterceptTouchEvent(false)
+                touchedView.alpha = 1f
+                if (session != null && session.lastValidSize != session.initialSize) {
+                    reportFailure(stateHolder.resize(cardId, session.lastValidSize))
+                } else {
+                    applyDisplayedCards(committedCards)
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                touchedView.alpha = 1f
+                cancelResize()
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun cancelMove() {
         dragSession = null
-        displayedCards = committedCards
         entries.values.forEach { it.chrome.alpha = 1f }
+        applyDisplayedCards(committedCards)
+    }
+
+    private fun cancelResize() {
+        resizeSession = null
+        requestDisallowInterceptTouchEvent(false)
+        entries.values.forEach { it.resize.alpha = 1f }
+        applyDisplayedCards(committedCards)
+    }
+
+    private fun cancelInteractions() {
+        cancelMove()
+        cancelResize()
+    }
+
+    private fun applyDisplayedCards(cards: List<PlacedCard>) {
+        displayedCards = cards.toList()
+        displayedCards.forEach { card ->
+            val entry = entries[card.id] ?: return@forEach
+            registry.provider(card.providerType)?.bind(entry.content, card, cardInteractions())
+        }
         requestLayout()
     }
 
     private fun reportFailure(result: LayoutMutationResult) {
         if (result is LayoutMutationResult.Failure) {
-            displayedCards = committedCards
-            requestLayout()
+            applyDisplayedCards(committedCards)
             onOperationRejected(result.reason.name)
         }
     }
 
-    private fun editButton(label: String) = TextView(context).apply {
+    private fun cardInteractions() = CardInteractionScope(
+        enabled = !editMode,
+        onGestureClaimed = onGestureClaimed,
+    )
+
+    private fun <T : TextView> editButton(label: String, view: T): T = view.apply {
         text = label
         textSize = 24f
         gravity = Gravity.CENTER
@@ -322,4 +427,15 @@ class DashboardGridView @JvmOverloads constructor(
         var targetRow: Int,
         var dragging: Boolean = false,
     )
+
+    private data class ActiveResizeSession(
+        val cardId: String,
+        val initialSize: CardSize,
+        var lastValidSize: CardSize,
+        val gesture: ResizeGestureSession,
+    )
+
+    private class ResizeHandleView(context: Context) : AppCompatTextView(context) {
+        override fun performClick(): Boolean = super.performClick()
+    }
 }

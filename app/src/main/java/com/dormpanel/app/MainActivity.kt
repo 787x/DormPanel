@@ -34,7 +34,7 @@ class MainActivity : AppCompatActivity() {
             inflater = layoutInflater,
             dashboardStateHolder = dashboardViewModel.stateHolder,
             cardRegistry = dashboardViewModel.registry,
-            onDashboardEditModeChanged = {
+            onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
             },
         )

@@ -57,8 +57,12 @@ class DashboardStateHolder(
     fun move(cardId: String, column: Int, row: Int): LayoutMutationResult =
         commit(engine.move(state.cards, cardId, column, row))
 
-    fun resize(cardId: String, size: CardSize): LayoutMutationResult =
-        commit(engine.resize(state.cards, cardId, size))
+    fun resize(cardId: String, size: CardSize): LayoutMutationResult {
+        val current = state.cards.firstOrNull { it.id == cardId }
+            ?: return LayoutMutationResult.Failure(LayoutFailureReason.CARD_NOT_FOUND, state.cards)
+        if (current.size == size) return LayoutMutationResult.Success(state.cards)
+        return commit(engine.resize(state.cards, cardId, size))
+    }
 
     fun previewMove(
         cards: List<PlacedCard>,
@@ -66,6 +70,12 @@ class DashboardStateHolder(
         column: Int,
         row: Int,
     ): LayoutMutationResult = engine.move(cards, cardId, column, row)
+
+    fun previewResize(
+        cards: List<PlacedCard>,
+        cardId: String,
+        size: CardSize,
+    ): LayoutMutationResult = engine.resize(cards, cardId, size)
 
     fun close() = store.close()
 
@@ -110,7 +120,7 @@ class DashboardStateHolder(
     private fun notifyListeners() = listeners.toList().forEach { it(state) }
 
     private fun seededCards(): List<PlacedCard> = listOf(
-        PlacedCard("seed-focus", "mock.focus", 0, 0, CardSize(4, 2)),
+        PlacedCard("seed-focus", "mock.focus", 0, 0, CardSize(3, 2)),
         PlacedCard("seed-status", "mock.status", 4, 0, CardSize(2, 2)),
         PlacedCard("seed-shortcuts", "mock.shortcuts", 6, 0, CardSize(2, 1)),
         PlacedCard("seed-shortcuts-wide", "mock.shortcuts", 0, 2, CardSize(4, 1)),

@@ -9,22 +9,40 @@ import android.widget.TextView
 import com.dormpanel.app.R
 import com.dormpanel.app.dashboard.layout.CardSizeCatalog
 import com.dormpanel.app.dashboard.model.CardSize
+import com.dormpanel.app.dashboard.model.CardSizePolicy
+import com.dormpanel.app.dashboard.model.ExplicitCardSizePolicy
 import com.dormpanel.app.dashboard.model.PlacedCard
+import com.dormpanel.app.dashboard.model.RangeCardSizePolicy
 
 data class CardDisplayMetadata(
     val name: String,
     val description: String,
 )
 
+class CardInteractionScope(
+    val enabled: Boolean,
+    private val onGestureClaimed: () -> Unit,
+) {
+    /** Call when a delayed interaction such as long press takes ownership of the stream. */
+    fun claimGesture() {
+        if (enabled) onGestureClaimed()
+    }
+
+    /** Marks controls such as sliders as owning their stream from ACTION_DOWN. */
+    fun claimFromDown(view: View) {
+        view.setTag(R.id.tag_claims_page_gesture, if (enabled) true else null)
+    }
+}
+
 interface DashboardCardProvider {
     val typeKey: String
     val displayMetadata: CardDisplayMetadata
-    val supportedSizes: List<CardSize>
+    val sizePolicy: CardSizePolicy
     val defaultSize: CardSize
     val defaultConfigurationJson: String get() = "{}"
 
     fun createView(context: Context): View
-    fun bind(view: View, card: PlacedCard)
+    fun bind(view: View, card: PlacedCard, interactions: CardInteractionScope)
 }
 
 class DashboardCardRegistry(
@@ -36,8 +54,7 @@ class DashboardCardRegistry(
     init {
         require(providersByType.size == providers.size) { "Card provider type keys must be unique" }
         providers.forEach { provider ->
-            require(provider.supportedSizes.isNotEmpty()) { "${provider.typeKey} has no supported sizes" }
-            require(provider.defaultSize in provider.supportedSizes) {
+            require(provider.sizePolicy.allows(provider.defaultSize)) {
                 "${provider.typeKey} default size is unsupported"
             }
         }
@@ -45,8 +62,14 @@ class DashboardCardRegistry(
 
     fun provider(typeKey: String): DashboardCardProvider? = providersByType[typeKey]
 
-    override fun supportedSizes(providerType: String): List<CardSize>? =
-        providersByType[providerType]?.supportedSizes
+    override fun sizePolicy(providerType: String): CardSizePolicy? =
+        providersByType[providerType]?.sizePolicy
+
+    fun snapSize(providerType: String, candidate: CardSize, maximum: CardSize): CardSize? =
+        providersByType[providerType]?.sizePolicy?.snap(candidate, maximum)
+
+    fun hasAlternativeSize(providerType: String, current: CardSize, maximum: CardSize): Boolean =
+        providersByType[providerType]?.sizePolicy?.hasAlternative(current, maximum) == true
 
     companion object {
         fun mock(): DashboardCardRegistry = DashboardCardRegistry(
@@ -54,12 +77,15 @@ class DashboardCardRegistry(
                 MockCardProvider(
                     typeKey = "mock.focus",
                     name = "Focus",
-                    description = "Large multi-size demo card",
+                    description = "Freely resizable demo card",
                     eyebrow = "FOCUS BLOCK",
                     body = "Quiet workspace",
                     accentColor = 0xFF76B7FF.toInt(),
-                    supportedSizes = listOf(CardSize(2, 2), CardSize(4, 2)),
-                    defaultSize = CardSize(4, 2),
+                    sizePolicy = RangeCardSizePolicy(
+                        minimum = CardSize(2, 1),
+                        maximum = CardSize(4, 3),
+                    ),
+                    defaultSize = CardSize(3, 2),
                 ),
                 MockCardProvider(
                     typeKey = "mock.status",
@@ -68,7 +94,7 @@ class DashboardCardRegistry(
                     eyebrow = "ROOM STATUS",
                     body = "All systems calm",
                     accentColor = 0xFF5DD39E.toInt(),
-                    supportedSizes = listOf(CardSize(2, 1), CardSize(2, 2)),
+                    sizePolicy = ExplicitCardSizePolicy(listOf(CardSize(2, 1), CardSize(2, 2))),
                     defaultSize = CardSize(2, 2),
                 ),
                 MockCardProvider(
@@ -78,7 +104,7 @@ class DashboardCardRegistry(
                     eyebrow = "SHORTCUTS",
                     body = "Study  ·  Relax  ·  Sleep",
                     accentColor = 0xFFDAA65E.toInt(),
-                    supportedSizes = listOf(CardSize(2, 1), CardSize(4, 1)),
+                    sizePolicy = ExplicitCardSizePolicy(listOf(CardSize(2, 1), CardSize(4, 1))),
                     defaultSize = CardSize(2, 1),
                 ),
             ),
@@ -93,7 +119,7 @@ private class MockCardProvider(
     private val eyebrow: String,
     private val body: String,
     private val accentColor: Int,
-    override val supportedSizes: List<CardSize>,
+    override val sizePolicy: CardSizePolicy,
     override val defaultSize: CardSize,
 ) : DashboardCardProvider {
     override val displayMetadata = CardDisplayMetadata(name, description)
@@ -116,13 +142,42 @@ private class MockCardProvider(
         })
     }
 
-    override fun bind(view: View, card: PlacedCard) {
+    override fun bind(view: View, card: PlacedCard, interactions: CardInteractionScope) {
         view.findViewById<TextView>(R.id.card_eyebrow).apply {
             text = eyebrow
             setTextColor(accentColor)
         }
-        view.findViewById<TextView>(R.id.card_body).text = body
+        val bodyView = view.findViewById<TextView>(R.id.card_body)
+        bodyView.text = view.context.getString(
+            R.string.mock_card_body_with_size,
+            body,
+            card.size.columnSpan,
+            card.size.rowSpan,
+        )
         view.contentDescription = "${displayMetadata.name}, ${card.size.columnSpan} by ${card.size.rowSpan}"
+        view.isClickable = interactions.enabled
+        view.isLongClickable = interactions.enabled
+        if (interactions.enabled) {
+            view.setOnClickListener {
+                bodyView.text = view.context.getString(
+                    R.string.mock_card_tap_action,
+                    card.size.columnSpan,
+                    card.size.rowSpan,
+                )
+            }
+            view.setOnLongClickListener {
+                interactions.claimGesture()
+                bodyView.text = view.context.getString(
+                    R.string.mock_card_secondary_action,
+                    card.size.columnSpan,
+                    card.size.rowSpan,
+                )
+                true
+            }
+        } else {
+            view.setOnClickListener(null)
+            view.setOnLongClickListener(null)
+        }
     }
 }
 

@@ -1,8 +1,10 @@
 package com.dormpanel.app.dashboard.layout
 
 import com.dormpanel.app.dashboard.model.CardSize
+import com.dormpanel.app.dashboard.model.ExplicitCardSizePolicy
 import com.dormpanel.app.dashboard.model.GridDefinition
 import com.dormpanel.app.dashboard.model.PlacedCard
+import com.dormpanel.app.dashboard.model.RangeCardSizePolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,8 +15,9 @@ class DashboardLayoutEngineTest {
     private val large = CardSize(2, 2)
     private val catalog = CardSizeCatalog { type ->
         when (type) {
-            "flex" -> listOf(small, wide, large)
-            "small" -> listOf(small)
+            "flex" -> ExplicitCardSizePolicy(listOf(small, wide, large))
+            "small" -> ExplicitCardSizePolicy(listOf(small))
+            "range" -> RangeCardSizePolicy(small, large)
             else -> null
         }
     }
@@ -87,11 +90,13 @@ class DashboardLayoutEngineTest {
 
     @Test
     fun `resize succeeds`() {
-        val cards = listOf(card("a", 0, 0))
+        val cards = listOf(card("a", 1, 1))
 
         val result = engine.resize(cards, "a", large).success()
 
         assertEquals(large, result.single().size)
+        assertEquals(1, result.single().column)
+        assertEquals(1, result.single().row)
     }
 
     @Test
@@ -104,6 +109,15 @@ class DashboardLayoutEngineTest {
         assertEquals(null, engine.validate(result))
         assertTrue(result.first { it.id == "b" } != cards[1])
         assertTrue(result.first { it.id == "c" } != cards[2])
+    }
+
+    @Test
+    fun `resize reflow is deterministic`() {
+        val cards = listOf(card("a", 0, 0), card("b", 1, 0), card("c", 0, 1))
+
+        val results = List(5) { engine.resize(cards, "a", large).success() }
+
+        assertTrue(results.all { it == results.first() })
     }
 
     @Test

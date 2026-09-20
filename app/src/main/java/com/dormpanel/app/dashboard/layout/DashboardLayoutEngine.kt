@@ -1,11 +1,12 @@
 package com.dormpanel.app.dashboard.layout
 
 import com.dormpanel.app.dashboard.model.CardSize
+import com.dormpanel.app.dashboard.model.CardSizePolicy
 import com.dormpanel.app.dashboard.model.GridDefinition
 import com.dormpanel.app.dashboard.model.PlacedCard
 
 fun interface CardSizeCatalog {
-    fun supportedSizes(providerType: String): List<CardSize>?
+    fun sizePolicy(providerType: String): CardSizePolicy?
 }
 
 enum class LayoutFailureReason {
@@ -42,9 +43,9 @@ class DashboardLayoutEngine(
 
         var occupancy = 0L
         for (card in cards) {
-            val supportedSizes = sizeCatalog.supportedSizes(card.providerType)
+            val sizePolicy = sizeCatalog.sizePolicy(card.providerType)
                 ?: return LayoutFailureReason.UNKNOWN_PROVIDER
-            if (card.size !in supportedSizes) return LayoutFailureReason.UNSUPPORTED_SIZE
+            if (!sizePolicy.allows(card.size)) return LayoutFailureReason.UNSUPPORTED_SIZE
             if (!isInsideGrid(card)) return LayoutFailureReason.OUT_OF_BOUNDS
             val mask = maskFor(card)
             if (occupancy and mask != 0L) return LayoutFailureReason.OVERLAP
@@ -182,9 +183,9 @@ class DashboardLayoutEngine(
     }
 
     private fun validateProviderAndSize(card: PlacedCard): LayoutFailureReason? {
-        val sizes = sizeCatalog.supportedSizes(card.providerType)
+        val policy = sizeCatalog.sizePolicy(card.providerType)
             ?: return LayoutFailureReason.UNKNOWN_PROVIDER
-        return if (card.size in sizes) null else LayoutFailureReason.UNSUPPORTED_SIZE
+        return if (policy.allows(card.size)) null else LayoutFailureReason.UNSUPPORTED_SIZE
     }
 
     private fun isInsideGrid(card: PlacedCard): Boolean =

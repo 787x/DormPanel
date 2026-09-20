@@ -2,6 +2,7 @@ package com.dormpanel.app.dashboard
 
 import com.dormpanel.app.dashboard.card.DashboardCardRegistry
 import com.dormpanel.app.dashboard.layout.LayoutMutationResult
+import com.dormpanel.app.dashboard.model.CardSize
 import com.dormpanel.app.dashboard.persistence.DashboardStore
 import com.dormpanel.app.dashboard.persistence.StoredDashboard
 import org.junit.Assert.assertEquals
@@ -50,6 +51,25 @@ class DashboardStateHolderTest {
         assertEquals(1, store.savedSnapshots.size)
         assertEquals(2, store.savedSnapshots.single().first { it.id == "seed-shortcuts-wide" }.column)
         assertEquals(3, store.savedSnapshots.single().first { it.id == "seed-shortcuts-wide" }.row)
+    }
+
+    @Test
+    fun `resize preview does not persist and commit persists exactly once`() {
+        val store = FakeStore(StoredDashboard(false, 0, emptyList()))
+        val holder = DashboardStateHolder(DashboardCardRegistry.mock(), store)
+        store.savedSnapshots.clear()
+
+        val preview = holder.previewResize(holder.state.cards, "seed-focus", CardSize(4, 2))
+
+        assertTrue(preview is LayoutMutationResult.Success)
+        assertTrue(store.savedSnapshots.isEmpty())
+
+        val committed = holder.resize("seed-focus", CardSize(4, 2))
+        assertTrue(committed is LayoutMutationResult.Success)
+        assertEquals(1, store.savedSnapshots.size)
+
+        holder.resize("seed-focus", CardSize(4, 2))
+        assertEquals(1, store.savedSnapshots.size)
     }
 
     private class FakeStore(private val stored: StoredDashboard) : DashboardStore {

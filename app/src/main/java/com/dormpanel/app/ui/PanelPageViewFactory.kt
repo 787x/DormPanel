@@ -14,12 +14,12 @@ class PanelPageViewFactory(
     private val inflater: LayoutInflater,
     private val dashboardStateHolder: DashboardStateHolder,
     private val cardRegistry: DashboardCardRegistry,
-    private val onDashboardEditModeChanged: (Boolean) -> Unit,
+    private val onPageGestureClaimed: () -> Unit,
 ) {
     fun create(page: PanelPage, parent: ViewGroup): View {
         if (page == PanelPage.HOME) {
             return (inflater.inflate(R.layout.view_home_page, parent, false) as DashboardPageView).apply {
-                bind(dashboardStateHolder, cardRegistry, onDashboardEditModeChanged)
+                bind(dashboardStateHolder, cardRegistry, onPageGestureClaimed)
             }
         }
 
