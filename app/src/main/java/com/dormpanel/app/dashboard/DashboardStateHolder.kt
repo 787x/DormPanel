@@ -120,9 +120,11 @@ class DashboardStateHolder(
     private fun notifyListeners() = listeners.toList().forEach { it(state) }
 
     private fun seededCards(): List<PlacedCard> = listOf(
-        PlacedCard("seed-focus", "mock.focus", 0, 0, CardSize(3, 2)),
-        PlacedCard("seed-status", "mock.status", 4, 0, CardSize(2, 2)),
-        PlacedCard("seed-shortcuts", "mock.shortcuts", 6, 0, CardSize(2, 1)),
-        PlacedCard("seed-shortcuts-wide", "mock.shortcuts", 0, 2, CardSize(4, 1)),
+        PlacedCard("seed-clock", "clock", 0, 0, CardSize(4, 3)),
+        PlacedCard("seed-weather", "weather", 4, 0, CardSize(4, 3)),
+        PlacedCard("seed-sensor", "sensor", 0, 3, CardSize(2, 2), "{\"sensorId\":\"room\"}"),
+        PlacedCard("seed-light", "light", 2, 3, CardSize(2, 2), "{\"lightId\":\"desk\"}"),
+        PlacedCard("seed-bedside", "light", 4, 3, CardSize(2, 2), "{\"lightId\":\"bedside\"}"),
+        PlacedCard("seed-ceiling", "light", 6, 3, CardSize(2, 2), "{\"lightId\":\"ceiling\"}"),
     )
 }

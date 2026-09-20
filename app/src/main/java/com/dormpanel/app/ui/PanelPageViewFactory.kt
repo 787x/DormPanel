@@ -9,14 +9,17 @@ import com.dormpanel.app.dashboard.DashboardStateHolder
 import com.dormpanel.app.dashboard.card.DashboardCardRegistry
 import com.dormpanel.app.dashboard.ui.DashboardPageView
 import com.dormpanel.app.navigation.PanelPage
+import com.dormpanel.app.appearance.AppearanceController
 
 class PanelPageViewFactory(
     private val inflater: LayoutInflater,
     private val dashboardStateHolder: DashboardStateHolder,
     private val cardRegistry: DashboardCardRegistry,
     private val onPageGestureClaimed: () -> Unit,
+    private val appearance: AppearanceController,
 ) {
     fun create(page: PanelPage, parent: ViewGroup): View {
+        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, onPageGestureClaimed)
         if (page == PanelPage.HOME) {
             return (inflater.inflate(R.layout.view_home_page, parent, false) as DashboardPageView).apply {
                 bind(dashboardStateHolder, cardRegistry, onPageGestureClaimed)

@@ -22,11 +22,23 @@ import com.dormpanel.app.dashboard.model.CardSize
 import com.dormpanel.app.dashboard.model.DashboardGridPolicy
 import com.dormpanel.app.dashboard.model.PlacedCard
 import kotlin.math.roundToInt
+import com.dormpanel.app.appearance.AppearanceAware
+import com.dormpanel.app.appearance.AppearanceState
+import com.dormpanel.app.appearance.PanelPalette
+import com.dormpanel.app.appearance.applyAppearanceTree
 
 class DashboardGridView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-) : ViewGroup(context, attrs) {
+) : ViewGroup(context, attrs), AppearanceAware {
+    private var appearance = AppearanceState()
+    override fun applyAppearance(state: AppearanceState) {
+        appearance = state
+        entries.values.forEach {
+            it.container.background = cardBackground(editMode)
+            applyAppearanceTree(it.content, state)
+        }
+    }
     private val definition = DashboardGridPolicy.definition
     private val gapPx = DashboardGridPolicy.GAP_DP.dp
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
@@ -121,6 +133,7 @@ class DashboardGridView @JvmOverloads constructor(
                 addView(it.container)
             }
             provider.bind(entry.content, card, cardInteractions())
+            applyAppearanceTree(entry.content, appearance)
             val maximumSize = CardSize(
                 definition.columns - card.column,
                 definition.rows - card.row,
@@ -399,11 +412,10 @@ class DashboardGridView @JvmOverloads constructor(
 
     private fun cardBackground(editing: Boolean) = GradientDrawable().apply {
         cornerRadius = 18.dp.toFloat()
-        setColor(context.getColor(R.color.dashboard_card_surface))
-        setStroke(
-            if (editing) 2.dp else 1.dp,
-            context.getColor(if (editing) R.color.panel_accent else R.color.panel_outline),
-        )
+        val palette = PanelPalette.forMode(appearance.themeMode)
+        setColor(Color.argb((appearance.cardSurfaceOpacity * 255).roundToInt(),
+            Color.red(palette.surface), Color.green(palette.surface), Color.blue(palette.surface)))
+        if (editing) setStroke(2.dp, palette.accent)
     }
 
     private val Int.dp: Int

@@ -15,9 +15,6 @@
     <string name="dashboard_no_space">The dashboard has no room for that card.</string>
     <string name="dashboard_resize_card">Resize %1$s card</string>
     <string name="dashboard_delete_card">Delete %1$s card</string>
-    <string name="mock_card_body_with_size">%1$s  ·  %2$d×%3$d</string>
-    <string name="mock_card_tap_action">Card action  ·  %1$d×%2$d</string>
-    <string name="mock_card_secondary_action">Secondary action  ·  %1$d×%2$d</string>
 
     <string name="apps_eyebrow">UP FROM HOME</string>
     <string name="apps_title">Apps</string>

@@ -15,6 +15,9 @@ import com.dormpanel.app.navigation.SwipeDirection
 import com.dormpanel.app.navigation.SwipeGestureDetector
 import com.dormpanel.app.ui.PanelPageViewFactory
 import com.dormpanel.app.ui.PageInteraction
+import com.dormpanel.app.appearance.AppearanceState
+import com.dormpanel.app.appearance.PanelPalette
+import com.dormpanel.app.appearance.applyAppearanceTree
 
 class MainActivity : AppCompatActivity() {
     private val router = NavigationRouter.default()
@@ -25,6 +28,10 @@ class MainActivity : AppCompatActivity() {
     private var currentPage = PanelPage.HOME
     private var transitionInProgress = false
     private var activePageInteraction: PageInteraction? = null
+    private val appearanceListener: (AppearanceState) -> Unit = { state ->
+        pageContainer.setBackgroundColor(PanelPalette.forMode(state.themeMode).background)
+        for (index in 0 until pageContainer.childCount) applyPageAppearance(pageContainer.getChildAt(index), state)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,6 +41,7 @@ class MainActivity : AppCompatActivity() {
             inflater = layoutInflater,
             dashboardStateHolder = dashboardViewModel.stateHolder,
             cardRegistry = dashboardViewModel.registry,
+            appearance = dashboardViewModel.appearance,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
             },
@@ -56,6 +64,7 @@ class MainActivity : AppCompatActivity() {
             ?.let { savedName -> PanelPage.entries.firstOrNull { it.name == savedName } }
             ?: router.initialPage
         showPage(currentPage, direction = null, animate = false)
+        dashboardViewModel.appearance.addListener(appearanceListener)
         enterImmersiveMode()
     }
 
@@ -79,6 +88,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        dashboardViewModel.appearance.removeListener(appearanceListener)
         for (index in 0 until pageContainer.childCount) {
             pageContainer.getChildAt(index).animate().cancel()
         }
@@ -94,6 +104,7 @@ class MainActivity : AppCompatActivity() {
     private fun showPage(page: PanelPage, direction: SwipeDirection?, animate: Boolean) {
         val previousView = pageContainer.getChildAt(pageContainer.childCount - 1)
         val nextView = pageViewFactory.create(page, pageContainer)
+        applyPageAppearance(nextView, dashboardViewModel.appearance.state)
         activePageInteraction = nextView as? PageInteraction
         currentPage = page
 
@@ -128,6 +139,11 @@ class MainActivity : AppCompatActivity() {
                 transitionInProgress = false
             }
             .start()
+    }
+
+    private fun applyPageAppearance(view: View, state: AppearanceState) {
+        view.setBackgroundColor(PanelPalette.forMode(state.themeMode).background)
+        applyAppearanceTree(view, state)
     }
 
     @Suppress("DEPRECATION")
