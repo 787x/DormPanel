@@ -3,7 +3,7 @@ package com.dormpanel.app.dashboard.catalog
 import com.dormpanel.app.data.DashboardDataSource
 import com.dormpanel.app.data.DashboardData
 
-enum class CardCategory { INFORMATION, HOME, PRODUCTIVITY, SYSTEM }
+enum class CardCategory { INFORMATION, HOME, PRODUCTIVITY, SYSTEM, APPS }
 
 data class CardAddCandidate(
     val candidateId: String,

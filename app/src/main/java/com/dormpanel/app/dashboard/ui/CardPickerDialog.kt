@@ -62,6 +62,7 @@ class CardPickerDialog(context: Context, private val catalog: CardCatalog,
                     CardCategory.HOME -> R.string.category_home
                     CardCategory.PRODUCTIVITY -> R.string.category_productivity
                     CardCategory.SYSTEM -> R.string.category_system
+                    CardCategory.APPS -> R.string.category_apps
                 })
                 textSize = 22f; isAllCaps = false; isSelected = category == selected
                 setOnClickListener { selected = category; render() }
