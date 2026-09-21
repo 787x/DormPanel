@@ -1,6 +1,7 @@
 package com.dormpanel.app.ha
 
 import com.dormpanel.app.data.*
+import com.dormpanel.app.home.*
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.roundToInt
@@ -13,13 +14,52 @@ data class HaEntity(val id: String, val value: String, val attributes: JSONObjec
     val usable get() = value != "unknown" && value != "unavailable"
     companion object { fun parse(json: JSONObject) = HaEntity(json.getString("entity_id"), json.optString("state"), json.optJSONObject("attributes") ?: JSONObject()) }
 }
-data class HaMetadata(val id: String, val device: String, val name: String, val area: String, val disabled: Boolean)
+data class HaMetadata(val id: String, val device: String, val name: String, val area: String, val disabled: Boolean, val category: String = "")
 data class SensorGroup(val id: String, val name: String, val temperature: String?, val humidity: String?)
 
 /** The only raw entity store. Registry topology is cached separately from live values. */
 class HaEntityStore {
     val entities = linkedMapOf<String, HaEntity>()
     val metadata = linkedMapOf<String, HaMetadata>()
+    private val scriptInputs = mutableMapOf<String, Boolean>()
+    fun scriptServices(result: JSONObject?) {
+        scriptInputs.clear()
+        val scripts = result?.optJSONObject("script") ?: return
+        scripts.keys().forEach { name ->
+            val fields = scripts.optJSONObject(name)?.optJSONObject("fields")
+            scriptInputs["script.$name"] = fields?.keys()?.asSequence()?.any { fields.optJSONObject(it)?.optBoolean("required") == true } == true
+        }
+    }
+    val areas = linkedMapOf<String, HomeArea>()
+    val devices = linkedMapOf<String, HomeDevice>()
+    fun areaRegistry(array: JSONArray) {
+        areas.clear()
+        array.objects().forEach { val id = it.text("area_id"); if (id.isNotEmpty()) areas[id] = HomeArea(id, it.text("name").ifEmpty { id }) }
+    }
+    fun deviceRegistry(array: JSONArray) {
+        devices.clear()
+        array.objects().forEach {
+            val id = it.text("id")
+            if (id.isNotEmpty()) devices[id] = HomeDevice(id, it.text("name_by_user").ifBlank { it.text("name").ifBlank { id } }, it.text("area_id").ifEmpty { null })
+        }
+    }
+    fun home(connected: Boolean, lights: Map<String, LightState>): HomeControlState {
+        val supported = HomeKind.entries.associateBy { it.name.lowercase() }
+        val values = entities.values.mapNotNull { e ->
+            val kind = supported[e.id.substringBefore('.')] ?: return@mapNotNull null
+            val meta = metadata[e.id]
+            if (!enabled(e) || meta?.category in setOf("diagnostic", "config")) return@mapNotNull null
+            val device = devices[meta?.device]
+            val area = (meta?.area?.takeIf { it.isNotEmpty() } ?: device?.areaId)?.takeIf { it in areas }
+            val availability = if (!connected) Availability.STALE else if (!e.usable) Availability.UNAVAILABLE else Availability.AVAILABLE
+            val fields = e.attributes.optJSONObject("fields")
+            val needsInput = fields?.keys()?.asSequence()?.any { fields.optJSONObject(it)?.optBoolean("required") == true } == true
+            HomeEntity("ha:${e.id}", name(e), kind, area, device?.id, availability,
+                e.value, e.attributes.text("unit_of_measurement"), e.value == "on", lights["ha:${e.id}"], !needsInput && (kind != HomeKind.SCRIPT || scriptInputs[e.id] == false))
+        }.sortedWith(compareBy({ it.name }, { it.id }))
+        return HomeControlState(areas.values.sortedWith(compareBy({ it.name }, { it.id })),
+            devices.values.sortedWith(compareBy({ it.name }, { it.id })), values, connected)
+    }
     private val discoveryIds = mutableMapOf<String, List<String>>()
     private var groupedSensors: List<SensorGroup>? = null
     private fun invalidateDiscovery() { discoveryIds.clear(); groupedSensors = null }
@@ -39,7 +79,7 @@ class HaEntityStore {
         array.objects().forEach {
             val id = it.text("entity_id").ifEmpty { it.text("ei") }
             if (id.isNotEmpty()) metadata[id] = HaMetadata(id, it.text("device_id").ifEmpty { it.text("di") },
-                it.text("name").ifEmpty { it.text("en") }, it.text("area_id").ifEmpty { it.text("ai") }, !it.isNull("disabled_by"))
+                it.text("name").ifEmpty { it.text("en") }, it.text("area_id").ifEmpty { it.text("ai") }, !it.isNull("disabled_by"), it.text("entity_category"))
         }
     }
     fun enabled(entity: HaEntity) = metadata[entity.id]?.disabled != true

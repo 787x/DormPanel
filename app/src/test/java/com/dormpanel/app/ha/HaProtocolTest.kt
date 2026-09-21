@@ -24,6 +24,7 @@ class HaProtocolTest {
         val source = HaDashboardDataSource(scheduler, http, appearance)
         var subscription = 0
         @Volatile var holdServices = false
+        @Volatile var areaName = "Bedroom"
         init {
             enqueueSocket()
             server.start()
@@ -48,7 +49,11 @@ class HaProtocolTest {
                             {"entity_id":"weather.home","state":"sunny","attributes":{"temperature":72,"temperature_unit":"°F","supported_features":1}}
                         ]""")
                         "config/entity_registry/list_for_display" -> JSONObject("""{"entities":[]}""")
-                        "config/entity_registry/list" -> org.json.JSONArray("""[{"entity_id":"light.b","disabled_by":"user"}]""")
+                        "config/entity_registry/list" -> org.json.JSONArray("""[{"entity_id":"light.b","disabled_by":"user"},{"entity_id":"light.a","device_id":"lamp","area_id":"bedroom"}]""")
+                        "config/device_registry/list" -> org.json.JSONArray("""[{"id":"lamp","name_by_user":"Lamp","area_id":"study"}]""")
+                        "config/area_registry/list" -> org.json.JSONArray().put(JSONObject().put("area_id", "study").put("name", "Study"))
+                            .put(JSONObject().put("area_id", "bedroom").put("name", areaName))
+                        "get_services" -> JSONObject("""{"script":{"simple":{"fields":{}},"required":{"fields":{"input":{"required":true}}}}}""")
                         "call_service" -> if (message.optString("domain") == "weather") JSONObject("""{"response":{"weather.home":{"forecast":[{"datetime":"2026-09-20T00:00:00Z","temperature":75,"templow":60,"condition":"sunny"}]}}}""") else JSONObject()
                         else -> JSONObject.NULL
                     }
@@ -78,6 +83,48 @@ class HaProtocolTest {
         fun state(value: String) { peer.send(JSONObject().put("type", "event").put("id", subscription).put("event", JSONObject().put("event_type", "state_changed")
             .put("data", JSONObject().put("entity_id", "light.a").put("new_state", JSONObject("""{"entity_id":"light.a","state":"$value","attributes":{"supported_color_modes":["color_temp"],"brightness":255,"min_color_temp_kelvin":2700,"max_color_temp_kelvin":6500}}""")))).toString()) }
         override fun close() { source.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); server.close(); http.dispatcher.executorService.shutdown() }
+    }
+    @Test fun homeCommandsRegistryRefreshAndOfflineSafety() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            assertEquals(1, f.received.count { it.optString("type") == "config/device_registry/list" })
+            assertEquals(1, f.received.count { it.optString("type") == "config/area_registry/list" })
+            assertEquals("bedroom", f.source.homeState.entities.single { it.id == "ha:light.a" }.areaId)
+            assertEquals("Lamp", f.source.homeState.devices.single().name)
+            f.entity("switch.outlet", "off")
+            assertTrue(f.source.activateEntity("ha:switch.outlet"))
+            f.until { f.services("turn_on").any { it.optString("domain") == "switch" } }
+            assertFalse(f.source.homeState.entities.single { it.id == "ha:switch.outlet" }.isOn)
+            f.entity("switch.outlet", "on")
+            assertTrue(f.source.activateEntity("ha:switch.outlet"))
+            f.until { f.services("turn_off").any { it.optString("domain") == "switch" } }
+            f.entity("scene.night", "2026-09-21")
+            assertTrue(f.source.activateEntity("ha:scene.night"))
+            f.until { f.services("turn_on").any { it.optString("domain") == "scene" } }
+            f.entity("script.simple", "off")
+            f.entity("script.simple", "on")
+            assertTrue(f.source.activateEntity("ha:script.simple"))
+            f.until { f.services("turn_on").any { it.optString("domain") == "script" } }
+            f.entity("script.required", "off")
+            assertFalse(f.source.activateEntity("ha:script.required"))
+            assertEquals(1, f.received.count { it.optString("type") == "config/device_registry/list" })
+            assertEquals(1, f.received.count { it.optString("type") == "config/area_registry/list" })
+            f.areaName = "Renamed bedroom"
+            for (kind in listOf("entity", "device", "area")) {
+                val before = f.received.count { it.optString("type") == "config/${kind}_registry/list" }
+                val subscription = f.received.single { it.optString("event_type") == "${kind}_registry_updated" }.getInt("id")
+                f.peer.send(JSONObject().put("id", subscription).put("type", "event").put("event", JSONObject().put("event_type", "${kind}_registry_updated").put("data", JSONObject())).toString())
+                f.until { f.received.count { it.optString("type") == "config/${kind}_registry/list" } == before + 1 }
+            }
+            f.until { f.source.homeState.areas.any { it.name == "Renamed bedroom" } }
+            assertEquals(2, f.received.count { it.optString("type") == "config/device_registry/list" })
+            assertEquals(2, f.received.count { it.optString("type") == "config/area_registry/list" })
+            assertTrue(f.received.none { it.optString("service") == "toggle" })
+            f.peer.close(1000, "offline"); f.until { !f.source.connected }
+            assertEquals("on", f.source.homeState.entities.single { it.id == "ha:switch.outlet" }.value)
+            assertEquals(Availability.STALE, f.source.homeState.entities.single { it.id == "ha:switch.outlet" }.availability)
+            listOf("ha:switch.outlet", "ha:scene.night", "ha:script.simple").forEach { assertFalse(f.source.activateEntity(it)) }
+        }
     }
     @Test fun authenticatesMapsSnapshotAndForecastAndAppearanceThenCommandsAndReconnect() {
         Fixture().use { f ->

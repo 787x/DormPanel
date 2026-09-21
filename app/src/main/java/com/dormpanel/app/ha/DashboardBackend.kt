@@ -6,6 +6,7 @@ import android.os.Looper
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.dashboard.catalog.*
 import com.dormpanel.app.data.*
+import com.dormpanel.app.home.*
 
 class MainHaScheduler : HaScheduler {
     private val handler = Handler(Looper.getMainLooper())
@@ -15,7 +16,7 @@ class MainHaScheduler : HaScheduler {
     }
 }
 /** Stable providers retain this boundary when settings switch the backend at runtime. */
-class DashboardBackend(context: Context, appearance: AppearanceController, labels: CatalogLabels) : DashboardDataSource {
+class DashboardBackend(context: Context, appearance: AppearanceController, labels: CatalogLabels) : DashboardDataSource, HomeControlSource {
     private val scheduler = MainHaScheduler()
     private val http = haHttpClient()
     val rest = HaRestClient(http, scheduler)
@@ -23,6 +24,18 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     private val tokens = HaTokenStore(context)
     val ha = HaDashboardDataSource(scheduler, http, appearance)
     private val demo = FakeDashboardDataSource()
+    private val demoHome = DemoHomeSource(demo)
+    val homeSelection = HomeSelection()
+    private var activeHome: HomeControlSource = demoHome
+    private val homeListeners = linkedSetOf<(HomeControlState) -> Unit>()
+    private val homeRelay: (HomeControlState) -> Unit = { value ->
+        homeSelection.reconcile(value)
+        homeListeners.toList().forEach { it(value) }
+    }
+    override val homeState get() = activeHome.homeState
+    override fun addHomeListener(listener: (HomeControlState) -> Unit) { homeListeners += listener; listener(homeState) }
+    override fun removeHomeListener(listener: (HomeControlState) -> Unit) { homeListeners -= listener }
+    override fun activateEntity(id: String) = activeHome.activateEntity(id)
     private val demoCatalog = SourceCardCatalog(demo, labels)
     var settings = preferences.read(); private set
     private var active: DashboardDataSource = demo
@@ -50,10 +63,13 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     }
     fun clearCredentials() { tokens.clear(); activate() }
     private fun activate() {
+        activeHome.removeHomeListener(homeRelay)
         active.removeListener(relay); activeCatalog.removeListener(catalogRelay)
         ha.configure(settings, tokens.read())
         active = if (settings.mode == BackendMode.DEMO) demo else ha
         activeCatalog = if (settings.mode == BackendMode.DEMO) demoCatalog else ha.catalog
+        activeHome = if (settings.mode == BackendMode.DEMO) demoHome else ha
+        activeHome.addHomeListener(homeRelay)
         active.addListener(relay); activeCatalog.addListener(catalogRelay)
     }
     override fun addListener(listener: (DashboardData) -> Unit) { listeners += listener; listener(state) }
