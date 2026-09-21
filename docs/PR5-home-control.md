@@ -26,7 +26,7 @@ Controls claim page gestures at touch-down. Vertical movement in the lists claim
 
 ## Verification
 
-Final results (2026-09-21):
+Codex automated and emulator verification (2026-09-21; preserved from implementation, not rerun for the IDE-only cleanup):
 
 - `gradlew assembleDebug testDebugUnitTest lintDebug connectedDebugAndroidTest`: BUILD SUCCESSFUL (`build/pr5-verification.log`).
 - After adding two more topology/500-entity JVM cases, `gradlew testDebugUnitTest lintDebug`: BUILD SUCCESSFUL (`build/pr5-final-unit-lint.log`). Latest JVM result: 70 tests, zero failures/errors.
@@ -37,7 +37,9 @@ Final results (2026-09-21):
 
 The new tests cover normalization, registry parsing and topology, deterministic commands, offline preservation, Demo synchronization, selection reconciliation, 500-entity identity/order, and API 28 touch/appearance behavior. Existing PR 1–4 tests remain present. The existing Demo UI fixture now saves/restores HA mode, and the clock detach test waits for the outgoing page transition to finish before asserting detachment.
 
-Real Home Assistant and physical X08E verification have not been performed in this task. Areas/devices, two real lights, external updates, switch/sensor/scene/script availability, registry edits and outage/reconnect therefore remain real-environment checks; MockWebServer tests do not establish those results. No claim is made that a missing domain is absent from the user's HA.
+Codex did not perform real Home Assistant or physical X08E verification. The user manually tested this PR with an emulator and a real Home Assistant installation and reports real home-device control working. The user did not report a domain-by-domain checklist; this does not establish that every supported HA domain, registry-edit scenario or outage/reconnect scenario was manually verified. Codex's MockWebServer results remain separate from the user's real-HA report.
+
+PR cleanup: restored all previously tracked `.idea` files to their `main` versions and removed branch-added `.idea` files. Only IDE state and this verification wording changed during cleanup; application code, build inputs and version are unchanged. `git diff --check` passed, and the branch-versus-main changed-file list contains no `.idea` paths. The Android test suite was not rerun solely for these reversions.
 
 Deferred: climate, cover, fan, lock, media_player, vacuum, alarm_control_panel, RGB picking, histories, dashboard Scene/Script cards and arbitrary service/automation editing. App version remains 1 / 1.0. No launcher, boot, Root or Xiaomi-service changes.
 
