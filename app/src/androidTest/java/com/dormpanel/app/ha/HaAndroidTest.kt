@@ -19,6 +19,7 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicReference
 
 class HaAndroidTest {
+    @get:org.junit.Rule val dashboardPersistence = com.dormpanel.app.IsolatedDashboardRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     @Test fun androidKeystoreRoundtripAndTamper() {
         val isolated = context.createDeviceProtectedStorageContext()

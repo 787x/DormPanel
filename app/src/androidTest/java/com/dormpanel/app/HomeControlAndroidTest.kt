@@ -28,6 +28,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class HomeControlAndroidTest {
+    @get:org.junit.Rule val dashboardPersistence = com.dormpanel.app.IsolatedDashboardRule()
     private var savedHa = HaConnectionSettings()
     private var savedAppearance = AppearanceState()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext

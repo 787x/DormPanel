@@ -101,9 +101,10 @@ class HaEntityStore {
             else values.map { SensorGroup("ha:${it.id}", name(it), it.id.takeIf { _ -> it in temperatures }, it.id.takeIf { _ -> it in humidities }) }
         }.sortedBy { it.id }.also { groupedSensors = it }
     }
-    fun normalized(connected: Boolean, weatherId: String): DashboardData {
+    /** Direct Home reads also work while a reconnect snapshot is still awaiting registries. */
+    fun lightStates(connected: Boolean): Map<String, LightState> {
         fun availability(e: HaEntity) = if (!e.usable) Availability.UNAVAILABLE else if (connected) Availability.AVAILABLE else Availability.STALE
-        val lights = discovered("light").associate { e ->
+        return discovered("light").associate { e ->
             val a = e.attributes
             val modes = a.optJSONArray("supported_color_modes")?.let { list -> (0 until list.length()).map { list.optString(it) } }.orEmpty()
             val min = a.optInt("min_color_temp_kelvin"); val max = a.optInt("max_color_temp_kelvin")
@@ -112,6 +113,10 @@ class HaEntityStore {
             id to LightState(id, name(e), e.value == "on", LightCapabilities(modes.any { it in setOf("brightness", "color_temp", "hs", "xy", "rgb", "rgbw", "rgbww", "white") }, range),
                 ((a.number("brightness") ?: 0.0) * 100 / 255).roundToInt().coerceIn(0, 100), a.optInt("color_temp_kelvin", range?.first ?: 4000), availability(e))
         }
+    }
+    fun normalized(connected: Boolean, weatherId: String): DashboardData {
+        fun availability(e: HaEntity) = if (!e.usable) Availability.UNAVAILABLE else if (connected) Availability.AVAILABLE else Availability.STALE
+        val lights = lightStates(connected)
         val sensors = sensorGroups().associate { group ->
             val t = entities[group.temperature]; val h = entities[group.humidity]
             val temp = t?.takeIf { it.usable }?.value?.toDoubleOrNull()?.takeIf { it.isFinite() }

@@ -26,16 +26,11 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     private val demo = FakeDashboardDataSource()
     private val demoHome = DemoHomeSource(demo)
     val homeSelection = HomeSelection()
-    private var activeHome: HomeControlSource = demoHome
-    private val homeListeners = linkedSetOf<(HomeControlState) -> Unit>()
-    private val homeRelay: (HomeControlState) -> Unit = { value ->
-        homeSelection.reconcile(value)
-        homeListeners.toList().forEach { it(value) }
-    }
-    override val homeState get() = activeHome.homeState
-    override fun addHomeListener(listener: (HomeControlState) -> Unit) { homeListeners += listener; listener(homeState) }
-    override fun removeHomeListener(listener: (HomeControlState) -> Unit) { homeListeners -= listener }
-    override fun activateEntity(id: String) = activeHome.activateEntity(id)
+    private val home = DemandHomeSource(demoHome, homeSelection::reconcile)
+    override val homeState get() = home.homeState
+    override fun addHomeListener(listener: (HomeControlState) -> Unit) = home.addHomeListener(listener)
+    override fun removeHomeListener(listener: (HomeControlState) -> Unit) = home.removeHomeListener(listener)
+    override fun activateEntity(id: String) = home.activateEntity(id)
     private val demoCatalog = SourceCardCatalog(demo, labels)
     var settings = preferences.read(); private set
     private var active: DashboardDataSource = demo
@@ -63,13 +58,12 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     }
     fun clearCredentials() { tokens.clear(); activate() }
     private fun activate() {
-        activeHome.removeHomeListener(homeRelay)
         active.removeListener(relay); activeCatalog.removeListener(catalogRelay)
-        ha.configure(settings, tokens.read())
         active = if (settings.mode == BackendMode.DEMO) demo else ha
         activeCatalog = if (settings.mode == BackendMode.DEMO) demoCatalog else ha.catalog
-        activeHome = if (settings.mode == BackendMode.DEMO) demoHome else ha
-        activeHome.addHomeListener(homeRelay)
+        home.activate(if (settings.mode == BackendMode.DEMO) demoHome else ha) {
+            ha.configure(settings, tokens.read())
+        }
         active.addListener(relay); activeCatalog.addListener(catalogRelay)
     }
     override fun addListener(listener: (DashboardData) -> Unit) { listeners += listener; listener(state) }
@@ -77,5 +71,5 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     override fun toggleLight(id: String) = active.toggleLight(id)
     override fun setBrightness(id: String, percent: Int) = active.setBrightness(id, percent)
     override fun setColorTemperature(id: String, kelvin: Int) = active.setColorTemperature(id, kelvin)
-    fun close() { ha.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); http.dispatcher.executorService.shutdown() }
+    fun close() { home.close(); ha.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); http.dispatcher.executorService.shutdown() }
 }

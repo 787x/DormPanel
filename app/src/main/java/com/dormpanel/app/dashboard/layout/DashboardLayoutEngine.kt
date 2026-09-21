@@ -190,8 +190,8 @@ class DashboardLayoutEngine(
 
     private fun isInsideGrid(card: PlacedCard): Boolean =
         card.column >= 0 && card.row >= 0 &&
-            card.column + card.size.columnSpan <= grid.columns &&
-            card.row + card.size.rowSpan <= grid.rows
+            card.size.columnSpan <= grid.columns && card.column <= grid.columns - card.size.columnSpan &&
+            card.size.rowSpan <= grid.rows && card.row <= grid.rows - card.size.rowSpan
 
     private fun overlaps(first: PlacedCard, second: PlacedCard): Boolean =
         first.column < second.column + second.size.columnSpan &&
