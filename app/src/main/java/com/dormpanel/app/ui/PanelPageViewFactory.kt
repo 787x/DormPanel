@@ -20,8 +20,10 @@ class PanelPageViewFactory(
     private val appearance: AppearanceController,
     private val catalog: CardCatalog,
     private val backend: com.dormpanel.app.ha.DashboardBackend,
+    private val apps: com.dormpanel.app.apps.AndroidInstalledApps,
 ) {
     fun create(page: PanelPage, parent: ViewGroup): View {
+        if (page == PanelPage.APPS) return com.dormpanel.app.apps.AppsPageView(inflater.context, apps, apps.icons, appearance)
         if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed)
         if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, onPageGestureClaimed, backend)
         if (page == PanelPage.HOME) {

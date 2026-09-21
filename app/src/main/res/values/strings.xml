@@ -1,4 +1,11 @@
 <resources>
+    <string name="category_apps">Apps</string>
+    <string name="app_shortcut">App shortcut</string>
+    <string name="apps_navigation">↓ Swipe down here to return Home · Hold an app to pin</string>
+    <string name="apps_pin">Pin to favorites</string>
+    <string name="apps_unpin">Unpin from favorites</string>
+    <string name="apps_open">Open</string>
+    <string name="apps_launch_failed">App unavailable. Please try again later.</string>
     <string name="app_name">DormPanel</string>
     <string name="home_apps_hint">↑  Apps</string>
     <string name="home_control_center_hint">↓  Control Center</string>

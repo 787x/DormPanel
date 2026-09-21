@@ -17,14 +17,17 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         application.getString(R.string.card_sensor_description), application.getString(R.string.catalog_switch),
         application.getString(R.string.catalog_dimmable), application.getString(R.string.catalog_temperature),
     ))
-    val registry = coreCardRegistry(dataSource, appearance)
-    val catalog: CardCatalog = dataSource.catalog
+    val apps = com.dormpanel.app.apps.AppSources.create(application)
+    val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
+        com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance))
+    val catalog: CardCatalog = com.dormpanel.app.apps.CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps))
     val stateHolder = DashboardStateHolder(
         registry = registry,
         store = DashboardStores.create(application),
     )
 
     override fun onCleared() {
+        apps.close()
         dataSource.close()
         stateHolder.close()
     }

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <item name="apps_grid" type="id" />
+    <item name="apps_header" type="id" />
     <item name="tag_claims_page_gesture" type="id" />
 </resources>

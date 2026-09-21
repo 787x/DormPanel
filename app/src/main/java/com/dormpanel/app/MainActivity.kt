@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
             appearance = dashboardViewModel.appearance,
             catalog = dashboardViewModel.catalog,
             backend = dashboardViewModel.dataSource,
+            apps = dashboardViewModel.apps,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
             },
@@ -77,6 +78,11 @@ class MainActivity : AppCompatActivity() {
             swipeGestureDetector.cancel()
         }
         return super.dispatchTouchEvent(event)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        dashboardViewModel.apps.refresh()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

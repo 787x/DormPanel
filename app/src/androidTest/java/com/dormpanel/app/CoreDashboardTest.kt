@@ -217,7 +217,7 @@ class CoreDashboardTest {
                 model(it).appearance.setCardOpacity(1f)
             }
             listOf(
-                Triple(swipe(.5f,.8f,.5f,.2f), "Apps", swipe(.5f,.2f,.5f,.8f)),
+                Triple(swipe(.5f,.8f,.5f,.2f), "Apps", swipe(.5f,.05f,.5f,.8f)),
                 Triple(swipe(.8f,.85f,.2f,.85f), "Calendar", swipe(.2f,.85f,.8f,.85f)),
                 Triple(swipe(.2f,.85f,.8f,.85f), "Home Control", swipe(.8f,.85f,.2f,.85f)),
             ).forEach { (out, title, back) ->
