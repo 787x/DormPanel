@@ -42,18 +42,18 @@
     <string name="card_light">Light</string>
     <string name="card_light_description">Tap to toggle · Hold for controls</string>
     <string name="local_time">LOCAL TIME</string>
-    <string name="weather_sample">WEATHER · SAMPLE</string>
+
     <string name="temperature">Temperature</string>
     <string name="humidity">Humidity</string>
     <string name="state_available">Available</string>
     <string name="state_unavailable">Unavailable</string>
     <string name="state_stale">Stale</string>
     <string name="value_unknown">—</string>
-    <string name="degrees_int">%1$d°</string>
-    <string name="degrees_decimal">%1$.1f°</string>
+    <string name="degrees_int">%1$d%2$s</string>
+    <string name="degrees_decimal">%1$.1f%2$s</string>
     <string name="percent_value">%1$d%%</string>
-    <string name="temperature_range">%1$d–%2$d°</string>
-    <string name="weather_summary">%1$d–%2$d°  ·  Humidity %3$d%%</string>
+    <string name="temperature_range">%1$d–%2$d%3$s</string>
+    <string name="weather_summary">%1$d–%2$d%4$s  ·  Humidity %3$d%%</string>
     <string name="name_with_status">%1$s · %2$s</string>
     <string name="light_on">On</string>
     <string name="light_off">Off</string>
@@ -85,4 +85,14 @@
     <string name="edit_icon">✎</string>
     <string name="home_calendar_edge">Calendar</string>
     <string name="home_control_edge">Home Control</string>
+    <string name="value_with_unit">%1$d%2$s</string>
+    <string name="ha_status">HA · %1$s %2$s</string>
+    <string name="ha_settings">Home Assistant settings</string>
+    <string name="ha_test">Test Connection</string>
+    <string name="ha_clear">Clear credentials</string>
+    <string name="ha_cleared">Credentials cleared; enter a new token.</string>
+    <string name="ha_testing">Testing…</string>
+    <string name="ha_invalid">Check the base URL and access token.</string>
+    <string name="ha_saved">Saved. Reopen this panel after discovery to select weather and helpers.</string>
+    <string name="ha_save_failed">Could not save. Check URL; if secure storage failed, clear credentials and re-enter.</string>
 </resources>

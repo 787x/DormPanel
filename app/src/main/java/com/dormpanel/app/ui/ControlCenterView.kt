@@ -16,7 +16,10 @@ import kotlin.math.roundToInt
 @android.annotation.SuppressLint("ViewConstructor") // Constructed by the page factory with its state owner.
 class ControlCenterView(context: Context, private val appearance: AppearanceController,
     private val onGestureClaimed: () -> Unit,
+    private val backend: com.dormpanel.app.ha.DashboardBackend? = null,
 ) : LinearLayout(context), PageInteraction {
+    private val haStatus = TextView(context).apply { textSize = 16f }
+    private val haListener: (com.dormpanel.app.ha.HaStatus) -> Unit = { haStatus.text = context.getString(R.string.ha_status, it.state, it.detail) }
     private val light = RadioButton(context).apply { id = generateViewId(); setText(R.string.theme_light); textSize = 20f }
     private val dark = RadioButton(context).apply { id = generateViewId(); setText(R.string.theme_dark); textSize = 20f }
     private val modes = RadioGroup(context).apply { orientation = HORIZONTAL; addView(light); addView(dark) }
@@ -44,6 +47,10 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         addView(TextView(context).apply { setText(R.string.control_center_title); textSize = 36f })
         addView(TextView(context).apply { setText(R.string.appearance_title); textSize = 22f; setPadding(0, 24, 0, 8) })
         addView(modes)
+        if (backend != null) {
+            addView(android.widget.Button(context).apply { setText(R.string.ha_settings); setOnClickListener { onGestureClaimed(); com.dormpanel.app.ha.HaSettingsDialog(context, backend).show() } })
+            addView(haStatus)
+        }
         addView(opacityLabel)
         addView(opacity)
         addView(TextView(context).apply { setText(R.string.return_home_up); textSize = 16f; setPadding(0, 24, 0, 0) })
@@ -51,8 +58,8 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         opacity.onUserProgress { appearance.setCardOpacity(it / 100f) }
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); appearance.addListener(listener) }
-    override fun onDetachedFromWindow() { appearance.removeListener(listener); super.onDetachedFromWindow() }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); appearance.addListener(listener); backend?.ha?.addStatusListener(haListener) }
+    override fun onDetachedFromWindow() { backend?.ha?.removeStatusListener(haListener); appearance.removeListener(listener); super.onDetachedFromWindow() }
 
     override fun shouldObservePageSwipe(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {

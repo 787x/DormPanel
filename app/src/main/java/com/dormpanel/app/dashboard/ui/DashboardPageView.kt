@@ -25,6 +25,13 @@ class DashboardPageView @JvmOverloads constructor(
     private lateinit var stateHolder: DashboardStateHolder
     private lateinit var catalog: CardCatalog
     private lateinit var appearance: AppearanceController
+    private var backend: com.dormpanel.app.ha.DashboardBackend? = null
+    private val haListener: (com.dormpanel.app.ha.HaStatus) -> Unit = { status ->
+        findViewById<TextView>(R.id.ha_connection_hint).apply {
+            visibility = if (backend?.settings?.mode == com.dormpanel.app.ha.BackendMode.HOME_ASSISTANT && status.state != com.dormpanel.app.ha.HaConnectionState.CONNECTED) View.VISIBLE else View.GONE
+            text = context.getString(R.string.ha_status, status.state, "")
+        }
+    }
     private var picker: CardPickerDialog? = null
     private lateinit var gridView: DashboardGridView
     private lateinit var editToolbar: View
@@ -61,7 +68,9 @@ class DashboardPageView @JvmOverloads constructor(
         onGestureClaimed: () -> Unit,
         catalog: CardCatalog,
         appearance: AppearanceController,
+        backend: com.dormpanel.app.ha.DashboardBackend? = null,
     ) {
+        this.backend = backend
         this.stateHolder = stateHolder
         this.catalog = catalog
         this.appearance = appearance
@@ -85,15 +94,16 @@ class DashboardPageView @JvmOverloads constructor(
             enterEditMode()
         }
         bound = true
-        if (isAttachedToWindow) stateHolder.addListener(stateListener)
+        if (isAttachedToWindow) { stateHolder.addListener(stateListener); backend?.ha?.addStatusListener(haListener) }
     }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        if (bound) stateHolder.addListener(stateListener)
+        if (bound) { stateHolder.addListener(stateListener); backend?.ha?.addStatusListener(haListener) }
     }
 
     override fun onDetachedFromWindow() {
+        backend?.ha?.removeStatusListener(haListener)
         picker?.dismiss(); picker = null
         if (bound) stateHolder.removeListener(stateListener)
         super.onDetachedFromWindow()

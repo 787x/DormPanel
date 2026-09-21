@@ -38,16 +38,16 @@ class WeatherCardView(context: Context, appearance: AppearanceController, source
         val model = source.state.weather
         val presentation = weatherPresentation(card.size)
         val available = model.availability != Availability.UNAVAILABLE
-        heading.setText(R.string.weather_sample)
+        heading.setText(R.string.card_weather)
         heading.show(presentation.summary)
         current.orientation = if (presentation.horizontal) HORIZONTAL else VERTICAL
         current.gravity = Gravity.CENTER_VERTICAL
         temperature.textSize = presentation.temperatureSp
-        temperature.text = if (available) context.getString(R.string.degrees_int, model.temperature) else context.getString(R.string.value_unknown)
+        temperature.text = if (available) context.getString(R.string.degrees_int, model.temperature, model.temperatureUnit) else context.getString(R.string.value_unknown)
         condition.text = if (model.availability == Availability.AVAILABLE) model.condition else model.availability.label(context)
         condition.textSize = if (card.size.rowSpan == 1) DashboardTypography.SECONDARY else DashboardTypography.TITLE
         condition.setPadding(if (presentation.horizontal) 16.dp else 0, 0, 0, 0)
-        summary.text = context.getString(R.string.weather_summary, model.low, model.high, model.humidity)
+        summary.text = context.getString(R.string.weather_summary, model.low, model.high, model.humidity, model.temperatureUnit)
         summary.show(presentation.summary && available)
         forecast.show(presentation.forecastColumns > 0 && available)
         forecastLabels.forEachIndexed { index, (day, range, sky) ->
@@ -55,7 +55,7 @@ class WeatherCardView(context: Context, appearance: AppearanceController, source
             forecast.getChildAt(index).show(index < presentation.forecastColumns && item != null)
             if (item != null) {
                 day.text = SimpleDateFormat("EEE", Locale.getDefault()).format(Date(item.timeEpochMillis))
-                range.text = context.getString(R.string.temperature_range, item.low, item.high)
+                range.text = context.getString(R.string.temperature_range, item.low, item.high, model.temperatureUnit)
                 sky.text = item.condition
             }
         }

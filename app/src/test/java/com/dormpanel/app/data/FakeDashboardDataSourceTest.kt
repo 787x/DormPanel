@@ -22,7 +22,14 @@ class FakeDashboardDataSourceTest {
     @Test fun `brightness and kelvin commands obey bounds and capabilities`() {
         val source = FakeDashboardDataSource()
         source.setBrightness("desk", -50)
-        assertEquals(0, source.state.lights.getValue("desk").brightness)
+        assertEquals(1, source.state.lights.getValue("desk").brightness)
+        source.setBrightness("desk", 0)
+        assertEquals(1, source.state.lights.getValue("desk").brightness)
+        assertTrue(source.state.lights.getValue("desk").isOn)
+        source.toggleLight("desk")
+        assertFalse(source.state.lights.getValue("desk").isOn)
+        source.setBrightness("desk", 1)
+        assertTrue(source.state.lights.getValue("desk").isOn)
         source.setBrightness("desk", 150)
         assertEquals(100, source.state.lights.getValue("desk").brightness)
         source.setColorTemperature("desk", 1)
@@ -37,5 +44,6 @@ class FakeDashboardDataSourceTest {
         assertEquals(before, source.state)
         source.setBrightness("bedside", 15)
         assertEquals(15, source.state.lights.getValue("bedside").brightness)
+        assertTrue(source.state.lights.getValue("bedside").isOn)
     }
 }

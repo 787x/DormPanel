@@ -38,7 +38,7 @@ class LightQuickControls(
     private val status = TextView(context).apply { textSize = DashboardTypography.SECONDARY }
     private val toggle = Button(context)
     private val brightnessLabel = TextView(context).apply { textSize = DashboardTypography.SECONDARY }
-    private val brightness = ClaimingSeekBar(context, interactions::claimGesture).apply { max = 100; contentDescription = context.getString(R.string.light_brightness) }
+    private val brightness = ClaimingSeekBar(context, interactions::claimGesture).apply { min = 1; max = 100; contentDescription = context.getString(R.string.light_brightness) }
     private val temperatureLabel = TextView(context).apply { textSize = DashboardTypography.SECONDARY }
     private val temperature = ClaimingSeekBar(context, interactions::claimGesture).apply { contentDescription = context.getString(R.string.light_temperature) }
     private val dataListener: (DashboardData) -> Unit = { bind() }
@@ -90,8 +90,10 @@ class LightQuickControls(
         val hasBrightness = light?.capabilities?.brightness == true
         brightness.visibility = if (hasBrightness) View.VISIBLE else View.GONE
         brightnessLabel.visibility = brightness.visibility
-        brightnessLabel.text = context.getString(R.string.brightness_value, light?.brightness ?: 0)
-        brightness.progress = light?.brightness ?: 0
+        // Only the control presentation is clamped; the backend state remains authoritative.
+        val controlBrightness = (light?.brightness ?: 0).coerceIn(1, 100)
+        brightnessLabel.text = context.getString(R.string.brightness_value, controlBrightness)
+        brightness.progress = controlBrightness
         val range = light?.capabilities?.colorTemperature
         temperature.visibility = if (range != null) View.VISIBLE else View.GONE
         temperatureLabel.visibility = temperature.visibility

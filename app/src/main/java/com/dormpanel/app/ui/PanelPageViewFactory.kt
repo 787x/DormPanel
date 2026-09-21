@@ -19,12 +19,13 @@ class PanelPageViewFactory(
     private val onPageGestureClaimed: () -> Unit,
     private val appearance: AppearanceController,
     private val catalog: CardCatalog,
+    private val backend: com.dormpanel.app.ha.DashboardBackend,
 ) {
     fun create(page: PanelPage, parent: ViewGroup): View {
-        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, onPageGestureClaimed)
+        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, onPageGestureClaimed, backend)
         if (page == PanelPage.HOME) {
             return (inflater.inflate(R.layout.view_home_page, parent, false) as DashboardPageView).apply {
-                bind(dashboardStateHolder, cardRegistry, onPageGestureClaimed, catalog, appearance)
+                bind(dashboardStateHolder, cardRegistry, onPageGestureClaimed, catalog, appearance, backend)
             }
         }
 

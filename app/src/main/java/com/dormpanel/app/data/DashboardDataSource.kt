@@ -9,11 +9,14 @@ data class WeatherState(
     val condition: String, val temperature: Int, val humidity: Int,
     val low: Int, val high: Int, val forecast: List<WeatherForecast>,
     val availability: Availability = Availability.AVAILABLE,
+    val temperatureUnit: String = "°C",
 )
 
 data class SensorState(
     val id: String, val name: String, val temperature: Double?, val humidity: Int?,
     val availability: Availability = Availability.AVAILABLE,
+    val temperatureUnit: String = "°C",
+    val humidityUnit: String = "%",
 )
 
 data class LightCapabilities(
@@ -44,6 +47,7 @@ interface DashboardDataSource {
     fun addListener(listener: (DashboardData) -> Unit)
     fun removeListener(listener: (DashboardData) -> Unit)
     fun toggleLight(id: String)
+    /** User brightness commands are 1..100; power is a separate action. */
     fun setBrightness(id: String, percent: Int)
     fun setColorTemperature(id: String, kelvin: Int)
 }
@@ -73,7 +77,7 @@ class FakeDashboardDataSource : DashboardDataSource {
     override fun removeListener(listener: (DashboardData) -> Unit) { listeners -= listener }
     override fun toggleLight(id: String) = update(id) { it.copy(isOn = !it.isOn) }
     override fun setBrightness(id: String, percent: Int) = update(id) {
-        if (it.capabilities.brightness) it.copy(brightness = percent.coerceIn(0, 100)) else it
+        if (it.capabilities.brightness) it.copy(isOn = true, brightness = percent.coerceIn(1, 100)) else it
     }
     override fun setColorTemperature(id: String, kelvin: Int) = update(id) {
         it.capabilities.colorTemperature?.let { range -> it.copy(colorTemperature = kelvin.coerceIn(range)) } ?: it

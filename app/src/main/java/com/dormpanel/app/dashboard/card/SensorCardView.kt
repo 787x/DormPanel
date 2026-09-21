@@ -32,8 +32,8 @@ class SensorCardView(context: Context, appearance: AppearanceController, source:
         val presentation = sensorPresentation(card.size)
         name.text = model?.name ?: context.getString(R.string.card_sensor)
         val unknown = context.getString(R.string.value_unknown)
-        temperature.text = if (availability != Availability.UNAVAILABLE && model?.temperature != null) context.getString(R.string.degrees_decimal, model.temperature) else unknown
-        humidity.text = if (availability != Availability.UNAVAILABLE && model?.humidity != null) context.getString(R.string.percent_value, model.humidity) else unknown
+        temperature.text = if (availability != Availability.UNAVAILABLE && model?.temperature != null) context.getString(R.string.degrees_decimal, model.temperature, model.temperatureUnit) else unknown
+        humidity.text = if (availability != Availability.UNAVAILABLE && model?.humidity != null) context.getString(R.string.value_with_unit, model.humidity, model.humidityUnit) else unknown
         temperature.textSize = presentation.valueSp; humidity.textSize = presentation.valueSp
         values.orientation = if (presentation.sideBySide) HORIZONTAL else VERTICAL
         // Narrow medium cards stack paired value/label rows; wide cards use two dominant columns.

@@ -17,7 +17,7 @@ class LightCardView(context: Context, appearance: AppearanceController, source: 
     private val brightnessLabel = label(DashboardTypography.SECONDARY)
     private val temperatureLabel = label(DashboardTypography.SECONDARY)
     private val brightness = ClaimingSeekBar(context) { interactions.claimGesture() }.apply {
-        max = 100; contentDescription = context.getString(R.string.inline_brightness)
+        min = 1; max = 100; contentDescription = context.getString(R.string.inline_brightness)
     }
     private val temperature = ClaimingSeekBar(context) { interactions.claimGesture() }.apply {
         contentDescription = context.getString(R.string.inline_temperature)
@@ -57,8 +57,10 @@ class LightCardView(context: Context, appearance: AppearanceController, source: 
         summary.textSize = if (presentation.inlineBrightness) DashboardTypography.SECONDARY else DashboardTypography.VALUE
         summary.text = if (capabilities.brightness) context.getString(R.string.percent_value, light?.brightness ?: 0) else ""
         summary.show(presentation.prominentSummary && capabilities.brightness && !presentation.inlineBrightness)
-        brightnessLabel.text = context.getString(R.string.brightness_value, light?.brightness ?: 0)
-        brightness.progress = light?.brightness ?: 0
+        // Only the control presentation is clamped; the backend state remains authoritative.
+        val controlBrightness = (light?.brightness ?: 0).coerceIn(1, 100)
+        brightnessLabel.text = context.getString(R.string.brightness_value, controlBrightness)
+        brightness.progress = controlBrightness
         brightnessLabel.show(presentation.inlineBrightness); brightness.show(presentation.inlineBrightness)
         val range = capabilities.colorTemperature
         if (range != null) {

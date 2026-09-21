@@ -120,6 +120,90 @@ class CoreDashboardTest {
         }
     }
 
+    @Test fun inlineAndQuickBrightnessHaveNonOffMinimumAndExplicitPower() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCards(scenario)
+            scenario.onActivity { activity ->
+                val vm = model(activity)
+                vm.stateHolder.state.cards.toList().forEach { vm.stateHolder.delete(it.id) }
+                vm.stateHolder.add(vm.catalog.candidates.first { it.candidateId == "light:desk" })
+                vm.stateHolder.resize(vm.stateHolder.state.cards.single().id, CardSize(3, 3))
+            }
+            val inline = onView(withContentDescription("Inline brightness"))
+            inline.check { view, error ->
+                if (error != null) throw error
+                val slider = view as android.widget.SeekBar
+                assertEquals(1, slider.min); assertEquals(100, slider.max)
+            }
+            inline.perform(swipe(.8f, .5f, 0f, .5f))
+            onView(withText("Brightness · 1%")).check(matches(isDisplayed()))
+            scenario.onActivity {
+                val light = model(it).dataSource.state.lights.getValue("desk")
+                assertEquals(1, light.brightness); assertTrue(light.isOn)
+            }
+            // Tap/long press the card header, away from the sliders.
+            fun header(tap: Tap) = GeneralClickAction(tap, { view ->
+                val pos = IntArray(2); view.getLocationOnScreen(pos)
+                floatArrayOf(pos[0] + view.width / 2f, pos[1] + 24f)
+            }, Press.FINGER, 0, 0)
+            onView(card("Desk light")).perform(header(Tap.LONG))
+            val quick = onView(withContentDescription("Light brightness"))
+            quick.check { view, error ->
+                if (error != null) throw error
+                val slider = view as android.widget.SeekBar
+                assertEquals(1, slider.min); assertEquals(100, slider.max)
+            }
+            quick.perform(swipe(.8f, .5f, 0f, .5f))
+            onView(withText("Turn off")).check(matches(isDisplayed()))
+            scenario.onActivity {
+                val light = model(it).dataSource.state.lights.getValue("desk")
+                assertEquals(1, light.brightness); assertTrue(light.isOn)
+            }
+            onView(withText("Turn off")).perform(ViewActions.click())
+            scenario.onActivity { assertFalse(model(it).dataSource.state.lights.getValue("desk").isOn) }
+            quick.perform(swipe(.8f, .5f, 0f, .5f))
+            scenario.onActivity {
+                val light = model(it).dataSource.state.lights.getValue("desk")
+                assertEquals(1, light.brightness); assertTrue(light.isOn)
+            }
+            onView(withText("Done")).perform(ViewActions.click())
+            onView(card("Desk light")).perform(header(Tap.SINGLE))
+            scenario.onActivity { assertFalse(model(it).dataSource.state.lights.getValue("desk").isOn) }
+        }
+    }
+
+    @Test fun zeroAuthoritativeBrightnessOnlyClampsControlPresentation() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val demo = com.dormpanel.app.data.FakeDashboardDataSource()
+                val zero = demo.state.copy(lights = demo.state.lights.mapValues { (_, light) -> light.copy(isOn = false, brightness = 0) })
+                var commands = 0
+                val source = object : com.dormpanel.app.data.DashboardDataSource by demo {
+                    override val state = zero
+                    override fun addListener(listener: (com.dormpanel.app.data.DashboardData) -> Unit) { listener(state) }
+                    override fun removeListener(listener: (com.dormpanel.app.data.DashboardData) -> Unit) {}
+                    override fun setBrightness(id: String, percent: Int) { commands++ }
+                }
+                val appearance = model(activity).appearance
+                val scope = com.dormpanel.app.dashboard.card.CardInteractionScope(true) {}
+                val inline = com.dormpanel.app.dashboard.card.LightCardView(activity, appearance, source)
+                inline.bind(com.dormpanel.app.dashboard.model.PlacedCard("zero", "light", 0, 0, CardSize(3, 3), "{\"lightId\":\"desk\"}"), scope)
+                val slider = descendants(inline).filterIsInstance<android.widget.SeekBar>().first()
+                assertEquals(1, slider.min); assertEquals(1, slider.progress)
+                assertTrue(descendants(inline).filterIsInstance<TextView>().any { it.text.toString() == "Brightness · 1%" })
+                val dialog = com.dormpanel.app.dashboard.card.LightQuickControls(activity, source, appearance, "desk", scope) {}
+                try {
+                    dialog.show()
+                    val quick = descendants(dialog.window!!.decorView).filterIsInstance<android.widget.SeekBar>().first()
+                    assertEquals(1, quick.min); assertEquals(1, quick.progress)
+                    assertEquals(0, source.state.lights.getValue("desk").brightness)
+                    assertFalse(source.state.lights.getValue("desk").isOn)
+                    assertEquals(0, commands)
+                } finally { dialog.dismiss() }
+            }
+        }
+    }
+
     @Test fun appearanceAppliesLiveAndAllDirectionsStillNavigate() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             waitForCards(scenario)
