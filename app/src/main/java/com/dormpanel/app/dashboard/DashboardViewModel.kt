@@ -8,6 +8,7 @@ import com.dormpanel.app.dashboard.card.coreCardRegistry
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.PreferencesAppearanceStore
 import com.dormpanel.app.dashboard.persistence.DashboardStores
+import com.dormpanel.app.productivity.*
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     val appearance = AppearanceController(PreferencesAppearanceStore(application))
@@ -18,15 +19,17 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         application.getString(R.string.catalog_dimmable), application.getString(R.string.catalog_temperature),
     ))
     val apps = com.dormpanel.app.apps.AppSources.create(application)
+    val productivity = ProductivitySource(ProductivityStores.create(application), AndroidProductivityClock)
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
-        com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance))
-    val catalog: CardCatalog = com.dormpanel.app.apps.CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps))
+        com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) })
+    val catalog: CardCatalog = com.dormpanel.app.apps.CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps), ProductivityCatalog(application))
     val stateHolder = DashboardStateHolder(
         registry = registry,
         store = DashboardStores.create(application),
     )
 
     override fun onCleared() {
+        productivity.close()
         apps.close()
         dataSource.close()
         stateHolder.close()
