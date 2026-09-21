@@ -23,6 +23,7 @@ class HaProtocolTest {
         })
         val source = HaDashboardDataSource(scheduler, http, appearance)
         var subscription = 0
+        @Volatile var holdServices = false
         init {
             enqueueSocket()
             server.start()
@@ -36,6 +37,7 @@ class HaProtocolTest {
                         webSocket.send(if (reject) """{"type":"auth_invalid","message":"Invalid token"}""" else """{"type":"auth_ok"}""")
                         return
                     }
+                    if (holdServices && message.optString("type") == "call_service") return
                     val result: Any = when (message.optString("type")) {
                         "subscribe_events" -> { if (message.optString("event_type") == "state_changed") subscription = message.getInt("id"); JSONObject.NULL }
                         "get_states" -> org.json.JSONArray("""[
@@ -54,7 +56,20 @@ class HaProtocolTest {
                 }
             }))
         }
-        fun start() = source.configure(HaConnectionSettings(BackendMode.HOME_ASSISTANT, server.url("/").toString(), "weather.home", "input_select.theme", "input_number.opacity"), "test-token")
+        fun start(theme: String = "input_select.theme", opacity: String = "input_number.opacity") {
+            appearance.themeCommand = source::requestTheme
+            appearance.opacityCommand = source::requestOpacity
+            source.configure(HaConnectionSettings(BackendMode.HOME_ASSISTANT, server.url("/").toString(), "weather.home", theme, opacity), "test-token")
+        }
+        fun entity(id: String, value: String?, attributes: JSONObject = JSONObject()) {
+            val next = value?.let { JSONObject().put("entity_id", id).put("state", it).put("attributes", attributes) } ?: JSONObject.NULL
+            peer.send(JSONObject().put("type", "event").put("id", subscription).put("event", JSONObject().put("event_type", "state_changed")
+                .put("data", JSONObject().put("entity_id", id).put("new_state", next))).toString())
+            until { if (value == null) id !in source.store.entities else source.store.entities[id]?.let { it.value == value && it.attributes.toString() == attributes.toString() } == true }
+        }
+        fun services(name: String) = received.filter { it.optString("service") == name }
+        fun brightnessCommands() = services("turn_on").mapNotNull { it.optJSONObject("service_data")?.takeIf { data -> data.has("brightness_pct") }?.getInt("brightness_pct") }
+        fun awaitAppearanceIdle() { until { source.state.weather.forecast.isNotEmpty() } }
         fun until(condition: () -> Boolean) {
             val deadline = System.nanoTime() + 5_000_000_000
             while (!condition() && System.nanoTime() < deadline) { scheduler.advance(); Thread.sleep(5) }
@@ -100,6 +115,131 @@ class HaProtocolTest {
             assertEquals(50, f.source.state.lights.getValue("ha:light.a").brightness)
             assertEquals(Availability.AVAILABLE, f.source.state.lights.getValue("ha:light.a").availability)
             assertEquals(2, f.received.count { it.optString("type") == "get_states" })
+        }
+    }
+    @Test fun brightnessCommandsNeverSendZeroAndPowerCancelsOlderSliderIntent() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            for ((input, expected) in listOf(0 to 1, -30 to 1, 150 to 100)) {
+                val before = f.brightnessCommands().size
+                f.source.setBrightness("ha:light.a", input); f.scheduler.advance(180)
+                f.until { f.brightnessCommands().size == before + 1 }
+                assertEquals(expected, f.brightnessCommands().last())
+            }
+            val before = f.brightnessCommands().size
+            for (value in 100 downTo -10) f.source.setBrightness("ha:light.a", value)
+            f.scheduler.advance(180); f.until { f.brightnessCommands().size == before + 1 }
+            assertEquals(1, f.brightnessCommands().last())
+            f.source.setBrightness("ha:light.a", 80)
+            f.source.toggleLight("ha:light.a")
+            f.until { f.services("turn_off").isNotEmpty() }
+            f.scheduler.advance(180)
+            // A subsequent acknowledged command is a barrier for the socket's ordered send queue.
+            f.source.requestTheme(ThemeMode.DARK); f.until { f.services("select_option").isNotEmpty() }
+            assertEquals(before + 1, f.brightnessCommands().size)
+            assertTrue(f.brightnessCommands().all { it in 1..100 })
+            assertTrue(f.received.none { it.optString("service") == "toggle" })
+            f.entity("light.a", "off", JSONObject("""{"brightness":0,"supported_color_modes":["brightness"]}"""))
+            assertEquals(0, f.source.state.lights.getValue("ha:light.a").brightness)
+            assertFalse(f.source.state.lights.getValue("ha:light.a").isOn)
+            f.source.setBrightness("ha:light.a", 0); f.scheduler.advance(180)
+            f.until { f.brightnessCommands().size == before + 2 }
+            assertEquals(1, f.brightnessCommands().last())
+            assertEquals(0, f.source.state.lights.getValue("ha:light.a").brightness)
+        }
+    }
+    @Test fun validHelpersSendExactOptionsAndWaitForAuthoritativeEvents() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            f.entity("input_select.theme", "LiGhT", JSONObject("""{"options":["LiGhT","dArK"]}"""))
+            assertTrue(f.source.requestTheme(ThemeMode.DARK))
+            assertTrue(f.source.requestOpacity(0.6f))
+            f.until { f.services("select_option").isNotEmpty() && f.services("set_value").isNotEmpty() }
+            assertEquals("dArK", f.services("select_option").last().getJSONObject("service_data").getString("option"))
+            assertEquals(60, f.services("set_value").last().getJSONObject("service_data").getInt("value"))
+            f.appearance.setTheme(ThemeMode.DARK); f.appearance.setCardOpacity(0.6f)
+            assertEquals(AppearanceState(ThemeMode.LIGHT, 0.35f), f.appearance.state)
+            f.entity("input_select.theme", "dArK", JSONObject("""{"options":["LiGhT","dArK"]}"""))
+            f.entity("input_number.opacity", "60")
+            assertEquals(AppearanceState(ThemeMode.DARK, 0.6f), f.appearance.state)
+            assertTrue(f.source.requestOpacity(-1f)); assertTrue(f.source.requestOpacity(2f))
+            f.until { f.services("set_value").size == 4 }
+            assertEquals(listOf(0, 100), f.services("set_value").takeLast(2).map { it.getJSONObject("service_data").getInt("value") })
+        }
+    }
+    @Test fun emptyStaleAndWrongDomainBindingsFallBackLocally() {
+        for ((theme, opacity) in listOf("" to "", "input_select.deleted" to "input_number.renamed", "input_number.opacity" to "input_select.theme")) {
+            Fixture().use { f ->
+                f.start(theme, opacity); f.until { f.source.connected }; f.awaitAppearanceIdle()
+                assertFalse(f.source.requestTheme(ThemeMode.LIGHT)); assertFalse(f.source.requestOpacity(0.6f))
+                f.appearance.setTheme(ThemeMode.LIGHT); f.appearance.setCardOpacity(0.6f)
+                assertEquals(AppearanceState(ThemeMode.LIGHT, 0.6f), f.appearance.state)
+                f.entity("light.a", "off")
+                assertEquals(AppearanceState(ThemeMode.LIGHT, 0.6f), f.appearance.state)
+                assertEquals(theme, f.source.settings.themeEntity); assertEquals(opacity, f.source.settings.opacityEntity)
+                assertTrue(f.services("select_option").isEmpty()); assertTrue(f.services("set_value").isEmpty())
+            }
+        }
+    }
+    @Test fun unavailableUnknownAndDeletedHelpersDoNotSwallowLocalChanges() {
+        for (value in listOf("unavailable", "unknown", null)) {
+            Fixture().use { f ->
+                f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+                f.entity("input_select.theme", value, JSONObject("""{"options":["LIGHT","DARK"]}"""))
+                f.entity("input_number.opacity", value)
+                assertFalse(f.source.requestTheme(ThemeMode.DARK)); assertFalse(f.source.requestOpacity(0.6f))
+                f.appearance.setTheme(ThemeMode.DARK); f.appearance.setCardOpacity(0.6f)
+                assertEquals(AppearanceState(ThemeMode.DARK, 0.6f), f.appearance.state)
+                f.entity("light.a", "off")
+                assertEquals(AppearanceState(ThemeMode.DARK, 0.6f), f.appearance.state)
+                assertEquals("input_select.theme", f.source.settings.themeEntity)
+                assertEquals("input_number.opacity", f.source.settings.opacityEntity)
+            }
+        }
+    }
+    @Test fun missingRequestedThemeOptionUsesLocalFallbackUntilHelperChanges() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            f.entity("input_select.theme", "LIGHT", JSONObject("""{"options":["LIGHT","automatic"]}"""))
+            assertFalse(f.source.requestTheme(ThemeMode.DARK))
+            f.appearance.setTheme(ThemeMode.DARK)
+            assertEquals(ThemeMode.DARK, f.appearance.state.themeMode)
+            f.entity("light.a", "off")
+            assertEquals(ThemeMode.DARK, f.appearance.state.themeMode)
+            assertTrue(f.services("select_option").isEmpty())
+        }
+    }
+    @Test fun disconnectedAndNonFiniteOpacityRequestsFallBackWithoutSending() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            for (value in listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) assertFalse(f.source.requestOpacity(value))
+            assertTrue(f.services("set_value").isEmpty())
+            f.peer.close(1000, "offline"); f.until { !f.source.connected }
+            assertFalse(f.source.requestTheme(ThemeMode.DARK)); assertFalse(f.source.requestOpacity(0.6f))
+            f.appearance.setTheme(ThemeMode.DARK); f.appearance.setCardOpacity(0.6f)
+            assertEquals(AppearanceState(ThemeMode.DARK, 0.6f), f.appearance.state)
+        }
+    }
+    @Test fun fullRequestQueueRejectsHelperOwnershipAndAllowsLocalFallback() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            f.holdServices = true
+            repeat(128) { assertTrue(f.source.requestOpacity(0.5f)) }
+            assertFalse(f.source.requestTheme(ThemeMode.DARK)); assertFalse(f.source.requestOpacity(0.6f))
+            f.appearance.setTheme(ThemeMode.DARK); f.appearance.setCardOpacity(0.6f)
+            assertEquals(AppearanceState(ThemeMode.DARK, 0.6f), f.appearance.state)
+            f.entity("light.a", "off")
+            assertEquals(AppearanceState(ThemeMode.DARK, 0.6f), f.appearance.state)
+        }
+    }
+    @Test fun socketNotSendableDoesNotClaimHelperOwnership() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            f.source.stop() // Stop transport before a UI status change, exercising stale connected status.
+            assertTrue(f.source.connected)
+            assertFalse(f.source.requestTheme(ThemeMode.DARK)); assertFalse(f.source.requestOpacity(0.6f))
+            f.appearance.setTheme(ThemeMode.DARK); f.appearance.setCardOpacity(0.6f)
+            assertEquals(AppearanceState(ThemeMode.DARK, 0.6f), f.appearance.state)
         }
     }
     @Test fun diagnosticsDoNotFollowRedirectsOrCreateState() {

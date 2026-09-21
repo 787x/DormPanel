@@ -22,8 +22,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private val bufferedEvents = mutableListOf<JSONObject>()
     private val commands = LatestCommands(scheduler) { entity, property, value ->
         if (connected) {
-            if (property == "value") socket.service("input_number", "set_value", entity, JSONObject().put(property, value))
-            else if (state.lights["ha:$entity"]?.availability == Availability.AVAILABLE)
+            if (state.lights["ha:$entity"]?.availability == Availability.AVAILABLE)
                 socket.service("light", "turn_on", entity, JSONObject().put(property, value))
         }
     }
@@ -94,7 +93,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                 val next = store.entities[id]
                 fun topology(entity: HaEntity?) = entity?.let { listOf(it.attributes.text("friendly_name"), it.attributes.text("device_class"), it.attributes.optJSONArray("supported_color_modes")?.toString(), it.attributes.text("min_color_temp_kelvin"), it.attributes.text("max_color_temp_kelvin")) }
                 if (topology(old) != topology(next)) { rebuildCatalog(); val previous = weatherId; selectWeather(); if (weatherId != previous) fetchForecast() }
-                publish(); applyAppearance()
+                publish(); applyAppearance(id)
             }
         }
     }
@@ -144,30 +143,47 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     }
     override fun setBrightness(id: String, percent: Int) {
         val light = state.lights[id] ?: return
-        if (connected && light.availability == Availability.AVAILABLE && light.capabilities.brightness) commands.put(id.removePrefix("ha:"), "brightness_pct", percent.coerceIn(0, 100))
+        if (connected && light.availability == Availability.AVAILABLE && light.capabilities.brightness) commands.put(id.removePrefix("ha:"), "brightness_pct", percent.coerceIn(1, 100))
     }
     override fun setColorTemperature(id: String, kelvin: Int) {
         val light = state.lights[id] ?: return
         val range = light.capabilities.colorTemperature ?: return
         if (connected && light.availability == Availability.AVAILABLE) commands.put(id.removePrefix("ha:"), "color_temp_kelvin", kelvin.coerceIn(range))
     }
+    private fun appearanceHelper(id: String, domain: String): HaEntity? {
+        if (!connected || !id.startsWith("$domain.")) return null
+        return store.entities[id]?.takeIf { it.usable && store.enabled(it) }
+    }
+    private fun themeOption(helper: HaEntity, mode: ThemeMode): String? {
+        val options = helper.attributes.optJSONArray("options") ?: return null
+        return (0 until options.length()).map { options.optString(it) }.firstOrNull { it.equals(mode.name, true) }
+    }
     fun requestTheme(mode: ThemeMode): Boolean {
-        if (!connected || settings.themeEntity.isEmpty()) return false
-        val helper = store.entities[settings.themeEntity]
-        val options = helper?.attributes?.optJSONArray("options")
-        val option = options?.let { list -> (0 until list.length()).map { list.optString(it) }.firstOrNull { it.equals(mode.name, true) } }
-        if (option != null) socket.service("input_select", "select_option", settings.themeEntity, JSONObject().put("option", option))
-        return true
+        val helper = appearanceHelper(settings.themeEntity, "input_select") ?: return false
+        val option = themeOption(helper, mode) ?: return false
+        return socket.service("input_select", "select_option", helper.id, JSONObject().put("option", option))
     }
     fun requestOpacity(opacity: Float): Boolean {
-        if (!connected || settings.opacityEntity.isEmpty()) return false
-        if (opacity.isFinite()) commands.put(settings.opacityEntity, "value", (opacity.coerceIn(0f, 1f) * 100).toInt())
-        return true
+        if (!opacity.isFinite()) return false
+        val helper = appearanceHelper(settings.opacityEntity, "input_number") ?: return false
+        // Return actual socket admission, not acceptance by a timer that may later fail to send.
+        return socket.service("input_number", "set_value", helper.id,
+            JSONObject().put("value", (opacity.coerceIn(0f, 1f) * 100).toInt()))
     }
-    private fun applyAppearance() {
+    private fun applyAppearance(changedEntity: String? = null) {
         if (!connected) return
-        val theme = when (store.entities[settings.themeEntity]?.value?.lowercase()) { "light" -> ThemeMode.LIGHT; "dark" -> ThemeMode.DARK; else -> appearance.state.themeMode }
-        val opacity = store.entities[settings.opacityEntity]?.value?.toFloatOrNull()?.takeIf { it.isFinite() && it in 0f..100f }?.div(100f) ?: appearance.state.cardSurfaceOpacity
-        appearance.update(AppearanceState(theme, opacity))
+        var next = appearance.state
+        if (changedEntity == null || changedEntity == settings.themeEntity) {
+            val helper = appearanceHelper(settings.themeEntity, "input_select")
+            val mode = when (helper?.value?.lowercase()) { "light" -> ThemeMode.LIGHT; "dark" -> ThemeMode.DARK; else -> null }
+            if (helper != null && mode != null && themeOption(helper, mode) != null) next = next.copy(themeMode = mode)
+        }
+        if (changedEntity == null || changedEntity == settings.opacityEntity) {
+            val helper = appearanceHelper(settings.opacityEntity, "input_number")
+            val opacity = helper?.value?.toFloatOrNull()?.takeIf { it.isFinite() && it in 0f..100f }
+            if (opacity != null) next = next.copy(cardSurfaceOpacity = opacity / 100f)
+        }
+        // Unrelated light/weather events must not undo a local fallback using an old helper value.
+        appearance.update(next)
     }
 }
