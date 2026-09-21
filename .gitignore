@@ -14,3 +14,7 @@
 .cxx
 local.properties
 /.kotlin/
+
+# Machine-local Android Studio state
+/.idea/deviceManager.xml
+/.idea/vcs.xml
