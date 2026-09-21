@@ -1,7 +1,10 @@
 <resources>
     <string name="category_apps">Apps</string>
     <string name="app_shortcut">App shortcut</string>
-    <string name="apps_navigation">↓ Swipe down here to return Home · Hold an app to pin</string>
+    <string name="apps_navigation">Hold an app for options</string>
+    <string name="apps_home">Home</string>
+    <string name="apps_settings">App settings</string>
+    <string name="apps_settings_failed">Unable to open app settings.</string>
     <string name="apps_pin">Pin to favorites</string>
     <string name="apps_unpin">Unpin from favorites</string>
     <string name="apps_open">Open</string>

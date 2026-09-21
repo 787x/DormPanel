@@ -17,11 +17,13 @@ interface InstalledAppSource {
     fun removeListener(listener: (List<InstalledApp>) -> Unit)
     fun refresh()
     fun launch(component: String): Boolean
+    fun openAppSettings(component: String): Boolean
     fun close()
 }
 
 /** Main-thread state; platform discovery and launch are injected and shared by every surface. */
 class AppState(private val ownComponent: String, private val favorites: FavoriteStore,
+    private val settingsLauncher: (String) -> Boolean = { false },
     private val launcher: (String) -> Boolean,
 ) {
     private var favoriteIds = favorites.read().toSet()
@@ -44,6 +46,10 @@ class AppState(private val ownComponent: String, private val favorites: Favorite
     }
     fun launch(component: String): Boolean = apps.any { it.component == component } &&
         runCatching { launcher(component) }.getOrDefault(false)
+    fun openAppSettings(component: String): Boolean {
+        val app = apps.firstOrNull { it.component == component } ?: return false
+        return runCatching { settingsLauncher(app.packageName) }.getOrDefault(false)
+    }
     fun addListener(listener: (List<InstalledApp>) -> Unit) { listeners.add(listener); listener(apps) }
     fun removeListener(listener: (List<InstalledApp>) -> Unit) { listeners.remove(listener) }
     fun close() = listeners.clear()

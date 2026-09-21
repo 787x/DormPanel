@@ -20,6 +20,7 @@ class AndroidInstalledApps(context: Context,
     private val discovery: (() -> List<InstalledApp>)? = null,
     launcher: ((String) -> Boolean)? = null,
     favorites: FavoriteStore = PreferencesFavoriteStore(context),
+    settingsLauncher: ((String) -> Boolean)? = null,
 ) : InstalledAppSource {
     private val appContext = context.applicationContext
     private val pm = appContext.packageManager
@@ -30,7 +31,16 @@ class AndroidInstalledApps(context: Context,
     private var pending = false
     var iconRevision = 0; private set
     private val state = AppState(ComponentName(appContext, com.dormpanel.app.MainActivity::class.java).flattenToString(),
-        favorites, launcher ?: { identity ->
+        favorites, settingsLauncher = settingsLauncher ?: { packageName ->
+            // Check for removal since discovery before asking system Settings to open details.
+            runCatching {
+                pm.getApplicationInfo(packageName, 0)
+                appContext.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(android.net.Uri.fromParts("package", packageName, null))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                true
+            }.getOrDefault(false)
+        }, launcher = launcher ?: { identity ->
         val component = ComponentName.unflattenFromString(identity)
         if (component == null) false else try {
             appContext.startActivity(Intent.makeMainActivity(component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true
@@ -55,6 +65,7 @@ class AndroidInstalledApps(context: Context,
     override fun addListener(listener: (List<InstalledApp>) -> Unit) = state.addListener(listener)
     override fun removeListener(listener: (List<InstalledApp>) -> Unit) = state.removeListener(listener)
     override fun launch(component: String): Boolean = state.launch(component).also { if (!it) refresh() }
+    override fun openAppSettings(component: String): Boolean = state.openAppSettings(component).also { if (!it) refresh() }
     override fun refresh() {
         if (closed) return
         main.removeCallbacks(refreshTask)

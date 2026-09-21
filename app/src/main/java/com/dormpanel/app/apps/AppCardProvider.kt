@@ -54,6 +54,9 @@ class AppCardView(context: Context, appearance: AppearanceController,
     override fun primaryAction() = launchApp(context, source, AppConfiguration.decode(card.configurationJson).component)
     override fun secondaryAction() {
         dialog = AlertDialog.Builder(context).setTitle(title.text)
-            .setItems(arrayOf(context.getString(R.string.apps_open))) { _, _ -> primaryAction() }.show()
+            .setItems(arrayOf(context.getString(R.string.apps_open), context.getString(R.string.apps_settings))) { _, action ->
+                if (action == 0) primaryAction()
+                else openAppSettings(context, source, AppConfiguration.decode(card.configurationJson).component)
+            }.show()
     }
 }

@@ -14,12 +14,19 @@ import com.dormpanel.app.ui.PageInteraction
 @SuppressLint("ViewConstructor")
 class AppsPageView(context: Context, private val source: InstalledAppSource,
     private val icons: AppIcons, private val appearance: AppearanceController,
+    onReturnHome: () -> Unit,
 ) : LinearLayout(context), PageInteraction, AppearanceAware {
     private val heading = TextView(context).apply { setText(R.string.apps_title); textSize = 30f }
     private val hint = TextView(context).apply { setText(R.string.apps_navigation); textSize = 18f }
+    private val home = Button(context).apply {
+        id = R.id.apps_home; setText(R.string.apps_home); textSize = 22f; isAllCaps = false
+        setOnClickListener { onReturnHome() }
+    }
     private val header = LinearLayout(context).apply {
-        id = R.id.apps_header; orientation = VERTICAL; gravity = Gravity.CENTER_VERTICAL
-        setPadding(24.dp, 0, 24.dp, 0); addView(heading); addView(hint)
+        id = R.id.apps_header; orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        setPadding(24.dp, 0, 24.dp, 0)
+        addView(LinearLayout(context).apply { orientation = VERTICAL; addView(heading); addView(hint) }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        addView(home, LayoutParams(144.dp, 56.dp))
     }
     private val adapter = AppsAdapter()
     private val grid = RecyclerView(context).apply {
@@ -27,7 +34,6 @@ class AppsPageView(context: Context, private val source: InstalledAppSource,
         itemAnimator = null; setPadding(16.dp, 0, 16.dp, 16.dp); clipToPadding = false
     }
     private val listener: (List<InstalledApp>) -> Unit = { adapter.items = it; adapter.notifyDataSetChanged() }
-    private var navigationGesture = false
     private var dialog: AlertDialog? = null
     init {
         orientation = VERTICAL
@@ -40,16 +46,12 @@ class AppsPageView(context: Context, private val source: InstalledAppSource,
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); source.addListener(listener) }
     override fun onDetachedFromWindow() { source.removeListener(listener); dialog?.dismiss(); super.onDetachedFromWindow() }
-    override fun shouldObservePageSwipe(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            val position = IntArray(2); header.getLocationOnScreen(position)
-            navigationGesture = event.rawY >= position[1] && event.rawY < position[1] + header.height
-        }
-        return navigationGesture
-    }
+    override fun shouldObservePageSwipe(event: MotionEvent): Boolean = false
     override fun applyAppearance(state: AppearanceState) {
         val palette = PanelPalette.forMode(state.themeMode)
         setBackgroundColor(palette.background); heading.setTextColor(palette.text); hint.setTextColor(palette.secondary); adapter.notifyDataSetChanged()
+        home.setTextColor(palette.accent)
+        home.backgroundTintList = android.content.res.ColorStateList.valueOf(palette.surface)
     }
     private inner class Holder(val cell: LinearLayout, val icon: ImageView, val label: TextView) : RecyclerView.ViewHolder(cell)
     private inner class AppsAdapter : RecyclerView.Adapter<Holder>() {
@@ -75,7 +77,10 @@ class AppsPageView(context: Context, private val source: InstalledAppSource,
             holder.cell.setOnClickListener { launchApp(context, source, app.component) }
             holder.cell.setOnLongClickListener {
                 dialog = AlertDialog.Builder(context).setTitle(app.label)
-                    .setItems(arrayOf(context.getString(if (source.isFavorite(app.component)) R.string.apps_unpin else R.string.apps_pin))) { _, _ -> source.toggleFavorite(app.component) }
+                    .setItems(arrayOf(context.getString(if (source.isFavorite(app.component)) R.string.apps_unpin else R.string.apps_pin),
+                        context.getString(R.string.apps_settings))) { _, action ->
+                        if (action == 0) source.toggleFavorite(app.component) else openAppSettings(context, source, app.component)
+                    }
                     .show()
                 true
             }
@@ -87,4 +92,8 @@ class AppsPageView(context: Context, private val source: InstalledAppSource,
 
 internal fun launchApp(context: Context, source: InstalledAppSource, component: String) {
     if (!source.launch(component)) Toast.makeText(context, R.string.apps_launch_failed, Toast.LENGTH_SHORT).show()
+}
+
+internal fun openAppSettings(context: Context, source: InstalledAppSource, component: String) {
+    if (!source.openAppSettings(component)) Toast.makeText(context, R.string.apps_settings_failed, Toast.LENGTH_SHORT).show()
 }

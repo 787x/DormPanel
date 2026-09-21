@@ -51,6 +51,7 @@ class InstalledAppsTest {
         override fun addListener(listener: (List<InstalledApp>) -> Unit) = state.addListener(listener)
         override fun removeListener(listener: (List<InstalledApp>) -> Unit) = state.removeListener(listener)
         override fun launch(component: String) = state.launch(component)
+        override fun openAppSettings(component: String) = state.openAppSettings(component)
         override fun refresh() { refreshes++ }
         override fun close() = state.close()
     }
@@ -87,5 +88,26 @@ class InstalledAppsTest {
         }).repair(listOf(raw))
         assertTrue(repair.quarantine.isEmpty())
         assertEquals(listOf(raw.toModel()), repair.cards)
+    }
+
+    @Test fun settingsResolveOnlyExactDiscoveredComponentToItsPackage() {
+        val requested = mutableListOf<String>()
+        val state = AppState("own/own.Main", Favorites(), settingsLauncher = { requested.add(it); true }) { true }
+        state.update(listOf(first, second, third))
+        assertTrue(state.openAppSettings(first.component))
+        assertTrue(state.openAppSettings(second.component))
+        assertTrue(state.openAppSettings(third.component))
+        assertEquals(listOf("test", "test", "other"), requested)
+        state.update(listOf(second))
+        assertFalse(state.openAppSettings(first.component))
+        assertFalse(state.openAppSettings("invalid"))
+        assertEquals(3, requested.size)
+    }
+
+    @Test fun settingsFailureIsSafe() {
+        val denied = AppState("own/own.Main", Favorites(), settingsLauncher = { throw SecurityException() }) { true }
+        denied.update(listOf(first)); assertFalse(denied.openAppSettings(first.component))
+        val missing = AppState("own/own.Main", Favorites(), settingsLauncher = { false }) { true }
+        missing.update(listOf(first)); assertFalse(missing.openAppSettings(first.component))
     }
 }

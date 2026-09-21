@@ -33,6 +33,7 @@ class AppsAndroidTest {
     private lateinit var savedAppearance: AppearanceState
     private lateinit var savedHa: com.dormpanel.app.ha.HaConnectionSettings
     private var launched = mutableListOf<String>()
+    private val settingsPackages = mutableListOf<String>()
     private val favorites = object : FavoriteStore {
         var ids = emptySet<String>()
         override fun read() = ids
@@ -50,7 +51,8 @@ class AppsAndroidTest {
     private fun fakeApps() {
         AppSources.overrideFactory = { AndroidInstalledApps(it,
             discovery = { (0..119).map { n -> InstalledApp("fixture/fixture.App$n", "App %03d".format(n), "fixture") } },
-            launcher = { component -> launched.add(component); true }, favorites = favorites) }
+            launcher = { component -> launched.add(component); true }, favorites = favorites,
+            settingsLauncher = { pkg -> settingsPackages.add(pkg); true }) }
     }
     private fun model(activity: MainActivity) = ViewModelProvider(activity)[DashboardViewModel::class.java]
     private fun waitReady(scenario: ActivityScenario<MainActivity>) {
@@ -72,7 +74,7 @@ class AppsAndroidTest {
         java.io.File(context.getExternalFilesDir(null), name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
     }
-    @Test fun gridOwnsScrollHeaderOwnsReturnAndFavoritesSurviveNewViewModel() {
+    @Test fun gridOwnsScrollHomeButtonReturnsAndFavoritesSurviveNewViewModel() {
         fakeApps()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             waitReady(scenario); apps()
@@ -86,6 +88,7 @@ class AppsAndroidTest {
             onView(withId(R.id.apps_grid)).check(matches(isDisplayed()))
             scenario.onActivity { it.findViewById<RecyclerView>(R.id.apps_grid).scrollToPosition(0) }
             onView(withContentDescription("App 002")).perform(longClick())
+            onView(withText(R.string.apps_settings)).check(matches(isDisplayed()))
             onView(withText(R.string.apps_pin)).perform(click())
             scenario.onActivity {
                 assertEquals("fixture/fixture.App2", model(it).apps.apps.first().component)
@@ -100,6 +103,9 @@ class AppsAndroidTest {
             scenario.recreate(); waitReady(scenario)
             onView(withId(R.id.apps_grid)).check(matches(isDisplayed()))
             onView(withId(R.id.page_container)).perform(swipe(.5f,.04f,.5f,.8f))
+            onView(withId(R.id.apps_grid)).check(matches(isDisplayed()))
+            onView(withId(R.id.apps_grid)).perform(swipeUp())
+            onView(withId(R.id.apps_home)).perform(click())
             onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
             apps(); pressBack()
             onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
@@ -141,6 +147,7 @@ class AppsAndroidTest {
             onView(allOf(withContentDescription("Resize Apps card"), withParent(withParent(hasDescendant(withContentDescription("App 000, App shortcut")))))).perform(swipe(.5f,.5f,.5f,-1.8f))
             scenario.onActivity { assertEquals(CardSize(2,1), model(it).stateHolder.state.cards.first().size) }
             assertTrue(launched.isEmpty())
+            assertTrue(settingsPackages.isEmpty())
             onView(withId(R.id.dashboard_done)).perform(click())
             scenario.onActivity {
                 val holder = model(it).stateHolder
@@ -188,6 +195,7 @@ class AppsAndroidTest {
                 assertTrue(model(it).catalog.candidates.none { c -> c.providerType == "app" })
                 assertEquals(original, model(it).stateHolder.state.cards)
                 assertFalse(model(it).apps.launch(app.component))
+                assertFalse(model(it).apps.openAppSettings(app.component))
             }
             onView(withText(R.string.state_unavailable)).check(matches(isDisplayed()))
             discovered.set(listOf(app))
@@ -199,6 +207,8 @@ class AppsAndroidTest {
         }
     }
     @Test fun realDiscoveryIconsAndExactExternalLaunchReturn() {
+        // Real PackageManager/actions with isolated favorites, never modify the user's favorites.
+        AppSources.overrideFactory = { AndroidInstalledApps(it, favorites = favorites) }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             waitReady(scenario); apps(); screenshot("pr7-real-apps.png")
             var chosen: InstalledApp? = null
@@ -214,6 +224,16 @@ class AppsAndroidTest {
             shell("input keyevent 4"); Thread.sleep(400)
             onView(withId(R.id.apps_grid)).check(matches(isDisplayed()))
             scenario.onActivity { assertSame(retained, model(it)) }
+            onView(withContentDescription(chosen!!.label)).perform(longClick())
+            onView(withText(R.string.apps_pin)).perform(click())
+            scenario.onActivity { assertTrue(model(it).apps.isFavorite(chosen!!.component)) }
+            onView(withContentDescription(chosen!!.label)).perform(longClick())
+            onView(withText(R.string.apps_unpin)).perform(click())
+            scenario.onActivity { assertFalse(model(it).apps.isFavorite(chosen!!.component)) }
+            onView(withContentDescription(chosen!!.label)).perform(longClick())
+            onView(withText(R.string.apps_settings)).perform(click())
+            verifyCalculatorSettingsAndReturn("pr7-app-settings.png")
+            onView(withId(R.id.apps_grid)).check(matches(isDisplayed()))
             pressBack()
             scenario.onActivity {
                 val holder = model(it).stateHolder; holder.state.cards.toList().forEach { c -> holder.delete(c.id) }
@@ -227,10 +247,57 @@ class AppsAndroidTest {
                 holder.resize(holder.state.cards.last().id, CardSize(2,2))
             }
             screenshot("pr7-real-shortcuts.png")
-            onView(allOf(isAssignableFrom(AppCardView::class.java), withContentDescription("${chosen!!.label}, App shortcut"))).perform(click())
+            val shortcut = allOf(isAssignableFrom(AppCardView::class.java), withContentDescription("${chosen!!.label}, App shortcut"))
+            onView(shortcut).perform(longClick())
+            onView(withText(R.string.apps_open)).check(matches(isDisplayed()))
+            onView(withText(R.string.apps_settings)).perform(click())
+            verifyCalculatorSettingsAndReturn("pr7-card-settings.png")
+            onView(shortcut).perform(longClick())
+            onView(withText(R.string.apps_open)).perform(click())
             Thread.sleep(500)
             assertTrue(shell("dumpsys activity activities").lineSequence().any { it.contains("mResumedActivity") && it.contains("com.android.calculator2/.Calculator") })
             shell("input keyevent 4")
+        }
+    }
+
+    private fun verifyCalculatorSettingsAndReturn(screenshotName: String) {
+        Thread.sleep(600)
+        val dump = shell("dumpsys activity activities")
+        assertTrue(dump.lineSequence().any { it.contains("mResumedActivity") && it.contains("com.android.settings") })
+        assertTrue(dump.contains("dat=package:com.android.calculator2"))
+        screenshot(screenshotName)
+        shell("input keyevent 4"); Thread.sleep(400)
+    }
+
+    @Test fun bothMenusUseSharedSettingsActionAndUnavailableShortcutFailsSafely() {
+        fakeApps()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitReady(scenario); apps()
+            onView(withContentDescription("App 001")).perform(longClick())
+            onView(withText(R.string.apps_pin)).check(matches(isDisplayed()))
+            onView(withText(R.string.apps_settings)).perform(click())
+            assertEquals(listOf("fixture"), settingsPackages)
+            onView(withId(R.id.apps_home)).perform(click())
+            scenario.onActivity {
+                val m = model(it)
+                m.stateHolder.state.cards.toList().forEach { c -> m.stateHolder.delete(c.id) }
+                m.stateHolder.add(m.catalog.candidates.single { c -> c.candidateId == "app:fixture/fixture.App1" })
+            }
+            onView(isAssignableFrom(AppCardView::class.java)).perform(longClick())
+            onView(withText(R.string.apps_open)).check(matches(isDisplayed()))
+            onView(withText(R.string.apps_settings)).perform(click())
+            assertEquals(listOf("fixture", "fixture"), settingsPackages)
+            // Same package, absent component: no fallback to any of its 120 other components.
+            scenario.onActivity {
+                val m = model(it)
+                m.stateHolder.state.cards.toList().forEach { c -> m.stateHolder.delete(c.id) }
+                val candidate = m.catalog.candidates.first { c -> c.providerType == "app" }
+                m.stateHolder.add(candidate.copy(configurationJson = AppConfiguration("fixture/fixture.Removed").encode()))
+            }
+            onView(isAssignableFrom(AppCardView::class.java)).perform(longClick())
+            onView(withText(R.string.apps_settings)).perform(click())
+            assertEquals(2, settingsPackages.size)
+            assertTrue(launched.isEmpty())
         }
     }
 }

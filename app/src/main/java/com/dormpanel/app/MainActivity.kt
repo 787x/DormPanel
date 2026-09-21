@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity() {
             catalog = dashboardViewModel.catalog,
             backend = dashboardViewModel.dataSource,
             apps = dashboardViewModel.apps,
+            onReturnHome = ::returnHome,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
             },
@@ -58,8 +59,7 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
 
-                val returnDirection = router.direction(currentPage, router.initialPage)
-                showPage(router.initialPage, returnDirection, animate = true)
+                returnHome()
             }
         })
         currentPage = savedInstanceState
@@ -107,6 +107,11 @@ class MainActivity : AppCompatActivity() {
         if (transitionInProgress) return
         val destination = router.destination(currentPage, direction) ?: return
         showPage(destination, direction, animate = true)
+    }
+
+    private fun returnHome() {
+        if (transitionInProgress || currentPage == router.initialPage) return
+        showPage(router.initialPage, router.direction(currentPage, router.initialPage), animate = true)
     }
 
     private fun showPage(page: PanelPage, direction: SwipeDirection?, animate: Boolean) {
