@@ -21,9 +21,22 @@ class HaProtocolTest {
             override fun read() = AppearanceState()
             override fun write(state: AppearanceState) {}
         })
-        val source = HaDashboardDataSource(scheduler, http, appearance)
+        var dashboards = 0
+        var homes = 0
+        val projector = object : HaProjector {
+            override fun dashboard(store: HaEntityStore, connected: Boolean, weatherId: String): com.dormpanel.app.data.DashboardData {
+                dashboards++
+                return DefaultHaProjector.dashboard(store, connected, weatherId)
+            }
+            override fun home(store: HaEntityStore, connected: Boolean, lights: Map<String, com.dormpanel.app.data.LightState>): com.dormpanel.app.home.HomeControlState {
+                homes++
+                return DefaultHaProjector.home(store, connected, lights)
+            }
+        }
+        val source = HaDashboardDataSource(scheduler, http, appearance, projector)
         var subscription = 0
         @Volatile var holdServices = false
+        @Volatile var scriptRequiresInput = false
         @Volatile var areaName = "Bedroom"
         init {
             enqueueSocket()
@@ -53,7 +66,7 @@ class HaProtocolTest {
                         "config/device_registry/list" -> org.json.JSONArray("""[{"id":"lamp","name_by_user":"Lamp","area_id":"study"}]""")
                         "config/area_registry/list" -> org.json.JSONArray().put(JSONObject().put("area_id", "study").put("name", "Study"))
                             .put(JSONObject().put("area_id", "bedroom").put("name", areaName))
-                        "get_services" -> JSONObject("""{"script":{"simple":{"fields":{}},"required":{"fields":{"input":{"required":true}}}}}""")
+                        "get_services" -> JSONObject("""{"script":{"simple":{"fields":{"input":{"required":$scriptRequiresInput}}},"required":{"fields":{"input":{"required":true}}}}}""")
                         "call_service" -> if (message.optString("domain") == "weather") JSONObject("""{"response":{"weather.home":{"forecast":[{"datetime":"2026-09-20T00:00:00Z","temperature":75,"templow":60,"condition":"sunny"}]}}}""") else JSONObject()
                         else -> JSONObject.NULL
                     }
@@ -84,6 +97,82 @@ class HaProtocolTest {
             .put("data", JSONObject().put("entity_id", "light.a").put("new_state", JSONObject("""{"entity_id":"light.a","state":"$value","attributes":{"supported_color_modes":["color_temp"],"brightness":255,"min_color_temp_kelvin":2700,"max_color_temp_kelvin":6500}}""")))).toString()) }
         override fun close() { source.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); server.close(); http.dispatcher.executorService.shutdown() }
     }
+    @Test fun projectionsAreDemandDrivenAndTopologyReusesOneDashboardSnapshot() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            assertEquals(0, f.homes)
+            var before = f.dashboards
+            f.entity("switch.outlet", "off", JSONObject().put("friendly_name", "New outlet"))
+            assertEquals(before + 1, f.dashboards)
+            assertEquals(0, f.homes)
+            f.entity("input_number.opacity", "60")
+            assertEquals(.6f, f.appearance.state.cardSurfaceOpacity)
+            assertEquals(0, f.homes)
+            assertFalse(f.source.homeState.entities.single { it.id == "ha:switch.outlet" }.isOn)
+            f.entity("switch.outlet", "on")
+            assertTrue(f.source.homeState.entities.single { it.id == "ha:switch.outlet" }.isOn)
+            val emitted = mutableListOf<com.dormpanel.app.home.HomeControlState>()
+            val listener: (com.dormpanel.app.home.HomeControlState) -> Unit = { emitted += it }
+            f.source.addHomeListener(listener)
+            val homeBefore = f.homes
+            before = f.dashboards
+            f.entity("input_number.opacity", "70")
+            assertEquals(before + 1, f.dashboards)
+            assertEquals(homeBefore, f.homes)
+            f.entity("switch.outlet", "off")
+            assertEquals(homeBefore + 1, f.homes)
+            assertFalse(emitted.last().entities.single { it.id == "ha:switch.outlet" }.isOn)
+            assertEquals(2, emitted.size)
+            f.source.removeHomeListener(listener)
+            val detached = f.homes
+            f.entity("switch.outlet", "on")
+            assertEquals(detached, f.homes)
+            f.peer.close(1000, "offline"); f.until { !f.source.connected }
+            assertEquals(detached, f.homes)
+            assertFalse(f.source.homeState.connected)
+            assertTrue(f.source.homeState.entities.all { it.availability == Availability.STALE })
+            f.enqueueSocket(); f.scheduler.advance(1000); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            assertTrue(f.source.homeState.connected)
+        }
+    }
+
+    @Test fun directHomeReadsUseRawLightsEvenBeforeInitializationPublishesDashboard() {
+        Fixture().use { f ->
+            f.source.store.snapshot(org.json.JSONArray("""[{"entity_id":"light.fresh","state":"on","attributes":{"brightness":255,"supported_color_modes":["brightness"]}}]"""))
+            assertTrue(f.source.state.lights.isEmpty())
+            val home = f.source.homeState
+            assertEquals(100, home.entities.single().light!!.brightness)
+            assertTrue(home.entities.single().isOn)
+            assertFalse(home.connected)
+        }
+    }
+
+    @Test fun observedRegistryAndServiceUpdatesReuseSnapshotsAndPublishFreshMetadata() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            f.entity("script.simple", "off")
+            var latest = com.dormpanel.app.home.HomeControlState()
+            f.source.addHomeListener { latest = it }
+            assertTrue(latest.entities.single { it.id == "ha:script.simple" }.actionable)
+            for (eventType in listOf("entity_registry_updated", "device_registry_updated", "area_registry_updated", "service_registered", "service_removed")) {
+                f.areaName = "Updated bedroom"
+                f.scriptRequiresInput = !f.scriptRequiresInput
+                val before = f.dashboards
+                val homeBefore = f.homes
+                val subscription = f.received.single { it.optString("event_type") == eventType }.getInt("id")
+                f.peer.send(JSONObject().put("id", subscription).put("type", "event").put("event",
+                    JSONObject().put("event_type", eventType).put("data", JSONObject().put("domain", "script"))).toString())
+                f.until { f.dashboards > before }
+                assertEquals(before + 1, f.dashboards)
+                assertEquals(homeBefore + 1, f.homes)
+                if (eventType == "area_registry_updated") assertTrue(latest.areas.any { it.name == "Updated bedroom" })
+                if (eventType.startsWith("service_")) {
+                    assertEquals(!f.scriptRequiresInput, latest.entities.single { it.id == "ha:script.simple" }.actionable)
+                }
+            }
+        }
+    }
+
     @Test fun homeCommandsRegistryRefreshAndOfflineSafety() {
         Fixture().use { f ->
             f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()

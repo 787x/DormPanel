@@ -7,15 +7,27 @@ import com.dormpanel.app.appearance.*
 import okhttp3.OkHttpClient
 import org.json.JSONObject
 
-class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClient, private val appearance: AppearanceController) : DashboardDataSource, HomeControlSource {
+class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClient, private val appearance: AppearanceController,
+    private val projector: HaProjector = DefaultHaProjector,
+) : DashboardDataSource, HomeControlSource {
     val store = HaEntityStore()
     var settings = HaConnectionSettings(); private set
     var status = HaStatus(HaConnectionState.NOT_CONFIGURED); private set
-    override var state = store.normalized(false, ""); private set
-    override var homeState = HomeControlState(); private set
+    override var state = projector.dashboard(store, false, ""); private set
+    // Fresh access is independent of notification deduplication; never cache unused Home projections.
+    override val homeState get() = projector.home(store, connected, store.lightStates(connected))
+    private var lastEmittedHomeState: HomeControlState? = null
     private val homeListeners = linkedSetOf<(HomeControlState) -> Unit>()
-    override fun addHomeListener(listener: (HomeControlState) -> Unit) { homeListeners += listener; listener(homeState) }
-    override fun removeHomeListener(listener: (HomeControlState) -> Unit) { homeListeners -= listener }
+    override fun addHomeListener(listener: (HomeControlState) -> Unit) {
+        if (!homeListeners.add(listener)) return
+        val fresh = homeState
+        lastEmittedHomeState = fresh
+        listener(fresh)
+    }
+    override fun removeHomeListener(listener: (HomeControlState) -> Unit) {
+        homeListeners -= listener
+        if (homeListeners.isEmpty()) lastEmittedHomeState = null
+    }
     override fun activateEntity(id: String): Boolean {
         val entity = homeState.entities.find { it.id == id } ?: return false
         if (!connected || entity.availability != Availability.AVAILABLE || !entity.actionable) return false
@@ -51,14 +63,14 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private fun statusChanged(value: HaStatus) {
         status = value
         if (!connected) { initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); forecastTimer?.invoke(); forecastTimer = null }
-        publish(); statusListeners.toList().forEach { it(value) }
+        publish(rebuild = true); statusListeners.toList().forEach { it(value) }
     }
     fun configure(value: HaConnectionSettings, token: String?) {
         val changedServer = settings.baseUrl != value.baseUrl
         stop(); settings = value
-        if (changedServer) { store.snapshot(org.json.JSONArray()); store.metadata.clear(); store.areas.clear(); store.devices.clear(); store.scriptServices(null); store.registryKnown = false; store.forecast = emptyList(); weatherId = ""; rebuildCatalog() }
+        if (changedServer) { store.snapshot(org.json.JSONArray()); store.metadata.clear(); store.areas.clear(); store.devices.clear(); store.scriptServices(null); store.registryKnown = false; store.forecast = emptyList(); weatherId = "" }
         if (value.mode != BackendMode.HOME_ASSISTANT || token.isNullOrBlank() || value.baseUrl.isBlank()) {
-            statusChanged(HaStatus(HaConnectionState.NOT_CONFIGURED, if (value.mode == BackendMode.HOME_ASSISTANT) "Enter HA URL and access token." else "Demo backend")); rebuildCatalog(); return
+            statusChanged(HaStatus(HaConnectionState.NOT_CONFIGURED, if (value.mode == BackendMode.HOME_ASSISTANT) "Enter HA URL and access token." else "Demo backend")); return
         }
         runCatching { HaEndpoint.parse(value.baseUrl) }.onSuccess { socket.start(it, token) }
             .onFailure { statusChanged(HaStatus(HaConnectionState.ERROR, "Invalid HA base URL.")) }
@@ -80,7 +92,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                             refreshRegistry("service") {
                                 initialized = true
                                 bufferedEvents.forEach(store::event); bufferedEvents.clear()
-                                rebuildCatalog(); selectWeather(); socket.synchronized(); applyAppearance(); fetchForecast()
+                                selectWeather(); socket.synchronized(); applyAppearance(); fetchForecast()
                                 registryDirty.toList().forEach { kind -> registryDirty -= kind; refreshRegistry(kind) }
                             }
                         }
@@ -97,8 +109,15 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         fun complete() {
             registryPending -= kind
             if (registryDirty.remove(kind)) { refreshRegistry(kind, done); return }
+            // Initialization's nested completions publish once at synchronized(), not once per unwind.
+            val wasInitialized = initialized
+            if (wasInitialized) {
+                val previous = weatherId
+                selectWeather()
+                publish(rebuild = true)
+                if (weatherId != previous) fetchForecast()
+            }
             done()
-            if (initialized) { rebuildCatalog(); publish() }
         }
         fun full() {
             socket.request(JSONObject().put("type", "config/${kind}_registry/list")) { result ->
@@ -143,8 +162,12 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                 store.event(data)
                 val next = store.entities[id]
                 fun topology(entity: HaEntity?) = entity?.let { listOf(it.attributes.text("friendly_name"), it.attributes.text("device_class"), it.attributes.optJSONArray("supported_color_modes")?.toString(), it.attributes.text("min_color_temp_kelvin"), it.attributes.text("max_color_temp_kelvin")) }
-                if (topology(old) != topology(next)) { rebuildCatalog(); val previous = weatherId; selectWeather(); if (weatherId != previous) fetchForecast() }
-                publish(); applyAppearance(id)
+                val topologyChanged = topology(old) != topology(next)
+                val previous = weatherId
+                if (topologyChanged) selectWeather()
+                publish(rebuild = topologyChanged, homeRelevant = id.substringBefore('.') in HOME_DOMAINS)
+                if (weatherId != previous) fetchForecast()
+                applyAppearance(id)
             }
         }
     }
@@ -159,18 +182,25 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         val features = store.entities[entity]?.attributes?.optInt("supported_features") ?: 0
         val type = when { features and 1 != 0 -> "daily"; features and 2 != 0 -> "hourly"; features and 4 != 0 -> "twice_daily"; else -> null }
         if (type != null) socket.service("weather", "get_forecasts", entity, JSONObject().put("type", type), true) { result ->
-            if (connected && entity == weatherId && result.optBoolean("success")) { store.forecast = HaEntityStore.forecast(result.optJSONObject("result"), entity); publish() }
+            if (connected && entity == weatherId && result.optBoolean("success")) { store.forecast = HaEntityStore.forecast(result.optJSONObject("result"), entity); publish(homeRelevant = false) }
         }
         forecastTimer = scheduler.after(3600000) { fetchForecast() }
     }
-    private fun publish() {
-        val next = store.normalized(connected, weatherId)
-        if (next != state) { state = next; listeners.toList().forEach { it(next) } }
-        val home = store.home(connected, next.lights)
-        if (home != homeState) { homeState = home; homeListeners.toList().forEach { it(home) } }
+    private fun publish(rebuild: Boolean = false, homeRelevant: Boolean = true) {
+        val next = projector.dashboard(store, connected, weatherId)
+        val dashboardChanged = next != state
+        state = next // Synchronous catalog listeners must also see fresh light projections.
+        if (rebuild) rebuildCatalog(next)
+        if (dashboardChanged) listeners.toList().forEach { it(next) }
+        if (homeRelevant && homeListeners.isNotEmpty()) {
+            val home = projector.home(store, connected, next.lights)
+            if (home != lastEmittedHomeState) {
+                lastEmittedHomeState = home
+                homeListeners.toList().forEach { it(home) }
+            }
+        }
     }
-    private fun rebuildCatalog() {
-        val data = store.normalized(connected, weatherId)
+    private fun rebuildCatalog(data: DashboardData) {
         val next = buildList {
             add(CardAddCandidate("clock", CardCategory.INFORMATION, "clock", "Clock", "Local time", "{}"))
             add(CardAddCandidate("weather", CardCategory.INFORMATION, "weather", "Weather", "Preferred HA weather", "{}"))
@@ -202,6 +232,9 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         val light = state.lights[id] ?: return
         val range = light.capabilities.colorTemperature ?: return
         if (connected && light.availability == Availability.AVAILABLE) commands.put(id.removePrefix("ha:"), "color_temp_kelvin", kelvin.coerceIn(range))
+    }
+    private companion object {
+        val HOME_DOMAINS = HomeKind.entries.map { it.name.lowercase() }.toSet()
     }
     private fun appearanceHelper(id: String, domain: String): HaEntity? {
         if (!connected || !id.startsWith("$domain.")) return null

@@ -18,8 +18,6 @@ import com.dormpanel.app.dashboard.DashboardViewModel
 import com.dormpanel.app.dashboard.card.DashboardCardView
 import com.dormpanel.app.dashboard.card.millisUntilNextMinute
 import com.dormpanel.app.dashboard.model.CardSize
-import com.dormpanel.app.dashboard.persistence.*
-import com.dormpanel.app.dashboard.DashboardStateHolder
 import org.junit.Before
 import org.junit.After
 import org.hamcrest.Matchers.allOf
@@ -30,37 +28,18 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class CoreDashboardTest {
-    private lateinit var database: DashboardDatabase
-    private var savedCards = emptyList<DashboardCardEntity>()
-    private var savedState: DashboardStateEntity? = null
+    @get:org.junit.Rule val dashboardPersistence = com.dormpanel.app.IsolatedDashboardRule()
     private var savedHa = com.dormpanel.app.ha.HaConnectionSettings()
     private var savedAppearance = AppearanceState()
-    private var lastHolder: DashboardStateHolder? = null
     @Before fun isolateDashboardFixture() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val haStore = com.dormpanel.app.ha.HaSettingsStore(context)
         savedHa = haStore.read()
         haStore.write(savedHa.copy(mode = com.dormpanel.app.ha.BackendMode.DEMO))
-        database = DashboardDatabase.getInstance(context)
-        savedCards = database.dashboardDao().getCards()
-        savedState = database.dashboardDao().getState()
         savedAppearance = PreferencesAppearanceStore(context).read()
-        database.clearAllTables()
         PreferencesAppearanceStore(context).write(AppearanceState())
     }
     @After fun restoreDashboardFixture() {
-        // Drain committed async writes before restoring the emulator's pre-test layout.
-        val holder = lastHolder
-        if (holder != null) {
-            val expected = holder.state.cards.map { DashboardCardEntity(it.id, it.providerType, it.column, it.row, it.size.columnSpan, it.size.rowSpan, it.configurationJson) }.toSet()
-            val deadline = System.currentTimeMillis() + 5000
-            while (database.dashboardDao().getCards().toSet() != expected && System.currentTimeMillis() < deadline) Thread.sleep(20)
-        }
-        database.runInTransaction {
-            database.clearAllTables()
-            if (savedCards.isNotEmpty()) database.dashboardDao().insertCards(savedCards)
-            savedState?.let { database.dashboardDao().putState(it) }
-        }
         PreferencesAppearanceStore(InstrumentationRegistry.getInstrumentation().targetContext).write(savedAppearance)
         com.dormpanel.app.ha.HaSettingsStore(InstrumentationRegistry.getInstrumentation().targetContext).write(savedHa)
     }
@@ -79,7 +58,7 @@ class CoreDashboardTest {
         val until = System.currentTimeMillis() + 5000
         var loaded = false
         while (!loaded && System.currentTimeMillis() < until) {
-            scenario.onActivity { lastHolder = model(it).stateHolder; loaded = model(it).stateHolder.state.loaded }
+            scenario.onActivity { loaded = model(it).stateHolder.state.loaded }
             if (!loaded) Thread.sleep(20)
         }
         assertTrue(loaded)

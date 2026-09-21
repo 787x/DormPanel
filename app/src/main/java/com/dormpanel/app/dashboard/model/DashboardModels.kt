@@ -75,8 +75,8 @@ data class ExplicitCardSizePolicy(
         .filter { it.columnSpan <= maximum.columnSpan && it.rowSpan <= maximum.rowSpan }
         .minWithOrNull(
             compareBy<CardSize> { size ->
-                val columnDistance = size.columnSpan - candidate.columnSpan
-                val rowDistance = size.rowSpan - candidate.rowSpan
+                val columnDistance = size.columnSpan.toLong() - candidate.columnSpan
+                val rowDistance = size.rowSpan.toLong() - candidate.rowSpan
                 columnDistance * columnDistance + rowDistance * rowDistance
             }.thenBy { allowedSizes.indexOf(it) },
         )

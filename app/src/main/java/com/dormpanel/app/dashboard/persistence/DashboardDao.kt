@@ -7,6 +7,15 @@ import androidx.room.Query
 
 @Dao
 interface DashboardDao {
+    @Query("SELECT * FROM dashboard_quarantine ORDER BY recoveryId")
+    fun getQuarantine(): List<DashboardQuarantineEntity>
+
+    @Insert
+    fun insertQuarantine(cards: List<DashboardQuarantineEntity>)
+
+    @Query("DELETE FROM dashboard_quarantine")
+    fun deleteQuarantine()
+
     @Query("SELECT * FROM dashboard_state WHERE id = 1")
     fun getState(): DashboardStateEntity?
 

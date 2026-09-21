@@ -7,7 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import com.dormpanel.app.dashboard.card.coreCardRegistry
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.PreferencesAppearanceStore
-import com.dormpanel.app.dashboard.persistence.RoomDashboardStore
+import com.dormpanel.app.dashboard.persistence.DashboardStores
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     val appearance = AppearanceController(PreferencesAppearanceStore(application))
@@ -21,7 +21,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val catalog: CardCatalog = dataSource.catalog
     val stateHolder = DashboardStateHolder(
         registry = registry,
-        store = RoomDashboardStore(application),
+        store = DashboardStores.create(application),
     )
 
     override fun onCleared() {

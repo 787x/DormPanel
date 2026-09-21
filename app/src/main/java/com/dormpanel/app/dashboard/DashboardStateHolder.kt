@@ -8,6 +8,7 @@ import com.dormpanel.app.dashboard.model.CardSize
 import com.dormpanel.app.dashboard.model.DashboardGridPolicy
 import com.dormpanel.app.dashboard.model.PlacedCard
 import com.dormpanel.app.dashboard.persistence.DashboardStore
+import com.dormpanel.app.dashboard.persistence.QuarantinedCard
 import java.util.UUID
 import com.dormpanel.app.dashboard.catalog.CardAddCandidate
 
@@ -22,6 +23,9 @@ class DashboardStateHolder(
     private val store: DashboardStore,
 ) {
     private val engine = DashboardLayoutEngine(DashboardGridPolicy.definition, registry)
+    // All owner operations and callbacks run on the UI scheduler.
+    private var closed = false
+    private var pendingRecovery: List<QuarantinedCard>? = null
     private val listeners = linkedSetOf<(DashboardUiState) -> Unit>()
     var state = DashboardUiState()
         private set
@@ -31,6 +35,7 @@ class DashboardStateHolder(
     }
 
     fun addListener(listener: (DashboardUiState) -> Unit) {
+        if (closed) return
         listeners += listener
         listener(state)
     }
@@ -78,20 +83,30 @@ class DashboardStateHolder(
         size: CardSize,
     ): LayoutMutationResult = engine.resize(cards, cardId, size)
 
-    fun close() = store.close()
+    fun close() {
+        if (closed) return
+        closed = true
+        listeners.clear()
+        store.close()
+    }
 
     private fun onLoaded(result: Result<com.dormpanel.app.dashboard.persistence.StoredDashboard>) {
+        if (closed) return
         result.fold(
             onSuccess = { stored ->
-                val needsSeedOrRepair = !stored.initialized || engine.validate(stored.cards) != null
-                val restored = if (!needsSeedOrRepair) {
-                    stored.cards
-                } else {
-                    seededCards()
-                }
+                val repair = com.dormpanel.app.dashboard.layout.DashboardLayoutRepair(
+                    DashboardGridPolicy.definition, registry,
+                ).repair(stored.rawCards, stored.quarantine)
+                val restored = if (!stored.initialized) seededCards() else repair.cards
                 state = DashboardUiState(cards = restored, loaded = true)
+                // Submit before notifying: a listener may synchronously edit or close this holder.
+                if (!stored.initialized) persist(restored)
+                else if (restored.map(com.dormpanel.app.dashboard.persistence.RawDashboardCard::from) != stored.rawCards ||
+                    repair.quarantine != stored.quarantine) {
+                    pendingRecovery = repair.quarantine
+                    persist(restored)
+                }
                 notifyListeners()
-                if (needsSeedOrRepair) persist(restored)
             },
             onFailure = {
                 state = DashboardUiState(cards = seededCards(), loaded = true, storageError = true)
@@ -101,24 +116,41 @@ class DashboardStateHolder(
     }
 
     private fun commit(result: LayoutMutationResult): LayoutMutationResult {
+        if (closed) return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_EXISTING_LAYOUT, state.cards)
         if (result is LayoutMutationResult.Success) {
             state = state.copy(cards = result.cards, storageError = false)
-            notifyListeners()
             persist(result.cards)
+            notifyListeners()
         }
         return result
     }
 
     private fun persist(cards: List<PlacedCard>) {
-        store.save(cards) { result ->
-            if (result.isFailure && !state.storageError) {
-                state = state.copy(storageError = true)
-                notifyListeners()
-            }
+        if (closed) return
+        val recovery = pendingRecovery
+        if (recovery == null) store.save(cards, ::onSaved)
+        else store.saveRepair(cards, recovery) { result ->
+            if (closed) return@saveRepair
+            // Keep retrying the atomic repair on subsequent edits if disk persistence failed.
+            if (result.isSuccess && pendingRecovery === recovery) pendingRecovery = null
+            onSaved(result)
         }
     }
 
-    private fun notifyListeners() = listeners.toList().forEach { it(state) }
+    private fun onSaved(result: Result<Unit>) {
+        if (closed) return
+        if (result.isFailure && !state.storageError) {
+            state = state.copy(storageError = true)
+            notifyListeners()
+        }
+    }
+
+    private fun notifyListeners() {
+        for (listener in listeners.toList()) {
+            if (closed) break
+            listener(state)
+        }
+    }
 
     private fun seededCards(): List<PlacedCard> = listOf(
         PlacedCard("seed-clock", "clock", 0, 0, CardSize(4, 3)),
