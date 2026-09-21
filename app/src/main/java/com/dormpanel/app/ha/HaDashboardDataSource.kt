@@ -1,22 +1,40 @@
 package com.dormpanel.app.ha
 
 import com.dormpanel.app.data.*
+import com.dormpanel.app.home.*
 import com.dormpanel.app.dashboard.catalog.*
 import com.dormpanel.app.appearance.*
 import okhttp3.OkHttpClient
 import org.json.JSONObject
 
-class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClient, private val appearance: AppearanceController) : DashboardDataSource {
+class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClient, private val appearance: AppearanceController) : DashboardDataSource, HomeControlSource {
     val store = HaEntityStore()
     var settings = HaConnectionSettings(); private set
     var status = HaStatus(HaConnectionState.NOT_CONFIGURED); private set
     override var state = store.normalized(false, ""); private set
+    override var homeState = HomeControlState(); private set
+    private val homeListeners = linkedSetOf<(HomeControlState) -> Unit>()
+    override fun addHomeListener(listener: (HomeControlState) -> Unit) { homeListeners += listener; listener(homeState) }
+    override fun removeHomeListener(listener: (HomeControlState) -> Unit) { homeListeners -= listener }
+    override fun activateEntity(id: String): Boolean {
+        val entity = homeState.entities.find { it.id == id } ?: return false
+        if (!connected || entity.availability != Availability.AVAILABLE || !entity.actionable) return false
+        if (entity.kind == HomeKind.LIGHT) return powerLight(id)
+        val domain = when(entity.kind) {
+            HomeKind.SWITCH -> "switch"
+            HomeKind.SCENE -> "scene"
+            HomeKind.SCRIPT -> "script"
+            else -> return false
+        }
+        return socket.service(domain, if (entity.kind == HomeKind.SWITCH && entity.isOn) "turn_off" else "turn_on", id.removePrefix("ha:"))
+    }
     var candidates = emptyList<CardAddCandidate>(); private set
     private val listeners = linkedSetOf<(DashboardData) -> Unit>()
     private val catalogListeners = linkedSetOf<(List<CardAddCandidate>) -> Unit>()
     private val statusListeners = linkedSetOf<(HaStatus) -> Unit>()
     private var initialized = false
-    private var registryPending = false
+    private val registryPending = mutableSetOf<String>()
+    private val registryDirty = mutableSetOf<String>()
     private var forecastTimer: (() -> Unit)? = null
     private var weatherId = ""
     private val bufferedEvents = mutableListOf<JSONObject>()
@@ -32,20 +50,20 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     fun removeStatusListener(listener: (HaStatus) -> Unit) { statusListeners -= listener }
     private fun statusChanged(value: HaStatus) {
         status = value
-        if (!connected) { initialized = false; registryPending = false; commands.clear(); forecastTimer?.invoke(); forecastTimer = null }
+        if (!connected) { initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); forecastTimer?.invoke(); forecastTimer = null }
         publish(); statusListeners.toList().forEach { it(value) }
     }
     fun configure(value: HaConnectionSettings, token: String?) {
         val changedServer = settings.baseUrl != value.baseUrl
         stop(); settings = value
-        if (changedServer) { store.snapshot(org.json.JSONArray()); store.metadata.clear(); store.registryKnown = false; store.forecast = emptyList(); weatherId = ""; rebuildCatalog() }
+        if (changedServer) { store.snapshot(org.json.JSONArray()); store.metadata.clear(); store.areas.clear(); store.devices.clear(); store.scriptServices(null); store.registryKnown = false; store.forecast = emptyList(); weatherId = ""; rebuildCatalog() }
         if (value.mode != BackendMode.HOME_ASSISTANT || token.isNullOrBlank() || value.baseUrl.isBlank()) {
             statusChanged(HaStatus(HaConnectionState.NOT_CONFIGURED, if (value.mode == BackendMode.HOME_ASSISTANT) "Enter HA URL and access token." else "Demo backend")); rebuildCatalog(); return
         }
         runCatching { HaEndpoint.parse(value.baseUrl) }.onSuccess { socket.start(it, token) }
             .onFailure { statusChanged(HaStatus(HaConnectionState.ERROR, "Invalid HA base URL.")) }
     }
-    fun stop() { socket.stop(); commands.clear(); forecastTimer?.invoke(); forecastTimer = null; initialized = false; bufferedEvents.clear(); registryPending = false }
+    fun stop() { socket.stop(); commands.clear(); forecastTimer?.invoke(); forecastTimer = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
     private fun initialize() {
         bufferedEvents.clear()
         socket.request(JSONObject().put("type", "subscribe_events").put("event_type", "state_changed")) { subscription ->
@@ -56,31 +74,64 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                 store.snapshot(states)
                 // Events preceding the get_states result are already represented by its newer snapshot.
                 bufferedEvents.clear()
-                refreshRegistry {
-                    initialized = true
-                    bufferedEvents.forEach(store::event); bufferedEvents.clear()
-                    rebuildCatalog(); selectWeather(); socket.synchronized(); applyAppearance(); fetchForecast()
+                refreshRegistry("entity") {
+                    refreshRegistry("device") {
+                        refreshRegistry("area") {
+                            refreshRegistry("service") {
+                                initialized = true
+                                bufferedEvents.forEach(store::event); bufferedEvents.clear()
+                                rebuildCatalog(); selectWeather(); socket.synchronized(); applyAppearance(); fetchForecast()
+                                registryDirty.toList().forEach { kind -> registryDirty -= kind; refreshRegistry(kind) }
+                            }
+                        }
+                    }
                 }
             }
         }
-        socket.request(JSONObject().put("type", "subscribe_events").put("event_type", "entity_registry_updated"))
+        (listOf("entity", "device", "area").map { "${it}_registry_updated" } + listOf("service_registered", "service_removed")).forEach { event ->
+            socket.request(JSONObject().put("type", "subscribe_events").put("event_type", event))
+        }
     }
-    private fun refreshRegistry(done: () -> Unit = {}) {
-        if (registryPending) return
-        registryPending = true
-        socket.request(JSONObject().put("type", "config/entity_registry/list_for_display")) { display ->
-            if (display.optBoolean("success")) store.registry(display.opt("result"))
-            // Full registry supplies disabled_by and stable device IDs, and supports older HA versions.
-            socket.request(JSONObject().put("type", "config/entity_registry/list")) { full ->
-                if (full.optBoolean("success")) store.registry(full.opt("result"))
-                registryPending = false
-                done(); if (initialized) { rebuildCatalog(); publish() }
+    private fun refreshRegistry(kind: String, done: () -> Unit = {}) {
+        if (!registryPending.add(kind)) { registryDirty += kind; return }
+        fun complete() {
+            registryPending -= kind
+            if (registryDirty.remove(kind)) { refreshRegistry(kind, done); return }
+            done()
+            if (initialized) { rebuildCatalog(); publish() }
+        }
+        fun full() {
+            socket.request(JSONObject().put("type", "config/${kind}_registry/list")) { result ->
+                if (result.optBoolean("success")) {
+                    val array = result.optJSONArray("result")
+                    when (kind) {
+                        "entity" -> store.registry(result.opt("result"))
+                        "device" -> array?.let(store::deviceRegistry)
+                        "area" -> array?.let(store::areaRegistry)
+                    }
+                }
+                complete()
             }
         }
+        if (kind == "service") {
+            socket.request(JSONObject().put("type", "get_services")) { result ->
+                store.scriptServices(result.optJSONObject("result"))
+                complete()
+            }
+        } else if (kind == "entity") socket.request(JSONObject().put("type", "config/entity_registry/list_for_display")) { result ->
+            if (result.optBoolean("success")) store.registry(result.opt("result"))
+            full()
+        } else full()
     }
     private fun event(event: JSONObject) {
         when (event.optString("event_type")) {
-            "entity_registry_updated" -> if (initialized) refreshRegistry()
+            "service_registered", "service_removed" -> if (event.optJSONObject("data")?.text("domain") == "script") {
+                if (initialized) refreshRegistry("service") else registryDirty += "service"
+            }
+            "entity_registry_updated", "device_registry_updated", "area_registry_updated" -> {
+                val kind = event.optString("event_type").substringBefore('_')
+                if (initialized) refreshRegistry(kind) else registryDirty += kind
+            }
             "state_changed" -> {
                 val data = event.optJSONObject("data") ?: return
                 if (!initialized) {
@@ -115,6 +166,8 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private fun publish() {
         val next = store.normalized(connected, weatherId)
         if (next != state) { state = next; listeners.toList().forEach { it(next) } }
+        val home = store.home(connected, next.lights)
+        if (home != homeState) { homeState = home; homeListeners.toList().forEach { it(home) } }
     }
     private fun rebuildCatalog() {
         val data = store.normalized(connected, weatherId)
@@ -134,12 +187,12 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         override fun addListener(listener: (List<CardAddCandidate>) -> Unit) { catalogListeners += listener; listener(candidates) }
         override fun removeListener(listener: (List<CardAddCandidate>) -> Unit) { catalogListeners -= listener }
     }
-    override fun toggleLight(id: String) {
-        val light = state.lights[id] ?: return
-        if (connected && light.availability == Availability.AVAILABLE) {
-            commands.cancel(id.removePrefix("ha:"))
-            socket.service("light", if (light.isOn) "turn_off" else "turn_on", id.removePrefix("ha:"))
-        }
+    override fun toggleLight(id: String) { powerLight(id) }
+    private fun powerLight(id: String): Boolean {
+        val light = state.lights[id] ?: return false
+        if (!connected || light.availability != Availability.AVAILABLE) return false
+        commands.cancel(id.removePrefix("ha:"))
+        return socket.service("light", if (light.isOn) "turn_off" else "turn_on", id.removePrefix("ha:"))
     }
     override fun setBrightness(id: String, percent: Int) {
         val light = state.lights[id] ?: return

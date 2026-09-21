@@ -22,6 +22,7 @@ class PanelPageViewFactory(
     private val backend: com.dormpanel.app.ha.DashboardBackend,
 ) {
     fun create(page: PanelPage, parent: ViewGroup): View {
+        if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed)
         if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, onPageGestureClaimed, backend)
         if (page == PanelPage.HOME) {
             return (inflater.inflate(R.layout.view_home_page, parent, false) as DashboardPageView).apply {

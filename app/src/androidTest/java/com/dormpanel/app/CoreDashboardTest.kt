@@ -33,10 +33,14 @@ class CoreDashboardTest {
     private lateinit var database: DashboardDatabase
     private var savedCards = emptyList<DashboardCardEntity>()
     private var savedState: DashboardStateEntity? = null
+    private var savedHa = com.dormpanel.app.ha.HaConnectionSettings()
     private var savedAppearance = AppearanceState()
     private var lastHolder: DashboardStateHolder? = null
     @Before fun isolateDashboardFixture() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val haStore = com.dormpanel.app.ha.HaSettingsStore(context)
+        savedHa = haStore.read()
+        haStore.write(savedHa.copy(mode = com.dormpanel.app.ha.BackendMode.DEMO))
         database = DashboardDatabase.getInstance(context)
         savedCards = database.dashboardDao().getCards()
         savedState = database.dashboardDao().getState()
@@ -58,6 +62,7 @@ class CoreDashboardTest {
             savedState?.let { database.dashboardDao().putState(it) }
         }
         PreferencesAppearanceStore(InstrumentationRegistry.getInstrumentation().targetContext).write(savedAppearance)
+        com.dormpanel.app.ha.HaSettingsStore(InstrumentationRegistry.getInstrumentation().targetContext).write(savedHa)
     }
     private fun model(activity: MainActivity) = ViewModelProvider(activity)[DashboardViewModel::class.java]
     private fun card(name: String) = allOf(isAssignableFrom(DashboardCardView::class.java), withContentDescription(containsString(name)))
@@ -422,7 +427,14 @@ class CoreDashboardTest {
             scenario.onActivity { assertNotEquals(before, clock!!.contentDescription.toString()) }
             navigate(swipe(.5f,.8f,.5f,.2f))
             onView(withText("Apps")).check(matches(isDisplayed()))
-            scenario.onActivity { assertFalse(clock!!.isAttachedToWindow) }
+            // Apps is visible before the outgoing page's 160 ms transition removes it.
+            val detachDeadline = System.currentTimeMillis() + 2000
+            var attached = true
+            while (attached && System.currentTimeMillis() < detachDeadline) {
+                scenario.onActivity { attached = clock!!.isAttachedToWindow }
+                if (attached) Thread.sleep(20)
+            }
+            assertFalse(attached)
         }
     }
 
