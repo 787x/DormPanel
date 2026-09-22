@@ -15,7 +15,8 @@ import java.time.format.TextStyle
 
 @SuppressLint("ViewConstructor")
 class SchedulePageView(context: Context, private val source: ScheduleSource, private val session: ScheduleSession,
-    private val appearance: AppearanceController, private val returnHome: () -> Unit) : LinearLayout(context), PageInteraction, AppearanceAware {
+    private val appearance: AppearanceController, private val returnHome: () -> Unit,
+    private val importTimetable: () -> Unit = {}, private val manageTimetables: () -> Unit = {}) : LinearLayout(context), PageInteraction, AppearanceAware {
     private val editors = ScheduleEditors(context, source, appearance)
     private val display = ScheduleDisplay(this, source, ::render)
     private var visible = false
@@ -99,19 +100,36 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         addView(body, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
     }
     private fun timetable() {
-        addView(button("+ Add class") { editors.entry() }.apply { isEnabled = source.ready })
+        val actions = LinearLayout(context)
+        actions.addView(button("+ Add class") { editors.entry() }.apply { isEnabled = source.ready })
+        actions.addView(button("Import ICS", importTimetable).apply { isEnabled = source.ready })
+        actions.addView(button("Sources", manageTimetables).apply { isEnabled = source.ready })
+        actions.addView(button("‹") { session.weekStart = session.weekStart.minusWeeks(1); render() }.apply { contentDescription = "Previous week" })
+        actions.addView(context.scheduleLabel("${session.weekStart} – ${session.weekStart.plusDays(6)}", 18f), LayoutParams(0, context.dp(52), 1f))
+        actions.addView(button("›") { session.weekStart = session.weekStart.plusWeeks(1); render() }.apply { contentDescription = "Next week" })
+        actions.addView(button("This week") { session.today(source.clock); render() })
+        addView(actions)
+        val occurrences = ScheduleProjection.week(source.state, session.weekStart, source.clock.zone())
         val week = LinearLayout(context)
-        ScheduleProjection.weekDays(source.clock.locale()).forEach { day ->
+        (0L..6L).forEach { offset ->
+            val date = session.weekStart.plusDays(offset)
+            val day = date.dayOfWeek
             val column = context.scheduleColumn().apply { setPadding(context.dp(3), 0, context.dp(3), 0) }
-            val heading = context.scheduleLabel(day.getDisplayName(TextStyle.SHORT, source.clock.locale()), 21f)
+            val headingText = "${day.getDisplayName(TextStyle.SHORT, source.clock.locale())} ${date.monthValue}/${date.dayOfMonth}"
+            val heading = context.scheduleLabel(headingText, 19f)
             column.addView(heading)
-            accents += { if (day == source.clock.today().dayOfWeek) { heading.setTextColor(PanelPalette.forMode(appearance.state.themeMode).accent); heading.text = "• ${day.getDisplayName(TextStyle.SHORT, source.clock.locale())}" } }
+            accents += { if (date == source.clock.today()) { heading.setTextColor(PanelPalette.forMode(appearance.state.themeMode).accent); heading.text = "• $headingText" } }
             val classes = context.scheduleColumn()
-            val entries = source.state.entries.filter { it.day == day.value }
+            val entries = occurrences.filter { it.date == date || (offset == 0L && it.date < date) }
             if (entries.isEmpty()) classes.addView(context.scheduleLabel("—", 18f))
-            entries.forEach { entry ->
-                classes.addView(button("${entry.title}\n${context.scheduleTime(entry.startMinute)}\n– ${context.scheduleTime(entry.endMinute)}${if (entry.location.isBlank()) "" else "\n${entry.location}"}") { editors.entry(entry) }.apply {
-                    textSize = 16f; maxLines = 6; isAllCaps = false; gravity = android.view.Gravity.START; ellipsize = android.text.TextUtils.TruncateAt.END
+            entries.forEach { occurrence ->
+                val entry = occurrence.entry
+                val imported = occurrence.imported
+                val extra = imported?.let { "\n${it.periodLabel?.let { label -> "$label · " }.orEmpty()}Imported" }.orEmpty()
+                classes.addView(button("${entry.title}\n${context.scheduleTime(entry.startMinute)}\n– ${context.scheduleTime(entry.endMinute)}${if (entry.location.isBlank()) "" else "\n${entry.location}"}$extra") {
+                    if (imported == null) editors.entry(entry) else editors.imported(imported)
+                }.apply {
+                    textSize = 16f; maxLines = 7; isAllCaps = false; gravity = android.view.Gravity.START; ellipsize = android.text.TextUtils.TruncateAt.END
                 }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
             }
             column.addView(ScrollView(context).apply { addView(classes) }, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
