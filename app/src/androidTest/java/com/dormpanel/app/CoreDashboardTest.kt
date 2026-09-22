@@ -223,7 +223,11 @@ class CoreDashboardTest {
             ).forEach { (out, title, back) ->
                 navigate(out)
                 onView(withText(title)).check(matches(isDisplayed()))
-                if (title == "Apps") onView(withId(R.id.apps_home)).perform(ViewActions.click()) else navigate(back)
+                when (title) {
+                    "Apps" -> onView(withId(R.id.apps_home)).perform(ViewActions.click())
+                    "Calendar" -> onView(withText("Home")).perform(ViewActions.click())
+                    else -> navigate(back)
+                }
                 onView(card("Desk light")).check(matches(isDisplayed()))
             }
         }

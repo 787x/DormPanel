@@ -9,6 +9,7 @@ import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.PreferencesAppearanceStore
 import com.dormpanel.app.dashboard.persistence.DashboardStores
 import com.dormpanel.app.productivity.*
+import com.dormpanel.app.schedule.*
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     val appearance = AppearanceController(PreferencesAppearanceStore(application))
@@ -20,15 +21,19 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     ))
     val apps = com.dormpanel.app.apps.AppSources.create(application)
     val productivity = ProductivitySource(ProductivityStores.create(application), AndroidProductivityClock)
+    val schedule = ScheduleSource(ScheduleStores.create(application))
+    val scheduleSession = ScheduleSession(schedule.clock)
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
-        com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) })
-    val catalog: CardCatalog = com.dormpanel.app.apps.CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps), ProductivityCatalog(application))
+        com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) } +
+        listOf("calendar", "timetable").map { ScheduleCardProvider(it, schedule, appearance) })
+    val catalog: CardCatalog = CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps), ProductivityCatalog(application), ScheduleCatalog())
     val stateHolder = DashboardStateHolder(
         registry = registry,
         store = DashboardStores.create(application),
     )
 
     override fun onCleared() {
+        schedule.close()
         productivity.close()
         apps.close()
         dataSource.close()

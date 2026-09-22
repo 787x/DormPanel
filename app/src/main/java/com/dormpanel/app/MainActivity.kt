@@ -45,6 +45,8 @@ class MainActivity : AppCompatActivity() {
             catalog = dashboardViewModel.catalog,
             backend = dashboardViewModel.dataSource,
             apps = dashboardViewModel.apps,
+            schedule = dashboardViewModel.schedule,
+            scheduleSession = dashboardViewModel.scheduleSession,
             onReturnHome = ::returnHome,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
@@ -83,6 +85,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         dashboardViewModel.apps.refresh()
+        dashboardViewModel.schedule.refresh()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

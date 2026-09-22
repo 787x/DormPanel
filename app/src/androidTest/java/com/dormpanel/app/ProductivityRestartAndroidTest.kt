@@ -34,6 +34,10 @@ class ProductivityRestartAndroidTest {
         ProductivityStores.overrideFactory = {
             RoomProductivityStore(Room.databaseBuilder(context, ProductivityDatabase::class.java, contentName).build(), executor())
         }
+        com.dormpanel.app.schedule.ScheduleStores.overrideFactory = {
+            com.dormpanel.app.schedule.RoomScheduleStore(Room.inMemoryDatabaseBuilder(context,
+                com.dormpanel.app.schedule.ScheduleDatabase::class.java).build(), executor())
+        }
         fun run(seed: Boolean) {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 var ready = false; val deadline = System.currentTimeMillis() + 8000
@@ -76,6 +80,7 @@ class ProductivityRestartAndroidTest {
             if (phase != "seed") run(false)
         } finally {
             DashboardStores.overrideFactory = null; ProductivityStores.overrideFactory = null
+            com.dormpanel.app.schedule.ScheduleStores.overrideFactory = null
             executors.forEach { it.shutdown(); it.awaitTermination(5, TimeUnit.SECONDS) }
             dashboard.close()
             if (phase != "seed") { context.deleteDatabase(dashboardName); context.deleteDatabase(contentName) }
