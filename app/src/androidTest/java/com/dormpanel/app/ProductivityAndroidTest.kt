@@ -72,7 +72,7 @@ class ProductivityAndroidTest {
             ready(scenario)
             scenario.onActivity { activity ->
                 val vm = model(activity)
-                assertEquals(setOf("todo", "memo", "timer"), vm.catalog.candidates.filter { it.category == CardCategory.PRODUCTIVITY }.map { it.providerType }.toSet())
+                assertEquals(setOf("todo", "memo", "timer", "calendar", "timetable"), vm.catalog.candidates.filter { it.category == CardCategory.PRODUCTIVITY }.map { it.providerType }.toSet())
                 assertTrue(vm.catalog.candidates.any { it.providerType == "clock" })
                 assertTrue(vm.catalog.candidates.any { it.providerType == "light" })
                 vm.stateHolder.state.cards.toList().forEach { vm.stateHolder.delete(it.id) }
