@@ -22,6 +22,10 @@ import com.dormpanel.app.appearance.applyAppearanceTree
 class MainActivity : AppCompatActivity() {
     private val router = NavigationRouter.default()
     private val dashboardViewModel: DashboardViewModel by viewModels()
+    private lateinit var scheduleImports: com.dormpanel.app.schedule.ScheduleImportUi
+    private val timetablePicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scheduleImports.selected(uri)
+    }
     private lateinit var pageContainer: FrameLayout
     private lateinit var pageViewFactory: PanelPageViewFactory
     private lateinit var swipeGestureDetector: SwipeGestureDetector
@@ -37,6 +41,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         pageContainer = findViewById(R.id.page_container)
+        scheduleImports = com.dormpanel.app.schedule.ScheduleImportUi(this, dashboardViewModel.schedule, dashboardViewModel.appearance) {
+            // Generic MIME allows .ics documents from providers that do not report text/calendar.
+            timetablePicker.launch(arrayOf("text/calendar", "*/*"))
+        }
         pageViewFactory = PanelPageViewFactory(
             inflater = layoutInflater,
             dashboardStateHolder = dashboardViewModel.stateHolder,
@@ -47,6 +55,8 @@ class MainActivity : AppCompatActivity() {
             apps = dashboardViewModel.apps,
             schedule = dashboardViewModel.schedule,
             scheduleSession = dashboardViewModel.scheduleSession,
+            importTimetable = scheduleImports::choose,
+            manageTimetables = scheduleImports::sources,
             onReturnHome = ::returnHome,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
@@ -99,6 +109,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        scheduleImports.close()
         dashboardViewModel.appearance.removeListener(appearanceListener)
         for (index in 0 until pageContainer.childCount) {
             pageContainer.getChildAt(index).animate().cancel()

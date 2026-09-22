@@ -30,9 +30,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    sourceSets.getByName("androidTest").assets.srcDir("src/test/resources/schedule")
 }
 
 dependencies {
+    implementation("net.sf.biweekly:biweekly:0.6.8") {
+        // Only the text ICS reader is used; no JSON/XML codecs or timezone downloads.
+        exclude(group = "com.fasterxml.jackson.core")
+    }
     implementation("androidx.recyclerview:recyclerview:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")

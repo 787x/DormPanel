@@ -136,6 +136,17 @@ internal class ScheduleEditors(private val context: Context, private val source:
             }
         }
     }
+    fun imported(item: ImportedClassOccurrence) {
+        if (!enabled()) return
+        val owner = source.state.sources.firstOrNull { it.id == item.sourceId }
+        val start = Instant.ofEpochMilli(item.start).atZone(source.clock.zone())
+        val end = Instant.ofEpochMilli(item.end).atZone(source.clock.zone())
+        val content = context.scheduleLabel("${scheduleDate(start.toLocalDate())} ${context.scheduleTime(start.toInstant())} – " +
+            "${scheduleDate(end.toLocalDate())} ${context.scheduleTime(end.toInstant())}\n${item.location}\n${item.description}\n\n" +
+            "Imported from ${owner?.displayName ?: item.sourceId}\nSource timezone: ${item.timezone}\nDisplay timezone: ${source.clock.zone()}\n" +
+            "Read-only. Replace the source to update these classes.", 18f)
+        track(AlertDialog.Builder(context).setTitle(item.title).setView(ScrollView(context).apply { addView(content) }).setPositiveButton("Close", null).create())
+    }
     fun entry(existing: TimetableEntry? = null) {
         if (!enabled() || !source.ready) return
         val title = input("Class title", existing?.title.orEmpty())
