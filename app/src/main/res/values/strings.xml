@@ -130,4 +130,31 @@
     <string name="home_action_failed">Unable to send action</string>
     <string name="home_ready">Ready</string>
     <string name="home_running">Running</string>
+    <string name="productivity_todo">Todo</string>
+    <string name="productivity_memo">Memo</string>
+    <string name="productivity_timer">Timer</string>
+    <string name="productivity_local">Local · available offline</string>
+    <string name="productivity_todo_empty">Tap to add your first task</string>
+    <string name="productivity_memo_empty">Tap to write a note</string>
+    <plurals name="productivity_remaining"><item quantity="one">%1$d incomplete task</item><item quantity="other">%1$d incomplete tasks</item></plurals>
+    <string name="productivity_timer_detail">%1$s · %2$s</string>
+    <string name="productivity_loading">Loading local content…</string>
+    <string name="productivity_error">Local storage error · changes may not be saved</string>
+    <string name="productivity_save">Save</string>
+    <string name="productivity_clear">Clear text</string>
+    <string name="productivity_add">Add task</string>
+    <string name="productivity_edit">Edit</string>
+    <string name="productivity_delete">Delete</string>
+    <string name="productivity_task_hint">Task text</string>
+    <string name="productivity_start">Start</string>
+    <string name="productivity_pause">Pause</string>
+    <string name="productivity_resume">Resume</string>
+    <string name="productivity_reset">Reset</string>
+    <string name="productivity_ready">Ready</string>
+    <string name="productivity_running">Running</string>
+    <string name="productivity_paused">Paused</string>
+    <string name="productivity_finished">Finished</string>
+    <string name="productivity_seconds">Seconds (1–86400)</string>
+    <string name="productivity_set_duration">Set duration and reset</string>
+    <string name="productivity_timer_hint">Local countdown · no background alert or sound</string>
 </resources>

@@ -11,11 +11,18 @@ import java.util.concurrent.TimeUnit
 
 /** Owns only in-memory persistence. ActivityScenario must close before this rule tears down. */
 class IsolatedDashboardRule : ExternalResource() {
+    private lateinit var productivityDatabase: com.dormpanel.app.productivity.ProductivityDatabase
     private lateinit var database: DashboardDatabase
     private val executors = mutableListOf<ExecutorService>()
     override fun before() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         database = Room.inMemoryDatabaseBuilder(context, DashboardDatabase::class.java).build()
+        productivityDatabase = Room.inMemoryDatabaseBuilder(context, com.dormpanel.app.productivity.ProductivityDatabase::class.java).build()
+        com.dormpanel.app.productivity.ProductivityStores.overrideFactory = {
+            val executor = Executors.newSingleThreadExecutor()
+            executors += executor
+            com.dormpanel.app.productivity.RoomProductivityStore(productivityDatabase, executor, closeDatabase = false)
+        }
         DashboardStores.overrideFactory = {
             val executor = Executors.newSingleThreadExecutor()
             executors += executor
@@ -23,6 +30,7 @@ class IsolatedDashboardRule : ExternalResource() {
         }
     }
     override fun after() {
+        com.dormpanel.app.productivity.ProductivityStores.overrideFactory = null
         DashboardStores.overrideFactory = null
         // ViewModel destruction shuts down each store without blocking the UI thread.
         try {
@@ -34,6 +42,7 @@ class IsolatedDashboardRule : ExternalResource() {
         } finally {
             executors.forEach { it.shutdown() }
             database.close()
+            productivityDatabase.close()
         }
     }
 }
