@@ -17,7 +17,7 @@ data class ClockPresentation(val timeSp: Float, val date: Boolean, val calendarD
 fun clockPresentation(size: CardSize) = ClockPresentation(
     timeSp = when {
         size.rowSpan == 1 -> if (size.columnSpan >= 3) 48f else 36f
-        size.columnSpan >= 4 && size.rowSpan >= 3 -> DashboardTypography.CLOCK
+        size.columnSpan >= 3 && size.rowSpan >= 3 -> DashboardTypography.CLOCK
         size.columnSpan >= 3 && size.rowSpan >= 2 -> 80f
         else -> 52f
     },
@@ -29,7 +29,7 @@ fun clockPresentation(size: CardSize) = ClockPresentation(
 data class WeatherPresentation(val horizontal: Boolean, val temperatureSp: Float, val summary: Boolean, val forecastColumns: Int)
 fun weatherPresentation(size: CardSize) = WeatherPresentation(
     horizontal = size.rowSpan == 1 || size.columnSpan >= 3,
-    temperatureSp = if (size.rowSpan == 1) 36f else if (size.columnSpan >= 3) 72f else 48f,
+    temperatureSp = if (size.rowSpan == 1) 36f else 72f,
     summary = size.rowSpan >= 2,
     forecastColumns = if (size.rowSpan >= 3 && size.columnSpan >= 3) size.columnSpan - 1 else 0,
 )
@@ -44,8 +44,8 @@ fun sensorPresentation(size: CardSize) = SensorPresentation(
 
 data class LightPresentation(val inlineBrightness: Boolean, val inlineTemperature: Boolean, val prominentSummary: Boolean, val horizontalHeader: Boolean)
 fun lightPresentation(size: CardSize, capabilities: LightCapabilities) = LightPresentation(
-    inlineBrightness = size.columnSpan >= 3 && size.rowSpan >= 2 && capabilities.brightness,
-    inlineTemperature = size.columnSpan >= 3 && size.rowSpan >= 3 && capabilities.colorTemperature != null,
+    inlineBrightness = size.columnSpan >= 2 && size.rowSpan >= 2 && capabilities.brightness,
+    inlineTemperature = size.columnSpan >= 2 && size.rowSpan >= 3 && capabilities.colorTemperature != null,
     prominentSummary = size.rowSpan >= 2,
     horizontalHeader = size.rowSpan == 1 || size.columnSpan >= 3,
 )

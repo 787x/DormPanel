@@ -76,8 +76,8 @@ class CoreDashboardTest {
             onView(withContentDescription("Light color temperature")).perform(swipe(.1f, .5f, .9f, .5f))
             scenario.onActivity {
                 val light = model(it).dataSource.state.lights.getValue("desk")
-                assertTrue(light.brightness in 75..95)
-                assertTrue(light.colorTemperature in 5700..6500)
+                assertTrue(light.brightness!! in 75..95)
+                assertTrue(light.colorTemperature!! in 5700..6500)
             }
             onView(withText("Done")).perform(ViewActions.click())
             onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
@@ -156,7 +156,7 @@ class CoreDashboardTest {
         }
     }
 
-    @Test fun zeroAuthoritativeBrightnessOnlyClampsControlPresentation() {
+    @Test fun zeroAuthoritativeBrightnessDoesNotInventObservedControlValue() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 val demo = com.dormpanel.app.data.FakeDashboardDataSource()
@@ -174,7 +174,7 @@ class CoreDashboardTest {
                 inline.bind(com.dormpanel.app.dashboard.model.PlacedCard("zero", "light", 0, 0, CardSize(3, 3), "{\"lightId\":\"desk\"}"), scope)
                 val slider = descendants(inline).filterIsInstance<android.widget.SeekBar>().first()
                 assertEquals(1, slider.min); assertEquals(1, slider.progress)
-                assertTrue(descendants(inline).filterIsInstance<TextView>().any { it.text.toString() == "Brightness · 1%" })
+                assertTrue(descendants(inline).filterIsInstance<TextView>().any { it.text.toString() == "Brightness · Unknown" })
                 val dialog = com.dormpanel.app.dashboard.card.LightQuickControls(activity, source, appearance, "desk", scope) {}
                 try {
                     dialog.show()
@@ -343,8 +343,8 @@ class CoreDashboardTest {
             onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
             scenario.onActivity {
                 val light = model(it).dataSource.state.lights.getValue("desk")
-                assertTrue(light.brightness >= 75)
-                assertTrue(light.colorTemperature >= 5700)
+                assertTrue(light.brightness!! >= 75)
+                assertTrue(light.colorTemperature!! >= 5700)
             }
             captureReview("05-large-dark")
             scenario.onActivity { model(it).appearance.setTheme(ThemeMode.LIGHT) }
@@ -386,15 +386,210 @@ class CoreDashboardTest {
         }
     }
 
+    @Test fun pr12ClockResizeRestoresTypographyAndBestFitKeepsNeighbors() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCards(scenario)
+            var clockId = ""
+            var retained: DashboardCardView? = null
+            var largeSize = 0f
+            scenario.onActivity { activity ->
+                val holder = model(activity).stateHolder
+                holder.state.cards.toList().filter { it.providerType != "clock" }.forEach { holder.delete(it.id) }
+                clockId = holder.state.cards.single().id
+            }
+            for ((index, size) in listOf(CardSize(4, 3), CardSize(2, 1), CardSize(3, 3), CardSize(4, 3)).withIndex()) {
+                scenario.onActivity { assertTrue(model(it).stateHolder.resize(clockId, size) is com.dormpanel.app.dashboard.layout.LayoutMutationResult.Success) }
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
+                scenario.onActivity { activity ->
+                    val view = descendants(activity.findViewById(R.id.dashboard_grid)).filterIsInstance<com.dormpanel.app.dashboard.card.ClockCardView>().single()
+                    val time = descendants(view).filterIsInstance<com.dormpanel.app.dashboard.card.FittingValueView>().single()
+                    if (index == 0) { retained = view; largeSize = time.textSize }
+                    else assertSame(retained, view)
+                    if (size.rowSpan == 3) {
+                        assertEquals(104f, time.maximumTextSp, 0f)
+                        assertEquals(largeSize, time.textSize, 1f)
+                    } else assertTrue(time.textSize < largeSize)
+                }
+                captureReview("pr12-clock-${size.columnSpan}x${size.rowSpan}-$index")
+                if (size.rowSpan == 3) {
+                    val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                    val position = IntArray(2)
+                    var width = 0; var height = 0
+                    scenario.onActivity { retained!!.getLocationOnScreen(position); width = retained!!.width; height = retained!!.height }
+                    var brightPixels = 0
+                    for (y in position[1] until position[1] + height) for (x in position[0] until position[0] + width) {
+                        val pixel = bitmap.getPixel(x, y)
+                        if (Color.red(pixel) > 180 && Color.green(pixel) > 180 && Color.blue(pixel) > 180) brightPixels++
+                    }
+                    bitmap.recycle()
+                    assertTrue("Expanded Clock must actually draw its text: $brightPixels bright pixels", brightPixels > 2000)
+                }
+            }
+            scenario.onActivity { activity ->
+                val vm = model(activity); val holder = vm.stateHolder
+                holder.delete(clockId)
+                val sensor = vm.catalog.candidates.first { it.candidateId == "sensor:room" }
+                repeat(23) {
+                    // Directly add minimum-size sensors to leave exactly one 2x1 opening.
+                    assertTrue(holder.add(sensor) is com.dormpanel.app.dashboard.layout.LayoutMutationResult.Success)
+                    val added = holder.state.cards.last()
+                    assertTrue(holder.resize(added.id, CardSize(2, 1)) is com.dormpanel.app.dashboard.layout.LayoutMutationResult.Success)
+                }
+                val before = holder.state.cards.toList()
+                assertTrue(holder.add(vm.catalog.candidates.first { it.candidateId == "clock" }) is com.dormpanel.app.dashboard.layout.LayoutMutationResult.Success)
+                assertEquals(before, holder.state.cards.dropLast(1))
+                assertEquals(CardSize(2, 1), holder.state.cards.last().size)
+            }
+            captureReview("pr12-best-fit-full-dashboard")
+        }
+    }
+
+    @Test fun pr12LongSensorCompactDetailPartialStaleAndEditMode() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCards(scenario)
+            lateinit var sensor: com.dormpanel.app.dashboard.card.SensorCardView
+            val name = "Dormitory south-facing balcony Xiaomi temperature and humidity sensor"
+            val demo = com.dormpanel.app.data.FakeDashboardDataSource()
+            var data = demo.state.copy(sensors = mapOf("room" to com.dormpanel.app.data.SensorState("room", name, 23.6, 54, temperatureUnit = "°F", humidityUnit = "% RH")))
+            val source = object : com.dormpanel.app.data.DashboardDataSource by demo {
+                override val state get() = data
+                override fun addListener(listener: (com.dormpanel.app.data.DashboardData) -> Unit) { listener(data) }
+                override fun removeListener(listener: (com.dormpanel.app.data.DashboardData) -> Unit) {}
+            }
+            val placed = com.dormpanel.app.dashboard.model.PlacedCard("long-sensor", "sensor", 0, 0, CardSize(2, 1))
+            scenario.onActivity { activity ->
+                sensor = com.dormpanel.app.dashboard.card.SensorCardView(activity, model(activity).appearance, source)
+                sensor.bind(placed, com.dormpanel.app.dashboard.card.CardInteractionScope(true) {})
+                val root = android.widget.FrameLayout(activity)
+                root.addView(sensor, android.widget.FrameLayout.LayoutParams(280, 100))
+                activity.setContentView(root)
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            scenario.onActivity {
+                val labels = descendants(sensor).filterIsInstance<TextView>().toList()
+                val title = labels.single { it.text.toString() == name }
+                assertEquals(1, title.maxLines); assertEquals(1, title.lineCount)
+                listOf("23.6°F", "54% RH").forEach { expected ->
+                    val value = labels.single { it.text.toString().replace(" ", "") == expected.replace(" ", "") }
+                    assertEquals(1, value.lineCount)
+                    assertEquals(0, value.layout.getEllipsisCount(0))
+                    assertTrue(value.layout.getLineWidth(0) <= value.width + 1)
+                    val rect = android.graphics.Rect()
+                    assertTrue(value.getLocalVisibleRect(rect)); assertEquals(value.height, rect.height())
+                }
+                sensor.performClick()
+            }
+            onView(withText(name)).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check(matches(isDisplayed()))
+            captureReview("pr12-sensor-detail-both")
+            onView(withText("Done")).perform(ViewActions.click())
+            scenario.onActivity {
+                data = data.copy(sensors = mapOf("room" to data.sensors.getValue("room").copy(humidity = null, availability = com.dormpanel.app.data.Availability.STALE)))
+                sensor.bind(placed, com.dormpanel.app.dashboard.card.CardInteractionScope(true) {})
+                sensor.performClick()
+            }
+            onView(withText("Stale")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check(matches(isDisplayed()))
+            onView(withText("Humidity")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+            captureReview("pr12-sensor-detail-partial-stale")
+            onView(withText("Done")).perform(ViewActions.click())
+            scenario.onActivity {
+                data = data.copy(sensors = mapOf("room" to data.sensors.getValue("room").copy(availability = com.dormpanel.app.data.Availability.UNAVAILABLE)))
+                sensor.bind(placed, com.dormpanel.app.dashboard.card.CardInteractionScope(true) {}); sensor.performClick()
+            }
+            onView(withText("Unavailable")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check(matches(isDisplayed()))
+            onView(withText("Temperature")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+            scenario.onActivity { sensor.bind(placed, com.dormpanel.app.dashboard.card.CardInteractionScope(false) {}); assertFalse(sensor.performClick()) }
+            onView(withText("Done")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+            scenario.onActivity {
+                sensor.bind(placed, com.dormpanel.app.dashboard.card.CardInteractionScope(true) {}); sensor.performClick()
+                (sensor.parent as ViewGroup).removeView(sensor)
+            }
+            onView(withText("Done")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+        }
+    }
+
+    @Test fun pr12PrecisionNumericControlsValidateAndShareOffSemantics() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCards(scenario)
+            val demo = com.dormpanel.app.data.FakeDashboardDataSource()
+            lateinit var dialog: com.dormpanel.app.dashboard.card.LightQuickControls
+            scenario.onActivity { activity ->
+                demo.setLightPower("desk", false)
+                dialog = com.dormpanel.app.dashboard.card.LightQuickControls(activity, demo, model(activity).appearance,
+                    "desk", com.dormpanel.app.dashboard.card.CardInteractionScope(true) {}) {}
+                dialog.show()
+                assertTrue(dialog.window!!.attributes.width >= 900 * activity.resources.displayMetrics.density)
+            }
+            onView(withText("Color temperature · 4000 K")).perform(ViewActions.click())
+            onView(isAssignableFrom(android.widget.EditText::class.java)).perform(ViewActions.replaceText("2600"), ViewActions.closeSoftKeyboard())
+            onView(withText(android.R.string.ok)).perform(ViewActions.click())
+            onView(withText("Enter a whole number from 2700 to 6500")).check(matches(isDisplayed()))
+            assertEquals(4000, demo.state.lights.getValue("desk").controlTemperature)
+            onView(isAssignableFrom(android.widget.EditText::class.java)).perform(ViewActions.replaceText("5100"), ViewActions.closeSoftKeyboard())
+            onView(withText(android.R.string.ok)).perform(ViewActions.click())
+            assertFalse(demo.state.lights.getValue("desk").isOn)
+            captureReview("pr12-numeric-after-submit")
+            assertEquals(5100, demo.state.lights.getValue("desk").controlTemperature)
+            onView(withText("Brightness · 65%")).perform(ViewActions.click())
+            onView(isAssignableFrom(android.widget.EditText::class.java)).perform(ViewActions.replaceText("101"), ViewActions.closeSoftKeyboard())
+            onView(withText(android.R.string.ok)).perform(ViewActions.click())
+            onView(withText("Enter a whole number from 1 to 100")).check(matches(isDisplayed()))
+            onView(isAssignableFrom(android.widget.EditText::class.java)).perform(ViewActions.replaceText("37"), ViewActions.closeSoftKeyboard())
+            onView(withText(android.R.string.ok)).perform(ViewActions.click())
+            assertTrue(demo.state.lights.getValue("desk").isOn)
+            assertEquals(37, demo.state.lights.getValue("desk").controlBrightness)
+            assertEquals(5100, demo.state.lights.getValue("desk").controlTemperature)
+            captureReview("pr12-precision-dialog")
+            scenario.onActivity { dialog.dismiss() }
+        }
+    }
+
+    @Test fun pr12EverySupportedCoreSizeFitsPhysicalBounds() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCards(scenario)
+            scenario.onActivity { activity ->
+                val vm = model(activity)
+                vm.stateHolder.state.cards.toList().forEach { vm.stateHolder.delete(it.id) }
+                listOf("clock", "weather", "sensor:room", "light:desk").forEach { id -> vm.stateHolder.add(vm.catalog.candidates.first { it.candidateId == id }) }
+            }
+            for (rows in 1..3) for (columns in 2..4) {
+                scenario.onActivity { activity ->
+                    val holder = model(activity).stateHolder
+                    holder.state.cards.toList().forEach { assertTrue(holder.resize(it.id, CardSize(columns, rows)) is com.dormpanel.app.dashboard.layout.LayoutMutationResult.Success) }
+                }
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
+                scenario.onActivity { activity ->
+                    descendants(activity.findViewById(R.id.dashboard_grid)).filterIsInstance<DashboardCardView>().forEach { card ->
+                        descendants(card).filter { it.isShown && (it is TextView || it is android.widget.SeekBar) }.forEach { value ->
+                            if (value is TextView && value.text.isEmpty()) return@forEach
+                            val visible = android.graphics.Rect()
+                            assertTrue("$columns x $rows: ${value.contentDescription} not visible", value.getLocalVisibleRect(visible))
+                            assertEquals("$columns x $rows: ${(value as? TextView)?.text} clipped vertically", value.height, visible.height())
+                            if (value is TextView) assertTrue("$columns x $rows: ${value.text} exceeds its measured text area",
+                                value.layout.height <= value.height - value.compoundPaddingTop - value.compoundPaddingBottom + 1)
+                            if (value is android.widget.SeekBar) assertTrue(value.height >= 48 * activity.resources.displayMetrics.density)
+                        }
+                    }
+                }
+                captureReview("pr12-core-${columns}x${rows}")
+            }
+        }
+    }
+
     private fun captureReview(name: String) {
         if (InstrumentationRegistry.getArguments().getString("reviewScreenshots") != "true") return
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.waitForIdleSync()
-        Thread.sleep(250) // Allow layout/transition presentation before capturing the actual emulator surface.
+        Thread.sleep(750) // Let the physical device compositor present the completed layout.
         val directory = java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "pr3-review").apply { mkdirs() }
         val bitmap = instrumentation.uiAutomation.takeScreenshot()
         java.io.File(directory, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
+        if (name == "pr12-clock-4x3-3") {
+            instrumentation.uiAutomation.executeShellCommand("screencap -p ${directory.absolutePath}/$name-adb.png").close()
+            Thread.sleep(500)
+        }
     }
 
     @Test fun clockCrossesMinuteBoundaryAndStopsWhenDetached() {

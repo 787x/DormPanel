@@ -27,8 +27,8 @@ private interface EntityRenderer {
 private class PowerRenderer(override val details: Boolean = false) : EntityRenderer {
     override fun value(context: Context, entity: HomeEntity): String {
         val power = context.getString(if (entity.isOn) R.string.home_on else R.string.home_off)
-        return if (entity.light?.capabilities?.brightness == true && entity.isOn)
-            context.getString(R.string.home_light_value, power, entity.light.brightness) else power
+        return if (entity.light?.capabilities?.brightness == true && entity.light.controlBrightness != null && entity.isOn)
+            context.getString(R.string.home_light_value, power, entity.light.controlBrightness) else power
     }
     override fun action(entity: HomeEntity) = if (entity.isOn) R.string.light_turn_off else R.string.light_turn_on
 }

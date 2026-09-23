@@ -36,7 +36,7 @@ class LightCardView(context: Context, appearance: AppearanceController, source: 
     }
     private fun lightId() = entityId("lightId", "desk")
     override fun select(data: DashboardData) = data.lights[lightId()]
-    override fun primaryAction() { source.toggleLight(lightId()) }
+    override fun primaryAction() { select(source.state)?.let { source.setLightPower(lightId(), !it.isOn) } }
     override fun secondaryAction() {
         if (dialog == null) {
             dialog = LightQuickControls(context, source, appearance, lightId(), interactions) { dialog = null }
@@ -55,18 +55,18 @@ class LightCardView(context: Context, appearance: AppearanceController, source: 
         header.orientation = if (presentation.horizontalHeader) HORIZONTAL else VERTICAL
         summary.setPadding(if (presentation.horizontalHeader) 20.dp else 0, 0, 0, 0)
         summary.textSize = if (presentation.inlineBrightness) DashboardTypography.SECONDARY else DashboardTypography.VALUE
-        summary.text = if (capabilities.brightness) context.getString(R.string.percent_value, light?.brightness ?: 0) else ""
+        summary.text = if (capabilities.brightness) light?.controlBrightness?.let { context.getString(R.string.percent_value, it) } ?: context.getString(R.string.value_unknown) else ""
         summary.show(presentation.prominentSummary && capabilities.brightness && !presentation.inlineBrightness)
         // Only the control presentation is clamped; the backend state remains authoritative.
-        val controlBrightness = (light?.brightness ?: 0).coerceIn(1, 100)
-        brightnessLabel.text = context.getString(R.string.brightness_value, controlBrightness)
-        brightness.progress = controlBrightness
+        val controlBrightness = light?.controlBrightness
+        brightnessLabel.text = controlBrightness?.let { context.getString(R.string.brightness_value, it) } ?: context.getString(R.string.brightness_unknown)
+        brightness.progress = controlBrightness ?: 1
         brightnessLabel.show(presentation.inlineBrightness); brightness.show(presentation.inlineBrightness)
         val range = capabilities.colorTemperature
         if (range != null) {
             temperature.max = range.last - range.first
-            temperature.progress = (light?.colorTemperature ?: range.first) - range.first
-            temperatureLabel.text = context.getString(R.string.color_temperature_value, light?.colorTemperature ?: range.first)
+            temperature.progress = (light?.controlTemperature ?: range.first) - range.first
+            temperatureLabel.text = light?.controlTemperature?.let { context.getString(R.string.color_temperature_value, it) } ?: context.getString(R.string.temperature_unknown)
         }
         temperatureLabel.show(presentation.inlineTemperature); temperature.show(presentation.inlineTemperature)
         listOf(brightness, temperature).forEach {

@@ -239,7 +239,7 @@ class HaProtocolTest {
             repeat(100) { f.source.setBrightness("ha:light.a", it) }
             f.scheduler.advance(180)
             f.until { f.received.any { it.optJSONObject("service_data")?.optInt("brightness_pct") == 99 } }
-            assertEquals(1, f.received.count { it.optJSONObject("service_data")?.has("brightness_pct") == true })
+            assertEquals(2, f.received.count { it.optJSONObject("service_data")?.has("brightness_pct") == true })
             f.source.requestTheme(ThemeMode.DARK); f.source.requestOpacity(0.6f); f.scheduler.advance(180)
             f.until { f.received.any { it.optString("service") == "set_value" } }
             assertEquals(ThemeMode.LIGHT, f.appearance.state.themeMode)
@@ -253,6 +253,67 @@ class HaProtocolTest {
             assertEquals(2, f.received.count { it.optString("type") == "get_states" })
         }
     }
+    @Test fun offMemoryAndPendingKelvinUseOneCoherentOnCommand() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            val id = "ha:light.a"
+            fun attributes(brightness: Int? = null, kelvin: Int? = null) = JSONObject()
+                .put("supported_color_modes", org.json.JSONArray().put("color_temp"))
+                .put("min_color_temp_kelvin", 2700).put("max_color_temp_kelvin", 6500)
+                .apply { brightness?.let { put("brightness", it) }; kelvin?.let { put("color_temp_kelvin", it) } }
+            f.entity("light.a", "on", attributes(166, 4000))
+            assertEquals(65, f.source.state.lights.getValue(id).controlBrightness)
+            f.entity("light.a", "off", attributes())
+            val off = f.source.state.lights.getValue(id)
+            assertNull(off.brightness); assertNull(off.colorTemperature)
+            assertEquals(65, off.controlBrightness); assertEquals(4000, off.controlTemperature)
+            var before = f.services("turn_on").size
+            f.source.setColorTemperature(id, 5100); f.scheduler.advance(180)
+            // Ordered service barrier verifies that no delayed light request was emitted.
+            f.source.requestTheme(ThemeMode.DARK); f.until { f.services("select_option").isNotEmpty() }
+            assertEquals(before, f.services("turn_on").size)
+            assertFalse(f.source.state.lights.getValue(id).isOn)
+            assertEquals(5100, f.source.homeState.entities.single { it.id == id }.light!!.controlTemperature)
+            f.source.setLightPower(id, true)
+            f.until { f.services("turn_on").size == before + 1 }
+            var payload = f.services("turn_on").last().getJSONObject("service_data")
+            assertEquals(65, payload.getInt("brightness_pct")); assertEquals(5100, payload.getInt("color_temp_kelvin"))
+            before = f.services("turn_on").size
+            f.source.setBrightness(id, 37); f.scheduler.advance(180)
+            f.until { f.services("turn_on").size == before + 1 }
+            payload = f.services("turn_on").last().getJSONObject("service_data")
+            assertEquals(37, payload.getInt("brightness_pct")); assertEquals(5100, payload.getInt("color_temp_kelvin"))
+            // A real resulting event, not a successful service response, establishes actual power.
+            f.entity("light.a", "on", attributes(94, 5050))
+            assertEquals(5050, f.source.state.lights.getValue(id).controlTemperature)
+            before = f.services("turn_on").size
+            f.source.setBrightness(id, 80); f.source.setColorTemperature(id, 4300)
+            f.source.setLightPower(id, false); f.scheduler.advance(180)
+            f.until { f.services("turn_off").isNotEmpty() }
+            f.source.requestTheme(ThemeMode.LIGHT); f.until { f.services("select_option").size == 2 }
+            assertEquals(before, f.services("turn_on").size)
+            assertEquals(4300, f.source.state.lights.getValue(id).controlTemperature)
+        }
+    }
+
+    @Test fun freshEventsUpdateMemoryWithoutRewritingUnsentSliderInput() {
+        Fixture().use { f ->
+            f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()
+            val id = "ha:light.a"
+            f.source.setBrightness(id, 76)
+            f.source.setColorTemperature(id, 4000)
+            // A previous request can finish while the next coalesced command is waiting.
+            f.entity("light.a", "on", JSONObject("""{"brightness":128,"color_temp_kelvin":5100,"supported_color_modes":["color_temp"],"min_color_temp_kelvin":2700,"max_color_temp_kelvin":6500}"""))
+            assertEquals(50, f.source.state.lights.getValue(id).controlBrightness)
+            assertEquals(5100, f.source.state.lights.getValue(id).controlTemperature)
+            f.scheduler.advance(180)
+            f.until { f.services("turn_on").isNotEmpty() }
+            val payload = f.services("turn_on").last().getJSONObject("service_data")
+            assertEquals(76, payload.getInt("brightness_pct"))
+            assertEquals(4000, payload.getInt("color_temp_kelvin"))
+        }
+    }
+
     @Test fun brightnessCommandsNeverSendZeroAndPowerCancelsOlderSliderIntent() {
         Fixture().use { f ->
             f.start(); f.until { f.source.connected }; f.awaitAppearanceIdle()

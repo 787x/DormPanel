@@ -29,9 +29,18 @@ data class LightCapabilities(
 data class LightState(
     val id: String, val name: String, val isOn: Boolean,
     val capabilities: LightCapabilities = LightCapabilities(),
-    val brightness: Int = 100, val colorTemperature: Int = 4000,
+    val brightness: Int? = null, val colorTemperature: Int? = null,
     val availability: Availability = Availability.AVAILABLE,
-)
+    val controlValues: LightControlValues? = null,
+) {
+    val controlBrightness get() = controlValues?.brightness ?: brightness?.takeIf { it in 1..100 }
+    val controlTemperature get() = controlValues?.kelvin ?: colorTemperature?.takeIf { it in (capabilities.colorTemperature ?: IntRange.EMPTY) }
+}
+
+data class LightControlValues(val brightness: Int? = null, val kelvin: Int? = null)
+
+/** Numeric entry rejects rather than clamps; sliders already enforce their bounds. */
+fun parseLightControlNumber(text: String, range: IntRange): Int? = text.trim().toIntOrNull()?.takeIf { it in range }
 
 data class DashboardData(
     val weather: WeatherState,
@@ -47,6 +56,7 @@ interface DashboardDataSource {
     fun addListener(listener: (DashboardData) -> Unit)
     fun removeListener(listener: (DashboardData) -> Unit)
     fun toggleLight(id: String)
+    fun setLightPower(id: String, on: Boolean) { if (state.lights[id]?.isOn != on) toggleLight(id) }
     /** User brightness commands are 1..100; power is a separate action. */
     fun setBrightness(id: String, percent: Int)
     fun setColorTemperature(id: String, kelvin: Int)
@@ -76,6 +86,7 @@ class FakeDashboardDataSource : DashboardDataSource {
     override fun addListener(listener: (DashboardData) -> Unit) { listeners += listener; listener(state) }
     override fun removeListener(listener: (DashboardData) -> Unit) { listeners -= listener }
     override fun toggleLight(id: String) = update(id) { it.copy(isOn = !it.isOn) }
+    override fun setLightPower(id: String, on: Boolean) = update(id) { it.copy(isOn = on) }
     override fun setBrightness(id: String, percent: Int) = update(id) {
         if (it.capabilities.brightness) it.copy(isOn = true, brightness = percent.coerceIn(1, 100)) else it
     }

@@ -55,7 +55,7 @@ class DashboardStateHolder(
             size = provider.defaultSize,
             configurationJson = candidate.configurationJson,
         )
-        return commit(engine.addFirstAvailable(state.cards, newCard))
+        return commit(engine.addBestFit(state.cards, newCard))
     }
 
     fun delete(cardId: String): LayoutMutationResult = commit(engine.delete(state.cards, cardId))

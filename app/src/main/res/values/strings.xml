@@ -159,4 +159,8 @@
     <string name="productivity_seconds">Seconds (1–86400)</string>
     <string name="productivity_set_duration">Set duration and reset</string>
     <string name="productivity_timer_hint">Local countdown · no background alert or sound</string>
+    <string name="brightness_unknown">Brightness · Unknown</string>
+    <string name="temperature_unknown">Color temperature · Unknown</string>
+    <string name="light_pending_temperature">%1$s · Off · Color temperature is saved for next ON</string>
+    <string name="light_number_error">Enter a whole number from %1$d to %2$d</string>
 </resources>

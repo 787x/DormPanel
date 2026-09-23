@@ -14,9 +14,9 @@ import java.util.Locale
 class WeatherCardView(context: Context, appearance: AppearanceController, source: DashboardDataSource) : SourceCardView<WeatherState>(context, appearance, source) {
     private val heading = label(DashboardTypography.MINOR, true)
     private val current = row()
-    private val temperature = label(72f)
+    private val temperature = fittingLabel(72f)
     private val condition = label(DashboardTypography.TITLE)
-    private val summary = label(DashboardTypography.SECONDARY, true)
+    private val summary = fittingLabel(DashboardTypography.SECONDARY, true)
     private val forecast = row()
     // Fixed, reusable forecast cells; state updates do not reconstruct the card hierarchy.
     private val forecastLabels = List(3) {
@@ -42,7 +42,7 @@ class WeatherCardView(context: Context, appearance: AppearanceController, source
         heading.show(presentation.summary)
         current.orientation = if (presentation.horizontal) HORIZONTAL else VERTICAL
         current.gravity = Gravity.CENTER_VERTICAL
-        temperature.textSize = presentation.temperatureSp
+        temperature.maximumTextSp = presentation.temperatureSp
         temperature.text = if (available) context.getString(R.string.degrees_int, model.temperature, model.temperatureUnit) else context.getString(R.string.value_unknown)
         condition.text = if (model.availability == Availability.AVAILABLE) model.condition else model.availability.label(context)
         condition.textSize = if (card.size.rowSpan == 1) DashboardTypography.SECONDARY else DashboardTypography.TITLE

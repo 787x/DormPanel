@@ -9,13 +9,14 @@ import org.json.JSONObject
 
 class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClient, private val appearance: AppearanceController,
     private val projector: HaProjector = DefaultHaProjector,
+    private val memory: LightControlMemory = LightControlMemory(),
 ) : DashboardDataSource, HomeControlSource {
     val store = HaEntityStore()
     var settings = HaConnectionSettings(); private set
     var status = HaStatus(HaConnectionState.NOT_CONFIGURED); private set
     override var state = projector.dashboard(store, false, ""); private set
     // Fresh access is independent of notification deduplication; never cache unused Home projections.
-    override val homeState get() = projector.home(store, connected, store.lightStates(connected))
+    override val homeState get() = projector.home(store, connected, store.lightStates(connected).mapValues { memory.project(it.value) })
     private var lastEmittedHomeState: HomeControlState? = null
     private val homeListeners = linkedSetOf<(HomeControlState) -> Unit>()
     override fun addHomeListener(listener: (HomeControlState) -> Unit) {
@@ -31,7 +32,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     override fun activateEntity(id: String): Boolean {
         val entity = homeState.entities.find { it.id == id } ?: return false
         if (!connected || entity.availability != Availability.AVAILABLE || !entity.actionable) return false
-        if (entity.kind == HomeKind.LIGHT) return powerLight(id)
+        if (entity.kind == HomeKind.LIGHT) return powerLight(id, !entity.isOn)
         val domain = when(entity.kind) {
             HomeKind.SWITCH -> "switch"
             HomeKind.SCENE -> "scene"
@@ -50,11 +51,14 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private var forecastTimer: (() -> Unit)? = null
     private var weatherId = ""
     private val bufferedEvents = mutableListOf<JSONObject>()
-    private val commands = LatestCommands(scheduler) { entity, property, value ->
-        if (connected) {
-            if (state.lights["ha:$entity"]?.availability == Availability.AVAILABLE)
-                socket.service("light", "turn_on", entity, JSONObject().put(property, value))
-        }
+    // One timer per light: brightness and Kelvin are sent in one coherent payload.
+    // Keep the unsent command separate from observations: an earlier service's event
+    // may update memory during this 180ms window, but must not rewrite the queued input.
+    private val pendingLights = mutableMapOf<String, LightControlValues>()
+    private val commands = LatestCommands(scheduler) { entity, _, _ ->
+        val intent = pendingLights.remove("ha:$entity")
+        val light = state.lights["ha:$entity"]
+        if (connected && light?.availability == Availability.AVAILABLE) sendOn(light, intent)
     }
     private val socket = HaWebSocketClient(http, scheduler, ::statusChanged, ::initialize, ::event)
     val connected get() = status.state == HaConnectionState.CONNECTED
@@ -62,12 +66,12 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     fun removeStatusListener(listener: (HaStatus) -> Unit) { statusListeners -= listener }
     private fun statusChanged(value: HaStatus) {
         status = value
-        if (!connected) { initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); forecastTimer?.invoke(); forecastTimer = null }
+        if (!connected) { initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); pendingLights.clear(); forecastTimer?.invoke(); forecastTimer = null }
         publish(rebuild = true); statusListeners.toList().forEach { it(value) }
     }
     fun configure(value: HaConnectionSettings, token: String?) {
         val changedServer = settings.baseUrl != value.baseUrl
-        stop(); settings = value
+        stop(); settings = value; memory.scope(value.baseUrl)
         if (changedServer) { store.snapshot(org.json.JSONArray()); store.metadata.clear(); store.areas.clear(); store.devices.clear(); store.scriptServices(null); store.registryKnown = false; store.forecast = emptyList(); weatherId = "" }
         if (value.mode != BackendMode.HOME_ASSISTANT || token.isNullOrBlank() || value.baseUrl.isBlank()) {
             statusChanged(HaStatus(HaConnectionState.NOT_CONFIGURED, if (value.mode == BackendMode.HOME_ASSISTANT) "Enter HA URL and access token." else "Demo backend")); return
@@ -75,7 +79,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         runCatching { HaEndpoint.parse(value.baseUrl) }.onSuccess { socket.start(it, token) }
             .onFailure { statusChanged(HaStatus(HaConnectionState.ERROR, "Invalid HA base URL.")) }
     }
-    fun stop() { socket.stop(); commands.clear(); forecastTimer?.invoke(); forecastTimer = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
+    fun stop() { socket.stop(); commands.clear(); pendingLights.clear(); forecastTimer?.invoke(); forecastTimer = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
     private fun initialize() {
         bufferedEvents.clear()
         socket.request(JSONObject().put("type", "subscribe_events").put("event_type", "state_changed")) { subscription ->
@@ -92,6 +96,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                             refreshRegistry("service") {
                                 initialized = true
                                 bufferedEvents.forEach(store::event); bufferedEvents.clear()
+                                store.lightStates(true).values.forEach(memory::observe)
                                 selectWeather(); socket.synchronized(); applyAppearance(); fetchForecast()
                                 registryDirty.toList().forEach { kind -> registryDirty -= kind; refreshRegistry(kind) }
                             }
@@ -161,6 +166,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                 val old = store.entities[id]
                 store.event(data)
                 val next = store.entities[id]
+                if (id.startsWith("light.")) store.lightStates(true)["ha:$id"]?.let(memory::observe)
                 fun topology(entity: HaEntity?) = entity?.let { listOf(it.attributes.text("friendly_name"), it.attributes.text("device_class"), it.attributes.optJSONArray("supported_color_modes")?.toString(), it.attributes.text("min_color_temp_kelvin"), it.attributes.text("max_color_temp_kelvin")) }
                 val topologyChanged = topology(old) != topology(next)
                 val previous = weatherId
@@ -187,7 +193,8 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         forecastTimer = scheduler.after(3600000) { fetchForecast() }
     }
     private fun publish(rebuild: Boolean = false, homeRelevant: Boolean = true) {
-        val next = projector.dashboard(store, connected, weatherId)
+        val raw = projector.dashboard(store, connected, weatherId)
+        val next = raw.copy(lights = raw.lights.mapValues { memory.project(it.value) })
         val dashboardChanged = next != state
         state = next // Synchronous catalog listeners must also see fresh light projections.
         if (rebuild) rebuildCatalog(next)
@@ -217,21 +224,43 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         override fun addListener(listener: (List<CardAddCandidate>) -> Unit) { catalogListeners += listener; listener(candidates) }
         override fun removeListener(listener: (List<CardAddCandidate>) -> Unit) { catalogListeners -= listener }
     }
-    override fun toggleLight(id: String) { powerLight(id) }
-    private fun powerLight(id: String): Boolean {
+    override fun toggleLight(id: String) { state.lights[id]?.let { setLightPower(id, !it.isOn) } }
+    override fun setLightPower(id: String, on: Boolean) { powerLight(id, on) }
+    private fun powerLight(id: String, on: Boolean): Boolean {
         val light = state.lights[id] ?: return false
         if (!connected || light.availability != Availability.AVAILABLE) return false
         commands.cancel(id.removePrefix("ha:"))
-        return socket.service("light", if (light.isOn) "turn_off" else "turn_on", id.removePrefix("ha:"))
+        pendingLights.remove(id)
+        return if (on) sendOn(light) else socket.service("light", "turn_off", id.removePrefix("ha:"))
+    }
+    private fun sendOn(light: LightState, intent: LightControlValues? = null): Boolean {
+        val values = memory.project(light)
+        val data = JSONObject()
+        if (light.capabilities.brightness) (intent?.brightness ?: values.controlBrightness)?.let { data.put("brightness_pct", it) }
+        light.capabilities.colorTemperature?.let { range ->
+            (intent?.kelvin ?: values.controlTemperature)?.takeIf { it in range }?.let { data.put("color_temp_kelvin", it) }
+        }
+        return socket.service("light", "turn_on", light.id.removePrefix("ha:"), data)
     }
     override fun setBrightness(id: String, percent: Int) {
         val light = state.lights[id] ?: return
-        if (connected && light.availability == Availability.AVAILABLE && light.capabilities.brightness) commands.put(id.removePrefix("ha:"), "brightness_pct", percent.coerceIn(1, 100))
+        if (!connected || light.availability != Availability.AVAILABLE || !light.capabilities.brightness) return
+        memory.remember(id, brightness = percent.coerceIn(1, 100))
+        pendingLights[id] = (pendingLights[id] ?: LightControlValues()).copy(brightness = percent.coerceIn(1, 100))
+        publish()
+        commands.put(id.removePrefix("ha:"), "turn_on", 1)
     }
     override fun setColorTemperature(id: String, kelvin: Int) {
         val light = state.lights[id] ?: return
         val range = light.capabilities.colorTemperature ?: return
-        if (connected && light.availability == Availability.AVAILABLE) commands.put(id.removePrefix("ha:"), "color_temp_kelvin", kelvin.coerceIn(range))
+        if (!connected || light.availability != Availability.AVAILABLE) return
+        memory.remember(id, kelvin = kelvin.coerceIn(range))
+        if (light.isOn || id in pendingLights) {
+            pendingLights[id] = (pendingLights[id] ?: LightControlValues()).copy(kelvin = kelvin.coerceIn(range))
+        }
+        publish()
+        // OFF Kelvin is pending intent only; a later brightness/ON request applies it.
+        if (light.isOn) commands.put(id.removePrefix("ha:"), "turn_on", 1)
     }
     private companion object {
         val HOME_DOMAINS = HomeKind.entries.map { it.name.lowercase() }.toSet()

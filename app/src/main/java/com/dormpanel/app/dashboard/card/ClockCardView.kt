@@ -3,10 +3,8 @@ package com.dormpanel.app.dashboard.card
 import android.annotation.SuppressLint
 import android.content.*
 import android.text.format.DateFormat
-import android.util.TypedValue
 import android.view.Gravity
 import androidx.core.content.ContextCompat
-import androidx.core.widget.TextViewCompat
 import com.dormpanel.app.R
 import com.dormpanel.app.appearance.AppearanceController
 import java.text.SimpleDateFormat
@@ -16,7 +14,9 @@ import java.util.Locale
 @SuppressLint("ViewConstructor")
 class ClockCardView(context: Context, appearance: AppearanceController) : DashboardCardView(context, appearance) {
     private val heading = label(DashboardTypography.SECONDARY, true)
-    private val time = label(DashboardTypography.CLOCK).apply { maxLines = 1 }
+    private val time = fittingLabel(DashboardTypography.CLOCK).apply {
+        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+    }
     private val date = label(DashboardTypography.TITLE)
     private val calendar = label(DashboardTypography.SECONDARY, true)
     private var activeClock = false
@@ -41,8 +41,7 @@ class ClockCardView(context: Context, appearance: AppearanceController) : Dashbo
         val presentation = clockPresentation(card.size)
         gravity = Gravity.CENTER_VERTICAL or if (presentation.centered) Gravity.CENTER_HORIZONTAL else Gravity.START
         time.gravity = if (presentation.centered) Gravity.CENTER else Gravity.START
-        time.textSize = presentation.timeSp
-        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(time, 28, presentation.timeSp.toInt(), 2, TypedValue.COMPLEX_UNIT_SP)
+        time.maximumTextSp = presentation.timeSp
         val now = Date()
         heading.text = context.getString(R.string.local_time)
         heading.show(presentation.calendarDetail)
