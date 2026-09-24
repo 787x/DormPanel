@@ -75,7 +75,11 @@ instrumentation tests passed (`BUILD SUCCESSFUL`, 5m 50s). The app remained
 installed. The user later re-entered the private HA settings on the device;
 the original database and relay identity did not reappear.
 
-The final command was:
+The final PR16 command was the historical pre-isolation command. **Do not use
+`connectedDebugAndroidTest` for routine physical X08E testing.** It targets the
+daily-use package; the PR16 data loss showed that remembering the retain-APK flag
+is not a reliable safety boundary. Use `./tools/test-x08e.ps1` as documented in
+[PR17](PR17-x08e-physical-test-isolation.md). The historical command was:
 
 ```powershell
 .\gradlew.bat --% assembleDebug testDebugUnitTest lintDebug connectedDebugAndroidTest -Pandroid.experimental.androidTest.builtin_test_platform=true -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true

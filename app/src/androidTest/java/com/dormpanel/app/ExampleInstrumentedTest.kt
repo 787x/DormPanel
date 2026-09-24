@@ -8,17 +8,14 @@ import org.junit.runner.RunWith
 
 import org.junit.Assert.*
 
-/**
- * Instrumented test, which will execute on an Android device.
- *
- * See [testing documentation](http://d.android.com/tools/testing).
- */
 @RunWith(AndroidJUnit4::class)
 class ExampleInstrumentedTest {
     @Test
-    fun useAppContext() {
-        // Context of the app under test.
-        val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("com.dormpanel.app", appContext.packageName)
+    fun instrumentationTargetsIsolatedTestbed() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val targetPackage = instrumentation.targetContext.packageName
+        assertEquals("com.dormpanel.app.testbed", targetPackage)
+        assertNotEquals("com.dormpanel.app", targetPackage)
+        assertEquals("com.dormpanel.app.testbed.test", instrumentation.context.packageName)
     }
 }
