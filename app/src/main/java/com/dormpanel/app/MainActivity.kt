@@ -41,7 +41,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         pageContainer = findViewById(R.id.page_container)
-        scheduleImports = com.dormpanel.app.schedule.ScheduleImportUi(this, dashboardViewModel.schedule, dashboardViewModel.appearance) {
+        scheduleImports = com.dormpanel.app.schedule.ScheduleImportUi(this, dashboardViewModel.schedule, dashboardViewModel.appearance, dashboardViewModel.webDav) {
             // Generic MIME allows .ics documents from providers that do not report text/calendar.
             timetablePicker.launch(arrayOf("text/calendar", "*/*"))
         }
