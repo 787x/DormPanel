@@ -11,11 +11,15 @@ import org.junit.Assert.*
 @RunWith(AndroidJUnit4::class)
 class ExampleInstrumentedTest {
     @Test
-    fun instrumentationTargetsIsolatedTestbed() {
+    fun instrumentationTargetsSelectedVariant() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val targetPackage = instrumentation.targetContext.packageName
-        assertEquals("com.dormpanel.app.testbed", targetPackage)
-        assertNotEquals("com.dormpanel.app", targetPackage)
-        assertEquals("com.dormpanel.app.testbed.test", instrumentation.context.packageName)
+        val testPackage = instrumentation.context.packageName
+        val expectedTarget = when (testPackage) {
+            "com.dormpanel.app.test" -> "com.dormpanel.app"
+            "com.dormpanel.app.testbed.test" -> "com.dormpanel.app.testbed"
+            else -> throw AssertionError("Unexpected instrumentation package: $testPackage")
+        }
+        assertEquals(expectedTarget, targetPackage)
     }
 }

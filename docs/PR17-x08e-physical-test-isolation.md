@@ -38,6 +38,11 @@ The existing androidTest sources and isolated Dashboard, Productivity, Schedule,
 fake HA, and test WebDAV fixtures are retained. Normal tests stay on Demo/fakes;
 real-HA probes still require explicit opt-in arguments. The testbed starts with
 its own empty HA and relay settings and cannot read the daily package's identity.
+The package assertion accepts exactly the `debug` pair (`com.dormpanel.app`,
+`com.dormpanel.app.test`) and the `x08eTest` pair (`com.dormpanel.app.testbed`,
+`com.dormpanel.app.testbed.test`). The physical helper also checks the generated
+instrumentation manifest after a successful run to confirm its target is the
+testbed package.
 
 ## Incident and verification
 
@@ -72,3 +77,20 @@ AGP 9.4.1 creates androidTest tasks for only the selected `testBuildType`. Setti
 it globally to `x08eTest` hides the existing `testDebugUnitTest` task. The
 repository therefore defaults to `debug`; the helper selects `x08eTest` for
 its invocation with `-Pdormpanel.testBuildType=x08eTest`.
+
+## Instrumentation compatibility follow-up, 2026-09-25
+
+The package assertion now verifies the exact debug or testbed package pair
+selected by the instrumentation APK. On the API 28, 1280×800 X08E emulator, a
+focused `connectedDebugAndroidTest` passed (one test, zero failures); its
+instrumentation manifest targeted `com.dormpanel.app`. Normal `assembleDebug`,
+`testDebugUnitTest`, and `lintDebug` also passed.
+
+After stopping the emulator, `tools/test-x08e.ps1` passed the full physical
+X08E suite (54 tests, zero failures/errors/skips, `BUILD SUCCESSFUL` in 5m 19s).
+The helper confirmed the instrumentation target was
+`com.dormpanel.app.testbed`. Gradle removed the testbed packages while leaving
+the daily app installed. HA settings, credential, and relay identity file
+checksums in the daily package matched before and after the suite and after
+reopening normal DormPanel. `git diff --check` passed. No app version,
+permission, or `.idea` files changed.

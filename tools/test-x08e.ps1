@@ -42,4 +42,16 @@ if ($LASTEXITCODE -ne 0 -or -not ($after -match '^package:')) {
     exit 1
 }
 Write-Host "Verified daily-use package $dailyPackage remains installed."
+if ($gradleExitCode -eq 0) {
+    $manifestPath = Join-Path $repositoryRoot 'app\build\intermediates\packaged_manifests\x08eTestAndroidTest\processX08eTestAndroidTestManifest\AndroidManifest.xml'
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        throw 'The x08eTest instrumentation manifest is missing after the suite.'
+    }
+    [xml]$manifest = Get-Content -LiteralPath $manifestPath -Raw
+    $targetPackage = $manifest.manifest.instrumentation.GetAttribute('targetPackage', 'http://schemas.android.com/apk/res/android')
+    if ($targetPackage -ne $testbedPackage) {
+        throw "The instrumentation APK targeted $targetPackage instead of $testbedPackage."
+    }
+    Write-Host "Verified instrumentation APK targets $testbedPackage."
+}
 exit $gradleExitCode
