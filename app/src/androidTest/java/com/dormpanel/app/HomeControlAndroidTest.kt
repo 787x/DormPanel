@@ -42,7 +42,7 @@ class HomeControlAndroidTest {
     private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float) = GeneralSwipeAction(Swipe.FAST,
         { v -> val p = IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0] + v.width*x1, p[1] + v.height*y1) },
         { v -> val p = IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0] + v.width*x2, p[1] + v.height*y2) }, Press.FINGER)
-    private fun navigate(right: Boolean) { onView(withId(R.id.page_container)).perform(if (right) swipe(.2f,.03f,.8f,.03f) else swipe(.8f,.07f,.3f,.07f)) }
+    private fun navigate(right: Boolean) { onView(withId(R.id.page_container)).perform(if (right) swipe(.2f,.5f,.8f,.5f) else swipe(.8f,.08f,.3f,.08f)) }
     private fun choose(name: String) { onView(allOf(withText(name), isAssignableFrom(Button::class.java))).perform(ViewActions.click()) }
     private fun rowButton(entity: String, button: String) = allOf(withText(button), isAssignableFrom(Button::class.java),
         withParent(hasDescendant(withText(entity))))

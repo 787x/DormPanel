@@ -29,6 +29,7 @@ class CoreCardPresentationTest {
         assertFalse(clockPresentation(CardSize(2, 3)).calendarDetail)
         assertTrue(clockPresentation(CardSize(4, 3)).calendarDetail)
         assertTrue(clockPresentation(CardSize(4, 3)).timeSp >= 100)
+        assertEquals(clockPresentation(CardSize(4, 3)).timeSp, clockPresentation(CardSize(3, 3)).timeSp)
         assertTrue(clockPresentation(CardSize(4, 3)).timeSp > clockPresentation(CardSize(4, 1)).timeSp)
     }
     @Test fun `weather and climate change structure independently`() {
@@ -44,7 +45,8 @@ class CoreCardPresentationTest {
     @Test fun `light controls require both sufficient area and device capability`() {
         val full = com.dormpanel.app.data.LightCapabilities(true, 2700..6500)
         assertFalse(lightPresentation(CardSize(2, 1), full).inlineBrightness)
-        assertFalse(lightPresentation(CardSize(2, 3), full).inlineTemperature)
+        assertTrue(lightPresentation(CardSize(2, 3), full).inlineTemperature)
+        assertTrue(lightPresentation(CardSize(2, 2), full).inlineBrightness)
         assertTrue(lightPresentation(CardSize(3, 2), full).inlineBrightness)
         assertFalse(lightPresentation(CardSize(3, 2), full).inlineTemperature)
         assertTrue(lightPresentation(CardSize(3, 3), full).inlineTemperature)

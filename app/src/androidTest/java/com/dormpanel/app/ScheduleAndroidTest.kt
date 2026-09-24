@@ -123,7 +123,7 @@ class ScheduleAndroidTest {
             // Reconstructed page uses the same session mode and selected date.
             onView(withId(R.id.page_container)).perform(swipeLeft())
             onView(withText("+ Add class")).check(matches(isDisplayed()))
-            onView(withText("Calendar")).perform(click()); onView(withText("Today")).perform(click())
+            onView(org.hamcrest.Matchers.allOf(withText("Calendar"), isAssignableFrom(android.widget.Button::class.java))).perform(click()); onView(withText("Today")).perform(click())
             screenshot("calendar-light")
             androidx.test.espresso.Espresso.pressBack(); onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
         }

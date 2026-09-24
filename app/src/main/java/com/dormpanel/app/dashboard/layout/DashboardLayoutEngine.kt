@@ -104,6 +104,23 @@ class DashboardLayoutEngine(
         return failure(LayoutFailureReason.NO_SPACE, cards)
     }
 
+    /** Default first, then minimum Manhattan shrink, largest area, width and row-major position. */
+    fun addBestFit(cards: List<PlacedCard>, card: PlacedCard): LayoutMutationResult {
+        val first = addFirstAvailable(cards, card)
+        if (first is LayoutMutationResult.Success) return first
+        if (first is LayoutMutationResult.Failure && first.reason !in setOf(LayoutFailureReason.NO_SPACE, LayoutFailureReason.OUT_OF_BOUNDS)) return first
+        val policy = sizeCatalog.sizePolicy(card.providerType) ?: return first
+        val sizes = policy.legalSizes(card.size).filter { it != card.size }.sortedWith(
+            compareBy<CardSize> { card.size.columnSpan - it.columnSpan + card.size.rowSpan - it.rowSpan }
+                .thenByDescending { it.columnSpan * it.rowSpan }.thenByDescending { it.columnSpan },
+        )
+        for (size in sizes) {
+            val result = addFirstAvailable(cards, card.copy(size = size))
+            if (result is LayoutMutationResult.Success) return result
+        }
+        return failure(LayoutFailureReason.NO_SPACE, cards)
+    }
+
     fun delete(cards: List<PlacedCard>, cardId: String): LayoutMutationResult {
         validate(cards)?.let { return failure(LayoutFailureReason.INVALID_EXISTING_LAYOUT, cards) }
         if (cards.none { it.id == cardId }) {

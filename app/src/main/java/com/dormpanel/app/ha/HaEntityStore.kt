@@ -111,7 +111,8 @@ class HaEntityStore {
             val range = if ("color_temp" in modes && min > 0 && max >= min) min..max else null
             val id = "ha:${e.id}"
             id to LightState(id, name(e), e.value == "on", LightCapabilities(modes.any { it in setOf("brightness", "color_temp", "hs", "xy", "rgb", "rgbw", "rgbww", "white") }, range),
-                ((a.number("brightness") ?: 0.0) * 100 / 255).roundToInt().coerceIn(0, 100), a.optInt("color_temp_kelvin", range?.first ?: 4000), availability(e))
+                a.number("brightness")?.takeIf { it in 0.0..255.0 }?.let { (it * 100 / 255).roundToInt() },
+                a.number("color_temp_kelvin")?.takeIf { it > 0 }?.toInt(), availability(e))
         }
     }
     fun normalized(connected: Boolean, weatherId: String): DashboardData {

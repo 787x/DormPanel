@@ -22,6 +22,14 @@ data class CardSize(
 sealed interface CardSizePolicy {
     fun allows(size: CardSize): Boolean
 
+    /** Legal automatic-add sizes, bounded independently in both dimensions. */
+    fun legalSizes(maximum: CardSize): List<CardSize> = buildList {
+        for (rows in 1..maximum.rowSpan) for (columns in 1..maximum.columnSpan) {
+            val size = CardSize(columns, rows)
+            if (allows(size)) add(size)
+        }
+    }
+
     /** Returns the closest allowed logical size that also fits [maximum], if one exists. */
     fun snap(candidate: CardSize, maximum: CardSize): CardSize?
 

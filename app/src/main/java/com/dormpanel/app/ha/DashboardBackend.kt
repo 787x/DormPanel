@@ -22,7 +22,7 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     val rest = HaRestClient(http, scheduler)
     private val preferences = HaSettingsStore(context)
     private val tokens = HaTokenStore(context)
-    val ha = HaDashboardDataSource(scheduler, http, appearance)
+    val ha = HaDashboardDataSource(scheduler, http, appearance, memory = LightControlMemory(PreferencesLightMemoryStore(context)))
     private val demo = FakeDashboardDataSource()
     private val demoHome = DemoHomeSource(demo)
     val homeSelection = HomeSelection()
@@ -69,6 +69,7 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     override fun addListener(listener: (DashboardData) -> Unit) { listeners += listener; listener(state) }
     override fun removeListener(listener: (DashboardData) -> Unit) { listeners -= listener }
     override fun toggleLight(id: String) = active.toggleLight(id)
+    override fun setLightPower(id: String, on: Boolean) = active.setLightPower(id, on)
     override fun setBrightness(id: String, percent: Int) = active.setBrightness(id, percent)
     override fun setColorTemperature(id: String, kelvin: Int) = active.setColorTemperature(id, kelvin)
     fun close() { home.close(); ha.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); http.dispatcher.executorService.shutdown() }

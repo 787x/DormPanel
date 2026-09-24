@@ -195,8 +195,8 @@ class ProductivityAndroidTest {
             scenario.onActivity { paused = model(it).productivity.state(ids[0]).timer.remaining }
             onView(withId(R.id.page_container)).perform(androidx.test.espresso.action.GeneralSwipeAction(
                 androidx.test.espresso.action.Swipe.FAST,
-                { view -> val location = IntArray(2); view.getLocationOnScreen(location); floatArrayOf(location[0] + view.width * .98f, location[1] + view.height * .8f) },
-                { view -> val location = IntArray(2); view.getLocationOnScreen(location); floatArrayOf(location[0] + view.width * .98f, location[1] + view.height * .2f) },
+                { view -> val location = IntArray(2); view.getLocationOnScreen(location); floatArrayOf(location[0] + view.width * .5f, location[1] + view.height * .8f) },
+                { view -> val location = IntArray(2); view.getLocationOnScreen(location); floatArrayOf(location[0] + view.width * .5f, location[1] + view.height * .2f) },
                 androidx.test.espresso.action.Press.FINGER))
             onView(withId(R.id.apps_home)).perform(click())
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)

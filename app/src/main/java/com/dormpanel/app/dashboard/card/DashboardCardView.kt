@@ -50,11 +50,22 @@ abstract class DashboardCardView(context: Context, protected val appearance: App
         if (size >= DashboardTypography.VALUE) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         labels += this to secondary
     }
+    protected fun fittingLabel(size: Float, secondary: Boolean = false) = FittingValueView(context).apply {
+        maximumTextSp = size
+        if (size >= DashboardTypography.VALUE) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        labels += this to secondary
+    }
     protected fun row() = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
     protected fun column() = LinearLayout(context).apply { orientation = VERTICAL; gravity = Gravity.CENTER_VERTICAL }
     protected fun View.show(show: Boolean) { visibility = if (show) VISIBLE else GONE }
     protected fun describe(vararg texts: CharSequence) { contentDescription = texts.filter { it.isNotBlank() }.joinToString(", ") }
     protected val Int.dp get() = (this * resources.displayMetrics.density).toInt()
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // Re-record retained labels after a card changes bounds, including when the
+        // fitted size is unchanged (e.g. 3-column -> 4-column expanded Clock).
+        labels.forEach { (view, _) -> view.invalidate() }
+    }
     override fun applyAppearance(state: AppearanceState) {
         val palette = PanelPalette.forMode(state.themeMode)
         labels.forEach { (view, secondary) -> view.setTextColor(if (secondary) palette.secondary else palette.text) }

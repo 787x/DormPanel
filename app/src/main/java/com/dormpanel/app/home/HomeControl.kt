@@ -64,7 +64,7 @@ class DemoHomeSource(private val dashboard: DashboardDataSource) : HomeControlSo
     override fun activateEntity(id: String): Boolean {
         val entity = homeState.entities.find { it.id == id && it.availability == Availability.AVAILABLE } ?: return false
         when (entity.kind) {
-            HomeKind.LIGHT -> dashboard.toggleLight(id)
+            HomeKind.LIGHT -> dashboard.setLightPower(id, !entity.isOn)
             HomeKind.SWITCH -> { switchOn = !switchOn; publish() }
             HomeKind.SCENE -> dashboard.state.lights.values.filter { it.isOn }.forEach { dashboard.toggleLight(it.id) }
             HomeKind.SCRIPT -> if (dashboard.state.lights["desk"]?.isOn == false) dashboard.toggleLight("desk")

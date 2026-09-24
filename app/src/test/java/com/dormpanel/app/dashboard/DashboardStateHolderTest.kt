@@ -12,6 +12,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DashboardStateHolderTest {
+    @Test fun `automatic fallback persists the chosen size and retains neighbors`() {
+        val cards = buildList {
+            for (row in 0..5) for (column in 0..3) {
+                if (row != 5 || column != 3) add(com.dormpanel.app.dashboard.model.PlacedCard("$column:$row", "sensor", column * 2, row, CardSize(2, 1)))
+            }
+        }
+        val store = FakeStore(StoredDashboard(true, 1, cards))
+        val holder = DashboardStateHolder(registry(), store)
+        val candidate = com.dormpanel.app.dashboard.catalog.CardAddCandidate("clock", com.dormpanel.app.dashboard.catalog.CardCategory.INFORMATION, "clock", "Clock", "Local", "{}")
+        assertTrue(holder.add(candidate) is LayoutMutationResult.Success)
+        assertEquals(cards, holder.state.cards.dropLast(1))
+        assertEquals(CardSize(2, 1), holder.state.cards.last().size)
+        assertEquals(holder.state.cards, store.savedSnapshots.single())
+    }
+
     @Test
     fun `first launch seeds once and persists stable ids`() {
         val store = FakeStore(StoredDashboard(false, 0, emptyList()))
