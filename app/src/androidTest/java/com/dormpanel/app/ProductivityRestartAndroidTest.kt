@@ -27,6 +27,7 @@ class ProductivityRestartAndroidTest {
         require(UUID.fromString(token).toString() == token)
         val dashboardName = "test-productivity-layout-$token.db"
         val contentName = "test-productivity-content-$token.db"
+        com.dormpanel.app.schedule.WebDavSettings.overrideNamespace = "webdav_productivity_restart_test"
         val dashboard = Room.databaseBuilder(context, DashboardDatabase::class.java, dashboardName).build()
         val executors = mutableListOf<ExecutorService>()
         fun executor() = Executors.newSingleThreadExecutor().also { executors += it }
@@ -81,6 +82,7 @@ class ProductivityRestartAndroidTest {
         } finally {
             DashboardStores.overrideFactory = null; ProductivityStores.overrideFactory = null
             com.dormpanel.app.schedule.ScheduleStores.overrideFactory = null
+            com.dormpanel.app.schedule.WebDavSettings.overrideNamespace = null
             executors.forEach { it.shutdown(); it.awaitTermination(5, TimeUnit.SECONDS) }
             dashboard.close()
             if (phase != "seed") { context.deleteDatabase(dashboardName); context.deleteDatabase(contentName) }

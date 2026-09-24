@@ -50,7 +50,7 @@ class ScheduleImportAndroidTest {
                         vm.schedule.saveEvent("Calendar remains separate", 1, 2)
                         vm.scheduleSession.mode = ScheduleMode.TIMETABLE
                         vm.scheduleSession.weekStart = LocalDate.parse("2026-08-31")
-                        ui = ScheduleImportUi(activity, vm.schedule, vm.appearance) {}
+                        ui = ScheduleImportUi(activity, vm.schedule, vm.appearance, vm.webDav) {}
                         ui.preview(preview)
                         assertTrue(vm.schedule.state.sources.isEmpty())
                     }

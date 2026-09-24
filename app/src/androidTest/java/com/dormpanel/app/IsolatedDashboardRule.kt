@@ -17,6 +17,9 @@ class IsolatedDashboardRule : ExternalResource() {
     private val executors = mutableListOf<ExecutorService>()
     override fun before() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        com.dormpanel.app.schedule.WebDavSettings.overrideNamespace = "webdav_test"
+        context.getSharedPreferences("webdav_test_settings", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("webdav_test_credentials", android.content.Context.MODE_PRIVATE).edit().clear().commit()
         scheduleDatabase = Room.inMemoryDatabaseBuilder(context, com.dormpanel.app.schedule.ScheduleDatabase::class.java).build()
         com.dormpanel.app.schedule.ScheduleStores.overrideFactory = {
             val executor = Executors.newSingleThreadExecutor()
@@ -37,6 +40,7 @@ class IsolatedDashboardRule : ExternalResource() {
         }
     }
     override fun after() {
+        com.dormpanel.app.schedule.WebDavSettings.overrideNamespace = null
         com.dormpanel.app.schedule.ScheduleStores.overrideFactory = null
         com.dormpanel.app.productivity.ProductivityStores.overrideFactory = null
         DashboardStores.overrideFactory = null

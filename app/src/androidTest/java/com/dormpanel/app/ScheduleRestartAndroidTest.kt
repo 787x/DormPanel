@@ -25,6 +25,7 @@ class ScheduleRestartAndroidTest {
         require(UUID.fromString(token).toString() == token)
         val dashboardName = "test-schedule-layout-$token.db"
         val scheduleName = "test-schedule-content-$token.db"
+        WebDavSettings.overrideNamespace = "webdav_schedule_restart_test"
         val dashboard = Room.databaseBuilder(context, DashboardDatabase::class.java, dashboardName).build()
         val executors = mutableListOf<ExecutorService>()
         fun executor() = Executors.newSingleThreadExecutor().also { executors += it }
@@ -61,6 +62,7 @@ class ScheduleRestartAndroidTest {
         try { if (phase != "verify") run(true); if (phase != "seed") run(false) }
         finally {
             DashboardStores.overrideFactory = null; ProductivityStores.overrideFactory = null; ScheduleStores.overrideFactory = null
+            WebDavSettings.overrideNamespace = null
             executors.forEach { it.shutdown(); it.awaitTermination(5, TimeUnit.SECONDS) }; dashboard.close()
             if (phase != "seed") { context.deleteDatabase(dashboardName); context.deleteDatabase(scheduleName) }
         }

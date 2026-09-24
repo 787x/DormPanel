@@ -22,6 +22,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val apps = com.dormpanel.app.apps.AppSources.create(application)
     val productivity = ProductivitySource(ProductivityStores.create(application), AndroidProductivityClock)
     val schedule = ScheduleSource(ScheduleStores.create(application))
+    val webDav = WebDavSyncController(application, schedule)
     val scheduleSession = ScheduleSession(schedule.clock)
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) } +
@@ -33,6 +34,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     override fun onCleared() {
+        webDav.close()
         schedule.close()
         productivity.close()
         apps.close()

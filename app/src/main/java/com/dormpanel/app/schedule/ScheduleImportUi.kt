@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.text.InputType
 import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
@@ -15,7 +16,8 @@ import java.util.concurrent.Executors
 
 /** Local SAF adapter and preview UI. All content reads, hashing and parsing run on the worker. */
 class ScheduleImportUi(private val context: Context, private val source: ScheduleSource,
-    private val appearance: AppearanceController, private val launchPicker: () -> Unit) {
+    private val appearance: AppearanceController, private val webDav: WebDavSyncController,
+    private val launchPicker: () -> Unit) {
     private val worker = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
     private val dialogs = mutableSetOf<AlertDialog>()
@@ -54,7 +56,10 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     }
     private fun date(millis: Long) = Instant.ofEpochMilli(millis).atZone(source.clock.zone())
         .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
-    fun preview(preview: ImportPreview) {
+    private data class RemoteChoice(val mode: WebDavMode, val remote: String, val item: WebDavItem,
+        val targetId: String? = null)
+    fun preview(preview: ImportPreview) = preview(preview, null)
+    private fun preview(preview: ImportPreview, remote: RemoteChoice?) {
         if (closed) return
         val fields = context.scheduleColumn().apply { setPadding(context.dp(16), 0, context.dp(16), 0) }
         val row = LinearLayout(context)
@@ -69,11 +74,13 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         row.addView(samples, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); fields.addView(row)
         val name = EditText(context).apply { hint = "Timetable name"; contentDescription = hint; setSingleLine(); setText(preview.calendarName ?: preview.filename.substringBeforeLast('.')) }
         fields.addView(name)
-        val sources = source.state.sources.toList()
+        val sources = source.state.sources.filter { webDav.binding(it.id) == null || it.id == remote?.targetId }
         val target = Spinner(context).apply {
             contentDescription = "Import target"; minimumHeight = context.dp(48)
             adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item,
                 listOf("Import as new timetable") + sources.map { "Replace: ${it.displayName}" })
+            if (remote?.targetId != null) setSelection(sources.indexOfFirst { it.id == remote.targetId } + 1)
+            isEnabled = remote?.targetId == null
         }
         fields.addView(target)
         val unchanged = context.scheduleLabel("", 16f); fields.addView(unchanged)
@@ -93,6 +100,9 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
             if (busy || !source.ready) return@setOnClickListener
             if (name.text.isBlank()) { error.text = "Enter a timetable name."; return@setOnClickListener }
             val existing = sources.getOrNull(target.selectedItemPosition - 1)
+            if (remote == null && existing != null && webDav.binding(existing.id) != null) {
+                error.text = "This source is managed by WebDAV. Use its WebDAV controls."; return@setOnClickListener
+            }
             fun commit() {
                 if (closed || busy) return
                 busy = true
@@ -100,7 +110,12 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                 dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = false
                 source.import(preview, name.text.toString(), existing?.id) { result -> if (!closed) {
                     busy = false
-                    result.onSuccess { dialog.dismiss(); message(if (it.unchanged) "Timetable unchanged" else "Timetable imported",
+                    result.onSuccess {
+                        remote?.let { choice -> webDav.bind(WebDavBinding(it.source.id, choice.mode, choice.remote,
+                            autoSync = webDav.binding(it.source.id)?.autoSync ?: false,
+                            etag = choice.item.etag, lastModified = choice.item.lastModified,
+                            currentFile = choice.item.url, lastSuccess = System.currentTimeMillis())) }
+                        dialog.dismiss(); message(if (it.unchanged) "Timetable unchanged" else "Timetable imported",
                         "${it.source.displayName} · ${it.source.occurrenceCount} classes") }
                         .onFailure { error.text = errorText(it); dialog.setCancelable(true)
                             dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true; dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = true }
@@ -117,9 +132,29 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         val fields = context.scheduleColumn()
         val dialog = AlertDialog.Builder(context).setTitle("Imported timetables").setNegativeButton("Close", null)
             .setView(ScrollView(context).apply { addView(fields) }).create()
+        fields.addView(context.scheduleButton("Add WebDAV timetable") { dialog.dismiss(); webDavSetup() })
         if (source.state.sources.isEmpty()) fields.addView(context.scheduleLabel("No imported timetables"))
         source.state.sources.forEach { item ->
             fields.addView(context.scheduleLabel("${item.displayName} · ${item.filename}\nImported ${date(item.importedAt)} · ${item.occurrenceCount} classes\n${date(item.firstStart)} – ${date(item.lastEnd)}", 18f))
+            webDav.binding(item.id)?.let { binding ->
+                val remote = runCatching { android.net.Uri.parse(binding.remote).path }.getOrNull() ?: "Remote timetable"
+                val filename = binding.currentFile?.let { runCatching { WebDavClient().run { filename(url(it)) } }.getOrNull() }
+                fields.addView(context.scheduleLabel("WebDAV ${if (binding.mode == WebDavMode.FILE) "file" else "folder · following newest ICS"} · $remote\n" +
+                    "Current: ${filename ?: item.filename}\n" +
+                    "Last synced: ${if (binding.lastSuccess == 0L) "Never" else date(binding.lastSuccess)} · Auto sync: ${if (binding.autoSync) "On" else "Off"}\n" +
+                    "Status: ${binding.lastError ?: "Up to date"}", 16f))
+                val controls = LinearLayout(context)
+                controls.addView(context.scheduleButton("Sync now") { webDav.sync(item.id) { result -> if (!closed) {
+                    dialog.dismiss(); sources()
+                    message("WebDAV sync", result.fold({ if (it) "Timetable updated." else "Already up to date." },
+                        { errorText(it) }))
+                } } })
+                controls.addView(context.scheduleButton(if (binding.autoSync) "Auto sync Off" else "Auto sync On") {
+                    webDav.bind(binding.copy(autoSync = !binding.autoSync)); dialog.dismiss(); sources()
+                })
+                controls.addView(context.scheduleButton("Edit selection") { dialog.dismiss(); webDavSetup(item.id) })
+                fields.addView(controls)
+            }
             fields.addView(context.scheduleButton("Delete ${item.displayName}") {
                 if (busy) return@scheduleButton
                 show(AlertDialog.Builder(context).setTitle("Delete imported timetable?")
@@ -127,15 +162,97 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                     .setNegativeButton("Cancel", null).setPositiveButton("Delete source") { _, _ ->
                         busy = true
                         source.deleteImport(item.id) { result -> if (!closed) { busy = false
-                            result.onSuccess { dialog.dismiss(); sources() }.onFailure { message("Delete failed", errorText(it)) }
+                            result.onSuccess { webDav.remove(item.id); dialog.dismiss(); sources() }.onFailure { message("Delete failed", errorText(it)) }
                         } }
                     }.create())
             })
         }
         show(dialog)
     }
+    private fun webDavSetup(targetId: String? = null) {
+        if (closed) return
+        val (savedUrl, savedUser) = webDav.settings.publicAccount()
+        val fields = context.scheduleColumn().apply { setPadding(context.dp(16), 0, context.dp(16), 0) }
+        fun field(label: String, value: String, secret: Boolean = false) = EditText(context).apply {
+            hint = label; contentDescription = label; setSingleLine(); setText(value)
+            if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            fields.addView(this)
+        }
+        val url = field("WebDAV server URL", savedUrl)
+        val user = field("Username", savedUser)
+        val password = field("Password (leave blank to keep saved password)", "", true)
+        val warning = context.scheduleLabel("HTTP sends username and password without encryption. Use HTTPS when available.", 16f)
+        fields.addView(warning)
+        val status = context.scheduleLabel("", 16f); fields.addView(status)
+        val dialog = show(AlertDialog.Builder(context).setTitle("WebDAV timetable")
+            .setView(fields).setNegativeButton("Close", null).create())
+        fun account(): WebDavAccount? {
+            val saved = webDav.settings.account()
+            val enteredUrl = url.text.toString().trim()
+            val enteredUser = user.text.toString()
+            val pass = password.text.toString().ifBlank {
+                if (saved?.baseUrl == enteredUrl && saved.username == enteredUser) saved.password else ""
+            }
+            if (pass.isEmpty()) { status.text = "Enter a password for this WebDAV account."; return null }
+            val candidate = WebDavAccount(enteredUrl, enteredUser, pass)
+            return runCatching { WebDavClient().url(candidate.baseUrl); candidate }.onFailure { status.text = errorText(it) }.getOrNull()
+        }
+        fields.addView(context.scheduleButton("Test connection") {
+            val candidate = account() ?: return@scheduleButton
+            status.text = "Testing…"
+            webDav.test(candidate) { result -> if (!closed) status.text = result.fold({ "Connection successful." }, { errorText(it) }) }
+        })
+        fields.addView(context.scheduleButton("Browse") {
+            val candidate = account() ?: return@scheduleButton
+            runCatching { webDav.settings.saveAccount(candidate) }.onFailure { status.text = errorText(it) }.onSuccess {
+                dialog.dismiss(); browse(candidate, candidate.baseUrl, targetId)
+            }
+        })
+    }
+    private fun browse(account: WebDavAccount, folder: String, targetId: String?) {
+        if (closed) return
+        val fields = context.scheduleColumn().apply { setPadding(context.dp(16), 0, context.dp(16), 0) }
+        val status = context.scheduleLabel("Loading folder…", 16f)
+        fields.addView(status)
+        val dialog = show(AlertDialog.Builder(context).setTitle("WebDAV · ${android.net.Uri.parse(folder).encodedPath}")
+            .setView(ScrollView(context).apply { addView(fields) }).setNegativeButton("Close", null).create())
+        val client = WebDavClient()
+        val base = client.url(account.baseUrl)
+        val current = client.url(folder)
+        if (current != base) {
+            val parent = current.resolve("../")
+            if (parent != null && parent.scheme == base.scheme && parent.host == base.host && parent.port == base.port &&
+                parent.encodedPath.startsWith(base.encodedPath.trimEnd('/') + "/"))
+                fields.addView(context.scheduleButton("[..]") { dialog.dismiss(); browse(account, parent.toString(), targetId) })
+        }
+        fields.addView(context.scheduleButton("Follow newest ICS in this folder") {
+            dialog.dismiss(); remotePreview(account, WebDavMode.FOLDER_LATEST_ICS, folder, targetId)
+        })
+        webDav.browse(account, folder) { result -> if (!closed && dialog.isShowing) {
+            result.onSuccess { items ->
+                status.text = if (items.isEmpty()) "No folders or ICS files." else "Select a folder or ICS file."
+                items.forEach { item -> fields.addView(context.scheduleButton("${if (item.folder) "📁" else "📄"} ${item.name}") {
+                    dialog.dismiss()
+                    if (item.folder) browse(account, item.url, targetId)
+                    else remotePreview(account, WebDavMode.FILE, item.url, targetId)
+                }) }
+            }.onFailure { status.text = errorText(it) }
+        } }
+    }
+    private fun remotePreview(account: WebDavAccount, mode: WebDavMode, remote: String, targetId: String?) {
+        val progress = show(AlertDialog.Builder(context).setTitle("Reading WebDAV timetable")
+            .setMessage("Downloading and checking ICS…").setCancelable(false).create())
+        webDav.initial(account, mode, remote) { result -> if (!closed) {
+            progress.dismiss()
+            result.onSuccess { (parsed, item) -> preview(parsed, RemoteChoice(mode, remote, item, targetId)) }
+                .onFailure { message("WebDAV import unavailable", errorText(it)) }
+        } }
+    }
     private fun message(title: String, text: String) { if (!closed) show(AlertDialog.Builder(context).setTitle(title).setMessage(text).setPositiveButton("OK", null).create()) }
-    private fun errorText(error: Throwable) = (error as? ScheduleImportException)?.message ?: "Unable to complete the import. Existing timetables have been kept."
+    private fun errorText(error: Throwable) = when (error) {
+        is ScheduleImportException, is WebDavException -> error.message ?: "Unable to complete the request."
+        else -> "Unable to complete the request. Existing timetables have been kept."
+    }
     private fun theme(dialog: AlertDialog, state: AppearanceState) { dialog.window?.decorView?.let {
         it.setBackgroundColor(PanelPalette.forMode(state.themeMode).surface); applyAppearanceTree(it, state)
     } }
@@ -144,5 +261,6 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         dialog.window?.setLayout(minOf(context.dp(1000), context.resources.displayMetrics.widthPixels - context.dp(48)), ViewGroup.LayoutParams.WRAP_CONTENT)
         theme(dialog, appearance.state); return dialog
     }
-    fun close() { closed = true; dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow() }
+    fun close() { closed = true; dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow()
+        webDav.settings.clearIfUnused() }
 }
