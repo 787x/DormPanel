@@ -45,6 +45,8 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private val listeners = linkedSetOf<(DashboardData) -> Unit>()
     private val catalogListeners = linkedSetOf<(List<CardAddCandidate>) -> Unit>()
     private val statusListeners = linkedSetOf<(HaStatus) -> Unit>()
+    private val relayReadyListeners = linkedSetOf<() -> Unit>()
+    private val relayEventListeners = linkedSetOf<(JSONObject) -> Unit>()
     private var initialized = false
     private val registryPending = mutableSetOf<String>()
     private val registryDirty = mutableSetOf<String>()
@@ -62,6 +64,15 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     }
     private val socket = HaWebSocketClient(http, scheduler, ::statusChanged, ::initialize, ::event)
     val connected get() = status.state == HaConnectionState.CONNECTED
+    val relayChannel: HaRelayChannel = object : HaRelayChannel {
+        override val origin get() = settings.baseUrl
+        override val ready get() = connected
+        override fun request(message: JSONObject, callback: (JSONObject) -> Unit) = socket.request(message, callback)
+        override fun addReadyListener(listener: () -> Unit) { relayReadyListeners += listener; if (connected) listener() }
+        override fun removeReadyListener(listener: () -> Unit) { relayReadyListeners -= listener }
+        override fun addEventListener(listener: (JSONObject) -> Unit) { relayEventListeners += listener }
+        override fun removeEventListener(listener: (JSONObject) -> Unit) { relayEventListeners -= listener }
+    }
     fun addStatusListener(listener: (HaStatus) -> Unit) { statusListeners += listener; listener(status) }
     fun removeStatusListener(listener: (HaStatus) -> Unit) { statusListeners -= listener }
     private fun statusChanged(value: HaStatus) {
@@ -98,6 +109,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                                 bufferedEvents.forEach(store::event); bufferedEvents.clear()
                                 store.lightStates(true).values.forEach(memory::observe)
                                 selectWeather(); socket.synchronized(); applyAppearance(); fetchForecast()
+                                relayReadyListeners.toList().forEach { it() }
                                 registryDirty.toList().forEach { kind -> registryDirty -= kind; refreshRegistry(kind) }
                             }
                         }
@@ -108,6 +120,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         (listOf("entity", "device", "area").map { "${it}_registry_updated" } + listOf("service_registered", "service_removed")).forEach { event ->
             socket.request(JSONObject().put("type", "subscribe_events").put("event_type", event))
         }
+        socket.request(JSONObject().put("type", "subscribe_events").put("event_type", "dormpanel_transfer_available"))
     }
     private fun refreshRegistry(kind: String, done: () -> Unit = {}) {
         if (!registryPending.add(kind)) { registryDirty += kind; return }
@@ -149,6 +162,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     }
     private fun event(event: JSONObject) {
         when (event.optString("event_type")) {
+            "dormpanel_transfer_available" -> relayEventListeners.toList().forEach { it(event.optJSONObject("data") ?: JSONObject()) }
             "service_registered", "service_removed" -> if (event.optJSONObject("data")?.text("domain") == "script") {
                 if (initialized) refreshRegistry("service") else registryDirty += "service"
             }

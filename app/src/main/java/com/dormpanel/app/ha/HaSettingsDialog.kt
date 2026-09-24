@@ -32,6 +32,8 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             isSaveEnabled = false; importantForAutofill = android.view.View.IMPORTANT_FOR_AUTOFILL_NO
         }
+        val relayName = input("DormPanel relay screen name", backend.relayIdentity.displayName)
+        label("Timetable relay: ${backend.relayStatus}")
         label("HTTP sends your token without encryption. Prefer HTTPS on untrusted networks.")
         fun entities(domain: String, saved: String) = (listOf("") + backend.ha.store.discovered(domain).map { it.id } + listOf(saved)).distinct()
         val weather = choices("Preferred weather (blank = first discovered)", entities("weather", settings.weatherEntity), settings.weatherEntity)
@@ -61,6 +63,7 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
             }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 try {
+                    backend.relayIdentity.setDisplayName(relayName.text.toString())
                     backend.save(HaConnectionSettings(BackendMode.valueOf(mode.selectedItem.toString()), url.text.toString(),
                         weather.selectedItem.toString(), theme.selectedItem.toString(), opacity.selectedItem.toString()), token.text.toString())
                     token.text.clear(); diagnostic.text = context.getString(R.string.ha_saved)

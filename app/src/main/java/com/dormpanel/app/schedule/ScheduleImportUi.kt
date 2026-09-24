@@ -134,7 +134,8 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     private data class RemoteChoice(val mode: WebDavMode, val remote: String, val item: WebDavItem,
         val targetId: String? = null)
     fun preview(preview: ImportPreview) = preview(preview, null)
-    private fun preview(preview: ImportPreview, remote: RemoteChoice?) {
+    fun relayPreview(preview: ImportPreview, outcome: (String) -> Unit) = preview(preview, null, outcome)
+    private fun preview(preview: ImportPreview, remote: RemoteChoice?, relayOutcome: ((String) -> Unit)? = null) {
         if (closed) return
         val fields = context.scheduleColumn().apply { setPadding(context.dp(16), 0, context.dp(16), 0) }
         val row = LinearLayout(context)
@@ -170,7 +171,10 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         fields.addView(context.scheduleLabel(preview.warnings.joinToString("\n"), 16f))
         val error = context.scheduleLabel("", 16f); fields.addView(error)
         val dialog = show(AlertDialog.Builder(context).setTitle("Timetable import preview")
-            .setView(ScrollView(context).apply { addView(fields) }).setNegativeButton("Cancel", null).setPositiveButton("Import", null).create())
+            .setView(ScrollView(context).apply { addView(fields) })
+            .setNegativeButton("Cancel") { _, _ -> relayOutcome?.invoke("dismissed") }
+            .setOnCancelListener { relayOutcome?.invoke("dismissed") }
+            .setPositiveButton("Import", null).create())
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             if (busy || !source.ready) return@setOnClickListener
             if (name.text.isBlank()) { error.text = "Enter a timetable name."; return@setOnClickListener }
@@ -190,6 +194,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                             autoSync = webDav.binding(it.source.id)?.autoSync ?: false,
                             etag = choice.item.etag, lastModified = choice.item.lastModified,
                             currentFile = choice.item.url, lastSuccess = System.currentTimeMillis())) }
+                        relayOutcome?.invoke("imported")
                         dialog.dismiss(); message(if (it.unchanged) "Timetable unchanged" else "Timetable imported",
                         "${it.source.displayName} · ${it.source.occurrenceCount} classes") }
                         .onFailure { error.text = errorText(it); dialog.setCancelable(true)

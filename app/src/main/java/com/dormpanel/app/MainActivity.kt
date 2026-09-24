@@ -45,6 +45,11 @@ class MainActivity : AppCompatActivity() {
             // Generic MIME allows .ics documents from providers that do not report text/calendar.
             timetablePicker.launch(arrayOf("text/calendar", "*/*"))
         }
+        dashboardViewModel.haRelay.attach { delivery ->
+            scheduleImports.relayPreview(delivery.preview) { outcome ->
+                dashboardViewModel.haRelay.resolve(delivery.transferId, outcome)
+            }
+        }
         pageViewFactory = PanelPageViewFactory(
             inflater = layoutInflater,
             dashboardStateHolder = dashboardViewModel.stateHolder,
@@ -110,6 +115,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        dashboardViewModel.haRelay.detach()
         scheduleImports.close()
         dashboardViewModel.appearance.removeListener(appearanceListener)
         for (index in 0 until pageContainer.childCount) {
