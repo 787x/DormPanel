@@ -61,8 +61,11 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val queued = ArrayDeque<String>()
     private val known = mutableSetOf<String>()
+    private val terminalAwaitingAck = mutableSetOf<String>()
     private val retries = mutableMapOf<String, Int>()
     private var downloading = false
+    private var inFlightId: String? = null
+    private var connectionGeneration = 0
     private var active: RelayPreview? = null
     private var presenter: ((RelayPreview) -> Unit)? = null
     private var closed = false
@@ -84,17 +87,25 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
 
     private fun register() {
         if (closed || !channel.ready) return
+        connectionGeneration++
+        val generation = connectionGeneration
+        // The socket discards outstanding callbacks when it disconnects. An
+        // unconfirmed terminal ack must be offered again by list_pending.
+        terminalAwaitingAck.forEach(known::remove)
+        terminalAwaitingAck.clear()
+        inFlightId?.let { queued.addFirst(it); inFlightId = null; downloading = false }
         val request = message("register").put("display_name", identity.displayName).put("app_version", "1.0")
             .put("capabilities", org.json.JSONArray().put("schedule_relay_v1"))
         if (!channel.request(request) { result ->
-            if (closed) return@request
+            if (closed || generation != connectionGeneration) return@request
             if (!result.optBoolean("success")) {
                 status("Relay unavailable: administrator permission or DormPanel integration required")
                 return@request
             }
             status("Relay ready")
+            next()
             channel.request(message("list_pending")) { pending ->
-                if (!closed && pending.optBoolean("success")) {
+                if (!closed && generation == connectionGeneration && pending.optBoolean("success")) {
                     val entries = pending.optJSONArray("result") ?: return@request
                     for (index in 0 until entries.length()) entries.optJSONObject(index)?.optString("transfer_id")?.let(::enqueue)
                 }
@@ -112,8 +123,10 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         if (closed || active != null || downloading || queued.isEmpty() || !channel.ready) return
         val id = queued.removeFirst()
         downloading = true
+        inFlightId = id
+        val generation = connectionGeneration
         if (!channel.request(message("claim_transfer", id)) { claim ->
-            if (closed) return@request
+            if (closed || generation != connectionGeneration) return@request
             if (!claim.optBoolean("success")) { failed(id); return@request }
             val payload = claim.optJSONObject("result") ?: run { failed(id); return@request }
             val origin = channel.origin
@@ -121,8 +134,9 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
                 val artifact = runCatching { downloader.download(origin, payload) }
                 val parsed = artifact.mapCatching(importer::parse)
                 handler.post {
-                    if (closed) return@post
+                    if (closed || generation != connectionGeneration) return@post
                     downloading = false
+                    inFlightId = null
                     parsed.onSuccess { preview ->
                         active = RelayPreview(id, preview)
                         retries.remove(id)
@@ -149,6 +163,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
 
     private fun failed(id: String) {
         downloading = false
+        inFlightId = null
         known.remove(id)
         next()
     }
@@ -164,13 +179,23 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
     fun detach() { presenter = null }
     fun resolve(transferId: String, outcome: String) {
         if (active?.transferId != transferId || outcome !in setOf("imported", "dismissed")) return
-        acknowledge(transferId, outcome)
+        // Keep the ID known while acknowledgement is uncertain. HA remains the
+        // source of truth and will offer it again through list_pending on reconnect.
+        terminalAwaitingAck += transferId
+        val generation = connectionGeneration
+        val accepted = channel.request(message("ack_transfer", transferId, outcome)) { result ->
+            if (!closed && generation == connectionGeneration) {
+                terminalAwaitingAck.remove(transferId)
+                if (!result.optBoolean("success")) known.remove(transferId)
+            }
+        }
+        if (!accepted) { terminalAwaitingAck.remove(transferId); known.remove(transferId) }
         active = null
-        known.remove(transferId)
         retries.remove(transferId)
         handler.post { next() }
     }
     fun close() {
+        if (closed) return
         closed = true; presenter = null
         channel.removeReadyListener(readyListener); channel.removeEventListener(eventListener)
         worker.shutdownNow()

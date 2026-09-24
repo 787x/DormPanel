@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.*
 import android.text.format.DateFormat
 import android.view.Gravity
+import android.view.View
 import androidx.core.content.ContextCompat
 import com.dormpanel.app.R
 import com.dormpanel.app.appearance.AppearanceController
@@ -11,8 +12,24 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** Clock's only time and scheduling boundary. Production schedules one callback per minute. */
+interface ClockTiming {
+    fun nowMillis(): Long
+    fun schedule(view: View, callback: Runnable, delayMillis: Long)
+    fun cancel(view: View, callback: Runnable)
+}
+
+object DeviceClockTiming : ClockTiming {
+    override fun nowMillis() = System.currentTimeMillis()
+    override fun schedule(view: View, callback: Runnable, delayMillis: Long) {
+        view.postDelayed(callback, delayMillis)
+    }
+    override fun cancel(view: View, callback: Runnable) { view.removeCallbacks(callback) }
+}
+
 @SuppressLint("ViewConstructor")
-class ClockCardView(context: Context, appearance: AppearanceController) : DashboardCardView(context, appearance) {
+class ClockCardView(context: Context, appearance: AppearanceController,
+    private var timing: ClockTiming = DeviceClockTiming) : DashboardCardView(context, appearance) {
     private val heading = label(DashboardTypography.SECONDARY, true)
     private val time = fittingLabel(DashboardTypography.CLOCK).apply {
         typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
@@ -25,11 +42,11 @@ class ClockCardView(context: Context, appearance: AppearanceController) : Dashbo
         override fun run() {
             if (!activeClock) return
             refresh()
-            postDelayed(this, millisUntilNextMinute(System.currentTimeMillis()))
+            timing.schedule(this@ClockCardView, this, millisUntilNextMinute(timing.nowMillis()))
         }
     }
     private val timeChanged = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) { removeCallbacks(tick); if (activeClock) tick.run() }
+        override fun onReceive(context: Context?, intent: Intent?) { timing.cancel(this@ClockCardView, tick); if (activeClock) tick.run() }
     }
     init {
         addView(heading)
@@ -42,7 +59,7 @@ class ClockCardView(context: Context, appearance: AppearanceController) : Dashbo
         gravity = Gravity.CENTER_VERTICAL or if (presentation.centered) Gravity.CENTER_HORIZONTAL else Gravity.START
         time.gravity = if (presentation.centered) Gravity.CENTER else Gravity.START
         time.maximumTextSp = presentation.timeSp
-        val now = Date()
+        val now = Date(timing.nowMillis())
         heading.text = context.getString(R.string.local_time)
         heading.show(presentation.calendarDetail)
         time.text = DateFormat.getTimeFormat(context).format(now)
@@ -66,5 +83,15 @@ class ClockCardView(context: Context, appearance: AppearanceController) : Dashbo
         }, ContextCompat.RECEIVER_NOT_EXPORTED)
         tick.run()
     }
-    private fun stopClock() { removeCallbacks(tick); if (activeClock) context.unregisterReceiver(timeChanged); activeClock = false }
+    /** Replaces the boundary on this retained view; useful for deterministic instrumentation. */
+    fun replaceTimingForTest(replacement: ClockTiming) {
+        timing.cancel(this, tick)
+        timing = replacement
+        if (activeClock) tick.run() else refresh()
+    }
+    fun dispatchTimeChangeForTest(action: String) {
+        require(action in setOf(Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_DATE_CHANGED))
+        timeChanged.onReceive(context, Intent(action))
+    }
+    private fun stopClock() { timing.cancel(this, tick); if (activeClock) context.unregisterReceiver(timeChanged); activeClock = false }
 }

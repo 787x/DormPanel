@@ -16,7 +16,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.appearance.*
 import com.dormpanel.app.dashboard.DashboardViewModel
 import com.dormpanel.app.dashboard.card.DashboardCardView
-import com.dormpanel.app.dashboard.card.millisUntilNextMinute
+import com.dormpanel.app.dashboard.card.ClockCardView
+import com.dormpanel.app.dashboard.card.ClockTiming
 import com.dormpanel.app.dashboard.model.CardSize
 import org.junit.Before
 import org.junit.After
@@ -601,17 +602,58 @@ class CoreDashboardTest {
         }
     }
 
+    private class ControlledClock : ClockTiming {
+        var now = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.SEPTEMBER, 24, 12, 34, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        var scheduled: Runnable? = null
+        var delay = -1L
+        override fun nowMillis() = now
+        override fun schedule(view: View, callback: Runnable, delayMillis: Long) {
+            assertNull("Clock must have one scheduled callback", scheduled)
+            scheduled = callback; delay = delayMillis
+        }
+        override fun cancel(view: View, callback: Runnable) {
+            if (scheduled === callback) scheduled = null
+        }
+        fun advanceMinute() {
+            now += 60_000L
+            val callback = scheduled ?: error("Clock callback was not scheduled")
+            scheduled = null
+            callback.run()
+        }
+    }
+
     @Test fun clockCrossesMinuteBoundaryAndStopsWhenDetached() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             waitForCards(scenario)
-            var clock: DashboardCardView? = null
+            val timing = ControlledClock()
+            var clock: ClockCardView? = null
             var before = ""
             scenario.onActivity {
-                clock = descendants(it.findViewById(R.id.dashboard_grid)).filterIsInstance<DashboardCardView>().first { view -> view.contentDescription.contains("LOCAL TIME") }
+                clock = descendants(it.findViewById(R.id.dashboard_grid)).filterIsInstance<ClockCardView>().single()
+                clock!!.replaceTimingForTest(timing)
                 before = clock!!.contentDescription.toString()
+                assertTrue(before.contains("12:34"))
+                assertEquals(60_000L, timing.delay)
             }
-            Thread.sleep(millisUntilNextMinute(System.currentTimeMillis()) + 150)
-            scenario.onActivity { assertNotEquals(before, clock!!.contentDescription.toString()) }
+            scenario.onActivity {
+                timing.advanceMinute()
+                assertSame(clock, descendants(it.findViewById(R.id.dashboard_grid)).filterIsInstance<ClockCardView>().single())
+                assertNotEquals(before, clock!!.contentDescription.toString())
+                assertTrue(clock!!.contentDescription.contains("12:35"))
+                assertEquals(60_000L, timing.delay)
+            }
+            for (action in listOf(android.content.Intent.ACTION_TIME_CHANGED,
+                android.content.Intent.ACTION_TIMEZONE_CHANGED, android.content.Intent.ACTION_DATE_CHANGED)) {
+                scenario.onActivity {
+                    timing.now += 60_000L
+                    clock!!.dispatchTimeChangeForTest(action)
+                    assertTrue(clock!!.contentDescription.contains(
+                        java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(timing.now))))
+                }
+            }
             navigate(swipe(.5f,.8f,.5f,.2f))
             onView(withText("Apps")).check(matches(isDisplayed()))
             // Apps is visible before the outgoing page's 160 ms transition removes it.
@@ -622,6 +664,7 @@ class CoreDashboardTest {
                 if (attached) Thread.sleep(20)
             }
             assertFalse(attached)
+            assertNull("Detached Clock must cancel its minute callback", timing.scheduled)
         }
     }
 
