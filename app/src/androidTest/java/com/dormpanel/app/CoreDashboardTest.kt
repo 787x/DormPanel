@@ -413,16 +413,25 @@ class CoreDashboardTest {
                 }
                 captureReview("pr12-clock-${size.columnSpan}x${size.rowSpan}-$index")
                 if (size.rowSpan == 3) {
-                    val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
                     val position = IntArray(2)
                     var width = 0; var height = 0
                     scenario.onActivity { retained!!.getLocationOnScreen(position); width = retained!!.width; height = retained!!.height }
                     var brightPixels = 0
-                    for (y in position[1] until position[1] + height) for (x in position[0] until position[0] + width) {
-                        val pixel = bitmap.getPixel(x, y)
-                        if (Color.red(pixel) > 180 && Color.green(pixel) > 180 && Color.blue(pixel) > 180) brightPixels++
-                    }
-                    bitmap.recycle()
+                    // waitForIdleSync reports the UI thread idle before X08E's compositor
+                    // necessarily presents its next frame. Give the physical frame a
+                    // bounded chance to appear instead of judging the first capture.
+                    val deadline = System.currentTimeMillis() + 3000
+                    do {
+                        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                        brightPixels = 0
+                        for (y in position[1] until position[1] + height) for (x in position[0] until position[0] + width) {
+                            val pixel = bitmap.getPixel(x, y)
+                            if (Color.red(pixel) > 180 && Color.green(pixel) > 180 && Color.blue(pixel) > 180) brightPixels++
+                        }
+                        bitmap.recycle()
+                        if (brightPixels > 2000) break
+                        Thread.sleep(100)
+                    } while (System.currentTimeMillis() < deadline)
                     assertTrue("Expanded Clock must actually draw its text: $brightPixels bright pixels", brightPixels > 2000)
                 }
             }

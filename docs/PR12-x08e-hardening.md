@@ -54,20 +54,45 @@ shorter landscape dimension, not evidence for changing the dashboard grid.
 
 `assembleDebug`, `testDebugUnitTest` and `lintDebug` passed: 133 JVM tests, zero
 failures/errors; lint has zero errors and 27 warnings.
-The final X08E instrumentation run reports 46 tests, zero failures/errors in both
-AndroidJUnitRunner and XML. Two methods return without exercising their conditional
+The final X08E instrumentation run reports 46 tests, zero failures/errors through
+direct AndroidJUnitRunner and the AGP built-in test platform. Two methods return without exercising their conditional
 scenario (absent Calculator and the opt-in real-light probe). The other 44 run their
 assertions. Real-light probes were run separately as recorded below.
 
-**Remaining validation issue:** `connectedDebugAndroidTest` exits 1 with "There were
-failing tests" despite the zero-failure report. This reproduces with a single
-`ExampleInstrumentedTest`, with configuration cache disabled, and with
-`android.experimental.androidTest.builtin_test_platform=false`. The exit-code
-artifact contains `1`; no failed test is present in the generated XML. Thus the
-Gradle connected-test gate is **not green** and the PR remains draft pending runner
-diagnosis. No ignore-failures option, dependency downgrade or report rewriting was
-used to make this appear successful.
-No emulator verification is claimed for this PR.
+The first direct full-suite run exposed one Clock screenshot assertion failure:
+immediately after `waitForIdleSync`, X08E returned a frame with zero bright pixels.
+The test now waits up to three seconds for the compositor to present the frame;
+continuous blank rendering still fails. A focused direct rerun passed, followed by
+the final direct full suite: `OK (46 tests)`, `INSTRUMENTATION_CODE: -1`, ADB exit 0.
+The direct one-test smoke run also passed: `OK (1 test)`, code -1, ADB exit 0.
+
+**AGP execution paths (9.4.1 / Gradle 9.6.0):** the default UTP path still exits 1
+with "There were failing tests" even for one `ExampleInstrumentedTest`. Its XML
+records one test, zero failures/errors; the test-engine exit-code artifact is `1`.
+With `--no-configuration-cache --stacktrace --info`, logs show APK installation,
+instrumentation and XML generation completed, followed by output/coverage collection
+and the task failure. No assertion, instrumentation process, install or uninstall
+error was reported. The exact internal UTP failure condition is unidentified; it
+occurs after the test result is generated and before the task returns. The unusual
+`28605/A0UH93770` serial is an observation, not a demonstrated cause.
+
+The existing Android 28 X08E AVD was used for one A/B smoke check. With the same
+APK, AGP/Gradle versions, default UTP path and `ExampleInstrumentedTest`, the
+emulator produced one passing test and **Gradle exit 0**. This narrows the default
+UTP failure to interaction with the physical X08E or its ADB environment, but does
+not isolate a vendor behavior or prove the serial is the cause. An attempted Gradle
+`--serial emulator-5554` selection failed before tests in AGP
+`DeviceProviderInstrumentTestTask.getFilteredDevices` with an
+`UnsupportedOperationException`; using a process-scoped `ANDROID_SERIAL` selected
+the emulator successfully. The emulator was shut down after the comparison.
+
+The actual alternate AGP built-in platform, selected with
+`-Pandroid.experimental.androidTest.builtin_test_platform=true`, returned **Gradle
+exit 0** for the one-test smoke run and for all 46 tests (XML: 46, zero failures/errors).
+This command-line option is the physical X08E Gradle validation workaround; it is
+not enabled globally. The default UTP task is still red. No failure suppression,
+report rewrite or dependency downgrade was used. See `build/pr12/gate-*.log` for
+the direct, UTP and built-in evidence.
 
 The physical suite covers retained-view Clock resizing (4×3 → 2×1 → 3×3 → 4×3),
 best-fit addition into a nearly full dashboard, long one-row sensor names with °F and
@@ -79,13 +104,13 @@ Existing device tests now avoid X08E system edge touch regions and disambiguate 
 Calendar tab from the dashboard hint. The AOSP Calculator-specific test is skipped
 when that package is absent. The opt-in real-light probe is skipped in normal runs.
 
-Gradle connected tests uninstall their APKs by default. For physical testing with
-retained app data use:
+Gradle connected tests uninstall their APKs by default. For physical X08E validation
+with retained app data use the passing built-in platform:
 
 ```powershell
 .\gradlew.bat assembleDebug testDebugUnitTest lintDebug connectedDebugAndroidTest `
-  '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true' `
-  '-Pandroid.testInstrumentationRunnerArguments.reviewScreenshots=true'
+  '-Pandroid.experimental.androidTest.builtin_test_platform=true' `
+  '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true'
 git diff --check
 ```
 
