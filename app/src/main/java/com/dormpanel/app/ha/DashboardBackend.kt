@@ -19,9 +19,12 @@ class MainHaScheduler : HaScheduler {
 class DashboardBackend(context: Context, appearance: AppearanceController, labels: CatalogLabels) : DashboardDataSource, HomeControlSource {
     private val scheduler = MainHaScheduler()
     private val http = haHttpClient()
+    val relayHttp: okhttp3.OkHttpClient get() = http
     val rest = HaRestClient(http, scheduler)
     private val preferences = HaSettingsStore(context)
     private val tokens = HaTokenStore(context)
+    val relayIdentity = HaRelayIdentityStore(context)
+    var relayStatus: String = "Waiting for Home Assistant"
     val ha = HaDashboardDataSource(scheduler, http, appearance, memory = LightControlMemory(PreferencesLightMemoryStore(context)))
     private val demo = FakeDashboardDataSource()
     private val demoHome = DemoHomeSource(demo)

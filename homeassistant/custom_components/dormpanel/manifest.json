@@ -1,0 +1,10 @@
+{
+  "domain": "dormpanel",
+  "name": "DormPanel",
+  "version": "0.1.0",
+  "config_flow": true,
+  "single_config_entry": true,
+  "dependencies": ["frontend", "http", "websocket_api"],
+  "codeowners": [],
+  "iot_class": "local_push"
+}
