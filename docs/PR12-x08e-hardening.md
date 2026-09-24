@@ -104,13 +104,13 @@ Existing device tests now avoid X08E system edge touch regions and disambiguate 
 Calendar tab from the dashboard hint. The AOSP Calculator-specific test is skipped
 when that package is absent. The opt-in real-light probe is skipped in normal runs.
 
-Gradle connected tests uninstall their APKs by default. For physical X08E validation
-with retained app data use the passing built-in platform:
+**PR17 update:** the historical `connectedDebugAndroidTest` command below is unsafe
+for routine physical X08E testing: it targets the daily-use package, and omitting
+the retain-APK property can erase that package and its data. Use the isolated
+testbed command in [PR17](PR17-x08e-physical-test-isolation.md) instead:
 
 ```powershell
-.\gradlew.bat assembleDebug testDebugUnitTest lintDebug connectedDebugAndroidTest `
-  '-Pandroid.experimental.androidTest.builtin_test_platform=true' `
-  '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true'
+.\tools\test-x08e.ps1
 git diff --check
 ```
 

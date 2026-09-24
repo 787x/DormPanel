@@ -20,12 +20,18 @@ android {
     }
 
     buildTypes {
+        create("x08eTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".testbed"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             optimization {
                 enable = false
             }
         }
     }
+    testBuildType = providers.gradleProperty("dormpanel.testBuildType").getOrElse("debug")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
