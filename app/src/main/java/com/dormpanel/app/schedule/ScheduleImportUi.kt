@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.provider.OpenableColumns
 import android.text.InputType
 import android.view.ViewGroup
@@ -13,6 +15,7 @@ import com.dormpanel.app.appearance.*
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 
 /** Local SAF adapter and preview UI. All content reads, hashing and parsing run on the worker. */
 class ScheduleImportUi(private val context: Context, private val source: ScheduleSource,
@@ -23,10 +26,82 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     private val dialogs = mutableSetOf<AlertDialog>()
     private var closed = false
     private var busy = false
+    private var receiver: TemporaryLanUploadServer? = null
+    private var receiveDialog: AlertDialog? = null
+    private var receiveTick: Runnable? = null
     private val importer = IcsScheduleImporter()
     private val themeListener: (AppearanceState) -> Unit = { state -> dialogs.forEach { theme(it, state) } }
     init { appearance.addListener(themeListener) }
     fun choose() { if (!closed && !busy && source.ready) launchPicker() }
+    fun receive() {
+        if (closed || busy || !source.ready) return
+        stopReceiving()
+        val address = TemporaryLanUploadServer.deviceAddress()
+        if (address == null) {
+            show(AlertDialog.Builder(context).setTitle("Network unavailable")
+                .setMessage("Connect DormPanel to a trusted local network, then retry receiving.")
+                .setNegativeButton("Close", null).setPositiveButton("Retry") { _, _ -> receive() }.create())
+            return
+        }
+        lateinit var started: TemporaryLanUploadServer
+        val parsed = AtomicReference<ImportPreview>()
+        val session = runCatching { TemporaryLanUploadServer.start(address,
+            { artifact -> runCatching { importer.parse(artifact) }.onSuccess(parsed::set).isSuccess },
+            { handler.post { if (!closed && receiver === started) {
+                val result = parsed.getAndSet(null)
+                stopReceiving(); if (result != null) preview(result)
+            } } }, { handler.post { if (!closed && receiver === started) {
+                stopReceiving(); message("Receive timetable", "The receive URL expired. Start a new session to retry.")
+            } } }) }.getOrElse {
+            message("Receive timetable", "Could not start a local receiver. Check the network and retry."); return
+        }
+        started = session
+        receiver = session
+        val qr = ImageView(context).apply {
+            contentDescription = "QR code for the displayed receive URL"
+            setBackgroundColor(Color.WHITE)
+            setPadding(context.dp(12), context.dp(12), context.dp(12), context.dp(12))
+        }
+        val url = context.scheduleLabel(session.url, 17f).apply { setTextIsSelectable(true); maxWidth = context.dp(490) }
+        val remaining = context.scheduleLabel("", 18f)
+        val details = context.scheduleColumn().apply {
+            addView(context.scheduleLabel("Scan with your phone, or open:", 21f))
+            addView(url); addView(remaining)
+            addView(context.scheduleLabel("Use only on a trusted local network.", 16f))
+        }
+        val row = LinearLayout(context).apply { gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(qr, LinearLayout.LayoutParams(context.dp(340), context.dp(340)))
+            addView(details, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        val dialog = show(AlertDialog.Builder(context).setTitle("Receive timetable")
+            .setView(row).setNegativeButton("Stop receiving") { _, _ -> stopReceiving() }.create())
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).minHeight = context.dp(56)
+        receiveDialog = dialog
+        dialog.setOnDismissListener { dialogs -= dialog; if (receiveDialog === dialog) stopReceiving() }
+        val tick = object : Runnable { override fun run() {
+            if (receiver !== session || closed) return
+            val seconds = ((session.expiresAt - System.currentTimeMillis()).coerceAtLeast(0) + 999) / 1000
+            remaining.text = "Expires in %02d:%02d".format(seconds / 60, seconds % 60)
+            handler.postDelayed(this, 1000)
+        } }
+        receiveTick = tick; tick.run()
+        worker.execute {
+            val bitmap = runCatching { qrBitmap(session.url) }.getOrNull()
+            handler.post { if (!closed && receiver === session && bitmap != null) qr.setImageBitmap(bitmap) }
+        }
+    }
+    private fun qrBitmap(payload: String): Bitmap {
+        val size = 320
+        val matrix = ReceiveQr.encode(payload, size)
+        val pixels = IntArray(size * size) { index -> if (matrix[index % size, index / size]) Color.BLACK else Color.WHITE }
+        return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.RGB_565)
+    }
+    private fun stopReceiving() {
+        val dialog = receiveDialog; receiveDialog = null
+        receiveTick?.let(handler::removeCallbacks); receiveTick = null
+        receiver?.close(); receiver = null
+        dialog?.dismiss()
+    }
     fun selected(uri: Uri) {
         if (closed || busy) return
         busy = true
@@ -261,6 +336,6 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         dialog.window?.setLayout(minOf(context.dp(1000), context.resources.displayMetrics.widthPixels - context.dp(48)), ViewGroup.LayoutParams.WRAP_CONTENT)
         theme(dialog, appearance.state); return dialog
     }
-    fun close() { closed = true; dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow()
+    fun close() { closed = true; stopReceiving(); dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow()
         webDav.settings.clearIfUnused() }
 }

@@ -25,10 +25,11 @@ class PanelPageViewFactory(
     private val schedule: com.dormpanel.app.schedule.ScheduleSource,
     private val scheduleSession: com.dormpanel.app.schedule.ScheduleSession,
     private val importTimetable: () -> Unit,
+    private val receiveTimetable: () -> Unit,
     private val manageTimetables: () -> Unit,
 ) {
     fun create(page: PanelPage, parent: ViewGroup): View {
-        if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, manageTimetables)
+        if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, receiveTimetable, manageTimetables)
         if (page == PanelPage.APPS) return com.dormpanel.app.apps.AppsPageView(inflater.context, apps, apps.icons, appearance, onReturnHome)
         if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed)
         if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, onPageGestureClaimed, backend)

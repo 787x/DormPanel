@@ -16,7 +16,8 @@ import java.time.format.TextStyle
 @SuppressLint("ViewConstructor")
 class SchedulePageView(context: Context, private val source: ScheduleSource, private val session: ScheduleSession,
     private val appearance: AppearanceController, private val returnHome: () -> Unit,
-    private val importTimetable: () -> Unit = {}, private val manageTimetables: () -> Unit = {}) : LinearLayout(context), PageInteraction, AppearanceAware {
+    private val importTimetable: () -> Unit = {}, private val receiveTimetable: () -> Unit = {},
+    private val manageTimetables: () -> Unit = {}) : LinearLayout(context), PageInteraction, AppearanceAware {
     private val editors = ScheduleEditors(context, source, appearance)
     private val display = ScheduleDisplay(this, source, ::render)
     private var visible = false
@@ -103,6 +104,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         val actions = LinearLayout(context)
         actions.addView(button("+ Add class") { editors.entry() }.apply { isEnabled = source.ready })
         actions.addView(button("Import ICS", importTimetable).apply { isEnabled = source.ready })
+        actions.addView(button("Receive from phone/computer", receiveTimetable).apply { isEnabled = source.ready })
         actions.addView(button("Sources", manageTimetables).apply { isEnabled = source.ready })
         actions.addView(button("‹") { session.weekStart = session.weekStart.minusWeeks(1); render() }.apply { contentDescription = "Previous week" })
         actions.addView(context.scheduleLabel("${session.weekStart} – ${session.weekStart.plusDays(6)}", 18f), LayoutParams(0, context.dp(52), 1f))

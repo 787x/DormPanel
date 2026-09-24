@@ -56,6 +56,7 @@ class MainActivity : AppCompatActivity() {
             schedule = dashboardViewModel.schedule,
             scheduleSession = dashboardViewModel.scheduleSession,
             importTimetable = scheduleImports::choose,
+            receiveTimetable = scheduleImports::receive,
             manageTimetables = scheduleImports::sources,
             onReturnHome = ::returnHome,
             onPageGestureClaimed = {

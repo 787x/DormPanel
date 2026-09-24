@@ -40,6 +40,7 @@ dependencies {
     }
     implementation("androidx.recyclerview:recyclerview:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.zxing:core:3.5.4")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.json:json:20240303")
     implementation(libs.androidx.activity.ktx)
