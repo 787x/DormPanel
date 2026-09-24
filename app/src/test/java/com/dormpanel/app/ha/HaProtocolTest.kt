@@ -133,6 +133,13 @@ class HaProtocolTest {
             assertTrue(f.source.homeState.entities.all { it.availability == Availability.STALE })
             f.enqueueSocket(); f.scheduler.advance(1000); f.until { f.source.connected }; f.awaitAppearanceIdle()
             assertTrue(f.source.homeState.connected)
+            assertEquals(2, f.server.requestCount) // The same client opens one replacement socket.
+            assertEquals(Availability.AVAILABLE, f.source.state.lights.getValue("ha:light.a").availability)
+            assertEquals(Availability.AVAILABLE, f.source.homeState.entities.single { it.id == "ha:light.a" }.availability)
+            assertTrue(f.source.state.weather.forecast.isNotEmpty())
+            val commandsBefore = f.services("turn_off").size
+            f.source.setLightPower("ha:light.a", false)
+            f.until { f.services("turn_off").size == commandsBefore + 1 }
         }
     }
 

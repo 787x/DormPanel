@@ -144,6 +144,14 @@ class WebDavSyncAndroidTest {
             }
             assertTrue("Due automatic sync did not complete", autoFinished)
             assertEquals("\"v1\"", server.takeRequest().getHeader("If-None-Match"))
+            lateinit var retainedController: WebDavSyncController
+            scenario.onActivity { retainedController = model(it).webDav }
+            val requestsBeforeRecreation = server.requestCount
+            scenario.recreate()
+            ready(scenario)
+            scenario.onActivity { assertSame("Activity recreation must retain the process scheduler",
+                retainedController, model(it).webDav) }
+            assertEquals(requestsBeforeRecreation, server.requestCount)
             scenario.onActivity { model(it).webDav.apply { bind(binding(id)!!.copy(autoSync = false)) } }
 
             fun sync(response: MockResponse): Result<Boolean> {
