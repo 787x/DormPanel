@@ -72,6 +72,42 @@ class HaRelayRecoveryAndroidTest {
         val listenerCount get() = readyListeners.size + eventListeners.size
     }
 
+    @Test fun apkUsesSameClaimQueueAndNeverAutoInstalls() {
+        MockWebServer().use { server ->
+            val context = instrumentation.targetContext
+            val identity = HaRelayIdentityStore(context)
+            val bytes = java.io.File(context.packageCodePath).readBytes()
+            val hash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            val id = "a".repeat(32)
+            val channel = Channel(server.url("/").toString()).apply {
+                pending += id
+                claimResponse = { JSONObject().put("transfer_id", id).put("kind", "apk")
+                    .put("size", bytes.size).put("filename", "testbed.apk").put("sha256", hash)
+                    .put("signed_path", "/api/dormpanel/transfers/$id?authSig=test") }
+            }
+            server.enqueue(MockResponse().setBody(okio.Buffer().write(bytes)))
+            val source = com.dormpanel.app.apps.AppSources.create(context)
+            val apk = com.dormpanel.app.apps.ApkInstallController(context, source)
+            val received = CountDownLatch(1)
+            lateinit var relay: HaScheduleRelayController
+            main {
+                apk.observe { if (apk.candidate != null) received.countDown() }
+                relay = HaScheduleRelayController(channel, identity, OkHttpClient(), {}, apk)
+            }
+            try {
+                await(received)
+                main {
+                    assertEquals(context.packageName, apk.candidate?.packageName)
+                    assertEquals(listOf(id), channel.claims)
+                    assertTrue(channel.acknowledgements.contains(id to "preview_ready"))
+                    assertFalse(channel.acknowledgements.any { it.second == "installed" })
+                    apk.dismiss()
+                    assertTrue(channel.acknowledgements.contains(id to "dismissed"))
+                }
+            } finally { main { relay.close(); apk.close(); source.close() } }
+        }
+    }
+
     @Test fun lostTerminalAckCallbackIsRediscoveredAfterReconnect() {
         MockWebServer().use { server ->
             val identity = HaRelayIdentityStore(instrumentation.targetContext)

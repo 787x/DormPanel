@@ -46,12 +46,16 @@ class DormPanelPanel extends HTMLElement {
     const main = this.element("main"); root.append(main);
     main.append(this.element("h1", "DormPanel"));
     if (error) main.append(this.element("p", error, "error"));
-    const send = this.section("Send timetable");
-    const fileLabel = this.element("label", "File (.ics, up to 1 MiB)");
-    const file = this.element("input"); file.type = "file"; file.accept = ".ics,text/calendar"; fileLabel.append(file); send.append(fileLabel);
+    for (const [kind, title, extension, limit, capability] of [
+      ["schedule_ics", "Send timetable", ".ics", 1048576, "schedule_relay_v1"],
+      ["apk", "Send APK", ".apk", 268435456, "apk_install_v1"]]) {
+    const send = this.section(title);
+    const fileLabel = this.element("label", `File (${extension}, up to ${kind === "apk" ? "256" : "1"} MiB)`);
+    const file = this.element("input"); file.type = "file"; file.accept = extension; fileLabel.append(file); send.append(fileLabel);
     send.append(this.element("div", "Send to"));
     const targets = this.element("div", undefined, "targets");
     for (const screen of this.state.screens) {
+      if (kind === "apk" && !(screen.capabilities || []).includes(capability)) continue;
       const label = this.element("label");
       const check = this.element("input"); check.type = "checkbox"; check.value = screen.installation_id;
       label.append(check, document.createTextNode(` ${screen.display_name} (${screen.installation_id.slice(0, 8)})`));
@@ -68,19 +72,20 @@ class DormPanelPanel extends HTMLElement {
     const uploadStatus = this.element("p", ""); send.append(submit, uploadStatus);
     submit.onclick = async () => {
       const selected = [...targets.querySelectorAll("input:checked")].map(input => input.value);
-      if (file.files.length !== 1 || !file.files[0].name.toLowerCase().endsWith(".ics") || file.files[0].size > 1048576 || file.files[0].size === 0 || !selected.length) {
-        uploadStatus.textContent = "Choose one .ics file under 1 MiB and at least one screen."; return;
+      if (file.files.length !== 1 || !file.files[0].name.toLowerCase().endsWith(extension) || file.files[0].size > limit || file.files[0].size === 0 || !selected.length) {
+        uploadStatus.textContent = `Choose one ${extension} file within the limit and at least one compatible screen.`; return;
       }
       submit.disabled = true; uploadStatus.textContent = "Uploading…";
       try {
-        const form = new FormData(); form.append("file", file.files[0]); form.append("targets", JSON.stringify(selected)); form.append("retention", retention.value);
+        const form = new FormData(); form.append("kind", kind); form.append("targets", JSON.stringify(selected)); form.append("retention", retention.value); form.append("file", file.files[0]);
         const response = await this.hass.fetchWithAuth("/api/dormpanel/upload", { method: "POST", body: form });
         if (!response.ok) throw new Error(await response.text());
-        uploadStatus.textContent = "Timetable sent."; file.value = ""; await this.refresh();
+        uploadStatus.textContent = `${title} sent.`; file.value = ""; await this.refresh();
       } catch (err) { uploadStatus.textContent = `Upload failed: ${err}`; }
       finally { submit.disabled = false; }
     };
     main.append(send);
+    }
     const screens = this.section("Registered screens");
     if (!this.state.screens.length) screens.append(this.element("p", "No DormPanel screen has registered yet."));
     for (const screen of this.state.screens) {
@@ -98,7 +103,7 @@ class DormPanelPanel extends HTMLElement {
     if (!this.state.transfers.length) transfers.append(this.element("p", "No transfers."));
     for (const transfer of this.state.transfers) {
       const row = this.element("div", undefined, "row"); const details = this.element("div");
-      details.append(this.element("strong", transfer.filename),
+      details.append(this.element("strong", `${transfer.kind || "schedule_ics"} · ${transfer.filename}`),
         this.element("div", `Expires: ${new Date(transfer.expires_at * 1000).toLocaleString()}`, "muted"));
       for (const target of transfer.targets) details.append(this.element("div", `${target.display_name}: ${target.state}`));
       const cancel = this.element("button", "Delete", "secondary");

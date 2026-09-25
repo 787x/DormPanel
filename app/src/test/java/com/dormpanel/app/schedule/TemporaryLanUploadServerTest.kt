@@ -115,7 +115,8 @@ class TemporaryLanUploadServerTest {
                     if (matrix[index % width, index / width]) 0 else 255.toByte()
                 }
             }
-            assertTrue(QRCodeReader().decode(BinaryBitmap(HybridBinarizer(source))).text == server.url)
+            assertTrue(QRCodeReader().decode(BinaryBitmap(HybridBinarizer(source)),
+                mapOf(com.google.zxing.DecodeHintType.PURE_BARCODE to true)).text == server.url)
         } finally { server.close() }
     }
 

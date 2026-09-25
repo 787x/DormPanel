@@ -115,6 +115,14 @@ class WebDavClient(private val http: OkHttpClient = OkHttpClient.Builder().follo
             return WebDavDownload(artifact, response.header("ETag"), response.header("Last-Modified"))
         }
     }
+    /** APK bytes are handed to the shared file sink while the response is open. */
+    fun <T> downloadStream(account: WebDavAccount, remote: String, consume: (java.io.InputStream, Long) -> T): T {
+        execute(account, url(remote), "GET").use { response ->
+            status(response, 200)
+            val body = response.body ?: throw WebDavException("Empty remote file.")
+            return body.byteStream().use { consume(it, body.contentLength()) }
+        }
+    }
     fun filename(url: HttpUrl): String = url.encodedPathSegments.lastOrNull()?.let {
         runCatching { URLDecoder.decode(it.replace("+", "%2B"), "UTF-8") }.getOrDefault(it)
     }?.ifBlank { "timetable.ics" } ?: "timetable.ics"

@@ -251,43 +251,10 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     }
     private fun webDavSetup(targetId: String? = null) {
         if (closed) return
-        val (savedUrl, savedUser) = webDav.settings.publicAccount()
-        val fields = context.scheduleColumn().apply { setPadding(context.dp(16), 0, context.dp(16), 0) }
-        fun field(label: String, value: String, secret: Boolean = false) = EditText(context).apply {
-            hint = label; contentDescription = label; setSingleLine(); setText(value)
-            if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            fields.addView(this)
-        }
-        val url = field("WebDAV server URL", savedUrl)
-        val user = field("Username", savedUser)
-        val password = field("Password (leave blank to keep saved password)", "", true)
-        val warning = context.scheduleLabel("HTTP sends username and password without encryption. Use HTTPS when available.", 16f)
-        fields.addView(warning)
-        val status = context.scheduleLabel("", 16f); fields.addView(status)
-        val dialog = show(AlertDialog.Builder(context).setTitle("WebDAV timetable")
-            .setView(fields).setNegativeButton("Close", null).create())
-        fun account(): WebDavAccount? {
-            val saved = webDav.settings.account()
-            val enteredUrl = url.text.toString().trim()
-            val enteredUser = user.text.toString()
-            val pass = password.text.toString().ifBlank {
-                if (saved?.baseUrl == enteredUrl && saved.username == enteredUser) saved.password else ""
-            }
-            if (pass.isEmpty()) { status.text = "Enter a password for this WebDAV account."; return null }
-            val candidate = WebDavAccount(enteredUrl, enteredUser, pass)
-            return runCatching { WebDavClient().url(candidate.baseUrl); candidate }.onFailure { status.text = errorText(it) }.getOrNull()
-        }
-        fields.addView(context.scheduleButton("Test connection") {
-            val candidate = account() ?: return@scheduleButton
-            status.text = "Testing…"
-            webDav.test(candidate) { result -> if (!closed) status.text = result.fold({ "Connection successful." }, { errorText(it) }) }
-        })
-        fields.addView(context.scheduleButton("Browse") {
-            val candidate = account() ?: return@scheduleButton
-            runCatching { webDav.settings.saveAccount(candidate) }.onFailure { status.text = errorText(it) }.onSuccess {
-                dialog.dismiss(); browse(candidate, candidate.baseUrl, targetId)
-            }
-        })
+        val account = webDav.settings.account()
+        if (account == null) {
+            message("WebDAV account needed", "Configure the shared WebDAV account in Control Center, then return to select an ICS file or folder.")
+        } else browse(account, account.baseUrl, targetId)
     }
     private fun browse(account: WebDavAccount, folder: String, targetId: String?) {
         if (closed) return
@@ -342,6 +309,5 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         dialog.matchActivityBrightness()
         theme(dialog, appearance.state); return dialog
     }
-    fun close() { closed = true; stopReceiving(); dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow()
-        webDav.settings.clearIfUnused() }
+    fun close() { closed = true; stopReceiving(); dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow() }
 }

@@ -10,6 +10,26 @@ import java.util.concurrent.TimeUnit
 
 class WebDavClientTest {
     private val client = WebDavClient()
+    @Test fun apkDownloadStreamsPastIcsLimitAndStaysOnOrigin() {
+        MockWebServer().use { server ->
+            val payload = ByteArray(2 * 1024 * 1024) { (it % 113).toByte() }
+            server.enqueue(MockResponse().setResponseCode(200).setBody(okio.Buffer().write(payload)))
+            val account = WebDavAccount(server.url("/dav/").toString(), "user", "secret")
+            val received = client.downloadStream(account, server.url("/dav/demo.apk").toString()) { input, length ->
+                assertEquals(payload.size.toLong(), length)
+                input.readBytes()
+            }
+            assertArrayEquals(payload, received)
+            assertEquals("Basic dXNlcjpzZWNyZXQ=", server.takeRequest().getHeader("Authorization"))
+        }
+        MockWebServer().use { origin -> MockWebServer().use { other ->
+            val account = WebDavAccount(origin.url("/dav/").toString(), "u", "p")
+            assertThrows(WebDavException::class.java) {
+                client.downloadStream(account, other.url("/dav/demo.apk").toString()) { input, _ -> input.read() }
+            }
+            assertEquals(0, other.requestCount)
+        } }
+    }
     private fun xml(vararg entries: String) = "<d:multistatus xmlns:d=\"DAV:\">${entries.joinToString("")}</d:multistatus>"
     private fun entry(href: String, name: String, folder: Boolean = false, modified: String? = null) =
         "<d:response><d:href>$href</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop>" +

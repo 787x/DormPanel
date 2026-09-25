@@ -56,23 +56,18 @@ class WebDavSyncAndroidTest {
         MockWebServer().use { server -> ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             ready(scenario)
             val raw = instrumentation.context.assets.open("wakeup.ics").use { it.readBytes().toString(Charsets.UTF_8) }
-            server.enqueue(MockResponse().setResponseCode(207).setBody(listing())) // Depth 0 connection test
             server.enqueue(MockResponse().setResponseCode(207).setBody(listing("current.ics" to "Thu, 24 Sep 2026 09:00:00 GMT")))
             server.enqueue(MockResponse().setBody(raw).addHeader("ETag", "\"v1\""))
-            lateinit var ui: ScheduleImportUi
+            val serverUrl = server.url("/dav/").toString()
+            var ui: ScheduleImportUi? = null
             try {
                 scenario.onActivity { activity ->
                     val vm = model(activity)
+                    vm.webDav.settings.saveAccount(WebDavAccount(serverUrl, "user", "secret"))
                     ui = ScheduleImportUi(activity, vm.schedule, vm.appearance, vm.webDav) {}
-                    ui.sources()
+                    ui!!.sources()
                 }
                 onView(withText("Add WebDAV timetable")).perform(click())
-                onView(withHint("WebDAV server URL")).perform(replaceText(server.url("/dav/").toString()))
-                onView(withHint("Username")).perform(replaceText("user"))
-                onView(withHint(containsString("Password"))).perform(replaceText("secret"))
-                onView(withText("Test connection")).perform(click())
-                waitText("Connection successful.")
-                onView(withText("Browse")).perform(click())
                 waitText("Select a folder or ICS file.")
                 onView(withText(containsString("current.ics"))).perform(click())
                 waitText("Timetable import preview")
@@ -94,7 +89,7 @@ class WebDavSyncAndroidTest {
                     assertEquals("webdav", vm.schedule.state.sources.single().kind)
                     assertEquals(WebDavMode.FILE, vm.webDav.binding(vm.schedule.state.sources.single().id)?.mode)
                 }
-            } finally { scenario.onActivity { ui.close() } }
+            } finally { scenario.onActivity { ui?.close() } }
         } }
     }
 
@@ -205,12 +200,12 @@ class WebDavSyncAndroidTest {
                 val vm = model(it)
                 assertTrue(vm.schedule.state.sources.isEmpty())
                 assertNull(vm.webDav.binding(id))
-                assertNull(vm.webDav.settings.account())
+                assertEquals("secret", vm.webDav.settings.account()?.password)
                 vm.webDav.settings.saveAccount(account)
                 vm.webDav.bind(WebDavBinding("orphan", WebDavMode.FILE, remote))
                 vm.schedule.refresh()
                 assertNull(vm.webDav.binding("orphan"))
-                assertNull(vm.webDav.settings.account())
+                assertEquals("secret", vm.webDav.settings.account()?.password)
             }
         } }
     }

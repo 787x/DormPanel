@@ -13,6 +13,13 @@ import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
+import android.widget.EditText
+import android.text.InputType
+import androidx.appcompat.app.AlertDialog
+import com.dormpanel.app.schedule.WebDavSettings
+import com.dormpanel.app.schedule.WebDavSyncController
+import com.dormpanel.app.schedule.WebDavClient
+import com.dormpanel.app.schedule.WebDavAccount
 import com.dormpanel.app.R
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.AppearanceState
@@ -30,6 +37,8 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     private val device: DeviceControlController, private val onGestureClaimed: () -> Unit,
     private val backend: DashboardBackend? = null,
     private val startupPolicy: StartupPolicy,
+    private val webDavSettings: WebDavSettings? = null,
+    private val webDavSync: WebDavSyncController? = null,
 ) : LinearLayout(context), PageInteraction {
     private val density = resources.displayMetrics.density
     private fun dp(value: Int) = (value * density).roundToInt()
@@ -50,6 +59,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     private val keepAwake = CheckBox(context).apply { text = "Keep screen awake"; textSize = 20f; minimumHeight = dp(52) }
     private val mute = Button(context).apply { minimumHeight = dp(52); textSize = 18f }
     private val haStatus = TextView(context).apply { textSize = 16f }
+    private val webDavStatus = TextView(context).apply { textSize = 18f }
     private val startAfterBoot = CheckBox(context).apply {
         id = R.id.start_after_boot
         setText(R.string.start_after_boot)
@@ -155,6 +165,13 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
             minimumHeight = dp(52)
             setOnClickListener { onGestureClaimed(); com.dormpanel.app.ha.HaSettingsDialog(context, backend).show() }
         })
+        if (webDavSettings != null) {
+            right.addView(section("WebDAV"))
+            right.addView(webDavStatus)
+            right.addView(Button(context).apply { text = "WebDAV settings"; minimumHeight = dp(48)
+                setOnClickListener { onGestureClaimed(); showWebDavSettings() } })
+            updateWebDavStatus()
+        }
         right.addView(section(context.getString(R.string.system_section)))
         right.addView(startAfterBoot)
         right.addView(Button(context).apply {
@@ -221,4 +238,69 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         return observe
     }
     override fun handleBack() = false
+
+    private fun updateWebDavStatus() {
+        webDavStatus.text = if (webDavSettings?.account() == null) "Not configured" else "Configured"
+    }
+
+    private fun showWebDavSettings() {
+        val settings = webDavSettings ?: return
+        val sync = webDavSync ?: return
+        val (oldUrl, oldUser) = settings.publicAccount()
+        val fields = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(20), 0, dp(20), 0) }
+        fun field(hintText: String, value: String, secret: Boolean = false) = EditText(context).apply {
+            hint = hintText; setSingleLine(); setText(value)
+            if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            fields.addView(this)
+        }
+        val url = field("WebDAV server URL", oldUrl)
+        val user = field("Username", oldUser)
+        val password = field("Password (blank keeps saved password)", "", true)
+        val status = TextView(context).apply { textSize = 16f; text = "Use HTTPS when possible. Saved passwords are never displayed." }
+        fields.addView(status)
+        fun candidate(): WebDavAccount? {
+            val entered = url.text.toString().trim()
+            val username = user.text.toString()
+            val saved = settings.account()
+            val secret = password.text.toString().ifBlank {
+                if (saved?.baseUrl == entered && saved.username == username) saved.password else ""
+            }
+            if (secret.isBlank()) { status.text = "Enter the account password."; return null }
+            return runCatching { WebDavClient().url(entered); WebDavAccount(entered, username, secret) }
+                .onFailure { status.text = it.message }.getOrNull()
+        }
+        val test = Button(context).apply { text = "Test connection"; setOnClickListener {
+            val account = candidate() ?: return@setOnClickListener
+            status.text = "Testing…"
+            sync.test(account) { result -> status.text = result.fold({ "Connection successful." }, { it.message ?: "Connection failed." }) }
+        } }
+        fields.addView(test)
+        val dialog = AlertDialog.Builder(context).setTitle("Shared WebDAV account").setView(fields)
+            .setNegativeButton("Close", null).setNeutralButton("Clear credentials", null)
+            .setPositiveButton("Save", null).create()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val account = candidate() ?: return@setOnClickListener
+            val old = settings.account()
+            fun save() { settings.saveAccount(account); updateWebDavStatus(); dialog.dismiss() }
+            val client = WebDavClient()
+            val previous = old?.let { client.url(it.baseUrl) }
+            val next = client.url(account.baseUrl)
+            val originChanged = previous != null && (previous.scheme != next.scheme || previous.host != next.host || previous.port != next.port)
+            val bindings = settings.bindings()
+            if (originChanged && bindings.isNotEmpty()) {
+                AlertDialog.Builder(context).setTitle("WebDAV server changed")
+                    .setMessage("${bindings.size} timetable bindings point to the previous server. Remove those bindings? Imported timetable content stays on this screen; choose a new remote ICS source later.")
+                    .setNegativeButton("Keep current account", null)
+                    .setPositiveButton("Remove bindings and save") { _, _ -> sync.clearBindingsForAccountChange(); save() }.show()
+            } else save()
+        }
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            AlertDialog.Builder(context).setTitle("Clear WebDAV credentials?")
+                .setMessage("Saved account credentials will be removed. Imported timetables stay intact.")
+                .setNegativeButton("Cancel", null).setPositiveButton("Clear") { _, _ ->
+                    settings.clearAccount(); updateWebDavStatus(); dialog.dismiss()
+                }.show()
+        }
+    }
 }

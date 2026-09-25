@@ -9,6 +9,9 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
+import com.dormpanel.app.apps.ApkInstallController
+import com.dormpanel.app.apps.ApkMetadata
+import com.dormpanel.app.apps.ApkStaging
 
 data class RelayPreview(val transferId: String, val preview: ImportPreview)
 class HaRelayIntegrityException(message: String) : IOException(message)
@@ -50,11 +53,29 @@ class HaRelayDownloader(http: OkHttpClient) {
             return artifact
         }
     }
+    fun downloadApk(origin: String, claim: JSONObject, apk: ApkInstallController): ApkMetadata {
+        val transferId = claim.getString("transfer_id")
+        require(Regex("[0-9a-f]{32}").matches(transferId))
+        val size = claim.getLong("size")
+        require(size in 1..ApkStaging.LIMIT)
+        val request = Request.Builder().url(url(origin, claim.getString("signed_path"))).get().build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("HA download HTTP ${response.code}")
+            val body = response.body ?: throw IOException("Empty HA response")
+            if (body.contentLength() > ApkStaging.LIMIT) throw HaRelayIntegrityException("HA APK exceeds limit")
+            val metadata = body.byteStream().use { apk.stageIncoming(it, claim.getString("filename"), "Home Assistant", size) }
+            if (metadata.staged.size != size || !metadata.staged.sha256.equals(claim.getString("sha256"), true)) {
+                metadata.staged.file.delete()
+                throw HaRelayIntegrityException("HA APK SHA-256 mismatch")
+            }
+            return metadata
+        }
+    }
 }
 
 /** Main-thread state machine; network and parsing run on one bounded worker. */
 class HaScheduleRelayController(private val channel: HaRelayChannel, private val identity: HaRelayIdentityStore,
-    http: OkHttpClient, private val status: (String) -> Unit = {}) {
+    http: OkHttpClient, private val status: (String) -> Unit = {}, private val apk: ApkInstallController? = null) {
     private val downloader = HaRelayDownloader(http)
     private val importer = IcsScheduleImporter()
     private val worker = Executors.newSingleThreadExecutor()
@@ -67,6 +88,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
     private var inFlightId: String? = null
     private var connectionGeneration = 0
     private var active: RelayPreview? = null
+    private var activeApkId: String? = null
     private var presenter: ((RelayPreview) -> Unit)? = null
     private var closed = false
     private val readyListener: () -> Unit = { register() }
@@ -95,7 +117,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         terminalAwaitingAck.clear()
         inFlightId?.let { queued.addFirst(it); inFlightId = null; downloading = false }
         val request = message("register").put("display_name", identity.displayName).put("app_version", "1.0")
-            .put("capabilities", org.json.JSONArray().put("schedule_relay_v1"))
+            .put("capabilities", org.json.JSONArray().put("schedule_relay_v1").apply { if (apk != null) put("apk_install_v1") })
         if (!channel.request(request) { result ->
             if (closed || generation != connectionGeneration) return@request
             if (!result.optBoolean("success")) {
@@ -120,7 +142,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
     }
 
     private fun next() {
-        if (closed || active != null || downloading || queued.isEmpty() || !channel.ready) return
+        if (closed || active != null || activeApkId != null || downloading || queued.isEmpty() || !channel.ready) return
         val id = queued.removeFirst()
         downloading = true
         inFlightId = id
@@ -130,6 +152,28 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
             if (!claim.optBoolean("success")) { failed(id); return@request }
             val payload = claim.optJSONObject("result") ?: run { failed(id); return@request }
             val origin = channel.origin
+            val kind = payload.optString("kind", "schedule_ics")
+            val apkController = apk
+            if (kind == "apk" && apkController != null) {
+                worker.execute {
+                    val staged = runCatching { downloader.downloadApk(origin, payload, apkController) }
+                    handler.post {
+                        if (closed || generation != connectionGeneration) { staged.getOrNull()?.staged?.file?.delete(); return@post }
+                        downloading = false; inFlightId = null
+                        staged.onSuccess { metadata ->
+                            activeApkId = id; retries.remove(id); acknowledge(id, "preview_ready")
+                            apkController.acceptIncoming(metadata) { outcome -> resolve(id, outcome) }
+                        }.onFailure { error ->
+                            if (error is com.dormpanel.app.apps.ApkRejected || error is HaRelayIntegrityException)
+                                acknowledge(id, "rejected_invalid")
+                            status("APK relay failed: ${error.message ?: "retry after reconnect"}")
+                            known.remove(id); next()
+                        }
+                    }
+                }
+                return@request
+            }
+            if (kind != "schedule_ics") { acknowledge(id, "rejected_invalid"); failed(id); return@request }
             worker.execute {
                 val artifact = runCatching { downloader.download(origin, payload) }
                 val parsed = artifact.mapCatching(importer::parse)
@@ -178,7 +222,10 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
     }
     fun detach() { presenter = null }
     fun resolve(transferId: String, outcome: String) {
-        if (active?.transferId != transferId || outcome !in setOf("imported", "dismissed")) return
+        val scheduleDelivery = active?.transferId == transferId
+        val apkDelivery = activeApkId == transferId
+        if ((!scheduleDelivery && !apkDelivery) || outcome !in
+            (if (apkDelivery) setOf("installed", "dismissed", "rejected_invalid", "install_failed") else setOf("imported", "dismissed"))) return
         // Keep the ID known while acknowledgement is uncertain. HA remains the
         // source of truth and will offer it again through list_pending on reconnect.
         terminalAwaitingAck += transferId
@@ -191,6 +238,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         }
         if (!accepted) { terminalAwaitingAck.remove(transferId); known.remove(transferId) }
         active = null
+        activeApkId = null
         retries.remove(transferId)
         handler.post { next() }
     }

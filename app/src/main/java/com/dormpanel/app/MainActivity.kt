@@ -29,6 +29,10 @@ class MainActivity : AppCompatActivity() {
     private val router = NavigationRouter.default()
     private val dashboardViewModel: DashboardViewModel by viewModels()
     private lateinit var scheduleImports: com.dormpanel.app.schedule.ScheduleImportUi
+    private lateinit var apkImports: com.dormpanel.app.apps.ApkImportUi
+    private val apkPicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) apkImports.selected(uri)
+    }
     private val timetablePicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scheduleImports.selected(uri)
     }
@@ -80,6 +84,10 @@ class MainActivity : AppCompatActivity() {
             // Generic MIME allows .ics documents from providers that do not report text/calendar.
             timetablePicker.launch(arrayOf("text/calendar", "*/*"))
         }
+        apkImports = com.dormpanel.app.apps.ApkImportUi(this, dashboardViewModel.apkInstall,
+            dashboardViewModel.appearance, dashboardViewModel.webDav.settings) {
+            apkPicker.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*"))
+        }
         dashboardViewModel.haRelay.attach { delivery ->
             scheduleImports.relayPreview(delivery.preview) { outcome ->
                 dashboardViewModel.haRelay.resolve(delivery.transferId, outcome)
@@ -100,6 +108,9 @@ class MainActivity : AppCompatActivity() {
             importTimetable = scheduleImports::choose,
             receiveTimetable = scheduleImports::receive,
             manageTimetables = scheduleImports::sources,
+            installApk = apkImports::open,
+            webDavSettings = dashboardViewModel.webDav.settings,
+            webDavSync = dashboardViewModel.webDav,
             onReturnHome = ::returnHome,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
@@ -144,6 +155,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         dashboardViewModel.apps.refresh()
+        if (::apkImports.isInitialized) apkImports.refreshPermission()
         dashboardViewModel.schedule.refresh()
         dashboardViewModel.deviceControls.refreshAudio()
         dashboardViewModel.deviceControls.refreshSystemBrightness()
@@ -171,6 +183,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         dashboardViewModel.haRelay.detach()
         scheduleImports.close()
+        apkImports.close()
         dashboardViewModel.appearance.removeListener(appearanceListener)
         dashboardViewModel.deviceControls.removeListener(deviceListener)
         for (index in 0 until pageContainer.childCount) {

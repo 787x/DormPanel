@@ -42,7 +42,7 @@ async def register(hass, connection, msg):
 def list_pending(hass, connection, msg):
     try:
         connection.send_result(msg["id"], relay(hass).pending(msg["installation_id"], msg["device_secret"]))
-    except PermissionError as error:
+    except (PermissionError, ValueError) as error:
         fail(connection, msg, error)
 
 
@@ -53,7 +53,7 @@ def claim_transfer(hass, connection, msg):
         item, claim_id = relay(hass).claim(msg["installation_id"], msg["device_secret"], msg["transfer_id"])
         path = f"/api/dormpanel/transfers/{item['transfer_id']}/{claim_id}"
         connection.send_result(msg["id"], {"transfer_id": item["transfer_id"], "filename": item["filename"],
-            "size": item["size"], "sha256": item["sha256"],
+            "size": item["size"], "sha256": item["sha256"], "kind": item.get("kind", "schedule_ics"),
             "signed_path": async_sign_path(hass, path, timedelta(seconds=60)), "expires_in": 60})
     except (ValueError, PermissionError) as error:
         fail(connection, msg, error)
@@ -68,7 +68,7 @@ async def ack_transfer(hass, connection, msg):
         await relay(hass).acknowledge(msg["installation_id"], msg["device_secret"],
                                       msg["transfer_id"], msg["outcome"])
         connection.send_result(msg["id"], {})
-    except PermissionError as error:
+    except (PermissionError, ValueError) as error:
         fail(connection, msg, error)
 
 

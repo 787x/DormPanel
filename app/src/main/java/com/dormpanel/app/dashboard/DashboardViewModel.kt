@@ -26,10 +26,11 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         application.getString(R.string.catalog_dimmable), application.getString(R.string.catalog_temperature),
     ))
     val apps = com.dormpanel.app.apps.AppSources.create(application)
+    val apkInstall = com.dormpanel.app.apps.ApkInstallController(application, apps)
     val productivity = ProductivitySource(ProductivityStores.create(application), AndroidProductivityClock)
     val schedule = ScheduleSource(ScheduleStores.create(application))
     val haRelay = HaScheduleRelayController(dataSource.ha.relayChannel, dataSource.relayIdentity,
-        dataSource.relayHttp) { dataSource.relayStatus = it }
+        dataSource.relayHttp, { dataSource.relayStatus = it }, apkInstall)
     val webDav = WebDavSyncController(application, schedule)
     val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
@@ -55,6 +56,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     override fun onCleared() {
         webDav.close()
+        apkInstall.close()
         haRelay.close()
         schedule.close()
         productivity.close()

@@ -46,6 +46,10 @@ class WebDavSettings(context: Context) {
         secrets.edit().putString("payload", cipher.encrypt(account.password)).apply()
         prefs.edit().putString("url", account.baseUrl.trim()).putString("username", account.username).apply()
     }
+    fun clearAccount() {
+        prefs.edit().remove("url").remove("username").apply()
+        secrets.edit().clear().apply()
+    }
     fun bindings(): List<WebDavBinding> = runCatching {
         val array = JSONArray(prefs.getString("bindings", "[]"))
         (0 until array.length()).map { index ->
@@ -66,12 +70,8 @@ class WebDavSettings(context: Context) {
             .put("lastSuccess", item.lastSuccess).put("lastAttempt", item.lastAttempt).put("lastError", item.lastError)) }
         prefs.edit().putString("bindings", array.toString()).apply()
     }
-    fun clearIfUnused() {
-        if (bindings().isNotEmpty()) return
-        prefs.edit().remove("url").remove("username").apply()
-        secrets.edit().clear().apply()
-        runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias) }
-    }
+    // Account lifetime is independent of timetable bindings. Preserve the existing
+    // preference names and Keystore alias so upgrades retain saved credentials.
 }
 
 /** Process-owned scheduler; source commits and callbacks return through the main thread. */
@@ -86,7 +86,7 @@ class WebDavSyncController(context: Context, private val source: ScheduleSource,
     private val listeners = linkedSetOf<() -> Unit>()
     private val sourceListener: () -> Unit = { if (source.ready) {
         cleanup()
-        if (!started) { started = true; settings.clearIfUnused() }
+        if (!started) { started = true }
         schedule()
     } }
     private val tick = Runnable { if (!closed) { due(); schedule() } }
@@ -100,7 +100,12 @@ class WebDavSyncController(context: Context, private val source: ScheduleSource,
     fun remove(id: String) {
         if (closed) return
         settings.saveBindings(settings.bindings().filterNot { it.sourceId == id })
-        settings.clearIfUnused(); notifyChanged(); schedule()
+        notifyChanged(); schedule()
+    }
+    fun clearBindingsForAccountChange() {
+        if (closed) return
+        settings.saveBindings(emptyList())
+        notifyChanged(); schedule()
     }
     private fun update(value: WebDavBinding) {
         settings.saveBindings(settings.bindings().filterNot { it.sourceId == value.sourceId } + value)
@@ -110,7 +115,7 @@ class WebDavSyncController(context: Context, private val source: ScheduleSource,
         val valid = source.state.sources.map { it.id }.toSet()
         val old = settings.bindings()
         if (old.any { it.sourceId !in valid }) {
-            settings.saveBindings(old.filter { it.sourceId in valid }); settings.clearIfUnused(); notifyChanged()
+            settings.saveBindings(old.filter { it.sourceId in valid }); notifyChanged()
         }
     }
     private fun due() {

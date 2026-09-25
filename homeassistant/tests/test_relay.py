@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import hashlib
 import importlib.util
 from pathlib import Path
 import sys
@@ -135,6 +136,43 @@ class RelayTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(orphan.exists())
         self.assertEqual([], restarted.pending("screen-one", "first-secret"))
         self.assertNotIn(identifier, restarted.transfers)
+
+    async def test_apk_kind_capability_and_terminal_outcomes(self):
+        await self.relay.register("screen-one", "first-secret", "Bedside", "1.0",
+                                  ["schedule_relay_v1", "apk_install_v1"], True)
+        temporary = self.relay.directory / ("e" * 32 + ".tmp")
+        body = b"APK fixture bytes"
+        temporary.write_bytes(body)
+        with self.assertRaises(ValueError):
+            await self.relay.create_from_file("demo.apk", temporary, len(body), hashlib.sha256(body).hexdigest(),
+                                              ["screen-two"], 3600, "apk")
+        item = await self.relay.create_from_file("demo.apk", temporary, len(body), hashlib.sha256(body).hexdigest(),
+                                                 ["screen-one"], 3600, "apk")
+        self.assertEqual("apk", item["kind"])
+        restarted = relay_module.Relay(self.hass)
+        await restarted.start()
+        claimed, claim_id = restarted.claim("screen-one", "first-secret", item["transfer_id"])
+        self.assertEqual("apk", claimed["kind"])
+        self.assertEqual(body, restarted.downloadable(item["transfer_id"], claim_id)[1].read_bytes())
+        with self.assertRaises(ValueError):
+            await restarted.acknowledge("screen-one", "first-secret", item["transfer_id"], "imported")
+        await restarted.acknowledge("screen-one", "first-secret", item["transfer_id"], "preview_ready")
+        self.assertEqual(1, len(restarted.pending("screen-one", "first-secret")))
+        await restarted.acknowledge("screen-one", "first-secret", item["transfer_id"], "installed")
+        self.assertFalse(restarted._path(item["transfer_id"]).exists())
+
+    async def test_apk_limit_does_not_expand_schedule_limit(self):
+        await self.relay.register("screen-one", "first-secret", "Bedside", "1.0",
+                                  ["schedule_relay_v1", "apk_install_v1"], True)
+        temporary = self.relay.directory / ("d" * 32 + ".tmp")
+        temporary.write_bytes(b"x")
+        with self.assertRaises(ValueError):
+            await self.relay.create_from_file("large.ics", temporary, 1024 * 1024 + 1, "a" * 64,
+                                              ["screen-one"], 3600, "schedule_ics")
+        self.assertTrue(temporary.exists())
+        item = await self.relay.create_from_file("large.apk", temporary, 1024 * 1024 + 1, "a" * 64,
+                                                 ["screen-one"], 3600, "apk")
+        self.assertEqual("apk", item["kind"])
 
 
 if __name__ == "__main__":

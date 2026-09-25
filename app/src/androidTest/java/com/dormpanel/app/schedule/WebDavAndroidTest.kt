@@ -16,7 +16,7 @@ class WebDavAndroidTest {
         context.getSharedPreferences("webdav_protocol_test_credentials", 0).edit().clear().commit()
     }
     @After fun restore() {
-        WebDavSettings(context).clearIfUnused()
+        WebDavSettings(context).clearAccount()
         WebDavSettings.overrideNamespace = null
     }
     @Test fun keystoreEncryptedPasswordAndRestartRecovery() {
@@ -29,7 +29,9 @@ class WebDavAndroidTest {
         val binding = WebDavBinding("source", WebDavMode.FILE, "https://example.test/dav/timetable.ics", true)
         settings.saveBindings(listOf(binding))
         assertEquals(binding, WebDavSettings(context).bindings().single())
-        settings.saveBindings(emptyList()); settings.clearIfUnused()
+        settings.saveBindings(emptyList())
+        assertEquals("private-password", WebDavSettings(context).account()?.password)
+        settings.clearAccount()
         assertNull(WebDavSettings(context).account())
     }
     @Test fun androidXmlParserAndAuthenticatedPropfind() {

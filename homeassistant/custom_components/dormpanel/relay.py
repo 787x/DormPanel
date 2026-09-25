@@ -15,14 +15,15 @@ import time
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_track_point_in_utc_time
 
-from .const import DOMAIN, EVENT_AVAILABLE, EVENT_CHANGED, MAX_BYTES, RETENTIONS, TERMINAL
+from .const import DOMAIN, EVENT_AVAILABLE, EVENT_CHANGED, MAX_BYTES, MAX_APK_BYTES, RETENTIONS, TERMINAL
 
 
-def safe_filename(value: str) -> str:
+def safe_filename(value: str, kind: str = "schedule_ics") -> str:
     name = value.replace("\\", "/").split("/")[-1]
     name = re.sub(r"[^\w.() -]", "_", name, flags=re.UNICODE).strip(" .")[:120]
-    if not name.lower().endswith(".ics") or name.lower() == ".ics":
-        raise ValueError("Choose one .ics file")
+    extension = ".apk" if kind == "apk" else ".ics"
+    if not name.lower().endswith(extension) or name.lower() == extension:
+        raise ValueError(f"Choose one {extension} file")
     return name
 
 
@@ -128,17 +129,33 @@ class Relay:
     async def create(self, filename, body, target_ids, retention):
         if retention not in RETENTIONS or not 0 < len(body) <= MAX_BYTES:
             raise ValueError("Invalid size or retention")
-        filename = safe_filename(filename)
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = self.directory / f"{secrets.token_hex(16)}.tmp"
+        try:
+            await self.hass.async_add_executor_job(self._write_atomic, temporary.with_suffix(""), body)
+            temporary.with_suffix("").rename(temporary)
+            return await self.create_from_file(filename, temporary, len(body), hashlib.sha256(body).hexdigest(),
+                                               target_ids, retention, "schedule_ics")
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    async def create_from_file(self, filename, temporary, size, sha256, target_ids, retention, kind):
+        if kind not in ("schedule_ics", "apk") or retention not in RETENTIONS or \
+                not 0 < size <= (MAX_APK_BYTES if kind == "apk" else MAX_BYTES):
+            raise ValueError("Invalid size, kind or retention")
+        filename = safe_filename(filename, kind)
         targets = list(dict.fromkeys(target_ids))
         async with self.lock:
-            if not targets or len(targets) > 100 or any(target not in self.screens for target in targets):
+            capability = "apk_install_v1" if kind == "apk" else "schedule_relay_v1"
+            if not targets or len(targets) > 100 or any(target not in self.screens or
+                    (kind == "apk" and capability not in self.screens[target].get("capabilities", [])) for target in targets):
                 raise ValueError("Choose registered screens")
             transfer_id = secrets.token_hex(16)
             path = self._path(transfer_id)
-            await self.hass.async_add_executor_job(self._write_atomic, path, body)
+            await self.hass.async_add_executor_job(temporary.replace, path)
             now = int(time.time())
-            item = {"transfer_id": transfer_id, "filename": filename, "sha256": hashlib.sha256(body).hexdigest(),
-                    "size": len(body), "created_at": now, "expires_at": now + retention,
+            item = {"transfer_id": transfer_id, "kind": kind, "filename": filename, "sha256": sha256,
+                    "size": size, "created_at": now, "expires_at": now + retention,
                     "targets": {target: "pending" for target in targets}, "file_available": True}
             self.transfers[transfer_id] = item
             try:
@@ -194,6 +211,11 @@ class Relay:
             if not item or item["expires_at"] <= time.time() or \
                     item["targets"].get(installation_id) is None:
                 raise PermissionError("Transfer unavailable")
+            kind = item.get("kind", "schedule_ics")
+            allowed = {"preview_ready", "imported", "dismissed", "rejected_invalid"} if kind == "schedule_ics" else \
+                {"preview_ready", "installed", "dismissed", "rejected_invalid", "install_failed"}
+            if outcome not in allowed:
+                raise ValueError("Outcome does not match transfer kind")
             if item["targets"][installation_id] in TERMINAL:
                 return
             item["targets"][installation_id] = outcome

@@ -14,7 +14,7 @@ import com.dormpanel.app.ui.PageInteraction
 @SuppressLint("ViewConstructor")
 class AppsPageView(context: Context, private val source: InstalledAppSource,
     private val icons: AppIcons, private val appearance: AppearanceController,
-    onReturnHome: () -> Unit,
+    onReturnHome: () -> Unit, onInstallApk: () -> Unit = {},
 ) : LinearLayout(context), PageInteraction, AppearanceAware {
     private val heading = TextView(context).apply { setText(R.string.apps_title); textSize = 30f }
     private val hint = TextView(context).apply { setText(R.string.apps_navigation); textSize = 18f }
@@ -22,10 +22,15 @@ class AppsPageView(context: Context, private val source: InstalledAppSource,
         id = R.id.apps_home; setText(R.string.apps_home); textSize = 22f; isAllCaps = false
         setOnClickListener { onReturnHome() }
     }
+    private val install = Button(context).apply {
+        text = "Install APK"; textSize = 21f; isAllCaps = false
+        setOnClickListener { onInstallApk() }
+    }
     private val header = LinearLayout(context).apply {
         id = R.id.apps_header; orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         setPadding(24.dp, 0, 24.dp, 0)
         addView(LinearLayout(context).apply { orientation = VERTICAL; addView(heading); addView(hint) }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        addView(install, LayoutParams(170.dp, 56.dp))
         addView(home, LayoutParams(144.dp, 56.dp))
     }
     private val adapter = AppsAdapter()
@@ -52,6 +57,8 @@ class AppsPageView(context: Context, private val source: InstalledAppSource,
         setBackgroundColor(palette.background); heading.setTextColor(palette.text); hint.setTextColor(palette.secondary); adapter.notifyDataSetChanged()
         home.setTextColor(palette.accent)
         home.backgroundTintList = android.content.res.ColorStateList.valueOf(palette.surface)
+        install.setTextColor(palette.accent)
+        install.backgroundTintList = android.content.res.ColorStateList.valueOf(palette.surface)
     }
     private inner class Holder(val cell: LinearLayout, val icon: ImageView, val label: TextView) : RecyclerView.ViewHolder(cell)
     private inner class AppsAdapter : RecyclerView.Adapter<Holder>() {
