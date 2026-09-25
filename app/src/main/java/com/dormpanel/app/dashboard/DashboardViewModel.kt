@@ -15,7 +15,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val appearance = AppearanceController(PreferencesAppearanceStore(application))
     val deviceControls = com.dormpanel.app.device.DeviceControlController(
         com.dormpanel.app.device.PreferencesDeviceControlStore(application),
-        com.dormpanel.app.device.AndroidMediaVolumePort(application))
+        com.dormpanel.app.device.AndroidMediaVolumePort(application),
+        com.dormpanel.app.device.AndroidSystemBrightnessPort(application))
     val dataSource = com.dormpanel.app.ha.DashboardBackend(application, appearance, CatalogLabels(
         application.getString(R.string.card_clock), application.getString(R.string.card_clock_description),
         application.getString(R.string.card_weather), application.getString(R.string.card_weather_description),
@@ -41,8 +42,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         deviceControls.brightnessCommand = dataSource.ha::requestDisplayBrightness
         deviceControls.volumeCommand = dataSource.ha::requestMediaVolume
+        deviceControls.systemBrightnessCommand = dataSource.ha::requestSystemBrightness
+        deviceControls.blackoutCommand = dataSource.ha::requestBlackout
         dataSource.ha.remoteBrightness = { deviceControls.setBrightness(it, remote = true) }
+        dataSource.ha.acceptBrightnessSnapshot = { !deviceControls.state.useSystemBrightness }
         dataSource.ha.remoteVolume = { deviceControls.setMediaPercent(it, remote = true) }
+        dataSource.ha.remoteSystemBrightness = { deviceControls.setSystemBrightness(it, remote = true) }
+        dataSource.ha.remoteBlackout = { if (it) deviceControls.enterBlackout(remote = true) else deviceControls.exitBlackout(remote = true) }
     }
 
     override fun onCleared() {

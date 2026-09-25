@@ -5,13 +5,16 @@ import org.junit.Test
 
 class DeviceControlControllerTest {
     private class MemoryStore : DeviceControlStore {
-        var brightness = 50
+        var brightness: Int? = 50
+        var follow: Boolean? = null
         var awake = true
         var audible = 6
         override fun brightness() = brightness
         override fun keepAwake() = awake
         override fun lastAudibleVolume() = audible
         override fun saveBrightness(value: Int) { brightness = value }
+        override fun followSystem() = follow ?: (brightness == null)
+        override fun saveFollowSystem(value: Boolean) { follow = value }
         override fun saveKeepAwake(value: Boolean) { awake = value }
         override fun saveLastAudibleVolume(value: Int) { audible = value }
     }
@@ -24,6 +27,91 @@ class DeviceControlControllerTest {
         override fun set(value: Int) { this.value = value }
         override fun muted() = silent
         override fun mute(value: Boolean) { silent = value }
+    }
+    private class FakeSystem : SystemBrightnessPort {
+        var observed = SystemBrightnessState(canWrite = true, automatic = true, raw = 128)
+        var brightnessWrites = 0
+        var modeWrites = 0
+        override fun read() = observed
+        override fun setBrightness(raw: Int): Boolean {
+            brightnessWrites++
+            observed = observed.copy(raw = raw)
+            return true
+        }
+        override fun setAutomatic(enabled: Boolean): Boolean {
+            modeWrites++
+            observed = observed.copy(automatic = enabled)
+            return true
+        }
+    }
+
+    @Test fun legacyModeAndRememberedOverrideSurviveRecreation() {
+        val store = MemoryStore().apply { brightness = null }
+        val control = DeviceControlController(store, FakeAudio())
+        assertTrue(control.state.useSystemBrightness)
+        control.setBrightness(25)
+        assertFalse(control.state.useSystemBrightness)
+        control.setFollowSystem(true)
+        assertEquals(25, control.state.brightness)
+        assertTrue(control.state.useSystemBrightness)
+        val recreated = DeviceControlController(store, FakeAudio())
+        assertTrue(recreated.state.useSystemBrightness)
+        assertEquals(25, recreated.state.brightness)
+        recreated.setFollowSystem(false)
+        assertEquals(25, recreated.state.brightness)
+        control.setBrightness(30, remote = true)
+        assertFalse(control.state.useSystemBrightness)
+        assertEquals(30, control.state.brightness)
+    }
+
+    @Test fun systemWritesRequirePermissionAndManualMode() {
+        val system = FakeSystem()
+        val control = DeviceControlController(MemoryStore(), FakeAudio(), system)
+        val sent = mutableListOf<Int>()
+        control.systemBrightnessCommand = sent::add
+        assertTrue(control.state.system.automatic)
+        assertFalse(control.setSystemBrightness(40))
+        assertEquals(0, system.brightnessWrites)
+        assertEquals(0, system.modeWrites)
+        system.observed = system.observed.copy(canWrite = false)
+        control.refreshSystemBrightness()
+        assertFalse(control.setSystemAutomatic(false))
+        system.observed = system.observed.copy(canWrite = true)
+        control.refreshSystemBrightness()
+        assertTrue(control.setSystemAutomatic(false))
+        assertTrue(control.setSystemBrightness(40))
+        assertEquals(1, system.brightnessWrites)
+        assertEquals(40, control.state.system.percent)
+        assertEquals(listOf(40), sent)
+        assertTrue(control.setSystemBrightness(45, remote = true))
+        assertEquals(listOf(40), sent)
+        assertTrue(control.setSystemAutomatic(true))
+        assertFalse(control.setSystemBrightness(50, remote = true))
+        system.observed = system.observed.copy(raw = 20)
+        control.refreshSystemBrightness()
+        assertEquals(2, system.brightnessWrites)
+        assertEquals(listOf(40), sent)
+        assertEquals(2, system.modeWrites)
+    }
+
+    @Test fun mappingRoundTripsAcrossX08eRange() {
+        val state = SystemBrightnessState(minimum = 1, maximum = 255)
+        for (percent in 1..100) {
+            assertTrue(kotlin.math.abs(state.copy(raw = state.rawFor(percent)).percent - percent) <= 1)
+        }
+        assertEquals(1, state.rawFor(1))
+        assertEquals(255, state.rawFor(100))
+    }
+
+    @Test fun blackoutRemoteAndDuplicateEventsDoNotEcho() {
+        val control = DeviceControlController(MemoryStore(), FakeAudio())
+        val calls = mutableListOf<Boolean>()
+        control.blackoutCommand = calls::add
+        control.enterBlackout()
+        control.enterBlackout(remote = true)
+        control.exitBlackout(remote = true)
+        assertEquals(listOf(true), calls)
+        assertFalse(control.state.blackout)
     }
 
     @Test fun brightnessAndAwakePersistWhileBlackoutDoesNot() {

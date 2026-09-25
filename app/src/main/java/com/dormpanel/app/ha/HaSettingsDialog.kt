@@ -39,8 +39,11 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
         val weather = choices("Preferred weather (blank = first discovered)", entities("weather", settings.weatherEntity), settings.weatherEntity)
         val theme = choices("Theme helper (optional input_select: light / dark)", entities("input_select", settings.themeEntity), settings.themeEntity)
         val opacity = choices("Opacity helper (optional input_number: 0–100)", entities("input_number", settings.opacityEntity), settings.opacityEntity)
-        val brightness = choices("Display brightness helper (optional input_number: 1–100)", entities("input_number", settings.displayBrightnessEntity), settings.displayBrightnessEntity)
+        val brightness = choices("DormPanel brightness helper (optional input_number: 1–100)", entities("input_number", settings.displayBrightnessEntity), settings.displayBrightnessEntity)
+        val systemBrightness = choices("System brightness helper (manual only, input_number: 1–100)", entities("input_number", settings.systemBrightnessEntity), settings.systemBrightnessEntity)
         val volume = choices("Media volume helper (optional input_number: 0–100)", entities("input_number", settings.mediaVolumeEntity), settings.mediaVolumeEntity)
+        val blackout = choices("DormPanel Blackout helper (optional input_boolean)", entities("input_boolean", settings.blackoutEntity), settings.blackoutEntity)
+        label("System helper updates are sent only for local manual changes; automatic ambient changes are not mirrored.")
         val status = TextView(context).apply { textSize = 16f; content.addView(this) }
         val diagnostic = TextView(context).apply { textSize = 16f; content.addView(this) }
         var call: Call? = null
@@ -76,7 +79,8 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
                     backend.relayIdentity.setDisplayName(relayName.text.toString())
                     backend.save(HaConnectionSettings(BackendMode.valueOf(mode.selectedItem.toString()), url.text.toString(),
                         weather.selectedItem.toString(), theme.selectedItem.toString(), opacity.selectedItem.toString(),
-                        brightness.selectedItem.toString(), volume.selectedItem.toString()), token.text.toString())
+                        brightness.selectedItem.toString(), volume.selectedItem.toString(),
+                        systemBrightness.selectedItem.toString(), blackout.selectedItem.toString()), token.text.toString())
                     token.text.clear(); diagnostic.text = context.getString(R.string.ha_saved)
                 } catch (_: Exception) { diagnostic.text = context.getString(R.string.ha_save_failed) }
             }

@@ -41,6 +41,9 @@ class MainActivity : AppCompatActivity() {
     private val volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) { dashboardViewModel.deviceControls.refreshAudio() }
     }
+    private val brightnessObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) { dashboardViewModel.deviceControls.refreshSystemBrightness() }
+    }
     private val deviceListener: (com.dormpanel.app.device.DeviceControlState) -> Unit = { state ->
         val attributes = window.attributes
         val effective = if (state.blackout) 1 else state.brightness
@@ -64,6 +67,10 @@ class MainActivity : AppCompatActivity() {
         pageContainer = findViewById(R.id.page_container)
         blackoutView = findViewById<View>(R.id.blackout_surface).apply {
             setOnClickListener { dashboardViewModel.deviceControls.exitBlackout() }
+            setOnTouchListener { view, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) view.performClick()
+                true
+            }
         }
         scheduleImports = com.dormpanel.app.schedule.ScheduleImportUi(this, dashboardViewModel.schedule, dashboardViewModel.appearance, dashboardViewModel.webDav) {
             // Generic MIME allows .ics documents from providers that do not report text/calendar.
@@ -130,11 +137,15 @@ class MainActivity : AppCompatActivity() {
         dashboardViewModel.apps.refresh()
         dashboardViewModel.schedule.refresh()
         dashboardViewModel.deviceControls.refreshAudio()
+        dashboardViewModel.deviceControls.refreshSystemBrightness()
         contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, volumeObserver)
+        contentResolver.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS), false, brightnessObserver)
+        contentResolver.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE), false, brightnessObserver)
     }
 
     override fun onPause() {
         contentResolver.unregisterContentObserver(volumeObserver)
+        contentResolver.unregisterContentObserver(brightnessObserver)
         super.onPause()
     }
 

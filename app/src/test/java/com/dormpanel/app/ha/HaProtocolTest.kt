@@ -60,7 +60,9 @@ class HaProtocolTest {
                             {"entity_id":"input_select.theme","state":"LIGHT","attributes":{"options":["LIGHT","DARK"]}},
                             {"entity_id":"input_number.opacity","state":"35","attributes":{}},
                             {"entity_id":"input_number.display","state":"32","attributes":{"min":1,"max":100}},
+                            {"entity_id":"input_number.system","state":"40","attributes":{"min":1,"max":100}},
                             {"entity_id":"input_number.volume","state":"45","attributes":{"min":0,"max":100}},
+                            {"entity_id":"input_boolean.blackout","state":"off","attributes":{}},
                             {"entity_id":"weather.home","state":"sunny","attributes":{"temperature":72,"temperature_unit":"°F","supported_features":1}}
                         ]""")
                         "config/entity_registry/list_for_display" -> JSONObject("""{"entities":[]}""")
@@ -77,10 +79,10 @@ class HaProtocolTest {
             }))
         }
         fun start(theme: String = "input_select.theme", opacity: String = "input_number.opacity",
-            display: String = "", volume: String = "") {
+            display: String = "", volume: String = "", system: String = "", blackout: String = "") {
             appearance.themeCommand = source::requestTheme
             appearance.opacityCommand = source::requestOpacity
-            source.configure(HaConnectionSettings(BackendMode.HOME_ASSISTANT, server.url("/").toString(), "weather.home", theme, opacity, display, volume), "test-token")
+            source.configure(HaConnectionSettings(BackendMode.HOME_ASSISTANT, server.url("/").toString(), "weather.home", theme, opacity, display, volume, system, blackout), "test-token")
         }
         fun entity(id: String, value: String?, attributes: JSONObject = JSONObject()) {
             val next = value?.let { JSONObject().put("entity_id", id).put("state", it).put("attributes", attributes) } ?: JSONObject.NULL
@@ -173,6 +175,39 @@ class HaProtocolTest {
             val sent = f.services("set_value").filter { it.optJSONObject("target")?.optString("entity_id") in listOf("input_number.display", "input_number.volume") }
             assertEquals(2, sent.size)
             assertEquals(setOf(49), sent.map { it.getJSONObject("service_data").getInt("value") }.toSet())
+        }
+    }
+
+    @Test fun systemAndBlackoutHelpersUseBoundedAndDeterministicCommands() {
+        Fixture().use { f ->
+            val systemValues = mutableListOf<Int>()
+            val blackoutValues = mutableListOf<Boolean>()
+            f.source.remoteSystemBrightness = { systemValues += it }
+            f.source.remoteBlackout = { blackoutValues += it }
+            f.start(system = "input_number.system", blackout = "input_boolean.blackout")
+            f.until { f.source.connected && blackoutValues.isNotEmpty() && systemValues.isNotEmpty() }
+            assertEquals(listOf(40), systemValues)
+            assertEquals(listOf(false), blackoutValues)
+            f.entity("input_number.system", "60", JSONObject("""{"min":1,"max":100}"""))
+            assertEquals(listOf(40, 60), systemValues)
+            f.entity("input_number.system", "unavailable")
+            f.entity("input_number.system", "101")
+            assertEquals(listOf(40, 60), systemValues)
+            f.entity("input_number.system", "40", JSONObject("""{"min":1,"max":100}"""))
+            repeat(50) { f.source.requestSystemBrightness(it.coerceAtLeast(1)) }
+            f.scheduler.advance(180)
+            f.until { f.services("set_value").any { it.optJSONObject("target")?.optString("entity_id") == "input_number.system" } }
+            val writes = f.services("set_value").filter { it.optJSONObject("target")?.optString("entity_id") == "input_number.system" }
+            assertEquals(1, writes.size)
+            assertEquals(49, writes.single().getJSONObject("service_data").getInt("value"))
+            f.entity("input_boolean.blackout", "on")
+            assertEquals(true, blackoutValues.last())
+            f.source.requestBlackout(true)
+            f.until { f.services("turn_on").any { it.optJSONObject("target")?.optString("entity_id") == "input_boolean.blackout" } }
+            f.source.requestBlackout(false)
+            f.until { f.services("turn_off").any { it.optJSONObject("target")?.optString("entity_id") == "input_boolean.blackout" } }
+            f.entity("input_boolean.blackout", "unavailable")
+            assertEquals(true, blackoutValues.last())
         }
     }
 

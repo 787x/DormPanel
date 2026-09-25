@@ -13,6 +13,7 @@ data class DeviceControlState(
     val mediaMax: Int = 1,
     val muted: Boolean = false,
     val muteAvailable: Boolean = true,
+    val system: SystemBrightnessState = SystemBrightnessState(),
 ) {
     val mediaPercent get() = if (muted) 0 else (mediaVolume * 100f / mediaMax.coerceAtLeast(1)).roundToInt()
 }
@@ -24,6 +25,24 @@ interface DeviceControlStore {
     fun saveBrightness(value: Int)
     fun saveKeepAwake(value: Boolean)
     fun saveLastAudibleVolume(value: Int)
+    fun followSystem(): Boolean = brightness() == null
+    fun saveFollowSystem(value: Boolean) = Unit
+}
+
+data class SystemBrightnessState(
+    val canWrite: Boolean = false, val automatic: Boolean = true,
+    val raw: Int = 1, val minimum: Int = 1, val maximum: Int = 255,
+) {
+    val percent: Int get() = (1 + (raw.coerceIn(minimum, maximum) - minimum) * 99f /
+        (maximum - minimum).coerceAtLeast(1)).roundToInt().coerceIn(1, 100)
+    fun rawFor(percent: Int): Int = (minimum + (percent.coerceIn(1, 100) - 1) *
+        (maximum - minimum).toFloat() / 99).roundToInt()
+}
+
+interface SystemBrightnessPort {
+    fun read(): SystemBrightnessState
+    fun setBrightness(raw: Int): Boolean
+    fun setAutomatic(enabled: Boolean): Boolean
 }
 
 interface MediaVolumePort {
@@ -36,14 +55,17 @@ interface MediaVolumePort {
 }
 
 /** Owns intent and observed media state. A Window is deliberately never retained here. */
-class DeviceControlController(private val store: DeviceControlStore, private val audio: MediaVolumePort) {
+class DeviceControlController(private val store: DeviceControlStore, private val audio: MediaVolumePort,
+    private val systemBrightness: SystemBrightnessPort? = null) {
     private val listeners = linkedSetOf<(DeviceControlState) -> Unit>()
     var brightnessCommand: ((Int) -> Unit)? = null
     var volumeCommand: ((Int) -> Unit)? = null
+    var systemBrightnessCommand: ((Int) -> Unit)? = null
+    var blackoutCommand: ((Boolean) -> Unit)? = null
     private var lastAudible = store.lastAudibleVolume().coerceIn(1, audio.max.coerceAtLeast(1))
-    var state = DeviceControlState(store.brightness()?.coerceIn(1, 100) ?: 50, store.brightness() == null, store.keepAwake(),
+    var state = DeviceControlState(store.brightness()?.coerceIn(1, 100) ?: 50, store.followSystem(), store.keepAwake(),
         mediaVolume = audio.current().coerceIn(0, audio.max.coerceAtLeast(1)), mediaMax = audio.max.coerceAtLeast(1), muted = audio.muted(),
-        muteAvailable = audio.muteAvailable)
+        muteAvailable = audio.muteAvailable, system = systemBrightness?.read() ?: SystemBrightnessState())
         private set
 
     fun addListener(listener: (DeviceControlState) -> Unit) { listeners += listener; listener(state) }
@@ -63,16 +85,49 @@ class DeviceControlController(private val store: DeviceControlStore, private val
     fun setBrightness(percent: Int, remote: Boolean = false) {
         if (percent !in 1..100 || (percent == state.brightness && !state.useSystemBrightness)) return
         store.saveBrightness(percent)
+        store.saveFollowSystem(false)
         update(state.copy(brightness = percent, useSystemBrightness = false))
         if (!remote) brightnessCommand?.invoke(percent)
+    }
+    fun setFollowSystem(enabled: Boolean) {
+        if (state.useSystemBrightness == enabled) return
+        store.saveFollowSystem(enabled)
+        update(state.copy(useSystemBrightness = enabled))
+    }
+    fun refreshSystemBrightness() {
+        systemBrightness?.read()?.let { update(state.copy(system = it)) }
+    }
+    fun setSystemAutomatic(enabled: Boolean): Boolean {
+        val current = state.system
+        if (!current.canWrite || systemBrightness == null) return false
+        if (current.automatic == enabled) return true
+        val changed = systemBrightness.setAutomatic(enabled)
+        refreshSystemBrightness()
+        return changed && state.system.automatic == enabled
+    }
+    fun setSystemBrightness(percent: Int, remote: Boolean = false): Boolean {
+        if (percent !in 1..100) return false
+        refreshSystemBrightness()
+        val current = state.system
+        if (!current.canWrite || current.automatic || systemBrightness == null) return false
+        if (current.percent == percent) return true
+        val changed = systemBrightness.setBrightness(current.rawFor(percent))
+        refreshSystemBrightness()
+        if (changed && !remote) systemBrightnessCommand?.invoke(state.system.percent)
+        return changed
     }
     fun setKeepAwake(enabled: Boolean) {
         if (enabled == state.keepAwake) return
         store.saveKeepAwake(enabled)
         update(state.copy(keepAwake = enabled))
     }
-    fun enterBlackout() = update(state.copy(blackout = true))
-    fun exitBlackout() = update(state.copy(blackout = false))
+    fun enterBlackout(remote: Boolean = false) = setBlackout(true, remote)
+    fun exitBlackout(remote: Boolean = false) = setBlackout(false, remote)
+    private fun setBlackout(enabled: Boolean, remote: Boolean) {
+        if (state.blackout == enabled) return
+        update(state.copy(blackout = enabled))
+        if (!remote) blackoutCommand?.invoke(enabled)
+    }
     fun setMediaPercent(percent: Int, remote: Boolean = false) {
         if (percent !in 0..100 || (percent == 0 && !audio.muteAvailable)) return
         val target = if (percent == 0) 0 else (percent * audio.max.coerceAtLeast(1) / 100f).roundToInt().coerceAtLeast(1)
@@ -118,6 +173,8 @@ class PreferencesDeviceControlStore(context: Context) : DeviceControlStore {
     override fun keepAwake() = prefs.getBoolean("keep_awake", true)
     override fun lastAudibleVolume() = prefs.getInt("last_audible_volume", 6)
     override fun saveBrightness(value: Int) { prefs.edit().putInt("brightness", value).apply() }
+    override fun followSystem(): Boolean = prefs.getBoolean("follow_system", !prefs.contains("brightness"))
+    override fun saveFollowSystem(value: Boolean) { prefs.edit().putBoolean("follow_system", value).apply() }
     override fun saveKeepAwake(value: Boolean) { prefs.edit().putBoolean("keep_awake", value).apply() }
     override fun saveLastAudibleVolume(value: Int) { prefs.edit().putInt("last_audible_volume", value).apply() }
 }

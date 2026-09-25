@@ -9,6 +9,7 @@ data class HaConnectionSettings(
     val mode: BackendMode = BackendMode.DEMO, val baseUrl: String = "",
     val weatherEntity: String = "", val themeEntity: String = "", val opacityEntity: String = "",
     val displayBrightnessEntity: String = "", val mediaVolumeEntity: String = "",
+    val systemBrightnessEntity: String = "", val blackoutEntity: String = "",
 )
 data class HaEndpoint(val base: String) {
     val api get() = "$base/api/"

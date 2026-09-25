@@ -63,7 +63,10 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         if (connected && light?.availability == Availability.AVAILABLE) sendOn(light, intent)
     }
     var remoteBrightness: ((Int) -> Unit)? = null
+    var acceptBrightnessSnapshot: () -> Boolean = { true }
     var remoteVolume: ((Int) -> Unit)? = null
+    var remoteSystemBrightness: ((Int) -> Unit)? = null
+    var remoteBlackout: ((Boolean) -> Unit)? = null
     private val deviceCommands = LatestCommands(scheduler) { entity, property, value ->
         if (numberHelper(entity, if (property == "brightness") 1 else 0) != null) socket.service("input_number", "set_value", entity,
             JSONObject().put("value", value))
@@ -303,6 +306,13 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     fun requestDisplayBrightness(percent: Int) {
         if (percent in 1..100) requestDeviceNumber(settings.displayBrightnessEntity, percent, 1)
     }
+    fun requestSystemBrightness(percent: Int) {
+        if (percent in 1..100) requestDeviceNumber(settings.systemBrightnessEntity, percent, 1)
+    }
+    fun requestBlackout(enabled: Boolean) {
+        val helper = appearanceHelper(settings.blackoutEntity, "input_boolean") ?: return
+        socket.service("input_boolean", if (enabled) "turn_on" else "turn_off", helper.id)
+    }
     fun requestMediaVolume(percent: Int) = requestDeviceNumber(settings.mediaVolumeEntity, percent, 0)
 
     private fun applyDeviceHelpers(changedEntity: String? = null) {
@@ -312,10 +322,21 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
             val numeric = helper.value.toDoubleOrNull()?.takeIf { it.isFinite() && it in minimum.toDouble()..100.0 } ?: return null
             return kotlin.math.round(numeric).toInt()
         }
-        if (changedEntity == null || changedEntity == settings.displayBrightnessEntity)
+        // A reconnect snapshot must not turn Follow System into Override.
+        if ((changedEntity != null || acceptBrightnessSnapshot()) &&
+            (changedEntity == null || changedEntity == settings.displayBrightnessEntity))
             value(settings.displayBrightnessEntity, 1)?.let { remoteBrightness?.invoke(it) }
+        if (changedEntity == null || changedEntity == settings.systemBrightnessEntity)
+            value(settings.systemBrightnessEntity, 1)?.let { remoteSystemBrightness?.invoke(it) }
         if (changedEntity == null || changedEntity == settings.mediaVolumeEntity)
             value(settings.mediaVolumeEntity, 0)?.let { remoteVolume?.invoke(it) }
+        if (changedEntity == null || changedEntity == settings.blackoutEntity) {
+            val helper = appearanceHelper(settings.blackoutEntity, "input_boolean")
+            when (helper?.value?.lowercase()) {
+                "on" -> remoteBlackout?.invoke(true)
+                "off" -> remoteBlackout?.invoke(false)
+            }
+        }
     }
     private fun themeOption(helper: HaEntity, mode: ThemeMode): String? {
         val options = helper.attributes.optJSONArray("options") ?: return null

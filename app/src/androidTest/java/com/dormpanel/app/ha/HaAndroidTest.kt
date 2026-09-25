@@ -32,6 +32,9 @@ class HaAndroidTest {
             val withHelpers = old.copy(displayBrightnessEntity = "input_number.display", mediaVolumeEntity = "input_number.volume")
             store.write(withHelpers)
             assertEquals(withHelpers, store.read())
+            val dual = withHelpers.copy(systemBrightnessEntity = "input_number.system", blackoutEntity = "input_boolean.blackout")
+            store.write(dual)
+            assertEquals(dual, store.read())
         } finally { store.write(saved) }
     }
     @Test fun androidKeystoreRoundtripAndTamper() {

@@ -1,6 +1,10 @@
 package com.dormpanel.app.ui
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import android.view.View
 import android.view.MotionEvent
 import android.widget.Button
 import android.widget.CheckBox
@@ -26,10 +30,16 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     private val density = resources.displayMetrics.density
     private fun dp(value: Int) = (value * density).roundToInt()
     private var claimed = false
-    private val brightnessLabel = TextView(context).apply { textSize = 23f }
+    private val brightnessLabel = TextView(context).apply { textSize = 21f }
+    private val systemLabel = TextView(context).apply { textSize = 21f }
+    private val systemBrightness = slider("System brightness").apply { min = 1 }
+    private val automatic = CheckBox(context).apply { text = "Automatic system brightness"; textSize = 19f; minimumHeight = dp(48) }
+    private val followSystem = CheckBox(context).apply { text = "Follow system"; textSize = 19f; minimumHeight = dp(48) }
+    private val allowSystem = Button(context).apply { text = "Allow system brightness control"; minimumHeight = dp(48) }
+    private val permissionStatus = TextView(context).apply { textSize = 16f; visibility = View.GONE }
     private val volumeLabel = TextView(context).apply { textSize = 23f }
     private val opacityLabel = TextView(context).apply { textSize = 22f }
-    private val brightness = slider("Display brightness")
+    private val brightness = slider("DormPanel brightness")
         .apply { min = 1 }
     private val volume = slider("Media volume")
     private val opacity = slider(context.getString(R.string.card_opacity))
@@ -54,7 +64,16 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     }
     private val deviceListener: (DeviceControlState) -> Unit = {
         brightness.progress = it.brightness
-        brightnessLabel.text = if (it.useSystemBrightness) "Brightness · System" else "Brightness · ${it.brightness}%"
+        brightnessLabel.text = "DormPanel override · ${it.brightness}%"
+        brightness.isEnabled = !it.useSystemBrightness
+        followSystem.isChecked = it.useSystemBrightness
+        systemBrightness.progress = it.system.percent
+        systemBrightness.isEnabled = it.system.canWrite && !it.system.automatic
+        automatic.isChecked = it.system.automatic
+        automatic.isEnabled = it.system.canWrite
+        systemLabel.text = "System · ${if (it.system.automatic) "Automatic" else "Manual"} · ${it.system.percent}%${if (it.system.canWrite) "" else " · Read only"}"
+        allowSystem.visibility = if (it.system.canWrite) View.GONE else View.VISIBLE
+        if (it.system.canWrite) permissionStatus.visibility = View.GONE
         volume.progress = it.mediaPercent
         volume.min = if (it.muteAvailable) 0 else (100f / it.mediaMax).roundToInt()
         volumeLabel.text = "Media volume · ${it.mediaPercent}%"
@@ -75,7 +94,13 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         columns.addView(left, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         columns.addView(right, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         left.addView(section("Display"))
+        left.addView(systemLabel)
+        left.addView(automatic)
+        left.addView(systemBrightness)
+        left.addView(allowSystem)
+        left.addView(permissionStatus)
         left.addView(brightnessLabel)
+        left.addView(followSystem)
         left.addView(brightness)
         left.addView(keepAwake)
         left.addView(Button(context).apply {
@@ -100,6 +125,19 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         })
         addView(TextView(context).apply { setText(R.string.return_home_up); textSize = 16f })
         brightness.onUserProgress { device.setBrightness(it.coerceAtLeast(1)) }
+        systemBrightness.onUserProgress { device.setSystemBrightness(it.coerceAtLeast(1)) }
+        automatic.setOnCheckedChangeListener { _, checked -> device.setSystemAutomatic(checked) }
+        followSystem.setOnCheckedChangeListener { _, checked -> device.setFollowSystem(checked) }
+        allowSystem.setOnClickListener {
+            onGestureClaimed()
+            try {
+                context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                    Uri.parse("package:${context.packageName}")))
+            } catch (_: Exception) {
+                permissionStatus.text = "System brightness access is unavailable on this device."
+                permissionStatus.visibility = View.VISIBLE
+            }
+        }
         volume.onUserProgress { device.setMediaPercent(it); volume.progress = device.state.mediaPercent }
         keepAwake.setOnCheckedChangeListener { _, checked -> device.setKeepAwake(checked) }
         mute.setOnClickListener { device.toggleMute() }
@@ -109,6 +147,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         device.refreshAudio()
+        device.refreshSystemBrightness()
         device.addListener(deviceListener)
         appearance.addListener(appearanceListener)
         backend?.ha?.addStatusListener(haListener)
@@ -121,7 +160,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     }
     override fun shouldObservePageSwipe(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            claimed = listOf(brightness, volume, opacity).any { bar ->
+            claimed = listOf(systemBrightness, brightness, volume, opacity).any { bar ->
                 val at = IntArray(2); bar.getLocationOnScreen(at)
                 event.rawX >= at[0] && event.rawX < at[0] + bar.width && event.rawY >= at[1] && event.rawY < at[1] + bar.height
             }
