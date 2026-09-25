@@ -87,6 +87,7 @@ class MainActivity : AppCompatActivity() {
             cardRegistry = dashboardViewModel.registry,
             appearance = dashboardViewModel.appearance,
             deviceControls = dashboardViewModel.deviceControls,
+            startupPolicy = dashboardViewModel.startupPolicy,
             catalog = dashboardViewModel.catalog,
             backend = dashboardViewModel.dataSource,
             apps = dashboardViewModel.apps,

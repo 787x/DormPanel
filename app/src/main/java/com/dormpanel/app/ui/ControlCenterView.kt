@@ -8,6 +8,7 @@ import android.view.View
 import android.view.MotionEvent
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.CompoundButton
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
@@ -20,12 +21,15 @@ import com.dormpanel.app.device.DeviceControlController
 import com.dormpanel.app.device.DeviceControlState
 import com.dormpanel.app.ha.DashboardBackend
 import com.dormpanel.app.ha.HaStatus
+import com.dormpanel.app.startup.StartupPolicy
+import com.dormpanel.app.startup.SystemHomeNavigator
 import kotlin.math.roundToInt
 
 @android.annotation.SuppressLint("ViewConstructor")
 class ControlCenterView(context: Context, private val appearance: AppearanceController,
     private val device: DeviceControlController, private val onGestureClaimed: () -> Unit,
     private val backend: DashboardBackend? = null,
+    private val startupPolicy: StartupPolicy,
 ) : LinearLayout(context), PageInteraction {
     private val density = resources.displayMetrics.density
     private fun dp(value: Int) = (value * density).roundToInt()
@@ -46,6 +50,34 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     private val keepAwake = CheckBox(context).apply { text = "Keep screen awake"; textSize = 20f; minimumHeight = dp(52) }
     private val mute = Button(context).apply { minimumHeight = dp(52); textSize = 18f }
     private val haStatus = TextView(context).apply { textSize = 16f }
+    private val startAfterBoot = CheckBox(context).apply {
+        id = R.id.start_after_boot
+        setText(R.string.start_after_boot)
+        textSize = 20f
+        minimumHeight = dp(52)
+    }
+    private val homeStatus = TextView(context).apply { textSize = 16f; visibility = View.GONE }
+    private val bootPreferenceListener = CompoundButton.OnCheckedChangeListener { _, enabled ->
+        if (!startupPolicy.setStartAfterBoot(enabled)) {
+            showBootPreference()
+            homeStatus.setText(R.string.start_after_boot_save_failed)
+            homeStatus.visibility = View.VISIBLE
+        } else {
+            updateBootLabel(enabled)
+            homeStatus.visibility = View.GONE
+        }
+    }
+    private fun updateBootLabel(enabled: Boolean) {
+        startAfterBoot.text = context.getString(R.string.start_after_boot_state,
+            context.getString(if (enabled) R.string.start_after_boot_on else R.string.start_after_boot_off))
+    }
+    private fun showBootPreference() {
+        startAfterBoot.setOnCheckedChangeListener(null)
+        val enabled = startupPolicy.startAfterBoot
+        startAfterBoot.isChecked = enabled
+        updateBootLabel(enabled)
+        startAfterBoot.setOnCheckedChangeListener(bootPreferenceListener)
+    }
     private val light = RadioButton(context).apply { id = generateViewId(); setText(R.string.theme_light); textSize = 20f; minimumHeight = dp(52) }
     private val dark = RadioButton(context).apply { id = generateViewId(); setText(R.string.theme_dark); textSize = 20f; minimumHeight = dp(52) }
     private val modes = RadioGroup(context).apply { orientation = HORIZONTAL; addView(light); addView(dark) }
@@ -123,6 +155,23 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
             minimumHeight = dp(52)
             setOnClickListener { onGestureClaimed(); com.dormpanel.app.ha.HaSettingsDialog(context, backend).show() }
         })
+        right.addView(section(context.getString(R.string.system_section)))
+        right.addView(startAfterBoot)
+        right.addView(Button(context).apply {
+            id = R.id.open_miui_home
+            setText(R.string.open_miui_home)
+            minimumHeight = dp(52)
+            setOnClickListener {
+                onGestureClaimed()
+                if (!SystemHomeNavigator(context).openHome()) {
+                    homeStatus.setText(R.string.open_miui_home_failed)
+                    homeStatus.visibility = View.VISIBLE
+                } else {
+                    homeStatus.visibility = View.GONE
+                }
+            }
+        })
+        right.addView(homeStatus)
         addView(TextView(context).apply { setText(R.string.return_home_up); textSize = 16f })
         brightness.onUserProgress { device.setBrightness(it.coerceAtLeast(1)) }
         systemBrightness.onUserProgress { device.setSystemBrightness(it.coerceAtLeast(1)) }
@@ -143,9 +192,11 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         mute.setOnClickListener { device.toggleMute() }
         modes.setOnCheckedChangeListener { _, id -> appearance.setTheme(if (id == light.id) ThemeMode.LIGHT else ThemeMode.DARK) }
         opacity.onUserProgress { appearance.setCardOpacity(it / 100f) }
+        showBootPreference()
     }
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        showBootPreference()
         device.refreshAudio()
         device.refreshSystemBrightness()
         device.addListener(deviceListener)

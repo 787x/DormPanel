@@ -13,6 +13,8 @@ import com.dormpanel.app.schedule.*
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     val appearance = AppearanceController(PreferencesAppearanceStore(application))
+    val startupPolicy = com.dormpanel.app.startup.StartupPolicy(
+        com.dormpanel.app.startup.PreferencesStartupStore(application))
     val deviceControls = com.dormpanel.app.device.DeviceControlController(
         com.dormpanel.app.device.PreferencesDeviceControlStore(application),
         com.dormpanel.app.device.AndroidMediaVolumePort(application),
