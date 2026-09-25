@@ -28,7 +28,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val haRelay = HaScheduleRelayController(dataSource.ha.relayChannel, dataSource.relayIdentity,
         dataSource.relayHttp) { dataSource.relayStatus = it }
     val webDav = WebDavSyncController(application, schedule)
-    val scheduleSession = ScheduleSession(schedule.clock)
+    val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) } +
         listOf("calendar", "timetable").map { ScheduleCardProvider(it, schedule, appearance) })

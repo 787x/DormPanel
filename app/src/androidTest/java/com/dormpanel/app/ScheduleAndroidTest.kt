@@ -22,8 +22,19 @@ class ScheduleAndroidTest {
     @get:Rule val persistence = IsolatedDashboardRule()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private lateinit var savedAppearance: AppearanceState
-    @Before fun prepare() { savedAppearance = PreferencesAppearanceStore(instrumentation.targetContext).read() }
-    @After fun restore() { PreferencesAppearanceStore(instrumentation.targetContext).write(savedAppearance) }
+    private lateinit var savedMode: ScheduleMode
+    @Before fun prepare() {
+        val context = instrumentation.targetContext
+        savedAppearance = PreferencesAppearanceStore(context).read()
+        val modeStore = PreferencesScheduleModeStore(context)
+        savedMode = modeStore.read()
+        modeStore.write(ScheduleMode.CALENDAR)
+    }
+    @After fun restore() {
+        val context = instrumentation.targetContext
+        PreferencesAppearanceStore(context).write(savedAppearance)
+        PreferencesScheduleModeStore(context).write(savedMode)
+    }
     private fun model(activity: MainActivity) = ViewModelProvider(activity)[DashboardViewModel::class.java]
     private fun ready(scenario: ActivityScenario<MainActivity>) {
         var ready = false; val deadline = System.currentTimeMillis() + 8000
@@ -48,6 +59,27 @@ class ScheduleAndroidTest {
         override fun perform(controller: androidx.test.espresso.UiController, view: View) {
             (view as android.widget.TimePicker).apply { this.hour = hour; this.minute = minute }
             controller.loopMainThreadUntilIdle()
+        }
+    }
+    @Test fun scheduleModeSurvivesHomeAndAppExitInBothDirections() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            ready(scenario); open()
+            onView(withText("Timetable")).perform(click())
+            onView(withText("+ Add class")).check(matches(isDisplayed()))
+            onView(withText("Home")).perform(click())
+            onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
+            onView(withId(R.id.page_container)).perform(swipeLeft())
+            onView(withText("+ Add class")).check(matches(isDisplayed()))
+        }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            ready(scenario)
+            onView(withId(R.id.page_container)).perform(swipeLeft())
+            onView(withText("+ Add class")).check(matches(isDisplayed()))
+            onView(allOf(withText("Calendar"), isAssignableFrom(android.widget.Button::class.java))).perform(click())
+            onView(withText("+ Add event")).check(matches(isDisplayed()))
+        }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            ready(scenario); open()
         }
     }
     @Test fun pageCrudSessionNavigationAndAppearance() {
