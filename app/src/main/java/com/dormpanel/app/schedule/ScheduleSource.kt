@@ -114,8 +114,13 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
 }
 
 enum class ScheduleMode { CALENDAR, TIMETABLE }
-class ScheduleSession(clock: ScheduleClock) {
-    var mode = ScheduleMode.CALENDAR
+class ScheduleSession(clock: ScheduleClock, private val modeStore: ScheduleModeStore? = null) {
+    var mode = modeStore?.read() ?: ScheduleMode.CALENDAR
+        set(value) {
+            if (field == value) return
+            field = value
+            modeStore?.write(value)
+        }
     var selectedDate: LocalDate = clock.today()
     var month: YearMonth = YearMonth.from(selectedDate)
     var weekStart: LocalDate = ScheduleProjection.weekStart(selectedDate, clock.locale())

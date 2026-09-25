@@ -93,6 +93,23 @@ class ScheduleTest {
         session.today(clock); assertEquals(LocalDate.parse("2025-01-01"), session.selectedDate)
         assertEquals(YearMonth.of(2025, 1), session.month); assertEquals(ScheduleMode.TIMETABLE, session.mode)
     }
+    @Test fun selectedScheduleModeSurvivesNewSession() {
+        val store = object : ScheduleModeStore {
+            var saved = ScheduleMode.CALENDAR
+            var writes = 0
+            override fun read() = saved
+            override fun write(mode: ScheduleMode) { saved = mode; writes++ }
+        }
+        val clock = Clock()
+        val first = ScheduleSession(clock, store)
+        assertEquals(ScheduleMode.CALENDAR, first.mode)
+        first.mode = ScheduleMode.TIMETABLE
+        first.mode = ScheduleMode.TIMETABLE
+        assertEquals(1, store.writes)
+        assertEquals(ScheduleMode.TIMETABLE, ScheduleSession(clock, store).mode)
+        first.mode = ScheduleMode.CALENDAR
+        assertEquals(ScheduleMode.CALENDAR, ScheduleSession(clock, store).mode)
+    }
     @Test fun currentNextAndNextWeekWithOverlaps() {
         val clock = Clock()
         val state = ScheduleState(entries = listOf(TimetableEntry("1", "Current", 4, 540, 600), TimetableEntry("2", "Overlap", 4, 560, 620),
