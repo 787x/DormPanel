@@ -51,3 +51,30 @@ Android's generic boot and HOME behavior alone would not have established the
 X08E outcome. This run found no need for an OEM, root, or recurring startup
 mechanism. Xiaomi's ordered boot queue made delivery later than
 `sys.boot_completed` on this device.
+
+## Top-edge system gesture follow-up
+
+DormPanel reserves the top **32dp** of the screen for gestures whose initial
+`ACTION_DOWN` is in that zone. On the X08E at 160dpi, that is 32px. The global
+page-swipe detector is canceled for the whole stream; each event still follows
+normal Android View dispatch. A stream starting below the zone remains eligible
+for the existing page and slider arbitration even if it later crosses the top.
+Blackout's existing touch path takes priority. No immersive-mode or system UI
+configuration changed.
+
+On the physical X08E, direct finger verification confirmed that a downward
+swipe from the extreme top edge opened Xiaomi's native pull-down while
+DormPanel stayed on Home underneath. This observation was reported by the
+person at the device; ADB-injected extreme-edge swipes exposed transient system
+bars but did not reproduce the full Xiaomi pull-down. ADB boundary probes on
+the daily app showed starts at 24px and 31px stayed on Home, while starts at
+32px, 33px, 40px, 80px, and 100px entered DormPanel Control Center. The
+reserved zone therefore remained 32dp.
+
+Focused unit tests cover stream ownership, movement outside the zone,
+UP/CANCEL reset, and the exact boundary. Connected tests cover edge-start
+downward and horizontal streams, normal navigation after UP/CANCEL, and
+below-edge navigation. The pre-existing slider and Blackout tests remain part
+of the full isolated X08E suite. Final verification passed:
+`assembleDebug testDebugUnitTest lintDebug`, `tools/test-x08e.ps1` (69 connected
+tests, zero failures), and `git diff --check`.

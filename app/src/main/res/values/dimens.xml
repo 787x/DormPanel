@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <dimen name="system_top_edge_gesture_zone">32dp</dimen>
     <dimen name="page_edge_margin">32dp</dimen>
     <dimen name="page_transition_distance">36dp</dimen>
 </resources>
