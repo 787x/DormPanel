@@ -49,8 +49,10 @@ class HaSettingsStore(context: Context) {
         prefs.getString("url", "")!!, prefs.getString("weather", "")!!,
         prefs.getString("theme", "")!!, prefs.getString("opacity", "")!!,
         prefs.getString("display_brightness", "")!!, prefs.getString("media_volume", "")!!,
+        prefs.getString("system_brightness", "")!!, prefs.getString("blackout", "")!!,
     )
     fun write(value: HaConnectionSettings) { prefs.edit().putString("mode", value.mode.name).putString("url", value.baseUrl)
         .putString("weather", value.weatherEntity).putString("theme", value.themeEntity).putString("opacity", value.opacityEntity)
-        .putString("display_brightness", value.displayBrightnessEntity).putString("media_volume", value.mediaVolumeEntity).apply() }
+        .putString("display_brightness", value.displayBrightnessEntity).putString("media_volume", value.mediaVolumeEntity)
+        .putString("system_brightness", value.systemBrightnessEntity).putString("blackout", value.blackoutEntity).apply() }
 }

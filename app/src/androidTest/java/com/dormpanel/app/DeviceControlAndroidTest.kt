@@ -34,6 +34,30 @@ import org.junit.runner.RunWith
 class DeviceControlAndroidTest {
     @get:Rule val isolation = IsolatedDashboardRule()
 
+    @Test fun legacyBrightnessPreferenceMigratesToExplicitMode() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefs = context.getSharedPreferences("device_controls", Context.MODE_PRIVATE)
+        val oldBrightness = if (prefs.contains("brightness")) prefs.getInt("brightness", 50) else null
+        val oldFollow = if (prefs.contains("follow_system")) prefs.getBoolean("follow_system", true) else null
+        try {
+            prefs.edit().remove("brightness").remove("follow_system").commit()
+            val empty = com.dormpanel.app.device.PreferencesDeviceControlStore(context)
+            assertTrue(empty.followSystem())
+            prefs.edit().putInt("brightness", 25).remove("follow_system").commit()
+            val legacy = com.dormpanel.app.device.PreferencesDeviceControlStore(context)
+            assertFalse(legacy.followSystem())
+            assertEquals(25, legacy.brightness())
+            legacy.saveFollowSystem(true)
+            assertTrue(com.dormpanel.app.device.PreferencesDeviceControlStore(context).followSystem())
+            assertEquals(25, legacy.brightness())
+        } finally {
+            val edit = prefs.edit()
+            if (oldBrightness == null) edit.remove("brightness") else edit.putInt("brightness", oldBrightness)
+            if (oldFollow == null) edit.remove("follow_system") else edit.putBoolean("follow_system", oldFollow)
+            edit.commit()
+        }
+    }
+
     @Test fun activityRecreationAwakeAndBlackoutRestore() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val prefs = context.getSharedPreferences("device_controls", Context.MODE_PRIVATE)
@@ -79,6 +103,10 @@ class DeviceControlAndroidTest {
                         assertEquals(.01f, activity.window.attributes.screenBrightness, .001f)
                     }
                     assertTrue(blackout.performClick())
+                    assertEquals(View.GONE, blackout.visibility)
+                    control.enterBlackout()
+                    val touch = android.view.MotionEvent.obtain(0, 0, android.view.MotionEvent.ACTION_DOWN, 2f, 2f, 0)
+                    try { assertTrue(blackout.dispatchTouchEvent(touch)) } finally { touch.recycle() }
                     assertEquals(View.GONE, blackout.visibility)
                     assertSame(page, container.getChildAt(0))
                     assertEquals(PanelPalette.forMode(ThemeMode.LIGHT).background,
@@ -145,7 +173,13 @@ class DeviceControlAndroidTest {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 onView(withId(R.id.page_container)).perform(swipeDown())
                 onView(withText("Control Center")).check(matches(isDisplayed()))
-                onView(withContentDescription("Display brightness")).perform(swipeRight())
+                onView(withText("Automatic system brightness")).check(matches(isDisplayed()))
+                onView(withText("Follow system")).check(matches(isDisplayed()))
+                onView(withContentDescription("System brightness")).check(matches(isDisplayed()))
+                onView(withContentDescription("DormPanel brightness")).check(matches(isDisplayed()))
+                onView(withText("Allow system brightness control")).check(matches(isDisplayed()))
+                scenario.onActivity { ViewModelProvider(it)[DashboardViewModel::class.java].deviceControls.setFollowSystem(false) }
+                onView(withContentDescription("DormPanel brightness")).perform(swipeRight())
                 onView(withText("Control Center")).check(matches(isDisplayed()))
                 onView(withContentDescription("Media volume")).perform(swipeLeft())
                 onView(withText("Control Center")).check(matches(isDisplayed()))
