@@ -33,6 +33,14 @@
 
     <string name="control_center_eyebrow">DOWN FROM HOME</string>
     <string name="control_center_title">Control Center</string>
+    <string name="system_section">System</string>
+    <string name="start_after_boot">Start DormPanel after boot</string>
+    <string name="start_after_boot_state">Start DormPanel after boot · %1$s</string>
+    <string name="start_after_boot_on">ON</string>
+    <string name="start_after_boot_off">OFF</string>
+    <string name="start_after_boot_save_failed">Could not save boot setting.</string>
+    <string name="open_miui_home">Open MIUI Home</string>
+    <string name="open_miui_home_failed">Home is unavailable on this device.</string>
     <string name="control_center_description">Quick system controls will live here.</string>
     <string name="control_center_return_hint">↑  Swipe up to return Home</string>
 

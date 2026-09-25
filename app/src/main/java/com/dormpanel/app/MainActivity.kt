@@ -17,6 +17,7 @@ import com.dormpanel.app.navigation.NavigationRouter
 import com.dormpanel.app.navigation.PanelPage
 import com.dormpanel.app.navigation.SwipeDirection
 import com.dormpanel.app.navigation.SwipeGestureDetector
+import com.dormpanel.app.navigation.TopEdgeSwipeGate
 import com.dormpanel.app.ui.PanelPageViewFactory
 import com.dormpanel.app.ui.PageInteraction
 import com.dormpanel.app.ui.hidePanelSystemBars
@@ -34,6 +35,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pageContainer: FrameLayout
     private lateinit var pageViewFactory: PanelPageViewFactory
     private lateinit var swipeGestureDetector: SwipeGestureDetector
+    private val topEdgeSwipeGate by lazy {
+        TopEdgeSwipeGate(resources.getDimension(R.dimen.system_top_edge_gesture_zone))
+    }
     private var currentPage = PanelPage.HOME
     private var transitionInProgress = false
     private var activePageInteraction: PageInteraction? = null
@@ -87,6 +91,7 @@ class MainActivity : AppCompatActivity() {
             cardRegistry = dashboardViewModel.registry,
             appearance = dashboardViewModel.appearance,
             deviceControls = dashboardViewModel.deviceControls,
+            startupPolicy = dashboardViewModel.startupPolicy,
             catalog = dashboardViewModel.catalog,
             backend = dashboardViewModel.dataSource,
             apps = dashboardViewModel.apps,
@@ -124,6 +129,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (dashboardViewModel.deviceControls.state.blackout) return super.dispatchTouchEvent(event)
+        if (!topEdgeSwipeGate.shouldObserve(event.actionMasked, event.rawY)) {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) swipeGestureDetector.cancel()
+            return super.dispatchTouchEvent(event)
+        }
         if (activePageInteraction?.shouldObservePageSwipe(event) != false) {
             swipeGestureDetector.onTouchEvent(event)
         } else if (event.actionMasked == MotionEvent.ACTION_DOWN) {
