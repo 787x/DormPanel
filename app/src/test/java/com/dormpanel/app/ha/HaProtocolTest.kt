@@ -59,6 +59,8 @@ class HaProtocolTest {
                             {"entity_id":"light.b","state":"off","attributes":{"friendly_name":"B","supported_color_modes":["brightness"]}},
                             {"entity_id":"input_select.theme","state":"LIGHT","attributes":{"options":["LIGHT","DARK"]}},
                             {"entity_id":"input_number.opacity","state":"35","attributes":{}},
+                            {"entity_id":"input_number.display","state":"32","attributes":{"min":1,"max":100}},
+                            {"entity_id":"input_number.volume","state":"45","attributes":{"min":0,"max":100}},
                             {"entity_id":"weather.home","state":"sunny","attributes":{"temperature":72,"temperature_unit":"°F","supported_features":1}}
                         ]""")
                         "config/entity_registry/list_for_display" -> JSONObject("""{"entities":[]}""")
@@ -74,10 +76,11 @@ class HaProtocolTest {
                 }
             }))
         }
-        fun start(theme: String = "input_select.theme", opacity: String = "input_number.opacity") {
+        fun start(theme: String = "input_select.theme", opacity: String = "input_number.opacity",
+            display: String = "", volume: String = "") {
             appearance.themeCommand = source::requestTheme
             appearance.opacityCommand = source::requestOpacity
-            source.configure(HaConnectionSettings(BackendMode.HOME_ASSISTANT, server.url("/").toString(), "weather.home", theme, opacity), "test-token")
+            source.configure(HaConnectionSettings(BackendMode.HOME_ASSISTANT, server.url("/").toString(), "weather.home", theme, opacity, display, volume), "test-token")
         }
         fun entity(id: String, value: String?, attributes: JSONObject = JSONObject()) {
             val next = value?.let { JSONObject().put("entity_id", id).put("state", it).put("attributes", attributes) } ?: JSONObject.NULL
@@ -140,6 +143,36 @@ class HaProtocolTest {
             val commandsBefore = f.services("turn_off").size
             f.source.setLightPower("ha:light.a", false)
             f.until { f.services("turn_off").size == commandsBefore + 1 }
+        }
+    }
+
+    @Test fun deviceHelpersApplyOnlyValidBoundUpdatesAndCoalesceLocalCommands() {
+        Fixture().use { f ->
+            val displays = mutableListOf<Int>()
+            val volumes = mutableListOf<Int>()
+            f.source.remoteBrightness = { displays += it }
+            f.source.remoteVolume = { volumes += it }
+            f.start(display = "input_number.display", volume = "input_number.volume")
+            f.until { f.source.connected && displays.isNotEmpty() && volumes.isNotEmpty() }
+            assertEquals(32, displays.last())
+            assertEquals(45, volumes.last())
+            f.entity("light.a", "off")
+            assertEquals(listOf(32), displays)
+            assertEquals(listOf(45), volumes)
+            f.entity("input_number.display", "unavailable")
+            f.entity("input_number.volume", "101")
+            assertEquals(listOf(32), displays)
+            assertEquals(listOf(45), volumes)
+            f.entity("input_number.display", "80", JSONObject("""{"min":1,"max":100}"""))
+            f.entity("input_number.volume", "0", JSONObject("""{"min":0,"max":100}"""))
+            assertEquals(80, displays.last())
+            assertEquals(0, volumes.last())
+            repeat(50) { f.source.requestDisplayBrightness(it.coerceAtLeast(1)); f.source.requestMediaVolume(it) }
+            f.scheduler.advance(180)
+            f.until { f.services("set_value").count { it.optJSONObject("target")?.optString("entity_id") in listOf("input_number.display", "input_number.volume") } >= 2 }
+            val sent = f.services("set_value").filter { it.optJSONObject("target")?.optString("entity_id") in listOf("input_number.display", "input_number.volume") }
+            assertEquals(2, sent.size)
+            assertEquals(setOf(49), sent.map { it.getJSONObject("service_data").getInt("value") }.toSet())
         }
     }
 

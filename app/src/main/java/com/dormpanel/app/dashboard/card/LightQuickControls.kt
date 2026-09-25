@@ -19,6 +19,7 @@ import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.AppearanceState
 import com.dormpanel.app.appearance.PanelPalette
 import com.dormpanel.app.appearance.applyAppearanceTree
+import com.dormpanel.app.appearance.matchActivityBrightness
 import com.dormpanel.app.data.Availability
 import com.dormpanel.app.data.DashboardData
 import com.dormpanel.app.data.DashboardDataSource
@@ -93,6 +94,7 @@ class LightQuickControls(
         window?.setBackgroundDrawable(android.graphics.Color.TRANSPARENT.toDrawable())
         val width = minOf((960 * context.resources.displayMetrics.density).toInt(), context.resources.displayMetrics.widthPixels - (48 * context.resources.displayMetrics.density).toInt())
         window?.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+        matchActivityBrightness()
         source.addListener(dataListener)
         appearance.addListener(appearanceListener)
     }
@@ -132,6 +134,7 @@ class LightQuickControls(
         }
         dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
         dialog.show()
+        dialog.matchActivityBrightness()
         input.requestFocus()
     }
 

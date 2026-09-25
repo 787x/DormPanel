@@ -1,8 +1,13 @@
 package com.dormpanel.app
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.database.ContentObserver
+import android.provider.Settings
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
@@ -32,6 +37,33 @@ class MainActivity : AppCompatActivity() {
     private var currentPage = PanelPage.HOME
     private var transitionInProgress = false
     private var activePageInteraction: PageInteraction? = null
+    private var blackoutView: View? = null
+    private val volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) { dashboardViewModel.deviceControls.refreshAudio() }
+    }
+    private val deviceListener: (com.dormpanel.app.device.DeviceControlState) -> Unit = { state ->
+        val attributes = window.attributes
+        val effective = if (state.blackout) 1 else state.brightness
+        val brightness = if (state.useSystemBrightness && !state.blackout) -1f else effective / 100f
+        if (attributes.screenBrightness != brightness) {
+            attributes.screenBrightness = brightness
+            window.attributes = attributes
+        }
+        if (state.keepAwake) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (state.blackout && blackoutView == null) {
+            blackoutView = View(this).apply {
+                setBackgroundColor(android.graphics.Color.BLACK)
+                contentDescription = "Blackout screen. Tap to restore."
+                isClickable = true
+                setOnClickListener { dashboardViewModel.deviceControls.exitBlackout() }
+            }
+            pageContainer.addView(blackoutView, FrameLayout.LayoutParams(-1, -1))
+        } else if (!state.blackout) {
+            blackoutView?.let(pageContainer::removeView)
+            blackoutView = null
+        }
+    }
     private val appearanceListener: (AppearanceState) -> Unit = { state ->
         pageContainer.setBackgroundColor(PanelPalette.forMode(state.themeMode).background)
         for (index in 0 until pageContainer.childCount) applyPageAppearance(pageContainer.getChildAt(index), state)
@@ -55,6 +87,7 @@ class MainActivity : AppCompatActivity() {
             dashboardStateHolder = dashboardViewModel.stateHolder,
             cardRegistry = dashboardViewModel.registry,
             appearance = dashboardViewModel.appearance,
+            deviceControls = dashboardViewModel.deviceControls,
             catalog = dashboardViewModel.catalog,
             backend = dashboardViewModel.dataSource,
             apps = dashboardViewModel.apps,
@@ -86,10 +119,12 @@ class MainActivity : AppCompatActivity() {
             ?: router.initialPage
         showPage(currentPage, direction = null, animate = false)
         dashboardViewModel.appearance.addListener(appearanceListener)
+        dashboardViewModel.deviceControls.addListener(deviceListener)
         enterImmersiveMode()
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (dashboardViewModel.deviceControls.state.blackout) return super.dispatchTouchEvent(event)
         if (activePageInteraction?.shouldObservePageSwipe(event) != false) {
             swipeGestureDetector.onTouchEvent(event)
         } else if (event.actionMasked == MotionEvent.ACTION_DOWN) {
@@ -102,6 +137,13 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         dashboardViewModel.apps.refresh()
         dashboardViewModel.schedule.refresh()
+        dashboardViewModel.deviceControls.refreshAudio()
+        contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, volumeObserver)
+    }
+
+    override fun onPause() {
+        contentResolver.unregisterContentObserver(volumeObserver)
+        super.onPause()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -118,6 +160,7 @@ class MainActivity : AppCompatActivity() {
         dashboardViewModel.haRelay.detach()
         scheduleImports.close()
         dashboardViewModel.appearance.removeListener(appearanceListener)
+        dashboardViewModel.deviceControls.removeListener(deviceListener)
         for (index in 0 until pageContainer.childCount) {
             pageContainer.getChildAt(index).animate().cancel()
         }

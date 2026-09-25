@@ -50,6 +50,7 @@ class CardPickerDialog(context: Context, private val catalog: CardCatalog,
         window?.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
         val metrics = context.resources.displayMetrics
         window?.setLayout(minOf(1120.dp, metrics.widthPixels - 64.dp), minOf(600.dp, metrics.heightPixels - 64.dp))
+        matchActivityBrightness()
         catalog.addListener(catalogListener)
         appearance.addListener(appearanceListener)
     }

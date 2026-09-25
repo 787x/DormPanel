@@ -40,6 +40,7 @@ class SensorDetailDialog(context: Context, private val appearance: AppearanceCon
         window?.hidePanelSystemBars()
         val metrics = context.resources.displayMetrics
         window?.setLayout(minOf((960 * metrics.density).toInt(), metrics.widthPixels - (48 * metrics.density).toInt()), ViewGroup.LayoutParams.WRAP_CONTENT)
+        matchActivityBrightness()
         source.addListener(listener); appearance.addListener(theme)
     }
     private fun bind() {

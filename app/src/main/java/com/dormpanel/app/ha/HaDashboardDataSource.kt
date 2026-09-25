@@ -62,6 +62,12 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         val light = state.lights["ha:$entity"]
         if (connected && light?.availability == Availability.AVAILABLE) sendOn(light, intent)
     }
+    var remoteBrightness: ((Int) -> Unit)? = null
+    var remoteVolume: ((Int) -> Unit)? = null
+    private val deviceCommands = LatestCommands(scheduler) { entity, property, value ->
+        if (numberHelper(entity, if (property == "brightness") 1 else 0) != null) socket.service("input_number", "set_value", entity,
+            JSONObject().put("value", value))
+    }
     private val socket = HaWebSocketClient(http, scheduler, ::statusChanged, ::initialize, ::event)
     val connected get() = status.state == HaConnectionState.CONNECTED
     val relayChannel: HaRelayChannel = object : HaRelayChannel {
@@ -77,7 +83,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     fun removeStatusListener(listener: (HaStatus) -> Unit) { statusListeners -= listener }
     private fun statusChanged(value: HaStatus) {
         status = value
-        if (!connected) { initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); pendingLights.clear(); forecastTimer?.invoke(); forecastTimer = null }
+        if (!connected) { initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); deviceCommands.clear(); pendingLights.clear(); forecastTimer?.invoke(); forecastTimer = null }
         publish(rebuild = true); statusListeners.toList().forEach { it(value) }
     }
     fun configure(value: HaConnectionSettings, token: String?) {
@@ -90,7 +96,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         runCatching { HaEndpoint.parse(value.baseUrl) }.onSuccess { socket.start(it, token) }
             .onFailure { statusChanged(HaStatus(HaConnectionState.ERROR, "Invalid HA base URL.")) }
     }
-    fun stop() { socket.stop(); commands.clear(); pendingLights.clear(); forecastTimer?.invoke(); forecastTimer = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
+    fun stop() { socket.stop(); commands.clear(); deviceCommands.clear(); pendingLights.clear(); forecastTimer?.invoke(); forecastTimer = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
     private fun initialize() {
         bufferedEvents.clear()
         socket.request(JSONObject().put("type", "subscribe_events").put("event_type", "state_changed")) { subscription ->
@@ -108,7 +114,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                                 initialized = true
                                 bufferedEvents.forEach(store::event); bufferedEvents.clear()
                                 store.lightStates(true).values.forEach(memory::observe)
-                                selectWeather(); socket.synchronized(); applyAppearance(); fetchForecast()
+                                selectWeather(); socket.synchronized(); applyAppearance(); applyDeviceHelpers(); fetchForecast()
                                 relayReadyListeners.toList().forEach { it() }
                                 registryDirty.toList().forEach { kind -> registryDirty -= kind; refreshRegistry(kind) }
                             }
@@ -188,6 +194,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                 publish(rebuild = topologyChanged, homeRelevant = id.substringBefore('.') in HOME_DOMAINS)
                 if (weatherId != previous) fetchForecast()
                 applyAppearance(id)
+                applyDeviceHelpers(id)
             }
         }
     }
@@ -282,6 +289,33 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private fun appearanceHelper(id: String, domain: String): HaEntity? {
         if (!connected || !id.startsWith("$domain.")) return null
         return store.entities[id]?.takeIf { it.usable && store.enabled(it) }
+    }
+    private fun numberHelper(id: String, minimum: Int = 0): HaEntity? = appearanceHelper(id, "input_number")?.takeIf { helper ->
+        val configuredMin = helper.attributes.number("min")
+        val configuredMax = helper.attributes.number("max")
+        (configuredMin == null || configuredMin <= minimum) && (configuredMax == null || configuredMax >= 100)
+    }
+
+    private fun requestDeviceNumber(id: String, percent: Int, minimum: Int) {
+        if (percent !in minimum..100 || numberHelper(id, minimum) == null) return
+        deviceCommands.put(id, if (minimum == 1) "brightness" else "volume", percent)
+    }
+    fun requestDisplayBrightness(percent: Int) {
+        if (percent in 1..100) requestDeviceNumber(settings.displayBrightnessEntity, percent, 1)
+    }
+    fun requestMediaVolume(percent: Int) = requestDeviceNumber(settings.mediaVolumeEntity, percent, 0)
+
+    private fun applyDeviceHelpers(changedEntity: String? = null) {
+        if (!connected) return
+        fun value(id: String, minimum: Int): Int? {
+            val helper = numberHelper(id, minimum) ?: return null
+            val numeric = helper.value.toDoubleOrNull()?.takeIf { it.isFinite() && it in minimum.toDouble()..100.0 } ?: return null
+            return kotlin.math.round(numeric).toInt()
+        }
+        if (changedEntity == null || changedEntity == settings.displayBrightnessEntity)
+            value(settings.displayBrightnessEntity, 1)?.let { remoteBrightness?.invoke(it) }
+        if (changedEntity == null || changedEntity == settings.mediaVolumeEntity)
+            value(settings.mediaVolumeEntity, 0)?.let { remoteVolume?.invoke(it) }
     }
     private fun themeOption(helper: HaEntity, mode: ThemeMode): String? {
         val options = helper.attributes.optJSONArray("options") ?: return null

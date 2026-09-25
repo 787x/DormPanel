@@ -70,7 +70,7 @@ internal class ScheduleEditors(private val context: Context, private val source:
         dialogs += dialog; themed += dialog
         appearance.addListener(appearanceListener)
         dialog.setOnDismissListener { dialogs.remove(dialog); themed.remove(dialog); if (dialogs.isEmpty()) appearance.removeListener(appearanceListener) }
-        dialog.show(); themeAll()
+        dialog.show(); dialog.matchActivityBrightness(); themeAll()
     }
     private fun input(hint: String, value: String, multiline: Boolean = false) = EditText(context).apply {
         this.hint = hint; contentDescription = hint; textSize = 20f; minHeight = context.dp(48); setText(value)
@@ -91,6 +91,7 @@ internal class ScheduleEditors(private val context: Context, private val source:
         dialog.setOnDismissListener { dialogs.remove(dialog); appearance.removeListener(appearanceUpdate) }
         dialog.show(); appearance.addListener(appearanceUpdate); appearanceUpdate(appearance.state)
         dialog.window?.setLayout(minOf(context.dp(900), context.resources.displayMetrics.widthPixels - context.dp(48)), ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.matchActivityBrightness()
         listOf(-1, -2, -3).forEach { dialog.getButton(it)?.minHeight = context.dp(48) }
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             if (enabled()) { val message = save(); if (message == null) dialog.dismiss() else error.text = message }

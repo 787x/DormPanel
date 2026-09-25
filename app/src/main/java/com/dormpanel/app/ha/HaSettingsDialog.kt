@@ -10,7 +10,7 @@ import okhttp3.Call
 
 /** Low-frequency configuration surface; protocol/state ownership remains in the backend. */
 class HaSettingsDialog(private val context: Context, private val backend: DashboardBackend) {
-    fun show() {
+    fun show(): AlertDialog {
         val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 12, 24, 12) }
         fun label(text: String) { content.addView(TextView(context).apply { this.text = text; textSize = 16f }) }
         fun input(title: String, value: String): EditText {
@@ -39,6 +39,8 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
         val weather = choices("Preferred weather (blank = first discovered)", entities("weather", settings.weatherEntity), settings.weatherEntity)
         val theme = choices("Theme helper (optional input_select: light / dark)", entities("input_select", settings.themeEntity), settings.themeEntity)
         val opacity = choices("Opacity helper (optional input_number: 0–100)", entities("input_number", settings.opacityEntity), settings.opacityEntity)
+        val brightness = choices("Display brightness helper (optional input_number: 1–100)", entities("input_number", settings.displayBrightnessEntity), settings.displayBrightnessEntity)
+        val volume = choices("Media volume helper (optional input_number: 0–100)", entities("input_number", settings.mediaVolumeEntity), settings.mediaVolumeEntity)
         val status = TextView(context).apply { textSize = 16f; content.addView(this) }
         val diagnostic = TextView(context).apply { textSize = 16f; content.addView(this) }
         var call: Call? = null
@@ -51,6 +53,14 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
         dialog.setOnShowListener {
             dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
             dialog.window?.setLayout((context.resources.displayMetrics.widthPixels * 0.8).toInt(), (context.resources.displayMetrics.heightPixels * 0.9).toInt())
+            // Dialogs have their own Window and otherwise fall back to system brightness.
+            (context as? android.app.Activity)?.window?.attributes?.screenBrightness?.let { current ->
+                dialog.window?.let { window ->
+                    val attributes = window.attributes
+                    attributes.screenBrightness = current
+                    window.attributes = attributes
+                }
+            }
             backend.ha.addStatusListener(listener)
             test.setOnClickListener {
                 try {
@@ -65,12 +75,14 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
                 try {
                     backend.relayIdentity.setDisplayName(relayName.text.toString())
                     backend.save(HaConnectionSettings(BackendMode.valueOf(mode.selectedItem.toString()), url.text.toString(),
-                        weather.selectedItem.toString(), theme.selectedItem.toString(), opacity.selectedItem.toString()), token.text.toString())
+                        weather.selectedItem.toString(), theme.selectedItem.toString(), opacity.selectedItem.toString(),
+                        brightness.selectedItem.toString(), volume.selectedItem.toString()), token.text.toString())
                     token.text.clear(); diagnostic.text = context.getString(R.string.ha_saved)
                 } catch (_: Exception) { diagnostic.text = context.getString(R.string.ha_save_failed) }
             }
         }
         dialog.setOnDismissListener { dismissed = true; call?.cancel(); backend.ha.removeStatusListener(listener); token.text.clear() }
         dialog.show()
+        return dialog
     }
 }
