@@ -339,6 +339,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     private fun show(dialog: AlertDialog): AlertDialog {
         dialogs += dialog; dialog.setOnDismissListener { dialogs -= dialog }; dialog.show()
         dialog.window?.setLayout(minOf(context.dp(1000), context.resources.displayMetrics.widthPixels - context.dp(48)), ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.matchActivityBrightness()
         theme(dialog, appearance.state); return dialog
     }
     fun close() { closed = true; stopReceiving(); dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow()

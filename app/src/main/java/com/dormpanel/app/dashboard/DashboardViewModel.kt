@@ -13,6 +13,9 @@ import com.dormpanel.app.schedule.*
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     val appearance = AppearanceController(PreferencesAppearanceStore(application))
+    val deviceControls = com.dormpanel.app.device.DeviceControlController(
+        com.dormpanel.app.device.PreferencesDeviceControlStore(application),
+        com.dormpanel.app.device.AndroidMediaVolumePort(application))
     val dataSource = com.dormpanel.app.ha.DashboardBackend(application, appearance, CatalogLabels(
         application.getString(R.string.card_clock), application.getString(R.string.card_clock_description),
         application.getString(R.string.card_weather), application.getString(R.string.card_weather_description),
@@ -34,6 +37,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         registry = registry,
         store = DashboardStores.create(application),
     )
+
+    init {
+        deviceControls.brightnessCommand = dataSource.ha::requestDisplayBrightness
+        deviceControls.volumeCommand = dataSource.ha::requestMediaVolume
+        dataSource.ha.remoteBrightness = { deviceControls.setBrightness(it, remote = true) }
+        dataSource.ha.remoteVolume = { deviceControls.setMediaPercent(it, remote = true) }
+    }
 
     override fun onCleared() {
         webDav.close()

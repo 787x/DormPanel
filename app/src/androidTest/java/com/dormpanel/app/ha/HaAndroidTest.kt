@@ -21,6 +21,19 @@ import java.util.concurrent.atomic.AtomicReference
 class HaAndroidTest {
     @get:org.junit.Rule val dashboardPersistence = com.dormpanel.app.IsolatedDashboardRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    @Test fun addingDeviceHelpersPreservesExistingSettings() {
+        val store = HaSettingsStore(context)
+        val saved = store.read()
+        try {
+            val old = HaConnectionSettings(BackendMode.HOME_ASSISTANT, "https://example.invalid", "weather.old",
+                "input_select.theme", "input_number.opacity")
+            store.write(old)
+            assertEquals(old, store.read())
+            val withHelpers = old.copy(displayBrightnessEntity = "input_number.display", mediaVolumeEntity = "input_number.volume")
+            store.write(withHelpers)
+            assertEquals(withHelpers, store.read())
+        } finally { store.write(saved) }
+    }
     @Test fun androidKeystoreRoundtripAndTamper() {
         val isolated = context.createDeviceProtectedStorageContext()
         val store = HaTokenStore(isolated)

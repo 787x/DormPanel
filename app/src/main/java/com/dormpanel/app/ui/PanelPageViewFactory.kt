@@ -19,6 +19,7 @@ class PanelPageViewFactory(
     private val onPageGestureClaimed: () -> Unit,
     private val onReturnHome: () -> Unit,
     private val appearance: AppearanceController,
+    private val deviceControls: com.dormpanel.app.device.DeviceControlController,
     private val catalog: CardCatalog,
     private val backend: com.dormpanel.app.ha.DashboardBackend,
     private val apps: com.dormpanel.app.apps.AndroidInstalledApps,
@@ -32,7 +33,7 @@ class PanelPageViewFactory(
         if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, receiveTimetable, manageTimetables)
         if (page == PanelPage.APPS) return com.dormpanel.app.apps.AppsPageView(inflater.context, apps, apps.icons, appearance, onReturnHome)
         if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed)
-        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, onPageGestureClaimed, backend)
+        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, deviceControls, onPageGestureClaimed, backend)
         if (page == PanelPage.HOME) {
             return (inflater.inflate(R.layout.view_home_page, parent, false) as DashboardPageView).apply {
                 bind(dashboardStateHolder, cardRegistry, onPageGestureClaimed, catalog, appearance, backend)

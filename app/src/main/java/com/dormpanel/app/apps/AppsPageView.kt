@@ -81,7 +81,7 @@ class AppsPageView(context: Context, private val source: InstalledAppSource,
                         context.getString(R.string.apps_settings))) { _, action ->
                         if (action == 0) source.toggleFavorite(app.component) else openAppSettings(context, source, app.component)
                     }
-                    .show()
+                    .showMatchingBrightness()
                 true
             }
         }

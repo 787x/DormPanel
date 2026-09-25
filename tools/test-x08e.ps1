@@ -14,6 +14,16 @@ if ($LASTEXITCODE -ne 0 -or $deviceLines.Count -ne 1 -or $deviceLines[0] -notmat
     throw 'Connect exactly one authorized X08E ADB device before running the physical suite.'
 }
 $deviceSerial = $Matches[1]
+$mediaBeforeOutput = @(adb -s $deviceSerial shell media volume --stream 3 --get) -join "`n"
+if ($LASTEXITCODE -ne 0 -or $mediaBeforeOutput -notmatch 'volume is (\d+) in range') {
+    throw 'Unable to snapshot physical media volume.'
+}
+$mediaBefore = [int]$Matches[1]
+$musicBefore = adb -s $deviceSerial shell dumpsys audio | Select-String 'STREAM_MUSIC:' -Context 0,1 | Select-Object -First 1
+$mutedBefore = $musicBefore.Context.PostContext[0] -match 'Muted: true'
+$brightnessBefore = (adb -s $deviceSerial shell settings get system screen_brightness).Trim()
+$brightnessModeBefore = (adb -s $deviceSerial shell settings get system screen_brightness_mode).Trim()
+$timeoutBefore = (adb -s $deviceSerial shell settings get system screen_off_timeout).Trim()
 $model = (adb -s $deviceSerial shell getprop ro.product.model).Trim()
 $api = (adb -s $deviceSerial shell getprop ro.build.version.sdk).Trim()
 $size = (adb -s $deviceSerial shell wm size | Select-String 'Physical size:').ToString().Trim()
@@ -34,6 +44,24 @@ try {
     $gradleExitCode = $LASTEXITCODE
 } finally {
     Pop-Location
+    $mediaAfterOutput = @(adb -s $deviceSerial shell media volume --stream 3 --get) -join "`n"
+    if ($mediaAfterOutput -match 'volume is (\d+) in range' -and [int]$Matches[1] -ne $mediaBefore) {
+        adb -s $deviceSerial shell media volume --stream 3 --set $mediaBefore | Out-Host
+    }
+    $musicAfter = adb -s $deviceSerial shell dumpsys audio | Select-String 'STREAM_MUSIC:' -Context 0,1 | Select-Object -First 1
+    if (($musicAfter.Context.PostContext[0] -match 'Muted: true') -ne $mutedBefore) {
+        # A test failure must never leave daily playback muted. The media key toggles this stream.
+        adb -s $deviceSerial shell input keyevent KEYCODE_VOLUME_MUTE
+    }
+    if ((adb -s $deviceSerial shell settings get system screen_brightness).Trim() -ne $brightnessBefore) {
+        adb -s $deviceSerial shell settings put system screen_brightness $brightnessBefore
+    }
+    if ((adb -s $deviceSerial shell settings get system screen_brightness_mode).Trim() -ne $brightnessModeBefore) {
+        adb -s $deviceSerial shell settings put system screen_brightness_mode $brightnessModeBefore
+    }
+    if ((adb -s $deviceSerial shell settings get system screen_off_timeout).Trim() -ne $timeoutBefore) {
+        throw 'System screen timeout changed during the physical suite; it must be restored manually.'
+    }
 }
 
 $after = @(adb -s $deviceSerial shell pm path $dailyPackage)

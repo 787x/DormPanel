@@ -7,6 +7,7 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import com.dormpanel.app.R
 import com.dormpanel.app.appearance.AppearanceController
+import com.dormpanel.app.appearance.showMatchingBrightness
 import com.dormpanel.app.dashboard.card.*
 import com.dormpanel.app.dashboard.model.*
 
@@ -57,6 +58,6 @@ class AppCardView(context: Context, appearance: AppearanceController,
             .setItems(arrayOf(context.getString(R.string.apps_open), context.getString(R.string.apps_settings))) { _, action ->
                 if (action == 0) primaryAction()
                 else openAppSettings(context, source, AppConfiguration.decode(card.configurationJson).component)
-            }.show()
+            }.showMatchingBrightness()
     }
 }

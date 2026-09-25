@@ -126,6 +126,7 @@ class ProductivityCardView(context: Context, appearance: AppearanceController, p
         }
         dialog.window?.setLayout(minOf(760.dp, resources.displayMetrics.widthPixels - 48.dp), ViewGroup.LayoutParams.WRAP_CONTENT)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.matchActivityBrightness()
         dialog.window?.decorView?.let { it.setBackgroundColor(PanelPalette.forMode(appearance.state.themeMode).surface); applyAppearanceTree(it, appearance.state) }
         return dialog
     }
