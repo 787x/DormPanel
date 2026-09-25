@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity() {
     private var currentPage = PanelPage.HOME
     private var transitionInProgress = false
     private var activePageInteraction: PageInteraction? = null
-    private var blackoutView: View? = null
+    private lateinit var blackoutView: View
     private val volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) { dashboardViewModel.deviceControls.refreshAudio() }
     }
@@ -51,18 +51,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (state.keepAwake) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        if (state.blackout && blackoutView == null) {
-            blackoutView = View(this).apply {
-                setBackgroundColor(android.graphics.Color.BLACK)
-                contentDescription = "Blackout screen. Tap to restore."
-                isClickable = true
-                setOnClickListener { dashboardViewModel.deviceControls.exitBlackout() }
-            }
-            pageContainer.addView(blackoutView, FrameLayout.LayoutParams(-1, -1))
-        } else if (!state.blackout) {
-            blackoutView?.let(pageContainer::removeView)
-            blackoutView = null
-        }
+        blackoutView.visibility = if (state.blackout) View.VISIBLE else View.GONE
     }
     private val appearanceListener: (AppearanceState) -> Unit = { state ->
         pageContainer.setBackgroundColor(PanelPalette.forMode(state.themeMode).background)
@@ -73,6 +62,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         pageContainer = findViewById(R.id.page_container)
+        blackoutView = findViewById<View>(R.id.blackout_surface).apply {
+            setOnClickListener { dashboardViewModel.deviceControls.exitBlackout() }
+        }
         scheduleImports = com.dormpanel.app.schedule.ScheduleImportUi(this, dashboardViewModel.schedule, dashboardViewModel.appearance, dashboardViewModel.webDav) {
             // Generic MIME allows .ics documents from providers that do not report text/calendar.
             timetablePicker.launch(arrayOf("text/calendar", "*/*"))

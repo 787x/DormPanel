@@ -2,6 +2,9 @@ package com.dormpanel.app
 
 import android.content.Context
 import android.media.AudioManager
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.view.View
 import android.view.WindowManager
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -19,6 +22,9 @@ import androidx.test.espresso.matcher.ViewMatchers.withText
 import com.dormpanel.app.dashboard.DashboardViewModel
 import com.dormpanel.app.dashboard.ui.CardPickerDialog
 import com.dormpanel.app.ha.HaSettingsDialog
+import com.dormpanel.app.appearance.PanelPalette
+import com.dormpanel.app.appearance.PreferencesAppearanceStore
+import com.dormpanel.app.appearance.ThemeMode
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -32,6 +38,8 @@ class DeviceControlAndroidTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val prefs = context.getSharedPreferences("device_controls", Context.MODE_PRIVATE)
         val before = prefs.all.toMap()
+        val appearanceStore = PreferencesAppearanceStore(context)
+        val beforeAppearance = appearanceStore.read()
         assertFalse(android.provider.Settings.System.canWrite(context))
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -54,11 +62,27 @@ class DeviceControlAndroidTest {
                     picker.dismiss()
                     control.setKeepAwake(false)
                     assertEquals(0, activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    val container = activity.findViewById<android.view.ViewGroup>(R.id.page_container)
+                    val page = container.getChildAt(0)
+                    val blackout = activity.findViewById<View>(R.id.blackout_surface)
+                    assertEquals(View.GONE, blackout.visibility)
                     control.enterBlackout()
                     assertEquals(.01f, activity.window.attributes.screenBrightness, .001f)
-                    assertEquals("Blackout screen. Tap to restore.", activity.findViewById<android.view.ViewGroup>(R.id.page_container)
-                        .getChildAt(1).contentDescription)
-                    control.exitBlackout()
+                    assertEquals(View.VISIBLE, blackout.visibility)
+                    assertEquals(1, container.childCount)
+                    assertSame(page, container.getChildAt(0))
+                    val appearance = model.appearance
+                    for (mode in listOf(ThemeMode.LIGHT, ThemeMode.DARK, ThemeMode.LIGHT)) {
+                        appearance.update(appearance.state.copy(themeMode = mode))
+                        assertEquals(Color.BLACK, (blackout.background as ColorDrawable).color)
+                        assertEquals(View.VISIBLE, blackout.visibility)
+                        assertEquals(.01f, activity.window.attributes.screenBrightness, .001f)
+                    }
+                    assertTrue(blackout.performClick())
+                    assertEquals(View.GONE, blackout.visibility)
+                    assertSame(page, container.getChildAt(0))
+                    assertEquals(PanelPalette.forMode(ThemeMode.LIGHT).background,
+                        (container.background as ColorDrawable).color)
                     assertEquals(.10f, activity.window.attributes.screenBrightness, .001f)
                 }
                 scenario.recreate()
@@ -78,6 +102,7 @@ class DeviceControlAndroidTest {
                 is String -> edit.putString(key, value)
             } }
             edit.commit()
+            appearanceStore.write(beforeAppearance)
         }
     }
 
