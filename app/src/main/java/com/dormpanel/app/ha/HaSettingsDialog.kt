@@ -43,6 +43,10 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
         val systemBrightness = choices("System brightness helper (manual only, input_number: 1–100)", entities("input_number", settings.systemBrightnessEntity), settings.systemBrightnessEntity)
         val volume = choices("Media volume helper (optional input_number: 0–100)", entities("input_number", settings.mediaVolumeEntity), settings.mediaVolumeEntity)
         val blackout = choices("DormPanel Blackout helper (optional input_boolean)", entities("input_boolean", settings.blackoutEntity), settings.blackoutEntity)
+        val systemAutomatic = choices("Automatic system brightness helper (optional input_boolean)", entities("input_boolean", settings.systemAutomaticEntity), settings.systemAutomaticEntity)
+        val followSystem = choices("Follow system helper (optional input_boolean)", entities("input_boolean", settings.followSystemEntity), settings.followSystemEntity)
+        val keepAwake = choices("Keep screen awake helper (optional input_boolean)", entities("input_boolean", settings.keepAwakeEntity), settings.keepAwakeEntity)
+        val startAfterBoot = choices("Start after boot helper (optional input_boolean)", entities("input_boolean", settings.startAfterBootEntity), settings.startAfterBootEntity)
         label("System helper updates are sent only for local manual changes; automatic ambient changes are not mirrored.")
         val status = TextView(context).apply { textSize = 16f; content.addView(this) }
         val diagnostic = TextView(context).apply { textSize = 16f; content.addView(this) }
@@ -80,7 +84,9 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
                     backend.save(HaConnectionSettings(BackendMode.valueOf(mode.selectedItem.toString()), url.text.toString(),
                         weather.selectedItem.toString(), theme.selectedItem.toString(), opacity.selectedItem.toString(),
                         brightness.selectedItem.toString(), volume.selectedItem.toString(),
-                        systemBrightness.selectedItem.toString(), blackout.selectedItem.toString()), token.text.toString())
+                        systemBrightness.selectedItem.toString(), blackout.selectedItem.toString(),
+                        systemAutomatic.selectedItem.toString(), followSystem.selectedItem.toString(),
+                        keepAwake.selectedItem.toString(), startAfterBoot.selectedItem.toString()), token.text.toString())
                     token.text.clear(); diagnostic.text = context.getString(R.string.ha_saved)
                 } catch (_: Exception) { diagnostic.text = context.getString(R.string.ha_save_failed) }
             }

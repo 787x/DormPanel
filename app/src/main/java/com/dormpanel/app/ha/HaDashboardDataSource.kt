@@ -67,6 +67,10 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     var remoteVolume: ((Int) -> Unit)? = null
     var remoteSystemBrightness: ((Int) -> Unit)? = null
     var remoteBlackout: ((Boolean) -> Unit)? = null
+    var remoteSystemAutomatic: ((Boolean) -> Unit)? = null
+    var remoteFollowSystem: ((Boolean) -> Unit)? = null
+    var remoteKeepAwake: ((Boolean) -> Unit)? = null
+    var remoteStartAfterBoot: ((Boolean) -> Unit)? = null
     private val deviceCommands = LatestCommands(scheduler) { entity, property, value ->
         if (numberHelper(entity, if (property == "brightness") 1 else 0) != null) socket.service("input_number", "set_value", entity,
             JSONObject().put("value", value))
@@ -298,6 +302,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         val configuredMax = helper.attributes.number("max")
         (configuredMin == null || configuredMin <= minimum) && (configuredMax == null || configuredMax >= 100)
     }
+    private fun booleanHelper(id: String): HaEntity? = appearanceHelper(id, "input_boolean")
 
     private fun requestDeviceNumber(id: String, percent: Int, minimum: Int) {
         if (percent !in minimum..100 || numberHelper(id, minimum) == null) return
@@ -309,11 +314,17 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     fun requestSystemBrightness(percent: Int) {
         if (percent in 1..100) requestDeviceNumber(settings.systemBrightnessEntity, percent, 1)
     }
-    fun requestBlackout(enabled: Boolean) {
-        val helper = appearanceHelper(settings.blackoutEntity, "input_boolean") ?: return
+    fun requestBlackout(enabled: Boolean) = requestBooleanHelper(settings.blackoutEntity, enabled)
+    fun requestSystemAutomatic(enabled: Boolean) = requestBooleanHelper(settings.systemAutomaticEntity, enabled)
+    fun requestFollowSystem(enabled: Boolean) = requestBooleanHelper(settings.followSystemEntity, enabled)
+    fun requestKeepAwake(enabled: Boolean) = requestBooleanHelper(settings.keepAwakeEntity, enabled)
+    fun requestStartAfterBoot(enabled: Boolean) = requestBooleanHelper(settings.startAfterBootEntity, enabled)
+    fun requestMediaVolume(percent: Int) = requestDeviceNumber(settings.mediaVolumeEntity, percent, 0)
+
+    private fun requestBooleanHelper(id: String, enabled: Boolean) {
+        val helper = booleanHelper(id) ?: return
         socket.service("input_boolean", if (enabled) "turn_on" else "turn_off", helper.id)
     }
-    fun requestMediaVolume(percent: Int) = requestDeviceNumber(settings.mediaVolumeEntity, percent, 0)
 
     private fun applyDeviceHelpers(changedEntity: String? = null) {
         if (!connected) return
@@ -322,6 +333,15 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
             val numeric = helper.value.toDoubleOrNull()?.takeIf { it.isFinite() && it in minimum.toDouble()..100.0 } ?: return null
             return kotlin.math.round(numeric).toInt()
         }
+        fun applyBoolean(id: String, callback: ((Boolean) -> Unit)?) {
+            if (callback == null || (changedEntity != null && changedEntity != id)) return
+            when (booleanHelper(id)?.value?.lowercase()) {
+                "on" -> callback(true)
+                "off" -> callback(false)
+            }
+        }
+        // Follow System first so a configured helper owns the mode and can reject a brightness snapshot.
+        applyBoolean(settings.followSystemEntity, remoteFollowSystem)
         // A reconnect snapshot must not turn Follow System into Override.
         if ((changedEntity != null || acceptBrightnessSnapshot()) &&
             (changedEntity == null || changedEntity == settings.displayBrightnessEntity))
@@ -330,13 +350,10 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
             value(settings.systemBrightnessEntity, 1)?.let { remoteSystemBrightness?.invoke(it) }
         if (changedEntity == null || changedEntity == settings.mediaVolumeEntity)
             value(settings.mediaVolumeEntity, 0)?.let { remoteVolume?.invoke(it) }
-        if (changedEntity == null || changedEntity == settings.blackoutEntity) {
-            val helper = appearanceHelper(settings.blackoutEntity, "input_boolean")
-            when (helper?.value?.lowercase()) {
-                "on" -> remoteBlackout?.invoke(true)
-                "off" -> remoteBlackout?.invoke(false)
-            }
-        }
+        applyBoolean(settings.blackoutEntity, remoteBlackout)
+        applyBoolean(settings.systemAutomaticEntity, remoteSystemAutomatic)
+        applyBoolean(settings.keepAwakeEntity, remoteKeepAwake)
+        applyBoolean(settings.startAfterBootEntity, remoteStartAfterBoot)
     }
     private fun themeOption(helper: HaEntity, mode: ThemeMode): String? {
         val options = helper.attributes.optJSONArray("options") ?: return null

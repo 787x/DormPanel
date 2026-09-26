@@ -61,11 +61,19 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         deviceControls.volumeCommand = dataSource.ha::requestMediaVolume
         deviceControls.systemBrightnessCommand = dataSource.ha::requestSystemBrightness
         deviceControls.blackoutCommand = dataSource.ha::requestBlackout
+        deviceControls.systemAutomaticCommand = dataSource.ha::requestSystemAutomatic
+        deviceControls.followSystemCommand = dataSource.ha::requestFollowSystem
+        deviceControls.keepAwakeCommand = dataSource.ha::requestKeepAwake
+        startupPolicy.startAfterBootCommand = dataSource.ha::requestStartAfterBoot
         dataSource.ha.remoteBrightness = { deviceControls.setBrightness(it, remote = true) }
         dataSource.ha.acceptBrightnessSnapshot = { !deviceControls.state.useSystemBrightness }
         dataSource.ha.remoteVolume = { deviceControls.setMediaPercent(it, remote = true) }
         dataSource.ha.remoteSystemBrightness = { deviceControls.setSystemBrightness(it, remote = true) }
         dataSource.ha.remoteBlackout = { if (it) deviceControls.enterBlackout(remote = true) else deviceControls.exitBlackout(remote = true) }
+        dataSource.ha.remoteSystemAutomatic = { deviceControls.setSystemAutomatic(it, remote = true) }
+        dataSource.ha.remoteFollowSystem = { deviceControls.setFollowSystem(it, remote = true) }
+        dataSource.ha.remoteKeepAwake = { deviceControls.setKeepAwake(it, remote = true) }
+        dataSource.ha.remoteStartAfterBoot = { startupPolicy.setStartAfterBoot(it, remote = true) }
     }
 
     override fun onCleared() {

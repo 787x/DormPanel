@@ -88,6 +88,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         updateBootLabel(enabled)
         startAfterBoot.setOnCheckedChangeListener(bootPreferenceListener)
     }
+    private val bootStateListener: (Boolean) -> Unit = { showBootPreference() }
     private val light = RadioButton(context).apply { id = generateViewId(); setText(R.string.theme_light); textSize = 20f; minimumHeight = dp(52) }
     private val dark = RadioButton(context).apply { id = generateViewId(); setText(R.string.theme_dark); textSize = 20f; minimumHeight = dp(52) }
     private val modes = RadioGroup(context).apply { orientation = HORIZONTAL; addView(light); addView(dark) }
@@ -192,7 +193,14 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         addView(TextView(context).apply { setText(R.string.return_home_up); textSize = 16f })
         brightness.onUserProgress { device.setBrightness(it.coerceAtLeast(1)) }
         systemBrightness.onUserProgress { device.setSystemBrightness(it.coerceAtLeast(1)) }
-        automatic.setOnCheckedChangeListener { _, checked -> device.setSystemAutomatic(checked) }
+        fun onAutomaticChanged(checked: Boolean) {
+            if (!device.setSystemAutomatic(checked)) {
+                automatic.setOnCheckedChangeListener(null)
+                automatic.isChecked = device.state.system.automatic
+                automatic.setOnCheckedChangeListener { _, next -> onAutomaticChanged(next) }
+            }
+        }
+        automatic.setOnCheckedChangeListener { _, checked -> onAutomaticChanged(checked) }
         followSystem.setOnCheckedChangeListener { _, checked -> device.setFollowSystem(checked) }
         allowSystem.setOnClickListener {
             onGestureClaimed()
@@ -218,10 +226,12 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         device.refreshSystemBrightness()
         device.addListener(deviceListener)
         appearance.addListener(appearanceListener)
+        startupPolicy.addListener(bootStateListener)
         backend?.ha?.addStatusListener(haListener)
     }
     override fun onDetachedFromWindow() {
         backend?.ha?.removeStatusListener(haListener)
+        startupPolicy.removeListener(bootStateListener)
         appearance.removeListener(appearanceListener)
         device.removeListener(deviceListener)
         super.onDetachedFromWindow()

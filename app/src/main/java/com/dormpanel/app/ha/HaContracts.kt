@@ -10,6 +10,8 @@ data class HaConnectionSettings(
     val weatherEntity: String = "", val themeEntity: String = "", val opacityEntity: String = "",
     val displayBrightnessEntity: String = "", val mediaVolumeEntity: String = "",
     val systemBrightnessEntity: String = "", val blackoutEntity: String = "",
+    val systemAutomaticEntity: String = "", val followSystemEntity: String = "",
+    val keepAwakeEntity: String = "", val startAfterBootEntity: String = "",
 )
 data class HaEndpoint(val base: String) {
     val api get() = "$base/api/"
