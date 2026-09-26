@@ -13,7 +13,8 @@ import com.dormpanel.app.apps.ApkInstallController
 import com.dormpanel.app.apps.ApkMetadata
 import com.dormpanel.app.apps.ApkStaging
 
-data class RelayPreview(val transferId: String, val preview: ImportPreview)
+data class RelayPreview(val transferId: String, val preview: ImportPreview?,
+    val needsProfile: TimetableImporter.ParseOutcome.NeedsProfile? = null)
 class HaRelayIntegrityException(message: String) : IOException(message)
 
 /** Signed paths never escape the configured HA origin, even through redirects. */
@@ -46,8 +47,10 @@ class HaRelayDownloader(http: OkHttpClient) {
             if (!response.isSuccessful) throw IOException("HA download HTTP ${response.code}")
             val body = response.body ?: throw IOException("Empty HA response")
             if (body.contentLength() > ImportLimits.BYTES) throw HaRelayIntegrityException("HA file exceeds size limit")
+            val kind = claim.optString("kind", "schedule_ics")
+            val mime = if (kind == "schedule_csv") "text/csv" else "text/calendar"
             val artifact = ScheduleArtifact.read(claim.getString("filename"), body.byteStream(),
-                "text/calendar", "ha_relay", "ha_relay:$transferId")
+                mime, "ha_relay", "ha_relay:$transferId")
             if (artifact.bytes().size != size || !digest(artifact.bytes()).equals(claim.getString("sha256"), true))
                 throw HaRelayIntegrityException("HA transfer SHA-256 mismatch")
             return artifact
@@ -128,8 +131,10 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         terminalAwaitingAck.clear()
         recoveredInFlight = null
         inFlightId?.let { queued.addFirst(it); inFlightId = null; downloading = false }
-        val request = message("register").put("display_name", identity.displayName).put("app_version", appVersion())
-            .put("capabilities", org.json.JSONArray().put("schedule_relay_v1").apply { if (apk != null) put("apk_install_v1") })
+            val request = message("register").put("display_name", identity.displayName).put("app_version", appVersion())
+            .put("capabilities", org.json.JSONArray().put("schedule_relay_v1").put("schedule_csv_v1").apply {
+                if (apk != null) put("apk_install_v1")
+            })
         if (!channel.request(request) { result ->
             if (closed || generation != connectionGeneration) return@request
             if (!result.optBoolean("success")) {
@@ -193,19 +198,29 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
                 }
                 return@request
             }
-            if (kind != "schedule_ics") { acknowledge(id, "rejected_invalid"); failed(id); return@request }
+            if (kind != "schedule_ics" && kind != "schedule_csv") { acknowledge(id, "rejected_invalid"); failed(id); return@request }
             worker.execute {
                 val artifact = runCatching { downloader.download(origin, payload) }
-                val parsed = artifact.mapCatching(importer::parse)
+                val parsed = artifact.mapCatching { bytes -> TimetableImporter(profiles = null).parseOutcome(bytes) }
                 handler.post {
                     if (closed || generation != connectionGeneration) return@post
                     downloading = false
                     inFlightId = null
-                    parsed.onSuccess { preview ->
-                        active = RelayPreview(id, preview)
-                        retries.remove(id)
-                        acknowledge(id, "preview_ready")
-                        presenter?.invoke(active!!)
+                    parsed.onSuccess { outcome ->
+                        when (outcome) {
+                            is TimetableImporter.ParseOutcome.Ready -> {
+                                active = RelayPreview(id, outcome.preview)
+                                retries.remove(id)
+                                acknowledge(id, "preview_ready")
+                                presenter?.invoke(active!!)
+                            }
+                            is TimetableImporter.ParseOutcome.NeedsProfile -> {
+                                active = RelayPreview(id, null, outcome)
+                                retries.remove(id)
+                                acknowledge(id, "preview_ready")
+                                presenter?.invoke(active!!)
+                            }
+                        }
                     }.onFailure { error ->
                         if (artifact.isSuccess && error is ScheduleImportException) acknowledge(id, "rejected_invalid")
                         if (artifact.isFailure && error is IOException && error !is HaRelayIntegrityException &&

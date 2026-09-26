@@ -103,7 +103,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     private fun timetable() {
         val actions = LinearLayout(context)
         actions.addView(button("+ Add class") { editors.entry() }.apply { isEnabled = source.ready })
-        actions.addView(button("Import ICS", importTimetable).apply { isEnabled = source.ready })
+        actions.addView(button("Import timetable", importTimetable).apply { isEnabled = source.ready })
         actions.addView(button("Receive from phone/computer", receiveTimetable).apply { isEnabled = source.ready })
         actions.addView(button("Sources", manageTimetables).apply { isEnabled = source.ready })
         actions.addView(button("‹") { session.weekStart = session.weekStart.minusWeeks(1); render() }.apply { contentDescription = "Previous week" })

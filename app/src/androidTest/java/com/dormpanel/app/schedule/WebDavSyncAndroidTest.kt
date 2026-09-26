@@ -68,7 +68,7 @@ class WebDavSyncAndroidTest {
                     ui!!.sources()
                 }
                 onView(withText("Add WebDAV timetable")).perform(click())
-                waitText("Select a folder or ICS file.")
+                waitText("Select a folder, .ics, or .csv file.")
                 onView(withText(containsString("current.ics"))).perform(click())
                 waitText("Timetable import preview")
                 scenario.onActivity { assertTrue(model(it).schedule.state.sources.isEmpty()) }

@@ -65,7 +65,7 @@ class ScheduleImportAndroidTest {
                         androidx.test.espresso.action.Swipe.FAST,
                         { v -> val p = IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0] + v.width * .8f, p[1] + v.height * .85f) },
                         { v -> val p = IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0] + v.width * .2f, p[1] + v.height * .85f) }, androidx.test.espresso.action.Press.FINGER))
-                    onView(withText("Import ICS")).check(matches(isDisplayed()))
+                    onView(withText("Import timetable")).check(matches(isDisplayed()))
                     screenshot("week-light")
                     onView(withText(startsWith("高等数学B-1\n"))).perform(click())
                     onView(withText(containsString("Read-only."))).check(matches(isDisplayed()))

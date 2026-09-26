@@ -81,15 +81,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
         scheduleImports = com.dormpanel.app.schedule.ScheduleImportUi(this, dashboardViewModel.schedule, dashboardViewModel.appearance, dashboardViewModel.webDav) {
-            // Generic MIME allows .ics documents from providers that do not report text/calendar.
-            timetablePicker.launch(arrayOf("text/calendar", "*/*"))
+            // Generic MIME allows .ics/.csv documents from providers that do not report text/calendar or text/csv.
+            timetablePicker.launch(arrayOf("text/calendar", "text/csv", "text/comma-separated-values", "*/*"))
         }
         apkImports = com.dormpanel.app.apps.ApkImportUi(this, dashboardViewModel.apkInstall,
             dashboardViewModel.appearance, dashboardViewModel.webDav.settings) {
             apkPicker.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*"))
         }
         dashboardViewModel.haRelay.attach { delivery ->
-            scheduleImports.relayPreview(delivery.preview) { outcome ->
+            scheduleImports.relayPreview(delivery) { outcome ->
                 dashboardViewModel.haRelay.resolve(delivery.transferId, outcome)
             }
         }
