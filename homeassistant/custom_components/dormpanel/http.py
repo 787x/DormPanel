@@ -86,8 +86,12 @@ class DownloadView(HomeAssistantView):
             raise web.HTTPNotFound()
         if not await self.relay.hass.async_add_executor_job(path.is_file):
             raise web.HTTPNotFound()
+        kind = item.get("kind", "schedule_ics")
+        content_type = "application/vnd.android.package-archive" if kind == "apk" else \
+            "text/csv" if kind == "schedule_csv" else "text/calendar"
+        fallback = "timetable.csv" if kind == "schedule_csv" else "timetable.ics"
         return web.FileResponse(path, headers={
-            "Content-Type": "application/vnd.android.package-archive" if item.get("kind") == "apk" else "text/calendar", "Content-Length": str(item["size"]),
+            "Content-Type": content_type, "Content-Length": str(item["size"]),
             "Cache-Control": "no-store",
-            "Content-Disposition": f'attachment; filename="{item["filename"].encode("ascii", "ignore").decode() or "timetable.ics"}"',
+            "Content-Disposition": f'attachment; filename="{item["filename"].encode("ascii", "ignore").decode() or fallback}"',
         })

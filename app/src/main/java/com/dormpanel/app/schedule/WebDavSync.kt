@@ -13,11 +13,13 @@ import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
-enum class WebDavMode { FILE, FOLDER_LATEST_ICS }
+enum class WebDavMode { FILE, FOLDER_LATEST_ICS, FOLDER_LATEST_CSV }
 data class WebDavBinding(val sourceId: String, val mode: WebDavMode, val remote: String,
     val autoSync: Boolean = false, val etag: String? = null, val lastModified: String? = null,
     val currentFile: String? = null, val lastSuccess: Long = 0, val lastAttempt: Long = 0,
-    val lastError: String? = null)
+    val lastError: String? = null,
+    /** CSV-only: detected term key, last-used profile fingerprint, and format label. */
+    val format: String? = null, val termKey: String? = null, val profileFingerprint: String? = null)
 
 /** Preferences carry only non-secret state. The password is AES-GCM encrypted with an Android Keystore key. */
 class WebDavSettings(context: Context) {
@@ -59,7 +61,10 @@ class WebDavSettings(context: Context) {
                 item.takeUnless { it.isNull("lastModified") }?.optString("lastModified")?.ifBlank { null },
                 item.takeUnless { it.isNull("currentFile") }?.optString("currentFile")?.ifBlank { null },
                 item.optLong("lastSuccess"), item.optLong("lastAttempt"),
-                item.takeUnless { it.isNull("lastError") }?.optString("lastError")?.ifBlank { null })
+                item.takeUnless { it.isNull("lastError") }?.optString("lastError")?.ifBlank { null },
+                item.takeUnless { it.isNull("format") }?.optString("format")?.ifBlank { null },
+                item.takeUnless { it.isNull("termKey") }?.optString("termKey")?.ifBlank { null },
+                item.takeUnless { it.isNull("profileFingerprint") }?.optString("profileFingerprint")?.ifBlank { null })
         }
     }.getOrDefault(emptyList())
     fun saveBindings(bindings: List<WebDavBinding>) {
@@ -67,7 +72,8 @@ class WebDavSettings(context: Context) {
         bindings.forEach { item -> array.put(JSONObject().put("sourceId", item.sourceId).put("mode", item.mode.name)
             .put("remote", item.remote).put("autoSync", item.autoSync).put("etag", item.etag)
             .put("lastModified", item.lastModified).put("currentFile", item.currentFile)
-            .put("lastSuccess", item.lastSuccess).put("lastAttempt", item.lastAttempt).put("lastError", item.lastError)) }
+            .put("lastSuccess", item.lastSuccess).put("lastAttempt", item.lastAttempt).put("lastError", item.lastError)
+            .put("format", item.format).put("termKey", item.termKey).put("profileFingerprint", item.profileFingerprint)) }
         prefs.edit().putString("bindings", array.toString()).apply()
     }
     // Account lifetime is independent of timetable bindings. Preserve the existing
@@ -75,7 +81,7 @@ class WebDavSettings(context: Context) {
 }
 
 /** Process-owned scheduler; source commits and callbacks return through the main thread. */
-class WebDavSyncController(context: Context, private val source: ScheduleSource,
+class WebDavSyncController(private val context: Context, private val source: ScheduleSource,
     val settings: WebDavSettings = WebDavSettings(context.applicationContext), private val client: WebDavClient = WebDavClient()) {
     companion object { const val INTERVAL = 60 * 60 * 1000L }
     private val main = Handler(Looper.getMainLooper())
@@ -139,10 +145,14 @@ class WebDavSyncController(context: Context, private val source: ScheduleSource,
         background({ WebDavSelection.children(folder, client.list(account, folder)) }, callback)
     fun initial(account: WebDavAccount, mode: WebDavMode, remote: String,
         callback: (Result<Pair<ImportPreview, WebDavItem>>) -> Unit) = background({
-            val item = if (mode == WebDavMode.FILE) WebDavItem(remote, client.filename(client.url(remote)), false, null, null, null, null, null)
-                else WebDavSelection.latest(client.list(account, remote))
+            val item = when (mode) {
+                WebDavMode.FILE -> WebDavItem(remote, client.filename(client.url(remote)), false, null, null, null, null, null)
+                WebDavMode.FOLDER_LATEST_CSV -> WebDavSelection.latest(client.list(account, remote), "csv")
+                else -> WebDavSelection.latest(client.list(account, remote), "ics")
+            }
             val download = client.download(account, item.url)
-            Pair(IcsScheduleImporter().parse(download.artifact ?: throw WebDavException("Remote file was not downloaded.")),
+            Pair(TimetableImporter(profiles = TermScheduleProfileStore(context)).parse(
+                download.artifact ?: throw WebDavException("Remote file was not downloaded.")),
                 item.copy(etag = download.etag ?: item.etag, lastModified = download.lastModified ?: item.lastModified))
         }, callback)
     fun sync(id: String, callback: ((Result<Boolean>) -> Unit)? = null) {
@@ -159,22 +169,41 @@ class WebDavSyncController(context: Context, private val source: ScheduleSource,
         update(binding.copy(lastAttempt = attempt))
         worker.execute {
             val result = runCatching {
-                val selected = if (binding.mode == WebDavMode.FILE)
-                    WebDavItem(binding.remote, client.filename(client.url(binding.remote)), false, null, null, null, null, null)
-                else WebDavSelection.latest(client.list(account, binding.remote))
+                val selected = when (binding.mode) {
+                    WebDavMode.FILE -> WebDavItem(binding.remote, client.filename(client.url(binding.remote)), false, null, null, null, null, null)
+                    WebDavMode.FOLDER_LATEST_CSV -> WebDavSelection.latest(client.list(account, binding.remote), "csv")
+                    else -> WebDavSelection.latest(client.list(account, binding.remote), "ics")
+                }
                 val sameFile = selected.url == (binding.currentFile ?: binding.remote)
                 val knownEtag = selected.etag ?: if (sameFile) binding.etag else null
                 val knownDate = selected.lastModified ?: if (sameFile) binding.lastModified else null
-                if (binding.mode == WebDavMode.FOLDER_LATEST_ICS && sameFile &&
-                    (selected.etag != null && !selected.etag.startsWith("W/") && selected.etag == binding.etag))
+                // CSV: profile changes must force re-import even when remote validators are unchanged.
+                val profileStore = TermScheduleProfileStore(context)
+                val currentProfileFingerprint = binding.termKey?.let { term ->
+                    profileStore.get(term)?.let { TimetableImporter.profileFingerprint(it) }
+                }
+                val profileChanged = binding.format == "csv" &&
+                    (binding.profileFingerprint == null || binding.profileFingerprint != currentProfileFingerprint)
+                val folderLatestUnchanged = (binding.mode == WebDavMode.FOLDER_LATEST_ICS || binding.mode == WebDavMode.FOLDER_LATEST_CSV) &&
+                    sameFile && !profileChanged &&
+                    (selected.etag != null && !selected.etag.startsWith("W/") && selected.etag == binding.etag)
+                if (folderLatestUnchanged)
                     Triple(null, selected, Pair(knownEtag, knownDate))
                 else {
                     val download = client.download(account, selected.url,
-                        if (sameFile) binding.etag else null,
-                        if (sameFile) binding.lastModified else null)
-                    Triple(download.artifact?.let { IcsScheduleImporter().parse(it) }, selected,
-                        Pair(download.etag ?: if (download.artifact == null) knownEtag else selected.etag,
-                            download.lastModified ?: if (download.artifact == null) knownDate else selected.lastModified))
+                        if (sameFile && !profileChanged) binding.etag else null,
+                        if (sameFile && !profileChanged) binding.lastModified else null)
+                    val artifact = download.artifact
+                    val parsed = artifact?.let {
+                        when (val outcome = TimetableImporter(profiles = profileStore).parseOutcome(it)) {
+                            is TimetableImporter.ParseOutcome.Ready -> outcome.preview
+                            is TimetableImporter.ParseOutcome.NeedsProfile ->
+                                throw WebDavException("No term profile for ${outcome.structure.termKey}. Configure the term, then sync again.")
+                        }
+                    }
+                    Triple(parsed, selected,
+                        Pair(download.etag ?: if (artifact == null) knownEtag else selected.etag,
+                            download.lastModified ?: if (artifact == null) knownDate else selected.lastModified))
                 }
             }
             main.post {
@@ -184,8 +213,17 @@ class WebDavSyncController(context: Context, private val source: ScheduleSource,
                     val target = source.state.sources.firstOrNull { it.id == id }
                     if (target == null) { fail(id, attempt, WebDavException("Timetable source was deleted."), callback); return@onSuccess }
                     source.import(preview, target.displayName, id) { committed ->
-                        committed.onSuccess { success(id, attempt, selected.url, validators, callback, !it.unchanged) }
-                            .onFailure { fail(id, attempt, it, callback) }
+                        committed.onSuccess {
+                            val isCsv = preview.formatLabel != null
+                            val profilePrint = preview.termKey?.let { term ->
+                                TermScheduleProfileStore(context).get(term)?.let { TimetableImporter.profileFingerprint(it) }
+                            }
+                            binding(id)?.let { current ->
+                                update(current.copy(format = if (isCsv) "csv" else "ics",
+                                    termKey = preview.termKey, profileFingerprint = profilePrint))
+                            }
+                            success(id, attempt, selected.url, validators, callback, !it.unchanged)
+                        }.onFailure { fail(id, attempt, it, callback) }
                     }
                 }
             }

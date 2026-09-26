@@ -48,6 +48,7 @@ class DormPanelPanel extends HTMLElement {
     if (error) main.append(this.element("p", error, "error"));
     for (const [kind, title, extension, limit, capability] of [
       ["schedule_ics", "Send timetable", ".ics", 1048576, "schedule_relay_v1"],
+      ["schedule_csv", "Send timetable (CSV)", ".csv", 1048576, "schedule_csv_v1"],
       ["apk", "Send APK", ".apk", 268435456, "apk_install_v1"]]) {
     const send = this.section(title);
     const fileLabel = this.element("label", `File (${extension}, up to ${kind === "apk" ? "256" : "1"} MiB)`);
@@ -55,7 +56,7 @@ class DormPanelPanel extends HTMLElement {
     send.append(this.element("div", "Send to"));
     const targets = this.element("div", undefined, "targets");
     for (const screen of this.state.screens) {
-      if (kind === "apk" && !(screen.capabilities || []).includes(capability)) continue;
+      if (kind !== "schedule_ics" && !(screen.capabilities || []).includes(capability)) continue;
       const label = this.element("label");
       const check = this.element("input"); check.type = "checkbox"; check.value = screen.installation_id;
       label.append(check, document.createTextNode(` ${screen.display_name} (${screen.installation_id.slice(0, 8)})`));

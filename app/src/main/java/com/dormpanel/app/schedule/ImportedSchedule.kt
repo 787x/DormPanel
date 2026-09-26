@@ -27,7 +27,7 @@ internal fun importCheck(condition: Boolean, message: String) {
 /** Transport data only. Locator is an opaque, credential-free identifier, never a fetch instruction. */
 class ScheduleArtifact(val filename: String, bytes: ByteArray, val mimeType: String? = null,
     val kind: String = "local_document", val locator: String? = null) {
-    init { importCheck(bytes.size <= ImportLimits.BYTES, "ICS exceeds the 1 MiB size limit.") }
+    init { importCheck(bytes.size <= ImportLimits.BYTES, "Timetable file exceeds the 1 MiB size limit.") }
     private val payload = bytes.copyOf()
     internal fun bytes() = payload.copyOf()
     companion object {
@@ -38,7 +38,7 @@ class ScheduleArtifact(val filename: String, bytes: ByteArray, val mimeType: Str
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
-                importCheck(output.size() + count <= ImportLimits.BYTES, "ICS exceeds the 1 MiB size limit.")
+                importCheck(output.size() + count <= ImportLimits.BYTES, "Timetable file exceeds the 1 MiB size limit.")
                 output.write(buffer, 0, count)
             }
             return ScheduleArtifact(filename, output.toByteArray(), mimeType, kind, locator)
@@ -64,9 +64,20 @@ internal fun ImportedClassOccurrence.textCharacters(): Long = id.length.toLong()
 data class ParsedTimetable(val calendarName: String?, val seriesCount: Int,
     val occurrences: List<ImportedClassOccurrence>, val warnings: List<String>, val hasAlarms: Boolean)
 
-/** Only the parser can construct a preview. No mutable library objects or artifact bytes reach UI. */
+/**
+ * Only the parser can construct a preview. No mutable library objects or artifact bytes reach UI.
+ *
+ * [sha256] is the effective import fingerprint used for unchanged/replacement decisions.
+ * For ICS this remains the raw-file SHA-256. For CSV it is a deterministic hash of the raw
+ * bytes plus parser identity and the active term schedule profile (see [TimetableImporter.csvFingerprint]).
+ */
 class ImportPreview internal constructor(val filename: String, val kind: String, val locator: String?,
-    val sha256: String, parsed: ParsedTimetable) {
+    val sha256: String, parsed: ParsedTimetable,
+    val formatLabel: String? = null,
+    val termKey: String? = null,
+    val week1Monday: String? = null,
+    val timezone: String? = null,
+    val phaseSummary: String? = null) {
     val calendarName = parsed.calendarName
     val seriesCount = parsed.seriesCount
     val occurrences: List<ImportedClassOccurrence> = java.util.Collections.unmodifiableList(parsed.occurrences.toList())
