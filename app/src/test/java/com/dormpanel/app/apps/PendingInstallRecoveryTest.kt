@@ -248,6 +248,10 @@ class PendingInstallRecoveryTest {
         assertTrue(ApkInstallResultPolicy.isStale(incomingSessionId = 7, record = null))
     }
 
+    @Test fun staleWhenNoPendingRecordAndMissingSessionId() {
+        assertTrue(ApkInstallResultPolicy.isStale(incomingSessionId = -1, record = null))
+    }
+
     @Test fun staleResultMustNotCompleteCurrentInstall() {
         val store = InMemoryPendingInstallStore()
         val newer = record(sessionId = 7, transferId = "0123456789abcdef0123456789abcdef")
@@ -258,5 +262,17 @@ class PendingInstallRecoveryTest {
         // Stale path must leave the newer pending record untouched.
         assertEquals(7, store.read()?.sessionId)
         assertEquals(PendingInstallPhase.COMMITTED, store.read()?.phase)
+    }
+
+    @Test fun unknownBaselineCannotProveInstalledFromPackageFallback() {
+        // Baseline lookup failed (NO_BASELINE). Candidate is later present.
+        // Fallback evidence alone must not report Installed.
+        val recovery = InstallRecoveryLogic.recover(
+            record(versionCode = 5L, baselineVersionCode = PendingInstallRecord.NO_BASELINE,
+                baselineLastUpdateTime = null),
+            facts(sessionStillExists = false,
+                installedVersionCode = 5L, installedLastUpdateTime = 2_000L))
+        assertTrue(recovery is InstallRecovery.Unresolved)
+        assertNull(InstallRecoveryLogic.haOutcome(recovery))
     }
 }

@@ -23,14 +23,15 @@ data class PendingInstallRecord(
     val message: String = "",
     /**
      * Pre-install installed version for this package.
-     * `null` = package was absent. `NO_BASELINE` = no baseline was captured
-     * (fallback evidence is then impossible). Any other value is the version.
+     * `null` = package was definitely absent (`NameNotFoundException`).
+     * `NO_BASELINE` = lookup unavailable/failed (fallback evidence impossible).
+     * Any other value is the installed versionCode.
      */
     val baselineVersionCode: Long? = null,
     val baselineLastUpdateTime: Long? = null,
 ) {
     companion object {
-        /** Sentinel: no pre-install baseline was captured. */
+        /** Sentinel: pre-install baseline lookup was unavailable or failed. */
         const val NO_BASELINE = Long.MIN_VALUE
     }
 }
@@ -195,9 +196,9 @@ data class RecoveredInstallOutcome(
  */
 object ApkInstallResultPolicy {
     fun isStale(incomingSessionId: Int, record: PendingInstallRecord?): Boolean = when {
-        // No current pending session: only a missing id is not provably stale.
-        record == null -> incomingSessionId >= 0
-        // Cannot prove the result belongs to the current session.
+        // No pending record at all cannot bind this result to a session.
+        record == null -> true
+        // Missing or invalid incoming session id cannot bind to the record.
         incomingSessionId < 0 -> true
         else -> record.sessionId != incomingSessionId
     }

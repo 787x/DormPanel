@@ -145,8 +145,9 @@ class ApkInstallController(
                             (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
                         val pending = PendingIntent.getBroadcast(context, sessionId, callback, flags)
                         // Capture pre-install package state so a later reconcile can
-                        // prove this candidate actually landed.
-                        val baseline = installedPackageFacts(metadata.packageName)
+                        // prove this candidate actually landed. Three logical states:
+                        // definitely absent, present with facts, or lookup unknown.
+                        val baseline = lookupInstalledPackage(metadata.packageName)
                         // Persist before commit so a process death during the Android
                         // confirmation UI can still be reconciled later. A failed
                         // write must prevent session.commit.
@@ -161,8 +162,12 @@ class ApkInstallController(
                             haTransferId = transferId,
                             phase = PendingInstallPhase.COMMITTED,
                             message = "Waiting for Android confirmation",
-                            baselineVersionCode = baseline?.versionCode,
-                            baselineLastUpdateTime = baseline?.lastUpdateTime,
+                            baselineVersionCode = when (baseline) {
+                                is BaselineLookup.Present -> baseline.versionCode
+                                BaselineLookup.Absent -> null
+                                BaselineLookup.Unknown -> PendingInstallRecord.NO_BASELINE
+                            },
+                            baselineLastUpdateTime = (baseline as? BaselineLookup.Present)?.lastUpdateTime,
                         ))
                         if (!persisted) {
                             throw java.io.IOException("Could not persist pending install state.")
@@ -201,13 +206,13 @@ class ApkInstallController(
      */
     fun reconcileRecovered(): List<RecoveredInstallOutcome> {
         val record = pendingStore.read() ?: return emptyList()
-        val now = installedPackageFacts(record.packageName)
+        val now = lookupInstalledPackage(record.packageName)
         val facts = PlatformInstallFacts(
             broadcastStatus = null,
             sessionStillExists = sessionExists(record.sessionId),
-            installedVersionCode = now?.versionCode,
-            installedLastUpdateTime = now?.lastUpdateTime,
-            installedSigningSha256 = now?.signingSha256,
+            installedVersionCode = (now as? BaselineLookup.Present)?.versionCode,
+            installedLastUpdateTime = (now as? BaselineLookup.Present)?.lastUpdateTime,
+            installedSigningSha256 = (now as? BaselineLookup.Present)?.signingSha256,
         )
         val recovery = InstallRecoveryLogic.recover(record, facts)
         return applyRecovery(recovery, fromReceiver = false)
@@ -217,9 +222,15 @@ class ApkInstallController(
         context.packageManager.packageInstaller.getSessionInfo(sessionId) != null
     }.getOrDefault(false)
 
-    private data class InstalledPackageFacts(val versionCode: Long, val lastUpdateTime: Long, val signingSha256: String)
+    private sealed class BaselineLookup {
+        data class Present(val versionCode: Long, val lastUpdateTime: Long, val signingSha256: String) : BaselineLookup()
+        /** PackageManager.NameNotFoundException: the package is definitely not installed. */
+        object Absent : BaselineLookup()
+        /** Lookup unavailable or failed; absence is not proven. */
+        object Unknown : BaselineLookup()
+    }
 
-    private fun installedPackageFacts(packageName: String): InstalledPackageFacts? = runCatching {
+    private fun lookupInstalledPackage(packageName: String): BaselineLookup = try {
         val pm = context.packageManager
         @Suppress("DEPRECATION")
         val info = pm.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
@@ -230,8 +241,12 @@ class ApkInstallController(
             digest.digest(it.toByteArray()).joinToString("") { b -> "%02x".format(b.toInt() and 255) }
         }.sorted().joinToString(", ")
         @Suppress("DEPRECATION")
-        InstalledPackageFacts(info.longVersionCode, info.lastUpdateTime, signing)
-    }.getOrNull()
+        BaselineLookup.Present(info.longVersionCode, info.lastUpdateTime, signing)
+    } catch (_: PackageManager.NameNotFoundException) {
+        BaselineLookup.Absent
+    } catch (_: Exception) {
+        BaselineLookup.Unknown
+    }
 
     private fun result(status: Int, message: String) {
         main.post {

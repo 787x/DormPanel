@@ -72,8 +72,9 @@ Optional, required for timetable and APK relay features:
 3. **Settings → Devices & Services → Add Integration → DormPanel**.
 4. Create the integration entry (admin user required for relay registration).
 
-Setup also exposes helper entities used by device controls (names are configurable
-in DormPanel settings):
+DormPanel does not create these helper entities. It can bind/configure existing
+Home Assistant helpers for synchronization (names are chosen in DormPanel
+settings):
 
 - **Brightness** — DormPanel display brightness
 - **Volume** — media volume
