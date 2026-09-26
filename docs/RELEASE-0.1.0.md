@@ -52,7 +52,7 @@ First daily-use release for the Xiaomi Redmi XiaoAI Touchscreen Speaker Pro 8
 ### System coexistence
 - Opt-in boot start via standard `BOOT_COMPLETED`
 - Open MIUI Home / system Home action
-- - DormPanel is not a Home launcher and does not replace XiaoAI, the Bluetooth
+- DormPanel is not a Home launcher and does not replace XiaoAI, the Bluetooth
   Mesh gateway, or system alarms.
 - Final physical acceptance verified a visible XiaoAI response while DormPanel
   was running and exercised the Xiaomi BLE/Mesh Yeelight control path with the
