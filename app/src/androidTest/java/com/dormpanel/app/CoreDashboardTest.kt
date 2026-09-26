@@ -223,7 +223,12 @@ class CoreDashboardTest {
                 Triple(swipe(.2f,.85f,.8f,.85f), "Home Control", swipe(.8f,.85f,.2f,.85f)),
             ).forEach { (out, title, back) ->
                 navigate(out)
-                onView(withText(title)).check(matches(isDisplayed()))
+                // "Calendar" also matches the home-page edge hint; require the
+                // Schedule tab Button when that title is checked.
+                val titleMatcher = if (title == "Calendar")
+                    allOf(withText(title), isAssignableFrom(android.widget.Button::class.java))
+                else withText(title)
+                onView(titleMatcher).check(matches(isDisplayed()))
                 when (title) {
                     "Apps" -> onView(withId(R.id.apps_home)).perform(ViewActions.click())
                     "Calendar" -> onView(withText("Home")).perform(ViewActions.click())

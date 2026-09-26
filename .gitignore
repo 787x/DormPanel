@@ -20,3 +20,15 @@ __pycache__/
 # Machine-local Android Studio state
 /.idea/deviceManager.xml
 /.idea/vcs.xml
+
+# Android release signing material (never commit)
+*.jks
+*.keystore
+*.pepk
+keystore.properties
+release-signing.properties
+signing.properties
+
+# Local release artifacts
+/artifacts/release/
+/artifacts/release-audit/

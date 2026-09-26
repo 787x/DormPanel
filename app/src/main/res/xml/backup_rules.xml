@@ -1,1 +1,8 @@
-<full-backup-content><exclude domain="sharedpref" path="ha_credentials.xml" /><exclude domain="sharedpref" path="ha_relay_identity.xml" /><exclude domain="sharedpref" path="webdav_credentials.xml" /></full-backup-content>
+<full-backup-content>
+    <!-- Secrets and Keystore-backed material must never leave the device via backup. -->
+    <exclude domain="sharedpref" path="ha_credentials.xml" />
+    <exclude domain="sharedpref" path="ha_relay_identity.xml" />
+    <exclude domain="sharedpref" path="webdav_credentials.xml" />
+    <!-- Pending PackageInstaller session metadata is meaningless after restore. -->
+    <exclude domain="sharedpref" path="pending_install.xml" />
+</full-backup-content>

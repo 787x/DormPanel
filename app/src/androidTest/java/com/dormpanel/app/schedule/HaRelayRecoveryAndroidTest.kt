@@ -185,6 +185,105 @@ class HaRelayRecoveryAndroidTest {
         }
     }
 
+    @Test fun recoveredHaInstalledIsAcceptedWithoutActivePreviewAndAckedAfterRegister() {
+        MockWebServer().use { server ->
+            val identity = HaRelayIdentityStore(instrumentation.targetContext)
+            val id = "e".repeat(32)
+            val channel = Channel(server.url("/").toString()).apply { ready = false }
+            lateinit var controller: HaScheduleRelayController
+            main {
+                // Fresh process: no active APK preview, HA not yet registered.
+                controller = HaScheduleRelayController(channel, identity, OkHttpClient(), {}, null)
+                controller.queueRecoveredTerminal(id, "installed")
+                assertEquals(emptyList<Pair<String, String>>(), channel.acknowledgements)
+            }
+            // Registration is driven by the ready listener created in init;
+            // force it now (as HA would after connect).
+            main {
+                channel.ready = true
+                channel.reconnect()
+            }
+            main {
+                assertTrue(channel.acknowledgements.contains(id to "installed"))
+                // Must not claim/download the APK again for this recovered terminal.
+                assertEquals(emptyList<String>(), channel.claims)
+                // Successful terminal ack clears the transfer from HA pending.
+                assertFalse(id in channel.pending)
+            }
+            // Successful ack should have been recorded; pending clear is fake-side.
+            main { controller.close() }
+        }
+    }
+
+    @Test fun recoveredTerminalSuccessPreventsNeedlessRedownloadOnRediscovery() {
+        MockWebServer().use { server ->
+            val identity = HaRelayIdentityStore(instrumentation.targetContext)
+            val id = "f".repeat(32)
+            val channel = Channel(server.url("/").toString()).apply { ready = false }
+            lateinit var controller: HaScheduleRelayController
+            main {
+                controller = HaScheduleRelayController(channel, identity, OkHttpClient(), {}, null)
+                controller.queueRecoveredTerminal(id, "installed")
+                channel.ready = true
+                channel.reconnect()
+                assertTrue(channel.acknowledgements.contains(id to "installed"))
+                // HA still lists the transfer (ack not yet reflected). A push or
+                // list_pending entry must not start a claim/download.
+                channel.push(id, identity.installationId)
+                assertEquals(emptyList<String>(), channel.claims)
+            }
+            main { controller.close() }
+        }
+    }
+
+    @Test fun recoveredTerminalFailedAckRemainsConservativelyRecoverable() {
+        MockWebServer().use { server ->
+            val identity = HaRelayIdentityStore(instrumentation.targetContext)
+            val id = "9".repeat(32)
+            val channel = Channel(server.url("/").toString()).apply {
+                rejectTerminalAck = true
+                ready = false
+                pending += id
+            }
+            lateinit var controller: HaScheduleRelayController
+            main {
+                controller = HaScheduleRelayController(channel, identity, OkHttpClient(), {}, null)
+                controller.queueRecoveredTerminal(id, "installed")
+                channel.ready = true
+                channel.reconnect()
+                // Ack was attempted but not confirmed.
+                assertTrue(channel.acknowledgements.any { it.first == id && it.second == "installed" })
+                assertTrue(id in channel.pending)
+                // Unconfirmed ack is never treated as completion. A later
+                // delivery retries the recovered terminal without re-download.
+                channel.rejectTerminalAck = false
+                channel.push(id, identity.installationId)
+                assertEquals(emptyList<String>(), channel.claims)
+                assertTrue(channel.acknowledgements.count { it.first == id && it.second == "installed" } >= 2)
+            }
+            main { controller.close() }
+        }
+    }
+
+    @Test fun recoveredTerminalBeforeRegisterIsFlushedOnceConnected() {
+        MockWebServer().use { server ->
+            val identity = HaRelayIdentityStore(instrumentation.targetContext)
+            val id = "b".repeat(32)
+            val channel = Channel(server.url("/").toString()).apply { ready = false }
+            lateinit var controller: HaScheduleRelayController
+            main {
+                controller = HaScheduleRelayController(channel, identity, OkHttpClient(), {}, null)
+                controller.queueRecoveredTerminal(id, "install_failed")
+                assertEquals(emptyList<Pair<String, String>>(), channel.acknowledgements)
+                channel.ready = true
+                channel.reconnect()
+                assertTrue(channel.acknowledgements.contains(id to "install_failed"))
+                assertEquals(emptyList<String>(), channel.claims)
+            }
+            main { controller.close() }
+        }
+    }
+
     @Test fun duplicatePushPendingAndAcknowledgementRecovery() {
         MockWebServer().use { server ->
             val identity = HaRelayIdentityStore(instrumentation.targetContext)
@@ -251,4 +350,5 @@ class HaRelayRecoveryAndroidTest {
             } finally { main { controller.close() } }
         }
     }
+
 }
