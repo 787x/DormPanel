@@ -12,7 +12,8 @@ First daily-use release for the Xiaomi Redmi XiaoAI Touchscreen Speaker Pro 8
 - Layout and card configuration persist across restarts
 
 ### Home Assistant
-- WebSocket live state and control (REST fallback)
+- WebSocket live entity state and control (REST only for connection diagnostic /
+  necessary supplemental calls — not an entity-state fallback)
 - Lights, sensors, scenes, and Home Control page
 - Display brightness, media volume, system brightness, and Blackout helpers
 - Timetable relay from the HA panel to the device
@@ -45,8 +46,9 @@ First daily-use release for the Xiaomi Redmi XiaoAI Touchscreen Speaker Pro 8
 ### System coexistence
 - Opt-in boot start via standard `BOOT_COMPLETED`
 - Open MIUI Home / system Home action
-- DormPanel is not a Home launcher and coexists with XiaoAI, Bluetooth Mesh
-  gateway, and system alarms
+- DormPanel is not a Home launcher. It is designed not to replace XiaoAI,
+  Bluetooth Mesh gateway, or system alarms. XiaoAI and Bluetooth Mesh
+  coexistence remain **unverified** until real device checks are performed.
 
 ## Upgrade notes
 

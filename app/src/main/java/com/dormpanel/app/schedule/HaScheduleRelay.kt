@@ -84,6 +84,15 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
     private val queued = ArrayDeque<String>()
     private val known = mutableSetOf<String>()
     private val terminalAwaitingAck = mutableSetOf<String>()
+    /**
+     * Recovered APK terminal outcomes (transferId → outcome) that must be
+     * acknowledged without downloading/re-previewing the APK. Ordered; may be
+     * filled before registration and flushed afterwards.
+     */
+    private val recoveredTerminals = LinkedHashMap<String, String>()
+    private var recoveredInFlight: String? = null
+    /** True only after register() succeeds; recovered acks wait for this. */
+    private var registered = false
     private val retries = mutableMapOf<String, Int>()
     private var downloading = false
     private var inFlightId: String? = null
@@ -112,10 +121,12 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         if (closed || !channel.ready) return
         connectionGeneration++
         val generation = connectionGeneration
+        registered = false
         // The socket discards outstanding callbacks when it disconnects. An
         // unconfirmed terminal ack must be offered again by list_pending.
         terminalAwaitingAck.forEach(known::remove)
         terminalAwaitingAck.clear()
+        recoveredInFlight = null
         inFlightId?.let { queued.addFirst(it); inFlightId = null; downloading = false }
         val request = message("register").put("display_name", identity.displayName).put("app_version", appVersion())
             .put("capabilities", org.json.JSONArray().put("schedule_relay_v1").apply { if (apk != null) put("apk_install_v1") })
@@ -125,7 +136,9 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
                 status("Relay unavailable: administrator permission or DormPanel integration required")
                 return@request
             }
+            registered = true
             status("Relay ready")
+            flushRecoveredTerminals(generation)
             next()
             channel.request(message("list_pending")) { pending ->
                 if (!closed && generation == connectionGeneration && pending.optBoolean("success")) {
@@ -138,6 +151,12 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
 
     private fun enqueue(id: String) {
         if (closed || !Regex("[0-9a-f]{32}").matches(id) || !known.add(id)) return
+        // A recovered terminal already knows the outcome: ack it instead of
+        // downloading and re-previewing the same APK again.
+        if (recoveredTerminals.containsKey(id)) {
+            flushRecoveredTerminals(connectionGeneration)
+            return
+        }
         queued.addLast(id)
         next()
     }
@@ -215,6 +234,63 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
 
     private fun acknowledge(id: String, outcome: String) {
         channel.request(message("ack_transfer", id, outcome)) { /* HA keeps pending on failed acknowledgement. */ }
+    }
+
+    /**
+     * Queue a recovered APK terminal outcome from a previous process. Safe to
+     * call before HA is connected/registered. Acknowledges after successful
+     * registration without re-downloading the APK. A failed acknowledgement is
+     * not treated as completion; HA rediscovery remains the recovery path.
+     */
+    fun queueRecoveredTerminal(transferId: String, outcome: String) {
+        if (closed) return
+        if (!Regex("[0-9a-f]{32}").matches(transferId)) return
+        if (outcome !in setOf("installed", "install_failed", "dismissed")) return
+        // Normal active-path resolve handles a live preview/transfer.
+        if (activeApkId == transferId || active?.transferId == transferId) {
+            resolve(transferId, outcome)
+            return
+        }
+        recoveredTerminals[transferId] = outcome
+        // Prevent a later list_pending/event from downloading this transfer again.
+        known.add(transferId)
+        flushRecoveredTerminals(connectionGeneration)
+    }
+
+    private fun flushRecoveredTerminals(generation: Int) {
+        if (closed || recoveredInFlight != null) return
+        if (!channel.ready || !registered) return
+        if (recoveredTerminals.isEmpty()) return
+        val entry = recoveredTerminals.entries.firstOrNull() ?: return
+        val id = entry.key
+        val outcome = entry.value
+        recoveredInFlight = id
+        terminalAwaitingAck += id
+        val accepted = channel.request(message("ack_transfer", id, outcome)) { result ->
+            if (closed || generation != connectionGeneration) {
+                // Reconnect: keep the recovered terminal for the next register().
+                if (recoveredInFlight == id) recoveredInFlight = null
+                terminalAwaitingAck.remove(id)
+                return@request
+            }
+            recoveredInFlight = null
+            terminalAwaitingAck.remove(id)
+            if (result.optBoolean("success")) {
+                // Confirmed: drop the recovered terminal and keep the id known
+                // so list_pending does not trigger a needless re-download.
+                recoveredTerminals.remove(id)
+                known.add(id)
+            } else {
+                // Not confirmed: retain the recovered terminal for retry and
+                // allow conservative HA rediscovery.
+                known.remove(id)
+            }
+        }
+        if (!accepted) {
+            recoveredInFlight = null
+            terminalAwaitingAck.remove(id)
+            known.remove(id)
+        }
     }
 
     fun attach(presenter: (RelayPreview) -> Unit) {

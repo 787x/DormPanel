@@ -49,12 +49,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         // Reconcile any PackageInstaller session interrupted by process death
-        // before the live HA relay callback was registered. Outcomes that still
-        // need a HA terminal ack are delivered here; unresolved sessions are
-        // left for rediscovery rather than being reported as installed.
+        // before the live HA relay callback was registered. Recovered terminal
+        // outcomes are queued on the single HA relay state machine so they are
+        // acknowledged after registration without re-downloading the APK.
+        // Unresolved sessions are left for rediscovery, never reported installed.
         apkInstall.reconcileRecovered().forEach { recovered ->
             val transferId = recovered.haTransferId
-            if (transferId != null) haRelay.resolve(transferId, recovered.outcome)
+            if (transferId != null) haRelay.queueRecoveredTerminal(transferId, recovered.outcome)
         }
         deviceControls.brightnessCommand = dataSource.ha::requestDisplayBrightness
         deviceControls.volumeCommand = dataSource.ha::requestMediaVolume

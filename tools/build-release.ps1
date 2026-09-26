@@ -3,8 +3,7 @@ param(
     [string]$KeyAlias = $env:DORMPANEL_RELEASE_KEY_ALIAS,
     [string]$StorePassword = $env:DORMPANEL_RELEASE_STORE_PASSWORD,
     [string]$KeyPassword = $env:DORMPANEL_RELEASE_KEY_PASSWORD,
-    [switch]$SkipTests,
-    [switch]$AllowUnsigned
+    [switch]$SkipTests
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,11 +42,7 @@ if (-not $StorePassword -or -not $KeyPassword) {
 }
 
 if (-not $signingReady) {
-    if ($AllowUnsigned) {
-        Write-Warning 'Continuing with an unsigned/debug-signed build because -AllowUnsigned was set. This is NOT an official release.'
-    } else {
-        Fail 'Official release builds require signing inputs. Set DORMPANEL_RELEASE_* or pass -AllowUnsigned for a non-release experiment.'
-    }
+    Fail 'Official release builds require signing inputs. Set DORMPANEL_RELEASE_KEYSTORE / DORMPANEL_RELEASE_KEY_ALIAS / DORMPANEL_RELEASE_STORE_PASSWORD / DORMPANEL_RELEASE_KEY_PASSWORD.'
 }
 
 # Prefer gradle property files when present so passwords stay out of the shell history.

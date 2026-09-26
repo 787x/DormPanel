@@ -144,19 +144,29 @@ class ApkInstallController(
                         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                             (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
                         val pending = PendingIntent.getBroadcast(context, sessionId, callback, flags)
+                        // Capture pre-install package state so a later reconcile can
+                        // prove this candidate actually landed.
+                        val baseline = installedPackageFacts(metadata.packageName)
                         // Persist before commit so a process death during the Android
-                        // confirmation UI can still be reconciled later.
-                        pendingStore.write(PendingInstallRecord(
+                        // confirmation UI can still be reconciled later. A failed
+                        // write must prevent session.commit.
+                        val persisted = pendingStore.write(PendingInstallRecord(
                             sessionId = sessionId,
                             packageName = metadata.packageName,
                             stagedPath = staged.file.absolutePath,
                             stagedSha256 = staged.sha256,
                             candidateVersionCode = metadata.versionCode,
+                            candidateSigningSha256 = metadata.signingSha256,
                             sourceKind = sourceKindOf(staged.source),
                             haTransferId = transferId,
                             phase = PendingInstallPhase.COMMITTED,
                             message = "Waiting for Android confirmation",
+                            baselineVersionCode = baseline?.versionCode,
+                            baselineLastUpdateTime = baseline?.lastUpdateTime,
                         ))
+                        if (!persisted) {
+                            throw java.io.IOException("Could not persist pending install state.")
+                        }
                         ApkInstallResultReceiver.callback = { status, message -> result(status, message) }
                         session.commit(pending.intentSender)
                     }
@@ -191,10 +201,13 @@ class ApkInstallController(
      */
     fun reconcileRecovered(): List<RecoveredInstallOutcome> {
         val record = pendingStore.read() ?: return emptyList()
+        val now = installedPackageFacts(record.packageName)
         val facts = PlatformInstallFacts(
             broadcastStatus = null,
             sessionStillExists = sessionExists(record.sessionId),
-            installedVersionCode = installedVersionCode(record.packageName),
+            installedVersionCode = now?.versionCode,
+            installedLastUpdateTime = now?.lastUpdateTime,
+            installedSigningSha256 = now?.signingSha256,
         )
         val recovery = InstallRecoveryLogic.recover(record, facts)
         return applyRecovery(recovery, fromReceiver = false)
@@ -204,9 +217,20 @@ class ApkInstallController(
         context.packageManager.packageInstaller.getSessionInfo(sessionId) != null
     }.getOrDefault(false)
 
-    private fun installedVersionCode(packageName: String): Long? = runCatching {
+    private data class InstalledPackageFacts(val versionCode: Long, val lastUpdateTime: Long, val signingSha256: String)
+
+    private fun installedPackageFacts(packageName: String): InstalledPackageFacts? = runCatching {
+        val pm = context.packageManager
         @Suppress("DEPRECATION")
-        context.packageManager.getPackageInfo(packageName, 0).longVersionCode
+        val info = pm.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+        @Suppress("DEPRECATION")
+        val signatures = info.signatures?.toList().orEmpty()
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val signing = signatures.map {
+            digest.digest(it.toByteArray()).joinToString("") { b -> "%02x".format(b.toInt() and 255) }
+        }.sorted().joinToString(", ")
+        @Suppress("DEPRECATION")
+        InstalledPackageFacts(info.longVersionCode, info.lastUpdateTime, signing)
     }.getOrNull()
 
     private fun result(status: Int, message: String) {
@@ -342,8 +366,17 @@ class ApkInstallResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
+        val incomingSessionId = intent.getIntExtra(PendingInstallResultContract.EXTRA_SESSION_ID, -1)
         val store = PreferencesPendingInstallStore(context)
         val record = store.read()
+
+        // Reject stale PackageInstaller results: they must not mutate the
+        // current pending record, complete the current install, or fire the
+        // current install callback as if it belonged to this session.
+        if (ApkInstallResultPolicy.isStale(incomingSessionId, record)) {
+            return
+        }
+
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             record?.let { store.write(it.copy(phase = PendingInstallPhase.AWAITING_USER, message = message)) }
             @Suppress("DEPRECATION")

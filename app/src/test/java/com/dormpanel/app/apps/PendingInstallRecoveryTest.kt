@@ -10,31 +10,57 @@ import org.junit.Test
 /**
  * Deterministic coverage for process-death recovery of PackageInstaller results.
  * The original process-local callback is never required.
+ *
+ * Success without a PackageInstaller SUCCESS broadcast requires real evidence
+ * of *this* install (pre-install baseline). VersionCode alone is never enough.
  */
 class PendingInstallRecoveryTest {
+
+    private val signing = "aa".repeat(32)
 
     private fun record(
         sessionId: Int = 7,
         phase: PendingInstallPhase = PendingInstallPhase.COMMITTED,
         versionCode: Long = 2L,
         transferId: String? = null,
+        baselineVersionCode: Long? = null,
+        baselineLastUpdateTime: Long? = 1_000L,
+        signingSha256: String = signing,
     ) = PendingInstallRecord(
         sessionId = sessionId,
         packageName = "com.example.app",
         stagedPath = "/data/user/0/com.dormpanel.app/cache/apk-staging/candidate.apk",
         stagedSha256 = "abc",
         candidateVersionCode = versionCode,
+        candidateSigningSha256 = signingSha256,
         sourceKind = InstallRecoveryLogic.SOURCE_HA,
         haTransferId = transferId,
         phase = phase,
         message = "",
+        baselineVersionCode = baselineVersionCode,
+        baselineLastUpdateTime = baselineLastUpdateTime,
+    )
+
+    private fun facts(
+        broadcastStatus: Int? = null,
+        broadcastMessage: String = "",
+        sessionStillExists: Boolean = false,
+        installedVersionCode: Long? = null,
+        installedLastUpdateTime: Long? = null,
+        installedSigningSha256: String? = signing,
+    ) = PlatformInstallFacts(
+        broadcastStatus = broadcastStatus,
+        broadcastMessage = broadcastMessage,
+        sessionStillExists = sessionStillExists,
+        installedVersionCode = installedVersionCode,
+        installedLastUpdateTime = installedLastUpdateTime,
+        installedSigningSha256 = installedSigningSha256,
     )
 
     @Test fun prepareInstallPersistsPendingSession() {
         val store = InMemoryPendingInstallStore()
         val original = record(transferId = "0123456789abcdef0123456789abcdef")
-        store.write(original)
-        // Process death: the in-process callback is gone; only the store remains.
+        assertTrue(store.write(original))
         val recovered = store.read()
         assertNotNull(recovered)
         assertEquals(original.sessionId, recovered!!.sessionId)
@@ -43,113 +69,135 @@ class PendingInstallRecoveryTest {
         assertEquals(PendingInstallPhase.COMMITTED, recovered.phase)
     }
 
-    @Test fun lostCallbackWithInstallerSuccessRecoversInstalledAndHaAck() {
-        val store = InMemoryPendingInstallStore()
-        store.write(record(phase = PendingInstallPhase.AWAITING_USER,
-            transferId = "0123456789abcdef0123456789abcdef"))
-        // Fresh process: no static callback. Receiver persists the terminal fact.
-        val pending = store.read()!!
-        val fromReceiver = InstallRecoveryLogic.recover(pending, PlatformInstallFacts(
-            broadcastStatus = 0,
-            broadcastMessage = "success",
-            installedVersionCode = pending.candidateVersionCode,
-        ))
-        assertTrue(fromReceiver is InstallRecovery.Installed)
-        store.write(fromReceiver.record)
-        // Later, a fresh controller reconciles the persisted terminal state.
-        val afterRestart = store.read()!!
-        val settled = InstallRecoveryLogic.recover(afterRestart, PlatformInstallFacts())
-        assertTrue(settled is InstallRecovery.Installed)
-        assertEquals("installed", InstallRecoveryLogic.haOutcome(settled))
-        assertEquals("0123456789abcdef0123456789abcdef", settled.record.haTransferId)
-    }
-
-    @Test fun lostCallbackWithInstallerFailureRecoversInstallFailed() {
-        val store = InMemoryPendingInstallStore()
-        store.write(record(phase = PendingInstallPhase.AWAITING_USER,
-            transferId = "fedcba9876543210fedcba9876543210"))
-        val pending = store.read()!!
-        val failed = InstallRecoveryLogic.recover(pending, PlatformInstallFacts(
-            broadcastStatus = 1,
-            broadcastMessage = "INSTALL_FAILED_INVALID_APK",
-        ))
-        assertTrue(failed is InstallRecovery.Failed)
-        assertEquals("install_failed", InstallRecoveryLogic.haOutcome(failed))
-        assertEquals("fedcba9876543210fedcba9876543210", failed.record.haTransferId)
-    }
-
-    @Test fun userAbortIsDismissedNotInstalled() {
-        val recovery = InstallRecoveryLogic.recover(record(), PlatformInstallFacts(
-            broadcastStatus = 3,
-            broadcastMessage = "User aborted",
-        ))
-        assertTrue(recovery is InstallRecovery.Dismissed)
-        assertEquals("dismissed", InstallRecoveryLogic.haOutcome(recovery))
-    }
-
-    @Test fun packageStateProvesSuccessWithoutBroadcast() {
-        // Process died after commit; no broadcast survived. The installed
-        // package version proves the candidate landed.
-        val recovery = InstallRecoveryLogic.recover(record(versionCode = 5L),
-            PlatformInstallFacts(sessionStillExists = false, installedVersionCode = 5L))
+    @Test fun terminalInstallerSuccessRemainsInstalledRegardlessOfFallback() {
+        val recovery = InstallRecoveryLogic.recover(
+            record(versionCode = 5L, baselineVersionCode = 5L),
+            facts(broadcastStatus = 0, broadcastMessage = "success",
+                installedVersionCode = 5L, installedLastUpdateTime = 1_000L))
         assertTrue(recovery is InstallRecovery.Installed)
         assertEquals("installed", InstallRecoveryLogic.haOutcome(recovery))
     }
 
-    @Test fun higherInstalledVersionAlsoProvesSuccess() {
-        val recovery = InstallRecoveryLogic.recover(record(versionCode = 5L),
-            PlatformInstallFacts(sessionStillExists = false, installedVersionCode = 6L))
+    @Test fun lostCallbackWithInstallerFailureRecoversInstallFailed() {
+        val recovery = InstallRecoveryLogic.recover(record(transferId = "fedcba9876543210fedcba9876543210"),
+            facts(broadcastStatus = 1, broadcastMessage = "INSTALL_FAILED_INVALID_APK"))
+        assertTrue(recovery is InstallRecovery.Failed)
+        assertEquals("install_failed", InstallRecoveryLogic.haOutcome(recovery))
+    }
+
+    @Test fun userAbortIsDismissedNotInstalled() {
+        val recovery = InstallRecoveryLogic.recover(record(),
+            facts(broadcastStatus = 3, broadcastMessage = "User aborted"))
+        assertTrue(recovery is InstallRecovery.Dismissed)
+        assertEquals("dismissed", InstallRecoveryLogic.haOutcome(recovery))
+    }
+
+    @Test fun preExistingSameVersionAndLostResultIsNotInstalled() {
+        // package already v5; candidate v5; user cancelled; session gone;
+        // package still v5 → must NOT become Installed.
+        val recovery = InstallRecoveryLogic.recover(
+            record(versionCode = 5L, baselineVersionCode = 5L, baselineLastUpdateTime = 1_000L),
+            facts(sessionStillExists = false,
+                installedVersionCode = 5L, installedLastUpdateTime = 1_000L))
+        assertTrue(recovery is InstallRecovery.Unresolved)
+        assertNull(InstallRecoveryLogic.haOutcome(recovery))
+    }
+
+    @Test fun preExistingNewerVersionAndLostResultIsNotInstalled() {
+        // Candidate v5 failed/cancelled while v6 was already present.
+        val recovery = InstallRecoveryLogic.recover(
+            record(versionCode = 5L, baselineVersionCode = 6L),
+            facts(sessionStillExists = false,
+                installedVersionCode = 6L, installedLastUpdateTime = 1_000L))
+        assertTrue(recovery is InstallRecovery.Unresolved)
+        assertNull(InstallRecoveryLogic.haOutcome(recovery))
+    }
+
+    @Test fun genuineVersionAdvanceFromBaselineIsInstalled() {
+        // baseline v4 → candidate v5 landed.
+        val recovery = InstallRecoveryLogic.recover(
+            record(versionCode = 5L, baselineVersionCode = 4L, baselineLastUpdateTime = 1_000L),
+            facts(sessionStillExists = false,
+                installedVersionCode = 5L, installedLastUpdateTime = 2_000L))
+        assertTrue(recovery is InstallRecovery.Installed)
+        assertEquals("installed", InstallRecoveryLogic.haOutcome(recovery))
+    }
+
+    @Test fun newInstallFromAbsentPackageIsInstalled() {
+        val recovery = InstallRecoveryLogic.recover(
+            record(versionCode = 5L, baselineVersionCode = null, baselineLastUpdateTime = null),
+            facts(sessionStillExists = false,
+                installedVersionCode = 5L, installedLastUpdateTime = 2_000L))
         assertTrue(recovery is InstallRecovery.Installed)
     }
 
+    @Test fun sameVersionReinstallRequiresLastUpdateTimeAdvance() {
+        val recovery = InstallRecoveryLogic.recover(
+            record(versionCode = 5L, baselineVersionCode = 5L, baselineLastUpdateTime = 1_000L),
+            facts(sessionStillExists = false,
+                installedVersionCode = 5L, installedLastUpdateTime = 5_000L))
+        assertTrue(recovery is InstallRecovery.Installed)
+    }
+
+    @Test fun signingMismatchIsNotInstalled() {
+        val recovery = InstallRecoveryLogic.recover(
+            record(versionCode = 5L, baselineVersionCode = 4L, signingSha256 = "bb".repeat(32)),
+            facts(sessionStillExists = false,
+                installedVersionCode = 5L, installedLastUpdateTime = 2_000L,
+                installedSigningSha256 = signing))
+        assertTrue(recovery is InstallRecovery.Unresolved)
+    }
+
+    @Test fun missingBaselineIsNotInstalled() {
+        val recovery = InstallRecoveryLogic.recover(
+            record(versionCode = 5L, baselineVersionCode = PendingInstallRecord.NO_BASELINE),
+            facts(sessionStillExists = false,
+                installedVersionCode = 5L, installedLastUpdateTime = 2_000L))
+        assertTrue(recovery is InstallRecovery.Unresolved)
+    }
+
     @Test fun unresolvedWhenSessionGoneAndPackageDoesNotProveInstall() {
-        // Never claim success without proof. HA rediscovery is preferred.
-        val recovery = InstallRecoveryLogic.recover(record(versionCode = 5L, transferId = "aa"),
-            PlatformInstallFacts(sessionStillExists = false, installedVersionCode = 4L))
+        val recovery = InstallRecoveryLogic.recover(record(versionCode = 5L, transferId = "aa",
+            baselineVersionCode = 5L),
+            facts(sessionStillExists = false, installedVersionCode = 4L))
         assertTrue(recovery is InstallRecovery.Unresolved)
         assertNull(InstallRecoveryLogic.haOutcome(recovery))
     }
 
     @Test fun unresolvedWhenPackageMissing() {
-        val recovery = InstallRecoveryLogic.recover(record(), PlatformInstallFacts(
-            sessionStillExists = false, installedVersionCode = null))
+        val recovery = InstallRecoveryLogic.recover(record(), facts(sessionStillExists = false))
         assertTrue(recovery is InstallRecovery.Unresolved)
         assertNull(InstallRecoveryLogic.haOutcome(recovery))
     }
 
     @Test fun liveSessionRemainsPending() {
         val recovery = InstallRecoveryLogic.recover(record(phase = PendingInstallPhase.COMMITTED),
-            PlatformInstallFacts(sessionStillExists = true))
+            facts(sessionStillExists = true))
         assertTrue(recovery is InstallRecovery.StillPending)
         assertNull(InstallRecoveryLogic.haOutcome(recovery))
     }
 
     @Test fun awaitingUserBroadcastKeepsPending() {
-        val recovery = InstallRecoveryLogic.recover(record(), PlatformInstallFacts(
-            broadcastStatus = -1, broadcastMessage = "pending user action"))
+        val recovery = InstallRecoveryLogic.recover(record(),
+            facts(broadcastStatus = -1, broadcastMessage = "pending user action"))
         assertTrue(recovery is InstallRecovery.StillPending)
         assertEquals(PendingInstallPhase.AWAITING_USER, recovery.record.phase)
     }
 
     @Test fun fullProcessDeathSuccessSequence() {
-        // prepare install -> persist -> destroy callback -> receiver/repair -> recovered
         val store = InMemoryPendingInstallStore()
         val transferId = "0123456789abcdef0123456789abcdef"
-        store.write(record(transferId = transferId))
+        store.write(record(transferId = transferId, baselineVersionCode = 4L))
 
-        // Destroy original controller/process-local callback.
         var liveCallback: ((Int, String) -> Unit)? = { _, _ -> }
         liveCallback = null
         assertNull(liveCallback)
 
-        // Result arrives in a fresh process: only the store is updated.
         val before = store.read()!!
-        val receiverRecovery = InstallRecoveryLogic.recover(before, PlatformInstallFacts(
-            broadcastStatus = 0, broadcastMessage = "success"))
+        val receiverRecovery = InstallRecoveryLogic.recover(before, facts(broadcastStatus = 0))
         store.write(receiverRecovery.record)
 
-        // Fresh controller reconciles.
-        val settled = InstallRecoveryLogic.recover(store.read()!!, PlatformInstallFacts())
+        val settled = InstallRecoveryLogic.recover(store.read()!!, facts())
         assertTrue(settled is InstallRecovery.Installed)
         assertEquals("installed", InstallRecoveryLogic.haOutcome(settled))
         assertEquals(transferId, settled.record.haTransferId)
@@ -158,29 +206,57 @@ class PendingInstallRecoveryTest {
     @Test fun fullProcessDeathFailureSequence() {
         val store = InMemoryPendingInstallStore()
         store.write(record(transferId = "abcdef0123456789abcdef0123456789"))
-        assertNull(null as ((Int, String) -> Unit)?)
         val before = store.read()!!
-        val receiverRecovery = InstallRecoveryLogic.recover(before, PlatformInstallFacts(
-            broadcastStatus = 1, broadcastMessage = "INSTALL_FAILED_VERSION_DOWNGRADE"))
+        val receiverRecovery = InstallRecoveryLogic.recover(before,
+            facts(broadcastStatus = 1, broadcastMessage = "INSTALL_FAILED_VERSION_DOWNGRADE"))
         store.write(receiverRecovery.record)
-        val settled = InstallRecoveryLogic.recover(store.read()!!, PlatformInstallFacts())
+        val settled = InstallRecoveryLogic.recover(store.read()!!, facts())
         assertTrue(settled is InstallRecovery.Failed)
         assertEquals("install_failed", InstallRecoveryLogic.haOutcome(settled))
     }
 
     @Test fun terminalRecordStaysTerminalOnLaterReconcile() {
-        val installed = record(phase = PendingInstallPhase.INSTALLED)
-        assertTrue(InstallRecoveryLogic.recover(installed, PlatformInstallFacts()) is InstallRecovery.Installed)
-        val failed = record(phase = PendingInstallPhase.INSTALL_FAILED)
-        assertTrue(InstallRecoveryLogic.recover(failed, PlatformInstallFacts()) is InstallRecovery.Failed)
-        val dismissed = record(phase = PendingInstallPhase.DISMISSED)
-        assertTrue(InstallRecoveryLogic.recover(dismissed, PlatformInstallFacts()) is InstallRecovery.Dismissed)
+        assertTrue(InstallRecoveryLogic.recover(record(phase = PendingInstallPhase.INSTALLED), facts()) is InstallRecovery.Installed)
+        assertTrue(InstallRecoveryLogic.recover(record(phase = PendingInstallPhase.INSTALL_FAILED), facts()) is InstallRecovery.Failed)
+        assertTrue(InstallRecoveryLogic.recover(record(phase = PendingInstallPhase.DISMISSED), facts()) is InstallRecovery.Dismissed)
     }
 
     @Test fun successIsNeverInventedFromAnAbsentCallback() {
-        // A stale store with only STAGED and no facts must not become Installed.
-        val recovery = InstallRecoveryLogic.recover(record(phase = PendingInstallPhase.STAGED),
-            PlatformInstallFacts())
+        val recovery = InstallRecoveryLogic.recover(record(phase = PendingInstallPhase.STAGED), facts())
         assertFalse(recovery is InstallRecovery.Installed)
+    }
+
+    @Test fun persistFailureIsObservable() {
+        val store = InMemoryPendingInstallStore()
+        store.failWrites = true
+        assertFalse(store.write(record()))
+        assertNull(store.read())
+        store.failWrites = false
+        assertTrue(store.write(record()))
+        assertNotNull(store.read())
+    }
+
+    @Test fun staleSessionResultIsRejected() {
+        val current = record(sessionId = 7)
+        // Old session after a newer pending session exists.
+        assertTrue(ApkInstallResultPolicy.isStale(incomingSessionId = 5, record = current))
+        // Matching session is accepted.
+        assertFalse(ApkInstallResultPolicy.isStale(incomingSessionId = 7, record = current))
+        // Missing id cannot be proven to belong to the current session.
+        assertTrue(ApkInstallResultPolicy.isStale(incomingSessionId = -1, record = current))
+        // Result with an id after the pending record is gone.
+        assertTrue(ApkInstallResultPolicy.isStale(incomingSessionId = 7, record = null))
+    }
+
+    @Test fun staleResultMustNotCompleteCurrentInstall() {
+        val store = InMemoryPendingInstallStore()
+        val newer = record(sessionId = 7, transferId = "0123456789abcdef0123456789abcdef")
+        store.write(newer)
+        val incomingSessionId = 5
+        assertFalse(ApkInstallResultPolicy.isStale(incomingSessionId = 7, store.read()))
+        assertTrue(ApkInstallResultPolicy.isStale(incomingSessionId = 5, store.read()))
+        // Stale path must leave the newer pending record untouched.
+        assertEquals(7, store.read()?.sessionId)
+        assertEquals(PendingInstallPhase.COMMITTED, store.read()?.phase)
     }
 }

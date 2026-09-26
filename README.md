@@ -52,8 +52,9 @@ signature conflict, **stop** — do not uninstall the existing app to force the 
 
 ## Home Assistant
 
-DormPanel talks to Home Assistant over WebSocket for live state and control.
-REST is only used as a fallback.
+DormPanel talks to Home Assistant over WebSocket for live entity state and
+control. REST is used only for the user-triggered connection diagnostic and
+other necessary supplemental calls — not as an entity-state fallback.
 
 ### Configure
 
@@ -112,7 +113,7 @@ The Apps page owns one-shot APK browsing/install from the same WebDAV account.
 | System brightness | Writes Android `screen_brightness`. Requires **WRITE_SETTINGS** special access and Manual brightness mode. |
 | DormPanel brightness | App-local overlay brightness; does not change the system value. |
 | Follow System | DormPanel brightness tracks the system brightness. |
-| Keep screen awake | Holds `screen_off_timeout` while enabled. |
+| Keep screen awake | Uses `FLAG_KEEP_SCREEN_ON` while enabled. It does not modify `screen_off_timeout`. |
 | Blackout | Covers the screen with a black surface and blocks touch. |
 
 **Blackout is not a true LCD/backlight power-off.** The panel stays powered;
@@ -133,8 +134,9 @@ HA commands cannot be applied.
 - On X08E, `BOOT_COMPLETED` may arrive noticeably after `sys.boot_completed`.
   Startup is therefore later than on typical Android devices.
 - **Open MIUI Home** (Control Center) returns to the Xiaomi launcher.
-- DormPanel is **not** a Home launcher. It never replaces MIUI Home, XiaoAI,
-  Bluetooth Mesh gateway, or the system alarm app.
+- DormPanel is **not** a Home launcher. It is designed not to replace MIUI Home,
+  XiaoAI, the Bluetooth Mesh gateway, or the system alarm app. Coexistence with
+  XiaoAI and Bluetooth Mesh is not physically verified in this release.
 
 ## APK install sources
 
@@ -172,7 +174,8 @@ The home screen is an editable card grid (Mijia-style):
   Calendar, Timetable, Apps, and more.
 
 Swipe edges open the secondary pages (Apps, Control Center, Schedule, Home
-Control). Exact page targets are configurable.
+Control). Directional page targets are fixed defaults and are not yet user
+configurable.
 
 ## Backup and sensitive state
 
@@ -199,8 +202,9 @@ remains backup-eligible.
   delivers `BOOT_COMPLETED` late.
 - **Split APK bundles (XAPK/APKS) are unsupported.** Single-APK only.
 - Only physically verified coexistence claims are documented as proven. XiaoAI
-  and Bluetooth Mesh end-to-end checks are listed in the release notes with their
-  actual verification status.
+  and Bluetooth Mesh coexistence are designed to be preserved but remain
+  **unverified** until real audible/visible XiaoAI response and a real Mesh
+  device command are observed.
 
 ## Build
 
