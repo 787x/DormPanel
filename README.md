@@ -153,9 +153,13 @@ HA commands cannot be applied.
 - On X08E, `BOOT_COMPLETED` may arrive noticeably after `sys.boot_completed`.
   Startup is therefore later than on typical Android devices.
 - **Open MIUI Home** (Control Center) returns to the Xiaomi launcher.
-- DormPanel is **not** a Home launcher. It is designed not to replace MIUI Home,
-  XiaoAI, the Bluetooth Mesh gateway, or the system alarm app. Coexistence with
-  XiaoAI and Bluetooth Mesh is not physically verified in this release.
+- DormPanel is not a Home launcher. It is designed not to replace MIUI Home,
+XiaoAI, the Bluetooth Mesh gateway, or the system alarm app. Final 0.1.0
+acceptance physically exercised Xiaomi coexistence: XiaoAI produced a visible
+response while DormPanel was running, and a Xiaomi BLE/Mesh Yeelight device was
+controlled through the normal Xiaomi path with the resulting state reflected in
+Home Assistant. XiaoAI wake-word audible response was not captured during final
+acceptance.
 
 ## APK install sources
 
@@ -220,10 +224,9 @@ remains backup-eligible.
 - Boot startup may occur noticeably after `sys.boot_completed` because X08E
   delivers `BOOT_COMPLETED` late.
 - **Split APK bundles (XAPK/APKS) are unsupported.** Single-APK only.
-- Only physically verified coexistence claims are documented as proven. XiaoAI
-  and Bluetooth Mesh coexistence are designed to be preserved but remain
-  **unverified** until real audible/visible XiaoAI response and a real Mesh
-  device command are observed.
+- Xiaomi coexistence was physically exercised during final 0.1.0 acceptance:
+XiaoAI produced a visible response, and the Xiaomi BLE/Mesh Yeelight control
+path was exercised with the resulting state reflected in Home Assistant.
 
 ## Build
 
