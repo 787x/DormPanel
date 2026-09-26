@@ -13,12 +13,40 @@ android {
         applicationId = "com.dormpanel.app"
         minSdk = 28
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing secrets are supplied by the developer machine only:
+    //   dormpanel.release.keystore / DORMPANEL_RELEASE_KEYSTORE
+    //   dormpanel.release.keyAlias  / DORMPANEL_RELEASE_KEY_ALIAS
+    //   dormpanel.release.storePassword / DORMPANEL_RELEASE_STORE_PASSWORD
+    //   dormpanel.release.keyPassword   / DORMPANEL_RELEASE_KEY_PASSWORD
+    // Never commit the keystore or password values.
+    signingConfigs {
+        create("release") {
+            val keystorePath = providers.gradleProperty("dormpanel.release.keystore")
+                .orElse(providers.environmentVariable("DORMPANEL_RELEASE_KEYSTORE"))
+                .orNull
+            val keyAlias = providers.gradleProperty("dormpanel.release.keyAlias")
+                .orElse(providers.environmentVariable("DORMPANEL_RELEASE_KEY_ALIAS"))
+                .orNull
+            val storePassword = providers.gradleProperty("dormpanel.release.storePassword")
+                .orElse(providers.environmentVariable("DORMPANEL_RELEASE_STORE_PASSWORD"))
+                .orNull
+            val keyPassword = providers.gradleProperty("dormpanel.release.keyPassword")
+                .orElse(providers.environmentVariable("DORMPANEL_RELEASE_KEY_PASSWORD"))
+                .orNull
+            if (keystorePath != null && keyAlias != null && storePassword != null && keyPassword != null) {
+                storeFile = file(keystorePath)
+                this.keyAlias = keyAlias
+                this.storePassword = storePassword
+                this.keyPassword = keyPassword
+            }
+        }
+    }
     buildTypes {
         create("x08eTest") {
             initWith(getByName("debug"))
@@ -26,9 +54,13 @@ android {
             matchingFallbacks += listOf("debug")
         }
         release {
+            // Size optimization is intentionally off: X08E stability matters more.
             optimization {
                 enable = false
             }
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("release").takeIf { it.storeFile != null }
         }
     }
     testBuildType = providers.gradleProperty("dormpanel.testBuildType").getOrElse("debug")

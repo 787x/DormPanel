@@ -75,7 +75,8 @@ class HaRelayDownloader(http: OkHttpClient) {
 
 /** Main-thread state machine; network and parsing run on one bounded worker. */
 class HaScheduleRelayController(private val channel: HaRelayChannel, private val identity: HaRelayIdentityStore,
-    http: OkHttpClient, private val status: (String) -> Unit = {}, private val apk: ApkInstallController? = null) {
+    http: OkHttpClient, private val status: (String) -> Unit = {}, private val apk: ApkInstallController? = null,
+    private val appVersion: () -> String = { "unknown" }) {
     private val downloader = HaRelayDownloader(http)
     private val importer = IcsScheduleImporter()
     private val worker = Executors.newSingleThreadExecutor()
@@ -116,7 +117,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         terminalAwaitingAck.forEach(known::remove)
         terminalAwaitingAck.clear()
         inFlightId?.let { queued.addFirst(it); inFlightId = null; downloading = false }
-        val request = message("register").put("display_name", identity.displayName).put("app_version", "1.0")
+        val request = message("register").put("display_name", identity.displayName).put("app_version", appVersion())
             .put("capabilities", org.json.JSONArray().put("schedule_relay_v1").apply { if (apk != null) put("apk_install_v1") })
         if (!channel.request(request) { result ->
             if (closed || generation != connectionGeneration) return@request
@@ -162,7 +163,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
                         downloading = false; inFlightId = null
                         staged.onSuccess { metadata ->
                             activeApkId = id; retries.remove(id); acknowledge(id, "preview_ready")
-                            apkController.acceptIncoming(metadata) { outcome -> resolve(id, outcome) }
+                            apkController.acceptIncoming(metadata, haTransferId = id) { outcome -> resolve(id, outcome) }
                         }.onFailure { error ->
                             if (error is com.dormpanel.app.apps.ApkRejected || error is HaRelayIntegrityException)
                                 acknowledge(id, "rejected_invalid")

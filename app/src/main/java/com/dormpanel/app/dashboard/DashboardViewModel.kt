@@ -30,7 +30,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val productivity = ProductivitySource(ProductivityStores.create(application), AndroidProductivityClock)
     val schedule = ScheduleSource(ScheduleStores.create(application))
     val haRelay = HaScheduleRelayController(dataSource.ha.relayChannel, dataSource.relayIdentity,
-        dataSource.relayHttp, { dataSource.relayStatus = it }, apkInstall)
+        dataSource.relayHttp, { dataSource.relayStatus = it }, apkInstall,
+        appVersion = {
+            runCatching {
+                application.packageManager.getPackageInfo(application.packageName, 0).versionName
+            }.getOrNull() ?: "unknown"
+        })
     val webDav = WebDavSyncController(application, schedule)
     val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
@@ -43,6 +48,14 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     init {
+        // Reconcile any PackageInstaller session interrupted by process death
+        // before the live HA relay callback was registered. Outcomes that still
+        // need a HA terminal ack are delivered here; unresolved sessions are
+        // left for rediscovery rather than being reported as installed.
+        apkInstall.reconcileRecovered().forEach { recovered ->
+            val transferId = recovered.haTransferId
+            if (transferId != null) haRelay.resolve(transferId, recovered.outcome)
+        }
         deviceControls.brightnessCommand = dataSource.ha::requestDisplayBrightness
         deviceControls.volumeCommand = dataSource.ha::requestMediaVolume
         deviceControls.systemBrightnessCommand = dataSource.ha::requestSystemBrightness
