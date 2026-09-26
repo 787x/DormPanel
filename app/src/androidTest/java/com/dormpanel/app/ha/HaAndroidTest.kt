@@ -35,6 +35,10 @@ class HaAndroidTest {
             val dual = withHelpers.copy(systemBrightnessEntity = "input_number.system", blackoutEntity = "input_boolean.blackout")
             store.write(dual)
             assertEquals(dual, store.read())
+            val toggles = dual.copy(systemAutomaticEntity = "input_boolean.automatic", followSystemEntity = "input_boolean.follow",
+                keepAwakeEntity = "input_boolean.awake", startAfterBootEntity = "input_boolean.boot")
+            store.write(toggles)
+            assertEquals(toggles, store.read())
         } finally { store.write(saved) }
     }
     @Test fun androidKeystoreRoundtripAndTamper() {

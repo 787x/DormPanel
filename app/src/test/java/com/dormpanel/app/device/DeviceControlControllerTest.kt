@@ -32,14 +32,17 @@ class DeviceControlControllerTest {
         var observed = SystemBrightnessState(canWrite = true, automatic = true, raw = 128)
         var brightnessWrites = 0
         var modeWrites = 0
+        var failWrites = false
         override fun read() = observed
         override fun setBrightness(raw: Int): Boolean {
             brightnessWrites++
+            if (failWrites) return false
             observed = observed.copy(raw = raw)
             return true
         }
         override fun setAutomatic(enabled: Boolean): Boolean {
             modeWrites++
+            if (failWrites) return false
             observed = observed.copy(automatic = enabled)
             return true
         }
@@ -92,6 +95,77 @@ class DeviceControlControllerTest {
         assertEquals(2, system.brightnessWrites)
         assertEquals(listOf(40), sent)
         assertEquals(2, system.modeWrites)
+    }
+
+    @Test fun automaticCommandEmitsOnlyAfterRealSystemChangeAndNeverEchoesRemote() {
+        val system = FakeSystem()
+        val control = DeviceControlController(MemoryStore(), FakeAudio(), system)
+        val commands = mutableListOf<Boolean>()
+        control.systemAutomaticCommand = commands::add
+        system.observed = system.observed.copy(canWrite = false)
+        control.refreshSystemBrightness()
+        assertFalse(control.setSystemAutomatic(false))
+        assertTrue(commands.isEmpty())
+        system.observed = system.observed.copy(canWrite = true)
+        control.refreshSystemBrightness()
+        assertTrue(control.setSystemAutomatic(false))
+        assertEquals(listOf(false), commands)
+        assertEquals(1, system.modeWrites)
+        assertTrue(control.setSystemAutomatic(false))
+        assertEquals(listOf(false), commands)
+        assertTrue(control.setSystemAutomatic(true, remote = true))
+        assertEquals(listOf(false), commands)
+        assertEquals(2, system.modeWrites)
+        assertTrue(control.state.system.automatic)
+        system.failWrites = true
+        system.observed = system.observed.copy(automatic = false)
+        control.refreshSystemBrightness()
+        assertFalse(control.setSystemAutomatic(true))
+        assertFalse(control.state.system.automatic)
+        assertEquals(listOf(false), commands)
+    }
+
+    @Test fun followSystemLocalAndRemoteShareOwnerWithoutEcho() {
+        val store = MemoryStore()
+        val control = DeviceControlController(store, FakeAudio())
+        val commands = mutableListOf<Boolean>()
+        control.followSystemCommand = commands::add
+        control.setFollowSystem(true)
+        assertEquals(listOf(true), commands)
+        control.setFollowSystem(true)
+        assertEquals(listOf(true), commands)
+        control.setFollowSystem(false, remote = true)
+        assertEquals(listOf(true), commands)
+        assertFalse(control.state.useSystemBrightness)
+        assertEquals(false, store.follow)
+        control.setFollowSystem(true, remote = true)
+        assertEquals(listOf(true), commands)
+        assertTrue(control.state.useSystemBrightness)
+        control.setFollowSystem(false)
+        assertEquals(listOf(true, false), commands)
+    }
+
+    @Test fun keepAwakeLocalAndRemoteShareOwnerWithoutEcho() {
+        val store = MemoryStore()
+        val control = DeviceControlController(store, FakeAudio())
+        val commands = mutableListOf<Boolean>()
+        control.keepAwakeCommand = commands::add
+        val observed = mutableListOf<Boolean>()
+        control.addListener { observed += it.keepAwake }
+        control.setKeepAwake(false)
+        assertEquals(listOf(false), commands)
+        assertEquals(listOf(true, false), observed)
+        control.setKeepAwake(false)
+        assertEquals(listOf(false), commands)
+        control.setKeepAwake(true, remote = true)
+        assertEquals(listOf(false), commands)
+        assertEquals(listOf(true, false, true), observed)
+        assertTrue(store.awake)
+        control.setKeepAwake(true)
+        assertEquals(listOf(false), commands)
+        control.setKeepAwake(false, remote = true)
+        assertEquals(listOf(false), commands)
+        assertEquals(listOf(true, false, true, false), observed)
     }
 
     @Test fun mappingRoundTripsAcrossX08eRange() {

@@ -50,9 +50,13 @@ class HaSettingsStore(context: Context) {
         prefs.getString("theme", "")!!, prefs.getString("opacity", "")!!,
         prefs.getString("display_brightness", "")!!, prefs.getString("media_volume", "")!!,
         prefs.getString("system_brightness", "")!!, prefs.getString("blackout", "")!!,
+        prefs.getString("system_automatic", "")!!, prefs.getString("follow_system", "")!!,
+        prefs.getString("keep_awake", "")!!, prefs.getString("start_after_boot", "")!!,
     )
     fun write(value: HaConnectionSettings) { prefs.edit().putString("mode", value.mode.name).putString("url", value.baseUrl)
         .putString("weather", value.weatherEntity).putString("theme", value.themeEntity).putString("opacity", value.opacityEntity)
         .putString("display_brightness", value.displayBrightnessEntity).putString("media_volume", value.mediaVolumeEntity)
-        .putString("system_brightness", value.systemBrightnessEntity).putString("blackout", value.blackoutEntity).apply() }
+        .putString("system_brightness", value.systemBrightnessEntity).putString("blackout", value.blackoutEntity)
+        .putString("system_automatic", value.systemAutomaticEntity).putString("follow_system", value.followSystemEntity)
+        .putString("keep_awake", value.keepAwakeEntity).putString("start_after_boot", value.startAfterBootEntity).apply() }
 }

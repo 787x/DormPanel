@@ -17,8 +17,25 @@ class PreferencesStartupStore(context: Context) : StartupStore {
         preferences.edit().putBoolean("start_after_boot", enabled).commit()
 }
 
+/** Owner of the durable next-boot preference. HA is an optional mirror, never a second store. */
 class StartupPolicy(private val store: StartupStore) {
     val startAfterBoot: Boolean get() = store.startAfterBoot()
+    var startAfterBootCommand: ((Boolean) -> Unit)? = null
+    private val listeners = linkedSetOf<(Boolean) -> Unit>()
 
-    fun setStartAfterBoot(enabled: Boolean): Boolean = store.setStartAfterBoot(enabled)
+    fun addListener(listener: (Boolean) -> Unit) {
+        if (!listeners.add(listener)) return
+        listener(store.startAfterBoot())
+    }
+    fun removeListener(listener: (Boolean) -> Unit) { listeners -= listener }
+
+    fun setStartAfterBoot(enabled: Boolean, remote: Boolean = false): Boolean {
+        val previous = store.startAfterBoot()
+        if (!store.setStartAfterBoot(enabled)) return false
+        if (previous != enabled) {
+            listeners.toList().forEach { it(enabled) }
+            if (!remote) startAfterBootCommand?.invoke(enabled)
+        }
+        return true
+    }
 }

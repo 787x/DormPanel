@@ -63,6 +63,11 @@ class HaProtocolTest {
                             {"entity_id":"input_number.system","state":"40","attributes":{"min":1,"max":100}},
                             {"entity_id":"input_number.volume","state":"45","attributes":{"min":0,"max":100}},
                             {"entity_id":"input_boolean.blackout","state":"off","attributes":{}},
+                            {"entity_id":"input_boolean.automatic","state":"on","attributes":{}},
+                            {"entity_id":"input_boolean.auto_off","state":"off","attributes":{}},
+                            {"entity_id":"input_boolean.follow","state":"on","attributes":{}},
+                            {"entity_id":"input_boolean.awake","state":"on","attributes":{}},
+                            {"entity_id":"input_boolean.boot","state":"off","attributes":{}},
                             {"entity_id":"weather.home","state":"sunny","attributes":{"temperature":72,"temperature_unit":"°F","supported_features":1}}
                         ]""")
                         "config/entity_registry/list_for_display" -> JSONObject("""{"entities":[]}""")
@@ -79,10 +84,12 @@ class HaProtocolTest {
             }))
         }
         fun start(theme: String = "input_select.theme", opacity: String = "input_number.opacity",
-            display: String = "", volume: String = "", system: String = "", blackout: String = "") {
+            display: String = "", volume: String = "", system: String = "", blackout: String = "",
+            systemAutomatic: String = "", followSystem: String = "", keepAwake: String = "", startAfterBoot: String = "") {
             appearance.themeCommand = source::requestTheme
             appearance.opacityCommand = source::requestOpacity
-            source.configure(HaConnectionSettings(BackendMode.HOME_ASSISTANT, server.url("/").toString(), "weather.home", theme, opacity, display, volume, system, blackout), "test-token")
+            source.configure(HaConnectionSettings(BackendMode.HOME_ASSISTANT, server.url("/").toString(), "weather.home", theme, opacity, display, volume, system, blackout,
+                systemAutomatic, followSystem, keepAwake, startAfterBoot), "test-token")
         }
         fun entity(id: String, value: String?, attributes: JSONObject = JSONObject()) {
             val next = value?.let { JSONObject().put("entity_id", id).put("state", it).put("attributes", attributes) } ?: JSONObject.NULL
@@ -208,6 +215,155 @@ class HaProtocolTest {
             f.until { f.services("turn_off").any { it.optJSONObject("target")?.optString("entity_id") == "input_boolean.blackout" } }
             f.entity("input_boolean.blackout", "unavailable")
             assertEquals(true, blackoutValues.last())
+        }
+    }
+
+    @Test fun controlCenterBooleanHelpersApplySnapshotsEventsAndSendLocalCommands() {
+        Fixture().use { f ->
+            val automatic = mutableListOf<Boolean>()
+            val follow = mutableListOf<Boolean>()
+            val awake = mutableListOf<Boolean>()
+            val boot = mutableListOf<Boolean>()
+            f.source.remoteSystemAutomatic = { automatic += it }
+            f.source.remoteFollowSystem = { follow += it }
+            f.source.remoteKeepAwake = { awake += it }
+            f.source.remoteStartAfterBoot = { boot += it }
+            f.start(systemAutomatic = "input_boolean.automatic", followSystem = "input_boolean.follow",
+                keepAwake = "input_boolean.awake", startAfterBoot = "input_boolean.boot")
+            f.until { f.source.connected && automatic.isNotEmpty() && follow.isNotEmpty() && awake.isNotEmpty() && boot.isNotEmpty() }
+            assertEquals(listOf(true), automatic)
+            assertEquals(listOf(true), follow)
+            assertEquals(listOf(true), awake)
+            assertEquals(listOf(false), boot)
+            f.entity("input_boolean.automatic", "off")
+            f.entity("input_boolean.follow", "off")
+            f.entity("input_boolean.awake", "off")
+            f.entity("input_boolean.boot", "on")
+            assertEquals(listOf(true, false), automatic)
+            assertEquals(listOf(true, false), follow)
+            assertEquals(listOf(true, false), awake)
+            assertEquals(listOf(false, true), boot)
+            f.entity("light.a", "off")
+            assertEquals(listOf(true, false), automatic)
+            assertEquals(2, follow.size)
+            assertEquals(2, awake.size)
+            assertEquals(2, boot.size)
+            listOf(true, false).forEach { enabled ->
+                f.source.requestSystemAutomatic(enabled)
+                f.source.requestFollowSystem(enabled)
+                f.source.requestKeepAwake(enabled)
+                f.source.requestStartAfterBoot(enabled)
+            }
+            f.until {
+                f.services("turn_on").count { it.optJSONObject("target")?.optString("entity_id")?.startsWith("input_boolean.") == true } >= 4 &&
+                    f.services("turn_off").count { it.optJSONObject("target")?.optString("entity_id")?.startsWith("input_boolean.") == true } >= 4
+            }
+            fun servicesFor(entity: String, name: String) = f.services(name).filter { it.optJSONObject("target")?.optString("entity_id") == entity }
+            assertEquals(1, servicesFor("input_boolean.automatic", "turn_on").size)
+            assertEquals(1, servicesFor("input_boolean.automatic", "turn_off").size)
+            assertEquals(1, servicesFor("input_boolean.follow", "turn_on").size)
+            assertEquals(1, servicesFor("input_boolean.follow", "turn_off").size)
+            assertEquals(1, servicesFor("input_boolean.awake", "turn_on").size)
+            assertEquals(1, servicesFor("input_boolean.awake", "turn_off").size)
+            assertEquals(1, servicesFor("input_boolean.boot", "turn_on").size)
+            assertEquals(1, servicesFor("input_boolean.boot", "turn_off").size)
+            // Remote application never re-emits a helper command.
+            val sentBefore = f.services("turn_on").size + f.services("turn_off").size
+            f.entity("input_boolean.automatic", "on")
+            f.entity("input_boolean.follow", "on")
+            f.entity("input_boolean.awake", "on")
+            f.entity("input_boolean.boot", "off")
+            assertEquals(sentBefore, f.services("turn_on").size + f.services("turn_off").size)
+            assertEquals(listOf(true, false, true), automatic)
+            assertEquals(listOf(true, false, true), follow)
+            assertEquals(listOf(true, false, true), awake)
+            assertEquals(listOf(false, true, false), boot)
+        }
+    }
+
+    @Test fun snapshotAppliesAutomaticOffBeforeSystemBrightnessSoManualValueIsAccepted() {
+        Fixture().use { f ->
+            val order = mutableListOf<String>()
+            // Mirrors DeviceControlController: system brightness is only accepted when Automatic is off.
+            var automatic = true
+            var acceptedSystemBrightness: Int? = null
+            var followSystem = true
+            var acceptedDisplayBrightness: Int? = null
+            f.source.remoteSystemAutomatic = { enabled ->
+                order += "auto:$enabled"
+                automatic = enabled
+            }
+            f.source.remoteSystemBrightness = { percent ->
+                order += "system:$percent"
+                if (!automatic) acceptedSystemBrightness = percent
+            }
+            f.source.remoteFollowSystem = { enabled ->
+                order += "follow:$enabled"
+                followSystem = enabled
+            }
+            f.source.acceptBrightnessSnapshot = { !followSystem }
+            f.source.remoteBrightness = { percent ->
+                order += "display:$percent"
+                if (!followSystem) acceptedDisplayBrightness = percent
+            }
+            // Snapshot: Automatic OFF, System brightness 40, Follow System OFF, DormPanel brightness 32.
+            f.start(system = "input_number.system", systemAutomatic = "input_boolean.auto_off",
+                followSystem = "input_boolean.follow", display = "input_number.display")
+            // follow snapshot is "on" in the shared fixture; flip the dependency inputs via live helpers
+            // only after asserting the automatic/system pair from the synchronized snapshot.
+            f.until { f.source.connected && order.any { it.startsWith("auto:") } && order.any { it.startsWith("system:") } }
+            val autoIndex = order.indexOfFirst { it.startsWith("auto:") }
+            val systemIndex = order.indexOfFirst { it.startsWith("system:") }
+            assertTrue("Automatic must be applied before System brightness: $order", autoIndex in 0 until systemIndex)
+            assertEquals(false, automatic)
+            assertEquals(40, acceptedSystemBrightness)
+            // Follow System helper "on" keeps display brightness rejected while following.
+            assertEquals(true, followSystem)
+            assertNull(acceptedDisplayBrightness)
+            // Live events stay event-driven and independent; order still matters only on full snapshots.
+            val before = order.size
+            f.entity("input_number.system", "55", JSONObject("""{"min":1,"max":100}"""))
+            assertEquals("system:55", order[before])
+            assertEquals(55, acceptedSystemBrightness)
+        }
+    }
+
+    @Test fun controlCenterBooleanHelpersIgnoreInvalidAndUnconfiguredBindings() {
+        Fixture().use { f ->
+            val automatic = mutableListOf<Boolean>()
+            val follow = mutableListOf<Boolean>()
+            val awake = mutableListOf<Boolean>()
+            val boot = mutableListOf<Boolean>()
+            f.source.remoteSystemAutomatic = { automatic += it }
+            f.source.remoteFollowSystem = { follow += it }
+            f.source.remoteKeepAwake = { awake += it }
+            f.source.remoteStartAfterBoot = { boot += it }
+            f.start(systemAutomatic = "switch.not_a_boolean", followSystem = "input_boolean.missing",
+                keepAwake = "", startAfterBoot = "input_boolean.boot")
+            f.until { f.source.connected && boot.isNotEmpty() }
+            assertTrue(automatic.isEmpty())
+            assertTrue(follow.isEmpty())
+            assertTrue(awake.isEmpty())
+            assertEquals(listOf(false), boot)
+            f.entity("switch.not_a_boolean", "on")
+            f.entity("input_boolean.automatic", "off")
+            f.entity("input_boolean.awake", "on")
+            assertTrue(automatic.isEmpty())
+            assertTrue(follow.isEmpty())
+            assertTrue(awake.isEmpty())
+            assertEquals(listOf(false), boot)
+            f.source.requestSystemAutomatic(true)
+            f.source.requestFollowSystem(true)
+            f.source.requestKeepAwake(true)
+            f.source.requestStartAfterBoot(true)
+            f.until { f.services("turn_on").any { it.optJSONObject("target")?.optString("entity_id") == "input_boolean.boot" } }
+            assertTrue(f.services("turn_on").none { it.optJSONObject("target")?.optString("entity_id") in listOf("switch.not_a_boolean", "input_boolean.missing", "input_boolean.automatic", "input_boolean.awake", "input_boolean.follow") })
+            assertTrue(f.services("turn_off").isEmpty())
+            f.entity("input_boolean.boot", "unavailable")
+            f.entity("input_boolean.boot", "unknown")
+            assertEquals(listOf(false), boot)
+            f.entity("input_boolean.boot", "on")
+            assertEquals(listOf(false, true), boot)
         }
     }
 

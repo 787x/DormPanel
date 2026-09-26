@@ -79,6 +79,24 @@ settings):
 - **Brightness** — DormPanel display brightness
 - **Volume** — media volume
 - **Blackout** — screen blackout switch
+- **System brightness** — Android system brightness (manual writes)
+- **Theme / Opacity** — appearance helpers (`input_select` / `input_number`)
+- **Automatic system brightness** — optional `input_boolean`
+- **Follow System** — optional `input_boolean`
+- **Keep screen awake** — optional `input_boolean`
+- **Start after boot** — optional `input_boolean`
+
+The four `input_boolean` bindings mirror the existing Control Center toggles
+bidirectionally when configured. Local controls keep working if HA is
+disconnected or a helper is missing, disabled, or unavailable.
+
+Notes on the optional Boolean helpers:
+
+- **Automatic system brightness** and **System brightness** require the normal
+  Android **WRITE_SETTINGS** conditions (see below). Manual System brightness
+  additionally requires Automatic mode OFF.
+- **Start after boot** updates the persisted next-boot preference only. It does
+  not remotely launch DormPanel while the app is not running.
 
 ### Timetable relay
 

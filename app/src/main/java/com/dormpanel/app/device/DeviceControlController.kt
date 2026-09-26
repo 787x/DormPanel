@@ -62,6 +62,9 @@ class DeviceControlController(private val store: DeviceControlStore, private val
     var volumeCommand: ((Int) -> Unit)? = null
     var systemBrightnessCommand: ((Int) -> Unit)? = null
     var blackoutCommand: ((Boolean) -> Unit)? = null
+    var systemAutomaticCommand: ((Boolean) -> Unit)? = null
+    var followSystemCommand: ((Boolean) -> Unit)? = null
+    var keepAwakeCommand: ((Boolean) -> Unit)? = null
     private var lastAudible = store.lastAudibleVolume().coerceIn(1, audio.max.coerceAtLeast(1))
     var state = DeviceControlState(store.brightness()?.coerceIn(1, 100) ?: 50, store.followSystem(), store.keepAwake(),
         mediaVolume = audio.current().coerceIn(0, audio.max.coerceAtLeast(1)), mediaMax = audio.max.coerceAtLeast(1), muted = audio.muted(),
@@ -89,21 +92,25 @@ class DeviceControlController(private val store: DeviceControlStore, private val
         update(state.copy(brightness = percent, useSystemBrightness = false))
         if (!remote) brightnessCommand?.invoke(percent)
     }
-    fun setFollowSystem(enabled: Boolean) {
+    fun setFollowSystem(enabled: Boolean, remote: Boolean = false) {
         if (state.useSystemBrightness == enabled) return
         store.saveFollowSystem(enabled)
         update(state.copy(useSystemBrightness = enabled))
+        if (!remote) followSystemCommand?.invoke(enabled)
     }
     fun refreshSystemBrightness() {
         systemBrightness?.read()?.let { update(state.copy(system = it)) }
     }
-    fun setSystemAutomatic(enabled: Boolean): Boolean {
+    fun setSystemAutomatic(enabled: Boolean, remote: Boolean = false): Boolean {
         val current = state.system
         if (!current.canWrite || systemBrightness == null) return false
         if (current.automatic == enabled) return true
         val changed = systemBrightness.setAutomatic(enabled)
         refreshSystemBrightness()
-        return changed && state.system.automatic == enabled
+        val success = changed && state.system.automatic == enabled
+        // Emit HA only after the observed Android system mode actually matches.
+        if (success && !remote) systemAutomaticCommand?.invoke(enabled)
+        return success
     }
     fun setSystemBrightness(percent: Int, remote: Boolean = false): Boolean {
         if (percent !in 1..100) return false
@@ -116,10 +123,11 @@ class DeviceControlController(private val store: DeviceControlStore, private val
         if (changed && !remote) systemBrightnessCommand?.invoke(state.system.percent)
         return changed
     }
-    fun setKeepAwake(enabled: Boolean) {
+    fun setKeepAwake(enabled: Boolean, remote: Boolean = false) {
         if (enabled == state.keepAwake) return
         store.saveKeepAwake(enabled)
         update(state.copy(keepAwake = enabled))
+        if (!remote) keepAwakeCommand?.invoke(enabled)
     }
     fun enterBlackout(remote: Boolean = false) = setBlackout(true, remote)
     fun exitBlackout(remote: Boolean = false) = setBlackout(false, remote)
