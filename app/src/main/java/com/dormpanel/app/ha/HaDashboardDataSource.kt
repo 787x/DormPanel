@@ -340,18 +340,19 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                 "off" -> callback(false)
             }
         }
-        // Follow System first so a configured helper owns the mode and can reject a brightness snapshot.
+        // Snapshot dependency order: Follow System before DormPanel brightness, and
+        // Automatic mode before System brightness, so a manual brightness value can apply.
         applyBoolean(settings.followSystemEntity, remoteFollowSystem)
         // A reconnect snapshot must not turn Follow System into Override.
         if ((changedEntity != null || acceptBrightnessSnapshot()) &&
             (changedEntity == null || changedEntity == settings.displayBrightnessEntity))
             value(settings.displayBrightnessEntity, 1)?.let { remoteBrightness?.invoke(it) }
+        applyBoolean(settings.systemAutomaticEntity, remoteSystemAutomatic)
         if (changedEntity == null || changedEntity == settings.systemBrightnessEntity)
             value(settings.systemBrightnessEntity, 1)?.let { remoteSystemBrightness?.invoke(it) }
         if (changedEntity == null || changedEntity == settings.mediaVolumeEntity)
             value(settings.mediaVolumeEntity, 0)?.let { remoteVolume?.invoke(it) }
         applyBoolean(settings.blackoutEntity, remoteBlackout)
-        applyBoolean(settings.systemAutomaticEntity, remoteSystemAutomatic)
         applyBoolean(settings.keepAwakeEntity, remoteKeepAwake)
         applyBoolean(settings.startAfterBootEntity, remoteStartAfterBoot)
     }

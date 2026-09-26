@@ -64,6 +64,7 @@ class HaProtocolTest {
                             {"entity_id":"input_number.volume","state":"45","attributes":{"min":0,"max":100}},
                             {"entity_id":"input_boolean.blackout","state":"off","attributes":{}},
                             {"entity_id":"input_boolean.automatic","state":"on","attributes":{}},
+                            {"entity_id":"input_boolean.auto_off","state":"off","attributes":{}},
                             {"entity_id":"input_boolean.follow","state":"on","attributes":{}},
                             {"entity_id":"input_boolean.awake","state":"on","attributes":{}},
                             {"entity_id":"input_boolean.boot","state":"off","attributes":{}},
@@ -277,6 +278,53 @@ class HaProtocolTest {
             assertEquals(listOf(true, false, true), follow)
             assertEquals(listOf(true, false, true), awake)
             assertEquals(listOf(false, true, false), boot)
+        }
+    }
+
+    @Test fun snapshotAppliesAutomaticOffBeforeSystemBrightnessSoManualValueIsAccepted() {
+        Fixture().use { f ->
+            val order = mutableListOf<String>()
+            // Mirrors DeviceControlController: system brightness is only accepted when Automatic is off.
+            var automatic = true
+            var acceptedSystemBrightness: Int? = null
+            var followSystem = true
+            var acceptedDisplayBrightness: Int? = null
+            f.source.remoteSystemAutomatic = { enabled ->
+                order += "auto:$enabled"
+                automatic = enabled
+            }
+            f.source.remoteSystemBrightness = { percent ->
+                order += "system:$percent"
+                if (!automatic) acceptedSystemBrightness = percent
+            }
+            f.source.remoteFollowSystem = { enabled ->
+                order += "follow:$enabled"
+                followSystem = enabled
+            }
+            f.source.acceptBrightnessSnapshot = { !followSystem }
+            f.source.remoteBrightness = { percent ->
+                order += "display:$percent"
+                if (!followSystem) acceptedDisplayBrightness = percent
+            }
+            // Snapshot: Automatic OFF, System brightness 40, Follow System OFF, DormPanel brightness 32.
+            f.start(system = "input_number.system", systemAutomatic = "input_boolean.auto_off",
+                followSystem = "input_boolean.follow", display = "input_number.display")
+            // follow snapshot is "on" in the shared fixture; flip the dependency inputs via live helpers
+            // only after asserting the automatic/system pair from the synchronized snapshot.
+            f.until { f.source.connected && order.any { it.startsWith("auto:") } && order.any { it.startsWith("system:") } }
+            val autoIndex = order.indexOfFirst { it.startsWith("auto:") }
+            val systemIndex = order.indexOfFirst { it.startsWith("system:") }
+            assertTrue("Automatic must be applied before System brightness: $order", autoIndex in 0 until systemIndex)
+            assertEquals(false, automatic)
+            assertEquals(40, acceptedSystemBrightness)
+            // Follow System helper "on" keeps display brightness rejected while following.
+            assertEquals(true, followSystem)
+            assertNull(acceptedDisplayBrightness)
+            // Live events stay event-driven and independent; order still matters only on full snapshots.
+            val before = order.size
+            f.entity("input_number.system", "55", JSONObject("""{"min":1,"max":100}"""))
+            assertEquals("system:55", order[before])
+            assertEquals(55, acceptedSystemBrightness)
         }
     }
 

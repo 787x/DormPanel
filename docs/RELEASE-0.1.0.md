@@ -15,7 +15,11 @@ First daily-use release for the Xiaomi Redmi XiaoAI Touchscreen Speaker Pro 8
 - WebSocket live entity state and control (REST only for connection diagnostic /
   necessary supplemental calls — not an entity-state fallback)
 - Lights, sensors, scenes, and Home Control page
-- Display brightness, media volume, system brightness, and Blackout helpers
+- Optional helper bindings (existing HA helpers are bound, not created):
+  - Display brightness, media volume, system brightness, and Blackout
+  - Appearance helpers (theme / opacity)
+  - Automatic system brightness, Follow System, Keep screen awake, and
+    Start after boot (`input_boolean`)
 - Timetable relay from the HA panel to the device
 - APK relay from the HA panel to the device
 - Relay registration reports the real installed DormPanel version
@@ -42,6 +46,8 @@ First daily-use release for the Xiaomi Redmi XiaoAI Touchscreen Speaker Pro 8
 - Keep screen awake
 - Blackout (UI cover — not true backlight power-off)
 - Media volume
+- Optional Home Assistant `input_boolean` bindings for Automatic system
+  brightness, Follow System, Keep screen awake, and Start after boot
 
 ### System coexistence
 - Opt-in boot start via standard `BOOT_COMPLETED`
@@ -81,6 +87,10 @@ If Android reports a signing incompatibility, stop and keep the current install.
 - System-brightness HA writes require WRITE_SETTINGS and Manual mode
 - Boot startup can occur noticeably after `sys.boot_completed` on X08E
 - Split APK bundles (XAPK/APKS) are unsupported
+- HA helpers are bound when already configured in Home Assistant; DormPanel
+  does not create them. Automatic/System brightness need WRITE_SETTINGS.
+  Manual System brightness requires Automatic mode OFF. Start after boot
+  updates the next-boot preference only and does not launch DormPanel remotely.
 - See README for the full list
 
 ## Verification status
