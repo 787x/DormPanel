@@ -2,9 +2,7 @@ package com.dormpanel.app.schedule
 
 import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.net.Inet4Address
 import java.net.InetAddress
-import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -17,6 +15,7 @@ import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import com.dormpanel.app.lan.LanAddress
 
 /** A single, explicitly started capability URL. No schedule storage or UI state is owned here. */
 class TemporaryLanUploadServer private constructor(
@@ -149,24 +148,9 @@ class TemporaryLanUploadServer private constructor(
         }
 
         /** Pure policy so address choice can be exercised without device interfaces. */
-        fun selectAddress(candidates: List<String>): String? = candidates.mapNotNull { raw ->
-            if (!raw.matches(Regex("[0-9]{1,3}(\\.[0-9]{1,3}){3}"))) return@mapNotNull null
-            val address = runCatching { java.net.InetAddress.getByName(raw) }.getOrNull()
-            if (address is Inet4Address && address.isSiteLocalAddress && !address.isLoopbackAddress &&
-                !address.isLinkLocalAddress && !address.isAnyLocalAddress) raw else null
-        }.firstOrNull()
+        fun selectAddress(candidates: List<String>): String? = LanAddress.select(candidates)
 
-        fun deviceAddress(): String? = runCatching {
-            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-            selectAddress(interfaces.filter { it.isUp && !it.isLoopback && !it.isVirtual &&
-                !it.name.startsWith("tun") && !it.name.startsWith("tap") && !it.name.startsWith("rmnet") }
-                .sortedBy { candidate -> when {
-                    candidate.name.startsWith("wlan") || candidate.name.startsWith("wifi") -> 0
-                    candidate.name.startsWith("eth") || candidate.name.startsWith("en") -> 1
-                    else -> 2
-                } }
-                .flatMap { it.inetAddresses.toList() }.filterIsInstance<Inet4Address>().map { it.hostAddress.orEmpty() })
-        }.getOrNull()
+        fun deviceAddress(): String? = LanAddress.deviceAddress()
 
         private fun multipart(body: ByteArray, boundary: String): ScheduleArtifact {
             val raw = String(body, StandardCharsets.ISO_8859_1)

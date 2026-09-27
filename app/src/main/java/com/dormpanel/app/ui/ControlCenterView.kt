@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.Settings
 import android.view.View
 import android.view.MotionEvent
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.CompoundButton
@@ -28,6 +29,8 @@ import com.dormpanel.app.device.DeviceControlController
 import com.dormpanel.app.device.DeviceControlState
 import com.dormpanel.app.ha.DashboardBackend
 import com.dormpanel.app.ha.HaStatus
+import com.dormpanel.app.lan.PhoneEntryUi
+import com.dormpanel.app.lan.SettingsEntryForm
 import com.dormpanel.app.startup.StartupPolicy
 import com.dormpanel.app.startup.SystemHomeNavigator
 import kotlin.math.roundToInt
@@ -259,14 +262,27 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         val (oldUrl, oldUser) = settings.publicAccount()
         val fields = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(20), 0, dp(20), 0) }
         fun field(hintText: String, value: String, secret: Boolean = false) = EditText(context).apply {
-            hint = hintText; setSingleLine(); setText(value)
-            if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            hint = hintText; contentDescription = hintText; setSingleLine(); setText(value)
+            if (secret) {
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                isSaveEnabled = false; importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+            }
             fields.addView(this)
         }
         val url = field("WebDAV server URL", oldUrl)
         val user = field("Username", oldUser)
         val password = field("Password (blank keeps saved password)", "", true)
         val status = TextView(context).apply { textSize = 16f; text = "Use HTTPS when possible. Saved passwords are never displayed." }
+        val phoneEntry = PhoneEntryUi(context, SettingsEntryForm.WEBDAV,
+            { values ->
+                url.setText(values.getValue("url")); user.setText(values.getValue("username"))
+                password.setText(values.getValue("password"))
+                status.text = "Received from phone — review, test, then Save."
+            }, { status.text = it })
+        fields.addView(Button(context).apply {
+            text = "Fill from phone"
+            setOnClickListener { phoneEntry.start(mapOf("url" to url.text.toString(), "username" to user.text.toString())) }
+        })
         fields.addView(status)
         fun candidate(): WebDavAccount? {
             val entered = url.text.toString().trim()
@@ -288,7 +304,9 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         val dialog = AlertDialog.Builder(context).setTitle("Shared WebDAV account").setView(fields)
             .setNegativeButton("Close", null).setNeutralButton("Clear credentials", null)
             .setPositiveButton("Save", null).create()
+        dialog.setOnDismissListener { phoneEntry.close(); password.text.clear() }
         dialog.show()
+        dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val account = candidate() ?: return@setOnClickListener
             val old = settings.account()

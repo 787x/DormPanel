@@ -67,6 +67,7 @@ class WebDavSyncAndroidTest {
                     ui = ScheduleImportUi(activity, vm.schedule, vm.appearance, vm.webDav) {}
                     ui!!.sources()
                 }
+                waitText("Add WebDAV timetable")
                 onView(withText("Add WebDAV timetable")).perform(click())
                 waitText("Select a folder, .ics, or .csv file.")
                 onView(withText(containsString("current.ics"))).perform(click())
