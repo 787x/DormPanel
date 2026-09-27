@@ -170,7 +170,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                 return@editProfile
             }
             val resolved = runCatching {
-                resolveHubeiCsv(needed.structure, profile, needed.filename, needed.kind, needed.locator)
+                resolveHubeiCsv(needed.structure, profile, needed.filename, needed.kind, needed.locator, needed.rawDigest)
             }
             resolved.onSuccess { preview(it) }.onFailure { message("Import not available", errorText(it)) }
         }
@@ -197,16 +197,19 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
             setText(existing?.timezone ?: "Asia/Shanghai")
         }
         fields.addView(tzInput)
+        // Unknown terms must never silently inherit 2026 preset dates.
+        val hasKnownPreset = existing != null || BuiltInProfiles.builtIn(termKeyHint) != null
         val week1Input = EditText(context).apply {
             hint = "Week 1 Monday (yyyy-MM-dd)"; contentDescription = hint; setSingleLine()
-            setText(existing?.week1Monday?.toString() ?: "2026-08-31")
+            setText(existing?.week1Monday?.toString() ?: if (hasKnownPreset) "2026-08-31" else "")
         }
         fields.addView(week1Input)
         fields.addView(context.scheduleLabel("Phases (one per block). Each line: yyyy-MM-dd then period rows.", 16f))
         val phaseInput = EditText(context).apply {
             hint = "2026-08-31\n1 08:00 08:45\n2 08:55 09:40\n...\n\n2026-10-08\n1 08:00 08:45"
             contentDescription = "Schedule phases"; minLines = 6
-            setText(existing?.let { phasesToText(it) } ?: phasesToText(BuiltInProfiles.term2026))
+            setText(existing?.let { phasesToText(it) }
+                ?: if (hasKnownPreset) phasesToText(BuiltInProfiles.term2026) else "")
         }
         fields.addView(phaseInput)
         if (structure != null) {
@@ -214,16 +217,26 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                 structure.series.flatMap { it.periodNumbers }.distinct().sorted().joinToString(", "), 16f))
         }
         val error = context.scheduleLabel("", 16f); fields.addView(error)
-        val dialog = show(AlertDialog.Builder(context).setTitle("Term schedule profile")
+        val builder = AlertDialog.Builder(context).setTitle("Term schedule profile")
             .setView(ScrollView(context).apply { addView(fields) })
             .setNegativeButton("Cancel") { _, _ -> onDone?.invoke(null) }
-            .setNeutralButton("Reset 2026-2027-1") { _, _ ->
-                if (termKeyHint == BuiltInProfiles.TERM_2026_2027_1 || termInput.text.toString().trim() == BuiltInProfiles.TERM_2026_2027_1) {
-                    profileStore.remove(BuiltInProfiles.TERM_2026_2027_1)
-                    onDone?.invoke(BuiltInProfiles.term2026)
-                } else message("Reset unavailable", "Only the built-in 2026-2027-1 profile can be reset.")
+        if (BuiltInProfiles.builtIn(termKeyHint) != null) {
+            builder.setNeutralButton("Reset to built-in") { _, _ ->
+                profileStore.remove(termKeyHint)
+                onDone?.invoke(BuiltInProfiles.builtIn(termKeyHint))
             }
-            .setPositiveButton("Save", null).create())
+        } else if (existing != null) {
+            builder.setNeutralButton("Delete profile") { _, _ ->
+                show(AlertDialog.Builder(context).setTitle("Delete ${existing.termKey}?")
+                    .setMessage("Remove the custom term profile ${existing.termKey}? Imported classes are not affected until you re-import or re-sync.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Delete profile") { _, _ ->
+                        profileStore.remove(existing.termKey)
+                        onDone?.invoke(null)
+                    }.create())
+            }
+        }
+        val dialog = show(builder.setPositiveButton("Save", null).create())
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val parsed = runCatching {
                 parseProfileForm(termInput.text.toString(), tzInput.text.toString(),
@@ -335,7 +348,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                     return@promptProfileThenPreview
                 }
                 val resolved = runCatching {
-                    resolveHubeiCsv(needs.structure, profile, needs.filename, needs.kind, needs.locator)
+                    resolveHubeiCsv(needs.structure, profile, needs.filename, needs.kind, needs.locator, needs.rawDigest)
                 }
                 resolved.onSuccess { preview(it, null, outcome) }
                     .onFailure {
@@ -354,6 +367,10 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     }
     private fun preview(preview: ImportPreview, remote: RemoteChoice?, relayOutcome: ((String) -> Unit)? = null) {
         if (closed) return
+        // Stale-preview guard: if the user edits the profile from this dialog the
+        // current occurrences/fingerprint no longer reflect the saved profile.
+        var previewInvalidated = false
+        var previewDialog: AlertDialog? = null
         val fields = context.scheduleColumn().apply { setPadding(context.dp(16), 0, context.dp(16), 0) }
         val row = LinearLayout(context)
         val summary = context.scheduleColumn()
@@ -372,10 +389,13 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         row.addView(samples, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); fields.addView(row)
         if (preview.termKey != null) {
             fields.addView(context.scheduleButton("Edit term profile ${preview.termKey}") {
+                if (previewInvalidated) return@scheduleButton
+                previewInvalidated = true
+                previewDialog?.dismiss()
                 editProfile(preview.termKey!!) { profile ->
                     if (profile != null) {
-                        message("Profile saved",
-                            "Profile ${profile.termKey} was updated.\n\n" +
+                        message("Profile saved — preview closed",
+                            "Profile ${profile.termKey} was updated. This preview used the previous profile and is now closed.\n\n" +
                             "Local/LAN/HA imports require re-importing the CSV to regenerate occurrences.\n" +
                             "WebDAV CSV sources can regenerate on their next successful sync.")
                     }
@@ -412,8 +432,9 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
             .setNegativeButton("Cancel") { _, _ -> relayOutcome?.invoke("dismissed") }
             .setOnCancelListener { relayOutcome?.invoke("dismissed") }
             .setPositiveButton("Import", null).create())
+        previewDialog = dialog
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            if (busy || !source.ready) return@setOnClickListener
+            if (busy || !source.ready || previewInvalidated) return@setOnClickListener
             if (name.text.isBlank()) { error.text = "Enter a timetable name."; return@setOnClickListener }
             val existing = sources.getOrNull(target.selectedItemPosition - 1)
             if (remote == null && existing != null && webDav.binding(existing.id) != null) {
@@ -427,10 +448,18 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                 source.import(preview, name.text.toString(), existing?.id) { result -> if (!closed) {
                     busy = false
                     result.onSuccess {
-                        remote?.let { choice -> webDav.bind(WebDavBinding(it.source.id, choice.mode, choice.remote,
-                            autoSync = webDav.binding(it.source.id)?.autoSync ?: false,
-                            etag = choice.item.etag, lastModified = choice.item.lastModified,
-                            currentFile = choice.item.url, lastSuccess = System.currentTimeMillis())) }
+                        remote?.let { choice ->
+                            val isCsv = preview.formatLabel != null
+                            val profilePrint = preview.termKey?.let { term ->
+                                profileStore.get(term)?.let { TimetableImporter.profileFingerprint(it) }
+                            }
+                            webDav.bind(WebDavBinding(it.source.id, choice.mode, choice.remote,
+                                autoSync = webDav.binding(it.source.id)?.autoSync ?: false,
+                                etag = choice.item.etag, lastModified = choice.item.lastModified,
+                                currentFile = choice.item.url, lastSuccess = System.currentTimeMillis(),
+                                format = if (isCsv) "csv" else "ics",
+                                termKey = preview.termKey, profileFingerprint = profilePrint))
+                        }
                         relayOutcome?.invoke("imported")
                         dialog.dismiss(); message(if (it.unchanged) "Timetable unchanged" else "Timetable imported",
                         "${it.source.displayName} · ${it.source.occurrenceCount} classes") }
@@ -533,11 +562,25 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     }
     private fun remotePreview(account: WebDavAccount, mode: WebDavMode, remote: String, targetId: String?) {
         val progress = show(AlertDialog.Builder(context).setTitle("Reading WebDAV timetable")
-            .setMessage("Downloading and checking ICS…").setCancelable(false).create())
+            .setMessage("Downloading and checking the timetable file…").setCancelable(false).create())
         webDav.initial(account, mode, remote) { result -> if (!closed) {
             progress.dismiss()
-            result.onSuccess { (parsed, item) -> preview(parsed, RemoteChoice(mode, remote, item, targetId)) }
-                .onFailure { message("WebDAV import unavailable", errorText(it)) }
+            result.onSuccess { (outcome, item) ->
+                when (outcome) {
+                    is TimetableImporter.ParseOutcome.Ready ->
+                        preview(outcome.preview, RemoteChoice(mode, remote, item, targetId))
+                    is TimetableImporter.ParseOutcome.NeedsProfile ->
+                        promptProfileThenPreview(outcome) { profile ->
+                            if (profile == null) return@promptProfileThenPreview
+                            val resolved = runCatching {
+                                resolveHubeiCsv(outcome.structure, profile, outcome.filename,
+                                    outcome.kind, outcome.locator, outcome.rawDigest)
+                            }
+                            resolved.onSuccess { preview(it, RemoteChoice(mode, remote, item, targetId)) }
+                                .onFailure { message("WebDAV import unavailable", errorText(it)) }
+                        }
+                }
+            }.onFailure { message("WebDAV import unavailable", errorText(it)) }
         } }
     }
     private fun message(title: String, text: String) { if (!closed) show(AlertDialog.Builder(context).setTitle(title).setMessage(text).setPositiveButton("OK", null).create()) }

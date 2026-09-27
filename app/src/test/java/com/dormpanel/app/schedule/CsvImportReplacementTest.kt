@@ -45,7 +45,8 @@ class CsvImportReplacementTest {
     }
 
     private fun preview(profile: TermScheduleProfile, name: String = "t.csv"): ImportPreview =
-        resolveHubeiCsv(HubeiCsvTimetableParser.parseBytes(fixtureBytes), profile, name, rawBytes = fixtureBytes)
+        resolveHubeiCsv(HubeiCsvTimetableParser.parseBytes(fixtureBytes), profile, name,
+            rawDigest = digest(fixtureBytes))
 
     @Test fun exactCsvAndProfileReplacementIsNoOp() {
         val profile = BuiltInProfiles.term2026

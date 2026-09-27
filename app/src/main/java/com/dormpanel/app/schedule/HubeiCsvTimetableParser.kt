@@ -249,8 +249,8 @@ object HubeiCsvTimetableParser {
             warnings += "Unsupported period specification '$periodText' for $title was not imported."
             return null
         }
-        // Cell periods are authoritative. The broader row range must not extend the class.
-        importCheck(periods.all { it in rowPeriods } || periods.last() <= (rowPeriods.maxOrNull() ?: 20),
+        // Cell periods must be a subset of the row's declared periods (09-10 in a 09,10,11 row is valid; 01-02 is not).
+        importCheck(periods.all { it in rowPeriods },
             "Period specification '$periodText' is inconsistent with its timetable row.")
         val lines = normalized.substring(match.range.last + 1).lines()
             .map { it.trim() }.filter { it.isNotEmpty() }

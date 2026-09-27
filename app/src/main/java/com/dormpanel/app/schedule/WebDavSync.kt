@@ -144,16 +144,16 @@ class WebDavSyncController(private val context: Context, private val source: Sch
     fun browse(account: WebDavAccount, folder: String, callback: (Result<List<WebDavItem>>) -> Unit) =
         background({ WebDavSelection.children(folder, client.list(account, folder)) }, callback)
     fun initial(account: WebDavAccount, mode: WebDavMode, remote: String,
-        callback: (Result<Pair<ImportPreview, WebDavItem>>) -> Unit) = background({
+        callback: (Result<Pair<TimetableImporter.ParseOutcome, WebDavItem>>) -> Unit) = background({
             val item = when (mode) {
                 WebDavMode.FILE -> WebDavItem(remote, client.filename(client.url(remote)), false, null, null, null, null, null)
                 WebDavMode.FOLDER_LATEST_CSV -> WebDavSelection.latest(client.list(account, remote), "csv")
                 else -> WebDavSelection.latest(client.list(account, remote), "ics")
             }
             val download = client.download(account, item.url)
-            Pair(TimetableImporter(profiles = TermScheduleProfileStore(context)).parse(
-                download.artifact ?: throw WebDavException("Remote file was not downloaded.")),
-                item.copy(etag = download.etag ?: item.etag, lastModified = download.lastModified ?: item.lastModified))
+            val outcome = TimetableImporter(profiles = TermScheduleProfileStore(context)).parseOutcome(
+                download.artifact ?: throw WebDavException("Remote file was not downloaded."))
+            Pair(outcome, item.copy(etag = download.etag ?: item.etag, lastModified = download.lastModified ?: item.lastModified))
         }, callback)
     fun sync(id: String, callback: ((Result<Boolean>) -> Unit)? = null) {
         val binding = binding(id)

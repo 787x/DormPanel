@@ -79,9 +79,10 @@ class HaRelayDownloader(http: OkHttpClient) {
 /** Main-thread state machine; network and parsing run on one bounded worker. */
 class HaScheduleRelayController(private val channel: HaRelayChannel, private val identity: HaRelayIdentityStore,
     http: OkHttpClient, private val status: (String) -> Unit = {}, private val apk: ApkInstallController? = null,
-    private val appVersion: () -> String = { "unknown" }) {
+    private val appVersion: () -> String = { "unknown" },
+    profiles: TermScheduleProfileStore? = null) {
     private val downloader = HaRelayDownloader(http)
-    private val importer = IcsScheduleImporter()
+    private val importer = TimetableImporter(profiles = profiles)
     private val worker = Executors.newSingleThreadExecutor()
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val queued = ArrayDeque<String>()
@@ -201,7 +202,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
             if (kind != "schedule_ics" && kind != "schedule_csv") { acknowledge(id, "rejected_invalid"); failed(id); return@request }
             worker.execute {
                 val artifact = runCatching { downloader.download(origin, payload) }
-                val parsed = artifact.mapCatching { bytes -> TimetableImporter(profiles = null).parseOutcome(bytes) }
+                val parsed = artifact.mapCatching { bytes -> importer.parseOutcome(bytes) }
                 handler.post {
                     if (closed || generation != connectionGeneration) return@post
                     downloading = false

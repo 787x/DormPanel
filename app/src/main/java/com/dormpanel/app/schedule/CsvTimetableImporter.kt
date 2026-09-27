@@ -68,11 +68,14 @@ class TimetableImporter(
     private val ics: IcsScheduleParser = BiweeklyScheduleParser(),
     private val profiles: TermScheduleProfileStore? = null
 ) {
-    /** Parse result for CSV that structurally validly identifies a term without a usable profile. */
+    /**
+     * Parse result for CSV that structurally validly identifies a term without a usable profile.
+     * [rawDigest] preserves file identity so the eventual fingerprint matches the Ready path.
+     */
     sealed class ParseOutcome {
         data class Ready(val preview: ImportPreview) : ParseOutcome()
         data class NeedsProfile(val structure: HubeiCsvStructure, val filename: String,
-            val kind: String, val locator: String?) : ParseOutcome()
+            val kind: String, val locator: String?, val rawDigest: String) : ParseOutcome()
     }
 
     fun parse(artifact: ScheduleArtifact): ImportPreview {
@@ -88,11 +91,12 @@ class TimetableImporter(
         val text = runCatching { CsvReader.decode(bytes) }.getOrNull()
         if (text != null && HubeiCsvTimetableParser.looksLike(text)) {
             val structure = HubeiCsvTimetableParser.parse(text)
+            val rawDigest = digest(bytes)
             val profile = profileOverride
                 ?: profiles?.get(structure.termKey)
                 ?: BuiltInProfiles.builtIn(structure.termKey)
             if (profile == null || profile.validate() != null || profile.termKey != structure.termKey) {
-                return ParseOutcome.NeedsProfile(structure, artifact.filename, artifact.kind, artifact.locator)
+                return ParseOutcome.NeedsProfile(structure, artifact.filename, artifact.kind, artifact.locator, rawDigest)
             }
             val parsed = CsvTimetableResolver.resolve(structure, profile)
             val fingerprint = csvFingerprint(bytes, profile)
@@ -119,9 +123,16 @@ class TimetableImporter(
          * Includes raw bytes, parser identity, and the full term profile so that a
          * profile change forces replacement even when the remote file is unchanged.
          */
-        fun csvFingerprint(rawBytes: ByteArray, profile: TermScheduleProfile): String {
+        fun csvFingerprint(rawBytes: ByteArray, profile: TermScheduleProfile): String =
+            csvFingerprintFromDigest(digest(rawBytes), profile)
+
+        /**
+         * Fingerprint from a pre-computed raw-file digest. Used by the NeedsProfile flow
+         * so ephemeral parse results match the Ready path without retaining source bytes.
+         */
+        fun csvFingerprintFromDigest(rawDigest: String, profile: TermScheduleProfile): String {
             val out = ByteArrayOutputStream()
-            out.write(rawBytes)
+            out.write(rawDigest.toByteArray(Charsets.UTF_8))
             out.write(0)
             out.write(HubeiCsvTimetableParser.PARSER_ID.toByteArray(Charsets.UTF_8))
             out.write(0)
@@ -137,14 +148,14 @@ class TimetableImporter(
 
 /**
  * Resolves a [HubeiCsvStructure] with an arbitrary profile (used by the profile-required UI flow
- * and tests) without touching the store.
+ * and tests) without touching the store. [rawDigest] must come from the original artifact so
+ * the fingerprint is file-sensitive; there is no profile-only fallback.
  */
 fun resolveHubeiCsv(structure: HubeiCsvStructure, profile: TermScheduleProfile,
     filename: String, kind: String = "local_document", locator: String? = null,
-    rawBytes: ByteArray? = null): ImportPreview {
+    rawDigest: String): ImportPreview {
     val parsed = CsvTimetableResolver.resolve(structure, profile)
-    val fingerprint = if (rawBytes != null) TimetableImporter.csvFingerprint(rawBytes, profile)
-    else digest(profile.fingerprintMaterial().toByteArray())
+    val fingerprint = TimetableImporter.csvFingerprintFromDigest(rawDigest, profile)
     return ImportPreview(filename, kind, locator, fingerprint, parsed,
         formatLabel = "Hubei University CSV",
         termKey = profile.termKey,
