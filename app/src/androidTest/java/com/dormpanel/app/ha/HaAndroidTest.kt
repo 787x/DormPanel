@@ -91,6 +91,7 @@ class HaAndroidTest {
                 onView(withText("Home Assistant base URL")).check(matches(isDisplayed()))
                 onView(withText("Access token (blank keeps saved token)")).check(matches(isDisplayed()))
                 onView(withText("Save / Reconnect")).check(matches(isDisplayed()))
+                onView(withContentDescription("Advanced settings")).perform(click())
                 onView(withContentDescription("Backend")).perform(click())
                 onView(withText("HOME_ASSISTANT")).inRoot(isPlatformPopup()).perform(click())
                 onView(withContentDescription("Home Assistant base URL")).perform(replaceText(server.url("/").toString()), closeSoftKeyboard())
