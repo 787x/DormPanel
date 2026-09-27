@@ -20,6 +20,34 @@ class TemporarySettingsEntryServerTest {
         .post(values.toRequestBody("application/x-www-form-urlencoded".toMediaType())).build()).execute()
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
 
+    @Test fun haUrlVariantsPassThroughWithoutEndpointInterpretation() {
+        for (baseUrl in listOf("homeassistant.local:8123", "ws://homeassistant.local:8123/api/websocket",
+            "wss://example.invalid/api/websocket")) {
+            val accepted = AtomicReference<Map<String, String>>()
+            val latch = CountDownLatch(1)
+            val server = TemporarySettingsEntryServer.start("127.0.0.1", SettingsEntryForm.HA, emptyMap(),
+                { accepted.set(it); latch.countDown() })
+            try {
+                post(server.url, "url=${encode(baseUrl)}&token=disposable").use { assertEquals(200, it.code) }
+                assertTrue(latch.await(2, TimeUnit.SECONDS))
+                assertEquals(baseUrl, accepted.get()["url"])
+                assertEquals("disposable", accepted.get()["token"])
+            } finally { server.close() }
+        }
+    }
+
+    @Test fun blankSecretIsTransferredForAndroidSaveSemantics() {
+        val accepted = AtomicReference<Map<String, String>>()
+        val latch = CountDownLatch(1)
+        val server = TemporarySettingsEntryServer.start("127.0.0.1", SettingsEntryForm.HA, emptyMap(),
+            { accepted.set(it); latch.countDown() })
+        try {
+            post(server.url, "url=homeassistant.local%3A8123&token=").use { assertEquals(200, it.code) }
+            assertTrue(latch.await(2, TimeUnit.SECONDS))
+            assertEquals("", accepted.get()["token"])
+        } finally { server.close() }
+    }
+
     @Test fun capabilityFormHeadersAndNoSecretEcho() {
         val received = AtomicReference<Map<String, String>>()
         val latch = CountDownLatch(1)
@@ -84,7 +112,8 @@ class TemporarySettingsEntryServerTest {
         val server = TemporarySettingsEntryServer.start("127.0.0.1", SettingsEntryForm.HA, emptyMap(), { count.incrementAndGet() })
         try {
             for (body in listOf("url=%ZZ&token=x", "url=%C3%28&token=x", "url=https%3A%2F%2Fa.invalid&token=x&token=y",
-                "url=https%3A%2F%2Fa.invalid&token=", "url=file%3A%2F%2Fa&token=x")) {
+                "url=+++&token=x", "url=x%00y&token=x",
+                "url=x%0Dy&token=x", "url=x%0Ay&token=x", "token=x", "url=${"x".repeat(2049)}&token=x")) {
                 post(server.url, body).use { assertEquals(400, it.code) }
             }
             post(server.url, "x".repeat(17 * 1024)).use { assertEquals(413, it.code) }

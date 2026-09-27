@@ -167,6 +167,40 @@ class SettingsPhoneEntryAndroidTest {
         }
     }
 
+    @Test fun haPhoneAcceptsExistingEndpointFormsWithoutSaving() {
+        val store = HaSettingsStore(context)
+        val before = store.read()
+        val tokenPrefs = context.getSharedPreferences("ha_credentials", Context.MODE_PRIVATE)
+        val oldPayload = tokenPrefs.getString("payload", null)
+        store.write(HaConnectionSettings().copy(baseUrl = "https://old.invalid"))
+        HaTokenStore(context).write("saved-ha-secret")
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val dialog = AtomicReference<AlertDialog>()
+                for (submittedUrl in listOf("homeassistant.local:8123",
+                    "ws://homeassistant.local:8123/api/websocket", "wss://example.invalid/api/websocket")) {
+                    scenario.onActivity { activity ->
+                        dialog.set(HaSettingsDialog(activity,
+                            ViewModelProvider(activity)[DashboardViewModel::class.java].dataSource).show())
+                    }
+                    onView(withText("Fill from phone")).perform(click())
+                    assertTrue(request(qrUrl(), "url=${encoded(submittedUrl)}&token=disposable-ha-token")
+                        .startsWith("HTTP/1.1 200"))
+                    awaitHaField(scenario, dialog, submittedUrl)
+                    onView(withContentDescription("Home Assistant base URL")).check(matches(withText(submittedUrl)))
+                    onView(withContentDescription("Access token (blank keeps saved token)"))
+                        .check(matches(withText("disposable-ha-token")))
+                    assertEquals("https://old.invalid", store.read().baseUrl)
+                    assertEquals("saved-ha-secret", HaTokenStore(context).read())
+                    scenario.onActivity { dialog.get().dismiss() }
+                }
+            }
+        } finally {
+            store.write(before)
+            tokenPrefs.edit().putString("payload", oldPayload).commit()
+        }
+    }
+
     @Test fun firstHaSetupWorksWithAdvancedCollapsed() {
         val store = HaSettingsStore(context)
         val before = store.read()

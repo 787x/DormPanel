@@ -5,7 +5,6 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
@@ -135,13 +134,10 @@ class TemporarySettingsEntryServer private constructor(
         }
         require(result.keys == form.fields.map { it.first }.toSet())
         require(result.values.none { it.any { char -> char == '\u0000' || char == '\r' || char == '\n' } })
-        require(result[form.secret].orEmpty().isNotBlank())
         require(result[form.secret]!!.length <= if (form == SettingsEntryForm.HA) 8192 else 4096)
         require(result["username"].orEmpty().length <= 256)
         val url = result["url"].orEmpty()
-        require(url.length in 1..2048)
-        val uri = URI(url)
-        require(uri.scheme?.lowercase() in listOf("http", "https") && !uri.host.isNullOrBlank() && uri.userInfo == null)
+        require(url.length <= 2048 && url.isNotBlank())
         result
     }.getOrNull()
 
@@ -174,7 +170,9 @@ class TemporarySettingsEntryServer private constructor(
         append("<form method=\"post\" enctype=\"application/x-www-form-urlencoded\">")
         for ((key, label) in form.fields) {
             append("<label>").append(escape(label)).append("<input name=\"").append(key).append("\" type=\"")
-                .append(if (key == form.secret) "password" else "text").append("\" required maxlength=\"")
+                .append(if (key == form.secret) "password" else "text").append('"')
+            if (key == "url") append(" required")
+            append(" maxlength=\"")
                 .append(when (key) { "url" -> 2048; "username" -> 256; "token" -> 8192; else -> 4096 }).append('"')
             if (key != form.secret) append(" value=\"").append(escape(publicValues[key].orEmpty())).append('"')
             append("></label>")
