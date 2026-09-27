@@ -49,7 +49,13 @@ class ScheduleArtifact(val filename: String, bytes: ByteArray, val mimeType: Str
 @Entity(tableName = "import_sources")
 data class ImportSource(@PrimaryKey val id: String, val displayName: String, val filename: String,
     val kind: String, val locator: String?, val calendarName: String?, val sha256: String,
-    val importedAt: Long, val timezones: String, val occurrenceCount: Int, val firstStart: Long, val lastEnd: Long)
+    val importedAt: Long, val timezones: String, val occurrenceCount: Int, val firstStart: Long, val lastEnd: Long,
+    val termKey: String? = null)
+
+/** Narrow PR25 compatibility path; arbitrary source names never imply a term. */
+fun ImportSource.resolvedTermKey(): String? = termKey ?: if (
+    calendarName == "湖北大学 2026-2027-1" && filename.lowercase(java.util.Locale.ROOT).endsWith(".csv")
+) BuiltInProfiles.TERM_2026_2027_1 else null
 
 @Entity(tableName = "imported_timetable_occurrences",
     foreignKeys = [ForeignKey(entity = ImportSource::class, parentColumns = ["id"], childColumns = ["sourceId"], onDelete = ForeignKey.CASCADE)],
@@ -87,7 +93,7 @@ class ImportPreview internal constructor(val filename: String, val kind: String,
     val firstStart = occurrences.minOf { it.start }
     val lastEnd = occurrences.maxOf { it.end }
     internal fun source(id: String, name: String, now: Long) = ImportSource(id, name.trim(), filename,
-        kind, locator, calendarName, sha256, now, timezones, occurrences.size, firstStart, lastEnd)
+        kind, locator, calendarName, sha256, now, timezones, occurrences.size, firstStart, lastEnd, termKey)
     internal fun forSource(id: String) = occurrences.map {
         it.copy(id = "$id:${it.id}", sourceId = id)
     }

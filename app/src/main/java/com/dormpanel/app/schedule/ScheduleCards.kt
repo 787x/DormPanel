@@ -76,7 +76,7 @@ class ScheduleCardView(context: Context, appearance: AppearanceController, priva
         if (kind == "calendar") editors.event(source.clock.today(), ScheduleProjection.upcomingEvents(source.state, source.clock, 1).firstOrNull())
         else {
             val occurrence = ScheduleProjection.occurrences(source.state, source.clock).firstOrNull()
-            if (occurrence?.imported != null) editors.imported(occurrence.imported) else editors.entry(occurrence?.entry)
+            if (occurrence != null) editors.classDetail(occurrence) else editors.entry(null)
         }
     }
 }

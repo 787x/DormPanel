@@ -117,8 +117,17 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
             val date = session.weekStart.plusDays(offset)
             val day = date.dayOfWeek
             val column = context.scheduleColumn().apply { setPadding(context.dp(3), 0, context.dp(3), 0) }
-            val headingText = "${day.getDisplayName(TextStyle.SHORT, source.clock.locale())} ${date.monthValue}/${date.dayOfMonth}"
-            val heading = context.scheduleLabel(headingText, 19f)
+            val adjustment = source.state.daysByDate[date.toString()]
+            val suffix = when (adjustment?.mode) {
+                "none" -> " · No classes"
+                "weekday" -> " →${DayOfWeek.of(adjustment.weekday!!).getDisplayName(TextStyle.SHORT, source.clock.locale())}"
+                else -> ""
+            }
+            val headingText = "${day.getDisplayName(TextStyle.SHORT, source.clock.locale())} ${date.monthValue}/${date.dayOfMonth}$suffix"
+            val heading = button(headingText) { editors.dayAdjustment(date) }.apply {
+                textSize = 16f; minWidth = 0; minimumWidth = 0; setPadding(0, 0, 0, 0)
+                contentDescription = "Day adjustment $date${if (adjustment?.mode == "weekday") " uses ${DayOfWeek.of(adjustment.weekday!!)}" else ""}"
+            }
             column.addView(heading)
             accents += { if (date == source.clock.today()) { heading.setTextColor(PanelPalette.forMode(appearance.state.themeMode).accent); heading.text = "• $headingText" } }
             val classes = context.scheduleColumn()
@@ -126,10 +135,10 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
             if (entries.isEmpty()) classes.addView(context.scheduleLabel("—", 18f))
             entries.forEach { occurrence ->
                 val entry = occurrence.entry
-                val imported = occurrence.imported
-                val extra = imported?.let { "\n${it.periodLabel?.let { label -> "$label · " }.orEmpty()}Imported" }.orEmpty()
+                val extra = "\n${occurrence.periodLabel?.let { "$it · " }.orEmpty()}" +
+                    if (occurrence.thisWeekEdited || occurrence.allWeeksEdited) "Edited" else if (occurrence.copiedFrom != null) "Makeup" else if (occurrence.imported != null) "Imported" else ""
                 classes.addView(button("${entry.title}\n${context.scheduleTime(entry.startMinute)}\n– ${context.scheduleTime(entry.endMinute)}${if (entry.location.isBlank()) "" else "\n${entry.location}"}$extra") {
-                    if (imported == null) editors.entry(entry) else editors.imported(imported)
+                    editors.classDetail(occurrence)
                 }.apply {
                     textSize = 16f; maxLines = 7; isAllCaps = false; gravity = android.view.Gravity.START; ellipsize = android.text.TextUtils.TruncateAt.END
                 }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))

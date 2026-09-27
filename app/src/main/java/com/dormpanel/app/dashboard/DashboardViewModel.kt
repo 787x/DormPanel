@@ -28,7 +28,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val apps = com.dormpanel.app.apps.AppSources.create(application)
     val apkInstall = com.dormpanel.app.apps.ApkInstallController(application, apps)
     val productivity = ProductivitySource(ProductivityStores.create(application), AndroidProductivityClock)
-    val schedule = ScheduleSource(ScheduleStores.create(application))
+    val schedule = ScheduleSource(ScheduleStores.create(application), profileResolver = { TermScheduleProfileStore(application).get(it) })
     val termProfiles = TermScheduleProfileStore(application)
     val haRelay = HaScheduleRelayController(dataSource.ha.relayChannel, dataSource.relayIdentity,
         dataSource.relayHttp, { dataSource.relayStatus = it }, apkInstall,

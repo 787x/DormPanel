@@ -18,18 +18,29 @@ class SchedulePersistenceTest {
         var store = RoomScheduleStore(database(), executor)
         val event = CalendarEvent("a", "Event", 1000, 2000, "note")
         val entry = TimetableEntry("a", "Class", 7, 540, 600, "Room 1")
+        val day = DayAdjustment("2026-10-11", "weekday", 3, "Makeup")
+        val edit = ClassOverride.of(null, "a", null, ClassPatch(teacher = "Professor", note = "Bring notes"))
         try {
             val saved = CountDownLatch(4)
             val callback: (Result<Unit>) -> Unit = { assertTrue(it.isSuccess); assertEquals(Looper.getMainLooper(), Looper.myLooper()); saved.countDown() }
             instrumentation.runOnMainSync { store.put(event, callback); store.put(event.copy(id = "b"), callback); store.put(entry, callback); store.put(entry.copy(id = "b"), callback) }
             assertTrue(saved.await(5, TimeUnit.SECONDS))
+            val overridesSaved = CountDownLatch(2)
+            instrumentation.runOnMainSync {
+                store.putDayAdjustment(day, day.date) { assertTrue(it.isSuccess); overridesSaved.countDown() }
+                store.putClassOverride(edit, edit.key) { assertTrue(it.isSuccess); overridesSaved.countDown() }
+            }
+            assertTrue(overridesSaved.await(5, TimeUnit.SECONDS))
             val deleted = CountDownLatch(2)
             instrumentation.runOnMainSync { store.deleteEvent("b") { deleted.countDown() }; store.deleteEntry("b") { deleted.countDown() } }
             assertTrue(deleted.await(5, TimeUnit.SECONDS))
             instrumentation.runOnMainSync { store.close() }; assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
             executor = Executors.newSingleThreadExecutor(); store = RoomScheduleStore(database(), executor)
             val loaded = CountDownLatch(1)
-            instrumentation.runOnMainSync { store.load { assertEquals(ScheduleState(listOf(event), listOf(entry)), it.getOrThrow()); loaded.countDown() } }
+            instrumentation.runOnMainSync { store.load {
+                assertEquals(ScheduleState(listOf(event), listOf(entry), dayAdjustments = listOf(day), classOverrides = listOf(edit)), it.getOrThrow())
+                loaded.countDown()
+            } }
             assertTrue(loaded.await(5, TimeUnit.SECONDS))
         } finally {
             instrumentation.runOnMainSync { store.close() }; assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS)); context.deleteDatabase(name)

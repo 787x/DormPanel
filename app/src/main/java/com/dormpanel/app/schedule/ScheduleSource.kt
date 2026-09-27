@@ -27,8 +27,12 @@ data class TimetableEntry(val id: String, val title: String, val day: Int, val s
 }
 data class ScheduleState(val events: List<CalendarEvent> = emptyList(), val entries: List<TimetableEntry> = emptyList(),
     val invalidRecords: Int = 0, val sources: List<ImportSource> = emptyList(),
-    val imported: List<ImportedClassOccurrence> = emptyList()) {
+    val imported: List<ImportedClassOccurrence> = emptyList(),
+    val dayAdjustments: List<DayAdjustment> = emptyList(), val classOverrides: List<ClassOverride> = emptyList(),
+    val profiles: Map<String, TermScheduleProfile> = emptyMap()) {
     val importedIndex by lazy { ImportedOccurrenceIndex(imported) }
+    val daysByDate by lazy { dayAdjustments.associateBy { it.date } }
+    val editsByKey by lazy { classOverrides.associateBy { it.key } }
 }
 interface ScheduleStore {
     fun load(callback: (Result<ScheduleState>) -> Unit)
@@ -36,6 +40,12 @@ interface ScheduleStore {
     fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit)
     fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit)
     fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit)
+    fun putDayAdjustment(item: DayAdjustment?, date: String, callback: (Result<Unit>) -> Unit) {
+        callback(Result.failure(UnsupportedOperationException("Day adjustments unavailable")))
+    }
+    fun putClassOverride(item: ClassOverride?, key: String, callback: (Result<Unit>) -> Unit) {
+        callback(Result.failure(UnsupportedOperationException("Class overrides unavailable")))
+    }
     fun commitImport(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,
         callback: (Result<ImportCommit>) -> Unit) { callback(Result.failure(UnsupportedOperationException("Imports unavailable"))) }
     fun deleteImport(id: String, callback: (Result<Unit>) -> Unit) { callback(Result.failure(UnsupportedOperationException("Imports unavailable"))) }
@@ -44,7 +54,8 @@ interface ScheduleStore {
 
 /** Main-thread confined. Global identities belong to this boundary, never to dashboard cards.
  * Invalid disk rows are withheld with a visible warning, and remain intact for future recovery. */
-class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock = DeviceScheduleClock) {
+class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock = DeviceScheduleClock,
+    private val profileResolver: (String) -> TermScheduleProfile? = { BuiltInProfiles.builtIn(it) }) {
     var state = ScheduleState(); private set
     var ready = false; private set
     var error = false; private set
@@ -54,7 +65,12 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         store.load { result -> if (!closed) {
             result.onSuccess { loaded ->
                 state = ordered(loaded.copy(events = loaded.events.filter { it.valid() }, entries = loaded.entries.filter { it.valid() },
-                    invalidRecords = loaded.invalidRecords + loaded.events.count { !it.valid() } + loaded.entries.count { !it.valid() }))
+                    dayAdjustments = loaded.dayAdjustments.filter { it.valid() }, classOverrides = loaded.classOverrides.filter { it.valid() },
+                    profiles = loaded.sources.mapNotNull { item -> item.resolvedTermKey()?.let { term ->
+                        profileResolver(term)?.let { term to it }
+                    } }.toMap(),
+                    invalidRecords = loaded.invalidRecords + loaded.events.count { !it.valid() } + loaded.entries.count { !it.valid() } +
+                        loaded.dayAdjustments.count { !it.valid() } + loaded.classOverrides.count { !it.valid() }))
                 ready = true
             }.onFailure { error = true }
             refresh()
@@ -85,7 +101,30 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     }
     fun deleteEntry(id: String) {
         if (closed || !ready || state.entries.none { it.id == id }) return
-        state = state.copy(entries = state.entries.filterNot { it.id == id }); store.deleteEntry(id, completion); refresh()
+        state = state.copy(entries = state.entries.filterNot { it.id == id },
+            classOverrides = state.classOverrides.filterNot { it.sourceId == null && it.seriesId == id })
+        store.deleteEntry(id, completion); refresh()
+    }
+    fun saveDayAdjustment(date: LocalDate, mode: String, weekday: Int? = null, label: String = ""): Boolean {
+        val item = if (mode == "normal") null else DayAdjustment(date.toString(), mode, weekday, label.trim())
+        if (closed || !ready || item != null && !item.valid() ||
+            item != null && state.dayAdjustments.none { it.date == item.date } && state.dayAdjustments.size >= 1000) return false
+        state = state.copy(dayAdjustments = state.dayAdjustments.filterNot { it.date == date.toString() } + listOfNotNull(item))
+        store.putDayAdjustment(item, date.toString(), completion); refresh(); return true
+    }
+    fun saveClassOverride(sourceId: String?, seriesId: String, anchorDate: LocalDate?, patch: ClassPatch?): Boolean {
+        val anchor = anchorDate?.toString()
+        val key = ClassOverride.key(sourceId, seriesId, anchor)
+        val item = patch?.let { ClassOverride.of(sourceId, seriesId, anchor, it) }
+        val existingCharacters = state.classOverrides.filterNot { it.key == key }.sumOf { it.textCharacters().toLong() }
+        if (closed || !ready || item != null && !item.valid() ||
+            anchorDate != null && patch?.date != null &&
+            runCatching { LocalDate.parse(patch.date).minusDays((LocalDate.parse(patch.date).dayOfWeek.value - 1).toLong()) }.getOrNull() !=
+                anchorDate.minusDays((anchorDate.dayOfWeek.value - 1).toLong()) ||
+            item != null && state.classOverrides.none { it.key == key } && state.classOverrides.size >= 5000 ||
+            item != null && existingCharacters + item.textCharacters() > 2_000_000L) return false
+        state = state.copy(classOverrides = state.classOverrides.filterNot { it.key == key } + listOfNotNull(item))
+        store.putClassOverride(item, key, completion); refresh(); return true
     }
     fun import(preview: ImportPreview, name: String, targetId: String?, callback: (Result<ImportCommit>) -> Unit) {
         if (closed || !ready) return
@@ -93,7 +132,10 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
             if (!closed) {
                 result.onSuccess { committed -> if (!committed.unchanged) {
                     state = state.copy(sources = state.sources.filterNot { it.id == committed.source.id } + committed.source,
-                        imported = state.imported.filterNot { it.sourceId == committed.source.id } + committed.occurrences)
+                        imported = state.imported.filterNot { it.sourceId == committed.source.id } + committed.occurrences,
+                        profiles = state.profiles + listOfNotNull(committed.source.resolvedTermKey()?.let { term ->
+                            profileResolver(term)?.let { term to it }
+                        }).toMap())
                     refresh()
                 } }
                 callback(result)
@@ -104,7 +146,8 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         if (closed || !ready) return
         store.deleteImport(id) { result -> if (!closed) {
             result.onSuccess {
-                state = state.copy(sources = state.sources.filterNot { it.id == id }, imported = state.imported.filterNot { it.sourceId == id })
+                state = state.copy(sources = state.sources.filterNot { it.id == id }, imported = state.imported.filterNot { it.sourceId == id },
+                    classOverrides = state.classOverrides.filterNot { it.sourceId == id })
                 refresh()
             }
             callback(result)
@@ -123,15 +166,19 @@ class ScheduleSession(clock: ScheduleClock, private val modeStore: ScheduleModeS
         }
     var selectedDate: LocalDate = clock.today()
     var month: YearMonth = YearMonth.from(selectedDate)
-    var weekStart: LocalDate = ScheduleProjection.weekStart(selectedDate, clock.locale())
-    fun today(clock: ScheduleClock) { selectedDate = clock.today(); month = YearMonth.from(selectedDate); weekStart = ScheduleProjection.weekStart(selectedDate, clock.locale()) }
+    var weekStart: LocalDate = selectedDate.minusDays((selectedDate.dayOfWeek.value - 1).toLong())
+    fun today(clock: ScheduleClock) { selectedDate = clock.today(); month = YearMonth.from(selectedDate); weekStart = selectedDate.minusDays((selectedDate.dayOfWeek.value - 1).toLong()) }
     fun moveMonth(amount: Long) { month = month.plusMonths(amount) }
     fun select(date: LocalDate) { selectedDate = date; month = YearMonth.from(date) }
     // Rollover retains explicit selection; Today is the deterministic way to follow the new day.
 }
-/** entry is presentation-only for imports; imported identifies read-only detail instead of the weekly editor. */
+/** One effective class. anchorDate identifies the composed day before a this-week move. */
 data class ClassOccurrence(val entry: TimetableEntry, val date: LocalDate, val start: Instant, val end: Instant,
-    val imported: ImportedClassOccurrence? = null)
+    val imported: ImportedClassOccurrence? = null, val anchorDate: LocalDate = date,
+    val seriesId: String = imported?.seriesId ?: entry.id, val sourceId: String? = imported?.sourceId,
+    val periodLabel: String? = imported?.periodLabel, val teacher: String = "", val note: String = "",
+    val allWeeksEdited: Boolean = false, val thisWeekEdited: Boolean = false,
+    val copiedFrom: LocalDate? = null, val linked: Boolean = false)
 enum class ClassStatus { CURRENT, NEXT_TODAY, NO_MORE_TODAY }
 data class TimetableCardContent(val status: ClassStatus, val occurrences: List<ClassOccurrence>)
 object ScheduleProjection {
@@ -143,17 +190,105 @@ object ScheduleProjection {
             start.hour * 60 + start.minute, end.hour * 60 + end.minute, item.location), start.toLocalDate(),
             start.toInstant(), end.toInstant(), item)
     }
-    fun week(state: ScheduleState, first: LocalDate, zone: ZoneId): List<ClassOccurrence> {
-        val manual = (0L..6L).flatMap { offset ->
-            val date = first.plusDays(offset)
+    private fun monday(date: LocalDate) = date.minusDays((date.dayOfWeek.value - 1).toLong())
+    fun profile(state: ScheduleState, occurrence: ClassOccurrence): TermScheduleProfile? =
+        state.sources.firstOrNull { it.id == occurrence.sourceId }?.resolvedTermKey()?.let { state.profiles[it] ?: BuiltInProfiles.builtIn(it) }
+    fun periods(label: String?): Pair<Int, Int>? {
+        val numbers = Regex("\\d+").findAll(label.orEmpty()).mapNotNull { it.value.toIntOrNull() }.toList()
+        return if (numbers.isNotEmpty() && numbers.size <= 30 && numbers.first() in 1..30 && numbers.last() in 1..30)
+            numbers.first() to numbers.last() else null
+    }
+    private fun patch(state: ScheduleState, value: ClassOccurrence, edit: ClassOverride, zone: ZoneId): ClassOccurrence? {
+        val p = edit.patch()
+        val targetDate = p.date?.let { LocalDate.parse(it) } ?: p.weekday?.let { monday(value.date).plusDays((it - 1).toLong()) } ?: value.date
+        if (p.date != null && monday(targetDate) != monday(value.anchorDate)) return null
+        val original = periods(value.periodLabel)
+        val first = p.periodStart ?: original?.first
+        val last = p.periodEnd ?: original?.second
+        val linked = p.timingMode == "linked" || p.timingMode == null && value.linked
+        val profile = profile(state, value)
+        if (p.timingMode == "linked" && (profile == null || first == null || last == null)) return null
+        val bounds = if (linked && profile != null && first != null && last != null) {
+            val phase = profile.phaseOn(targetDate) ?: return null
+            val start = phase.period(first) ?: return null
+            val end = phase.period(last) ?: return null
+            start.start.toSecondOfDay() / 60 to end.end.toSecondOfDay() / 60
+        } else (p.startMinute ?: value.entry.startMinute) to (p.endMinute ?: value.entry.endMinute)
+        val overnight = value.end.atZone(zone).toLocalDate() > value.date &&
+            p.startMinute == null && p.endMinute == null && p.periodStart == null && p.periodEnd == null && p.timingMode == null
+        if (bounds.second <= bounds.first && !overnight) return null
+        val start = targetDate.atTime(LocalTime.ofSecondOfDay(bounds.first * 60L)).atZone(zone).toInstant()
+        val end = targetDate.plusDays(if (overnight) 1 else 0)
+            .atTime(LocalTime.ofSecondOfDay(bounds.second * 60L)).atZone(zone).toInstant()
+        return value.copy(entry = value.entry.copy(title = p.title ?: value.entry.title, day = targetDate.dayOfWeek.value,
+            startMinute = bounds.first, endMinute = bounds.second, location = p.location ?: value.entry.location),
+            date = targetDate, start = start, end = end,
+            periodLabel = if (p.periodStart != null || p.periodEnd != null)
+                "[${(first!!..last!!).joinToString("-") { "%02d".format(it) }}节]" else value.periodLabel,
+            teacher = p.teacher ?: value.teacher, note = p.note ?: value.note,
+            allWeeksEdited = value.allWeeksEdited || edit.anchorDate == null,
+            thisWeekEdited = value.thisWeekEdited || edit.anchorDate != null, linked = linked)
+    }
+    private fun onDate(value: ClassOccurrence, date: LocalDate, zone: ZoneId, anchor: LocalDate = value.anchorDate): ClassOccurrence {
+        if (date == value.date) return value.copy(anchorDate = anchor)
+        val start = date.atTime(LocalTime.ofSecondOfDay(value.entry.startMinute * 60L)).atZone(zone).toInstant()
+        val endDate = date.plusDays(if (value.end.atZone(zone).toLocalDate() > value.date) 1 else 0)
+        val end = endDate.atTime(LocalTime.ofSecondOfDay(value.entry.endMinute * 60L)).atZone(zone).toInstant()
+        return value.copy(date = date, anchorDate = anchor, start = start, end = end,
+            entry = value.entry.copy(day = date.dayOfWeek.value))
+    }
+    /** Base → all-weeks → target day composition → this-week. Source-day adjustments are never copied. */
+    private fun academicWeek(state: ScheduleState, first: LocalDate, zone: ZoneId, applyThisWeek: Boolean = true): List<ClassOccurrence> {
+        val monday = monday(first)
+        val base = (0L..6L).flatMap { offset ->
+            val date = monday.plusDays(offset)
             state.entries.filter { it.day == date.dayOfWeek.value }.map { entry ->
-                ClassOccurrence(entry, date, date.atTime(LocalTime.ofSecondOfDay(entry.startMinute * 60L)).atZone(zone).toInstant(),
-                    date.atTime(LocalTime.ofSecondOfDay(entry.endMinute * 60L)).atZone(zone).toInstant())
+                val start = date.atTime(LocalTime.ofSecondOfDay(entry.startMinute * 60L)).atZone(zone).toInstant()
+                val end = date.atTime(LocalTime.ofSecondOfDay(entry.endMinute * 60L)).atZone(zone).toInstant()
+                ClassOccurrence(entry, date, start, end)
+            }
+        } + state.importedIndex.range(monday.atStartOfDay(zone).toInstant().toEpochMilli(),
+            monday.plusDays(7).atStartOfDay(zone).toInstant().toEpochMilli()).map { importedClass(it, zone) }
+        val templates = base.mapNotNull { raw ->
+            val value = raw.copy(linked = profile(state, raw) != null && periods(raw.periodLabel) != null)
+            val edit = state.editsByKey[ClassOverride.key(value.sourceId, value.seriesId, null)]
+            val withEdit = if (edit == null) value else patch(state, value, edit, zone)
+            withEdit
+        }
+        val composed = (0L..6L).flatMap { offset ->
+            val target = monday.plusDays(offset)
+            val day = state.daysByDate[target.toString()]
+            when (day?.mode) {
+                "none" -> emptyList()
+                "weekday" -> {
+                    val sourceDate = monday.plusDays((day.weekday!! - 1).toLong())
+                    templates.filter { it.date == sourceDate }.mapNotNull { template ->
+                        var copied = onDate(template, target, zone, target).copy(copiedFrom = sourceDate)
+                        val range = periods(copied.periodLabel)
+                        val term = profile(state, copied)
+                        if (copied.linked && range != null && term != null) {
+                            copied = patch(state, copied, ClassOverride.of(copied.sourceId, copied.seriesId, null,
+                                ClassPatch(periodStart = range.first, periodEnd = range.second, timingMode = "linked")), zone)
+                                ?.copy(allWeeksEdited = template.allWeeksEdited, thisWeekEdited = template.thisWeekEdited)
+                                ?: return@mapNotNull null
+                        }
+                        copied
+                    }
+                }
+                else -> templates.filter { it.date == target }.map { onDate(it, target, zone) }
             }
         }
-        val imported = state.importedIndex.range(first.atStartOfDay(zone).toInstant().toEpochMilli(),
-            first.plusDays(7).atStartOfDay(zone).toInstant().toEpochMilli()).map { importedClass(it, zone) }
-        return (manual + imported).sortedBy { it.start }
+        if (!applyThisWeek) return composed.sortedBy { it.start }
+        return composed.mapNotNull { value ->
+            val edit = state.editsByKey[ClassOverride.key(value.sourceId, value.seriesId, value.anchorDate.toString())]
+            val edited = if (edit == null) value else patch(state, value, edit, zone)
+            edited?.takeUnless { state.daysByDate[it.date.toString()]?.mode == "none" }
+        }.sortedWith(compareBy<ClassOccurrence> { it.start }.thenBy { it.entry.title }.thenBy { it.entry.id })
+    }
+    fun week(state: ScheduleState, first: LocalDate, zone: ZoneId): List<ClassOccurrence> {
+        val start = first.atStartOfDay(zone).toInstant()
+        val carry = academicWeek(state, first.minusWeeks(1), zone).filter { it.start < start && it.end > start }
+        return (carry + academicWeek(state, first, zone)).sortedBy { it.start }
     }
     fun weekDays(locale: Locale): List<DayOfWeek> {
         val first = WeekFields.of(locale).firstDayOfWeek
@@ -173,16 +308,11 @@ object ScheduleProjection {
         state.events.filter { it.end > clock.instant().toEpochMilli() }.take(limit)
     fun occurrences(state: ScheduleState, clock: ScheduleClock): List<ClassOccurrence> {
         val today = clock.today()
-        val manual = (0L..7L).flatMap { offset ->
-            val date = today.plusDays(offset)
-            state.entries.filter { it.day == date.dayOfWeek.value }.map { entry ->
-                ClassOccurrence(entry, date, date.atTime(LocalTime.ofSecondOfDay(entry.startMinute * 60L)).atZone(clock.zone()).toInstant(),
-                    date.atTime(LocalTime.ofSecondOfDay(entry.endMinute * 60L)).atZone(clock.zone()).toInstant())
-            }
+        val futureWeeks = state.importedIndex.upcoming(clock.instant().toEpochMilli(), 16).map {
+            monday(Instant.ofEpochMilli(it.start).atZone(clock.zone()).toLocalDate())
         }
-        val importedToday = state.importedIndex.range(clock.instant().toEpochMilli(), today.plusDays(1).atStartOfDay(clock.zone()).toInstant().toEpochMilli())
-        val importedFuture = state.importedIndex.upcoming(today.plusDays(1).atStartOfDay(clock.zone()).toInstant().toEpochMilli(), 4)
-        return (manual + (importedToday + importedFuture).distinctBy { it.id }.map { importedClass(it, clock.zone()) })
+        val weeks = ((-1L..2L).map { monday(today).plusWeeks(it) } + futureWeeks).distinct()
+        return weeks.flatMap { academicWeek(state, it, clock.zone()) }
             .filter { it.end > clock.instant() && it.end > it.start }
             .sortedWith(compareBy<ClassOccurrence> { it.start }.thenBy { it.entry.title }.thenBy { it.entry.id })
     }

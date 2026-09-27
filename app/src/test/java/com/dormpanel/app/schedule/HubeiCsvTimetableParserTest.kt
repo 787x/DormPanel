@@ -223,6 +223,7 @@ class CsvTimetableImportTest {
         assertEquals(131, ready.preview.occurrences.size)
         assertEquals("Hubei University CSV", ready.preview.formatLabel)
         assertEquals("2026-2027-1", ready.preview.termKey)
+        assertEquals("2026-2027-1", ready.preview.source("csv", "Hubei", 1).termKey)
     }
 
     @Test fun unknownTermRequiresProfileInsteadOfGuessing() {

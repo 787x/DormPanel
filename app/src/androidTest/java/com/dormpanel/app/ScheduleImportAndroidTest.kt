@@ -33,11 +33,12 @@ class ScheduleImportAndroidTest {
             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
         }; bitmap.recycle()
     }
-    @Test fun previewBeforeWriteWeekNavigationReadOnlyDetailAndSourceDeletion() {
+    @Test fun previewWeekNavigationEditableDetailAndSourceDeletion() {
         // Same byte-identical fixture as JVM tests, packaged only in the test APK.
         val bytes = instrumentation.context.assets.open("wakeup.ics").use { it.readBytes() }
         val preview = IcsScheduleImporter().parse(ScheduleArtifact("课表.ics", bytes))
         assertEquals(175, preview.occurrences.size)
+        var editedRoom = ""
         val saved = PreferencesAppearanceStore(instrumentation.targetContext).read()
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -68,10 +69,34 @@ class ScheduleImportAndroidTest {
                     onView(withText("Import timetable")).check(matches(isDisplayed()))
                     screenshot("week-light")
                     onView(withText(startsWith("高等数学B-1\n"))).perform(click())
-                    onView(withText(containsString("Read-only."))).check(matches(isDisplayed()))
-                    screenshot("detail"); onView(withText("Close")).perform(click())
+                    onView(withText(containsString("Source data stays unchanged"))).check(matches(isDisplayed()))
+                    onView(withText("Edit")).check(matches(isDisplayed()))
+                    screenshot("detail"); onView(withText("Edit")).perform(click())
+                    onView(withText("This week")).perform(click())
+                    onView(withText(startsWith("Date · 2026-"))).check(matches(isDisplayed()))
+                    onView(withHint("Course name")).perform(replaceText("Local one-week title"), closeSoftKeyboard())
+                    onView(withHint("Teacher")).perform(replaceText("Professor"), closeSoftKeyboard())
+                    onView(withHint("User note")).perform(replaceText("Bring notes"), closeSoftKeyboard())
+                    onView(withText("Save")).perform(click())
+                    scenario.onActivity { activity ->
+                        val state = model(activity).schedule.state
+                        assertEquals(1, state.classOverrides.size)
+                        assertTrue(state.imported.any { it.title == "高等数学B-1" })
+                        editedRoom = state.imported.first { it.seriesId == state.classOverrides.single().seriesId }.location
+                    }
                     onView(withContentDescription("Next week")).perform(click())
                     scenario.onActivity { assertEquals(LocalDate.parse("2026-09-07"), model(it).scheduleSession.weekStart) }
+                    onView(allOf(withText(startsWith("高等数学B-1\n")), withText(containsString(editedRoom)))).perform(click())
+                    onView(withText("Edit")).perform(click())
+                    onView(withText("All weeks for this timetable item")).perform(click())
+                    onView(withText("Weekday")).check(matches(isDisplayed()))
+                    onView(withHint("Location")).perform(replaceText("Series room"), closeSoftKeyboard())
+                    onView(withText("Save")).perform(click())
+                    scenario.onActivity { activity ->
+                        val state = model(activity).schedule.state
+                        assertEquals(2, state.classOverrides.size)
+                        assertTrue(state.imported.none { it.location == "Series room" })
+                    }
                     onView(withText("Home")).perform(click())
                     scenario.onActivity { activity ->
                         val vm = model(activity)

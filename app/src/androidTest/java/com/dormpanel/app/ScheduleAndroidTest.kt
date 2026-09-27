@@ -61,6 +61,60 @@ class ScheduleAndroidTest {
             controller.loopMainThreadUntilIdle()
         }
     }
+    private fun chooseSpinner(index: Int) = object : androidx.test.espresso.ViewAction {
+        override fun getConstraints() = isAssignableFrom(android.widget.Spinner::class.java)
+        override fun getDescription() = "Select spinner item $index"
+        override fun perform(controller: androidx.test.espresso.UiController, view: View) {
+            (view as android.widget.Spinner).setSelection(index)
+            controller.loopMainThreadUntilIdle()
+        }
+    }
+    @Test fun localClassDetailDayAdjustmentAndScopedEdit() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            ready(scenario); open(); onView(withText("Timetable")).perform(click())
+            var today = LocalDate.now()
+            var id = ""
+            scenario.onActivity { activity ->
+                val schedule = model(activity).schedule
+                today = schedule.clock.today()
+                assertTrue(schedule.saveEntry("Override demo", today.dayOfWeek.value, 540, 600, "Source room"))
+                id = schedule.state.entries.single { it.title == "Override demo" }.id
+            }
+            onView(withText(startsWith("Override demo"))).perform(click())
+            onView(withText(containsString("Local recurring class"))).check(matches(isDisplayed()))
+            onView(withText("Edit")).perform(click())
+            onView(withText("This week")).perform(click())
+            onView(withText("Date · $today")).check(matches(isDisplayed()))
+            onView(withHint("Course name")).perform(replaceText("Edited demo"), closeSoftKeyboard())
+            onView(withHint("Location")).perform(replaceText(""), closeSoftKeyboard())
+            onView(withHint("Teacher")).perform(replaceText("Professor"), closeSoftKeyboard())
+            onView(withHint("User note")).perform(replaceText("Bring notes"), closeSoftKeyboard())
+            onView(withText("Save")).perform(click())
+            scenario.onActivity { activity ->
+                val schedule = model(activity).schedule
+                assertEquals("Override demo", schedule.state.entries.single { it.id == id }.title)
+                val effective = ScheduleProjection.week(schedule.state,
+                    today.minusDays((today.dayOfWeek.value - 1).toLong()), schedule.clock.zone())
+                    .single { it.seriesId == id }
+                assertEquals("Edited demo", effective.entry.title)
+                assertEquals("", effective.entry.location)
+                assertEquals("Professor", effective.teacher)
+                assertEquals("Bring notes", effective.note)
+            }
+            onView(withContentDescription("Day adjustment $today")).perform(click())
+            onView(withContentDescription("Day adjustment mode")).perform(chooseSpinner(1))
+            onView(withText("Save")).perform(click())
+            onView(withText(startsWith("Edited demo"))).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+            scenario.onActivity { activity ->
+                val schedule = model(activity).schedule
+                assertTrue(ScheduleProjection.week(schedule.state,
+                    today.minusDays((today.dayOfWeek.value - 1).toLong()), schedule.clock.zone()).none { it.seriesId == id })
+            }
+            onView(withContentDescription("Day adjustment $today")).perform(click())
+            onView(withText("Reset day to normal")).perform(click())
+            onView(withText(startsWith("Edited demo"))).check(matches(isDisplayed()))
+        }
+    }
     @Test fun scheduleModeSurvivesHomeAndAppExitInBothDirections() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             ready(scenario); open()
@@ -135,16 +189,18 @@ class ScheduleAndroidTest {
             onView(withHint("Location (optional)")).perform(replaceText("Room 201"), closeSoftKeyboard())
             screenshot("class-editor"); onView(withText("Save")).perform(click())
             onView(withText(startsWith("Mathematics"))).perform(click())
-            onView(withHint("Class title")).perform(replaceText("Cancelled class"), closeSoftKeyboard()); onView(withText("Cancel")).perform(click())
+            onView(withText("Edit")).perform(click()); onView(withText("All weeks for this timetable item")).perform(click())
+            onView(withHint("Course name")).perform(replaceText("Cancelled class"), closeSoftKeyboard()); onView(withText("Cancel")).perform(click())
             onView(withText(startsWith("Mathematics"))).perform(click())
-            onView(withHint("Class title")).perform(replaceText("Physics"), closeSoftKeyboard()); onView(withText("Save")).perform(click())
+            onView(withText("Edit")).perform(click()); onView(withText("All weeks for this timetable item")).perform(click())
+            onView(withHint("Course name")).perform(replaceText("Physics"), closeSoftKeyboard()); onView(withText("Save")).perform(click())
             scenario.onActivity { activity ->
                 val source = model(activity).schedule
                 for (day in 1..7) source.saveEntry("Lab $day", day, 780, 840, "West wing")
                 source.saveEntry("English", source.clock.today().dayOfWeek.value, 660, 720)
             }
             screenshot("timetable-dark")
-            onView(withText(startsWith("Physics"))).perform(click()); onView(withText("Delete")).perform(click())
+            onView(withText(startsWith("Physics"))).perform(click()); onView(withText("Delete recurring class")).perform(click())
             scenario.onActivity { model(it).appearance.setTheme(ThemeMode.LIGHT) }; screenshot("timetable-light")
             scenario.recreate(); ready(scenario)
             scenario.onActivity { assertEquals(tomorrow, model(it).scheduleSession.selectedDate); assertEquals(YearMonth.from(tomorrow), model(it).scheduleSession.month) }
