@@ -68,7 +68,7 @@ class WebDavSyncAndroidTest {
                     ui!!.sources()
                 }
                 onView(withText("Add WebDAV timetable")).perform(click())
-                waitText("Select a folder or ICS file.")
+                waitText("Select a folder, .ics, or .csv file.")
                 onView(withText(containsString("current.ics"))).perform(click())
                 waitText("Timetable import preview")
                 scenario.onActivity { assertTrue(model(it).schedule.state.sources.isEmpty()) }
@@ -102,13 +102,14 @@ class WebDavSyncAndroidTest {
             val remote = server.url("/dav/current.ics").toString()
             val account = WebDavAccount(server.url("/dav/").toString(), "user", "secret")
             val previewLatch = CountDownLatch(1)
-            val first = AtomicReference<Result<Pair<ImportPreview, WebDavItem>>>()
+            val first = AtomicReference<Result<Pair<TimetableImporter.ParseOutcome, WebDavItem>>>()
             server.enqueue(MockResponse().setBody(raw).addHeader("ETag", "\"v1\""))
             scenario.onActivity { model(it).webDav.initial(account, WebDavMode.FILE, remote) { result ->
                 first.set(result); previewLatch.countDown()
             } }
             await(previewLatch)
-            val (preview, item) = first.get().getOrThrow()
+            val (outcome, item) = first.get().getOrThrow()
+            val preview = (outcome as TimetableImporter.ParseOutcome.Ready).preview
             assertEquals("GET", server.takeRequest().method)
             assertEquals("webdav", preview.kind)
             assertFalse(preview.locator!!.contains("user"))

@@ -179,16 +179,23 @@ class WebDavClient(private val http: OkHttpClient = OkHttpClient.Builder().follo
 }
 
 object WebDavSelection {
-    private fun WebDavItem.isIcs(): Boolean = url.toHttpUrlOrNull()?.encodedPathSegments?.lastOrNull()?.let {
+    private fun WebDavItem.decodedName(): String = url.toHttpUrlOrNull()?.encodedPathSegments?.lastOrNull()?.let {
         runCatching { URLDecoder.decode(it.replace("+", "%2B"), "UTF-8") }.getOrDefault(it)
-    }?.endsWith(".ics", true) == true
+    } ?: ""
+    private fun WebDavItem.isIcs(): Boolean = decodedName().endsWith(".ics", true)
+    private fun WebDavItem.isCsv(): Boolean = decodedName().endsWith(".csv", true)
     fun children(folder: String, items: List<WebDavItem>): List<WebDavItem> = items.filter { it.url.trimEnd('/') != folder.trimEnd('/') &&
-        (it.folder || it.isIcs()) }.sortedWith(compareByDescending<WebDavItem> { it.folder }.thenBy { it.name.lowercase() })
-    fun latest(items: List<WebDavItem>): WebDavItem {
-        val files = items.filter { !it.folder && it.isIcs() }
-        if (files.isEmpty()) throw WebDavException("No ICS files in folder.")
+        (it.folder || it.isIcs() || it.isCsv()) }.sortedWith(compareByDescending<WebDavItem> { it.folder }.thenBy { it.name.lowercase() })
+    fun latest(items: List<WebDavItem>, extension: String = "ics"): WebDavItem {
+        val match: (WebDavItem) -> Boolean = when (extension.lowercase()) {
+            "csv" -> { item -> !item.folder && item.isCsv() }
+            else -> { item -> !item.folder && item.isIcs() }
+        }
+        val label = if (extension.equals("csv", true)) "CSV" else "ICS"
+        val files = items.filter(match)
+        if (files.isEmpty()) throw WebDavException("No $label files in folder.")
         if (files.size > 1 && files.any { it.modifiedAt == null })
-            throw WebDavException("Cannot determine newest ICS; choose an exact file.")
+            throw WebDavException("Cannot determine newest $label; choose an exact file.")
         return files.sortedWith(compareByDescending<WebDavItem> { it.modifiedAt ?: Long.MIN_VALUE }
             .thenBy { it.url }).first()
     }

@@ -29,14 +29,16 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val apkInstall = com.dormpanel.app.apps.ApkInstallController(application, apps)
     val productivity = ProductivitySource(ProductivityStores.create(application), AndroidProductivityClock)
     val schedule = ScheduleSource(ScheduleStores.create(application))
+    val termProfiles = TermScheduleProfileStore(application)
     val haRelay = HaScheduleRelayController(dataSource.ha.relayChannel, dataSource.relayIdentity,
         dataSource.relayHttp, { dataSource.relayStatus = it }, apkInstall,
         appVersion = {
             runCatching {
                 application.packageManager.getPackageInfo(application.packageName, 0).versionName
             }.getOrNull() ?: "unknown"
-        })
-    val webDav = WebDavSyncController(application, schedule)
+        },
+        profiles = termProfiles)
+    val webDav = WebDavSyncController(application, schedule, profiles = termProfiles)
     val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) } +

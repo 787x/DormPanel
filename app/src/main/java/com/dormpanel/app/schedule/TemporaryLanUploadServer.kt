@@ -92,24 +92,24 @@ class TemporaryLanUploadServer private constructor(
                     }.toMap()
                     val length = headers["content-length"]?.toIntOrNull()
                     if (length == null || length < 0) { reply(output, 411, "Content length required."); return }
-                    if (length > BODY_LIMIT) { reply(output, 413, "ICS exceeds the upload size limit."); return }
+                    if (length > BODY_LIMIT) { reply(output, 413, "Timetable file exceeds the upload size limit."); return }
                     val type = headers["content-type"].orEmpty()
                     val boundary = Regex("boundary=(?:\"([^\"]+)\"|([^;]+))", RegexOption.IGNORE_CASE)
                         .find(type)?.let { it.groupValues[1].ifEmpty { it.groupValues[2].trim() } }
                     if (!type.startsWith("multipart/form-data", true) || boundary == null || boundary.length !in 1..70) {
-                        reply(output, 400, "Choose one .ics file."); return
+                        reply(output, 400, "Choose one .ics or .csv file."); return
                     }
                     val body = ByteArray(length)
                     var read = 0
                     while (read < length) { val count = input.read(body, read, length - read); if (count < 0) throw IOException("Short body"); read += count }
                     val artifact = try { multipart(body, boundary) } catch (error: ScheduleImportException) {
-                        if (error.message?.contains("limit") == true) reply(output, 413, "ICS exceeds the 1 MiB size limit.")
-                        else reply(output, 400, "Choose one valid .ics file.")
+                        if (error.message?.contains("limit") == true) reply(output, 413, "Timetable file exceeds the 1 MiB size limit.")
+                        else reply(output, 400, "Choose one valid .ics or .csv file.")
                         return
                     }
                     val valid = try { validate(artifact) } catch (_: Exception) { false }
                     if (!valid) {
-                        reply(output, 422, "ICS could not be imported. Check the file and try again."); return
+                        reply(output, 422, "Timetable file could not be imported. Check the file and try again."); return
                     }
                     if (now() >= expiresAt || !finish(socket)) { reply(output, 404, "Session expired."); return }
                     successful = true
@@ -136,7 +136,7 @@ class TemporaryLanUploadServer private constructor(
         const val LIFETIME_MS = 10 * 60 * 1000L
         private const val HEADER_LIMIT = 8192
         private const val BODY_LIMIT = ImportLimits.BYTES + 16 * 1024
-        private val FORM = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DormPanel timetable upload</title><style>body{font:18px system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:1rem;line-height:1.5}input,button{font:inherit;margin:.5rem 0;padding:.6rem}button{min-height:3rem}</style></head><body><h1>DormPanel timetable upload</h1><form method="post" action="upload" enctype="multipart/form-data"><label>Choose .ics file <input type="file" name="file" accept=".ics,text/calendar" required></label><br><button type="submit">Upload</button></form><p>This upload goes directly to the DormPanel currently showing the QR code.</p></body></html>"""
+        private val FORM = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DormPanel timetable upload</title><style>body{font:18px system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:1rem;line-height:1.5}input,button{font:inherit;margin:.5rem 0;padding:.6rem}button{min-height:3rem}</style></head><body><h1>DormPanel timetable upload</h1><form method="post" action="upload" enctype="multipart/form-data"><label>Choose .ics or .csv file <input type="file" name="file" accept=".ics,.csv,text/calendar,text/csv" required></label><br><button type="submit">Upload</button></form><p>This upload goes directly to the DormPanel currently showing the QR code.</p></body></html>"""
 
         fun start(address: String, validate: (ScheduleArtifact) -> Boolean, onAccepted: () -> Unit = {}, onExpired: () -> Unit = {},
             now: () -> Long = System::currentTimeMillis, lifetimeMs: Long = LIFETIME_MS): TemporaryLanUploadServer {
@@ -184,10 +184,11 @@ class TemporaryLanUploadServer private constructor(
                 val disposition = headers.lines().firstOrNull { it.startsWith("Content-Disposition:", true) }.orEmpty()
                 val filename = Regex("filename=\"([^\"]*)\"", RegexOption.IGNORE_CASE).find(disposition)?.groupValues?.get(1)
                 if (filename != null) {
-                    importCheck(artifact == null && filename.substringAfterLast('/').substringAfterLast('\\').endsWith(".ics", true), "Choose one .ics file.")
                     val safeName = filename.substringAfterLast('/').substringAfterLast('\\')
+                    val isTimetable = safeName.endsWith(".ics", true) || safeName.endsWith(".csv", true)
+                    importCheck(artifact == null && isTimetable, "Choose one .ics or .csv file.")
                     val bytes = body.copyOfRange(headersEnd + 4, next)
-                    importCheck(bytes.size <= ImportLimits.BYTES, "ICS exceeds the 1 MiB size limit.")
+                    importCheck(bytes.size <= ImportLimits.BYTES, "Timetable file exceeds the 1 MiB size limit.")
                     val mime = headers.lines().firstOrNull { it.startsWith("Content-Type:", true) }?.substringAfter(':')?.trim()
                     artifact = ScheduleArtifact(safeName, bytes, mime, "lan_upload", "lan_upload")
                 }
@@ -196,7 +197,7 @@ class TemporaryLanUploadServer private constructor(
                 importCheck(raw.startsWith("\r\n", cursor), "Malformed multipart.")
                 cursor += 2
             }
-            return artifact ?: throw ScheduleImportException("Missing ICS file.")
+            return artifact ?: throw ScheduleImportException("Missing timetable file.")
         }
 
         private fun reply(output: java.io.OutputStream, code: Int, message: String) {

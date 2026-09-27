@@ -5,3 +5,7 @@ MAX_BYTES = 1024 * 1024
 MAX_APK_BYTES = 256 * 1024 * 1024
 RETENTIONS = {3600, 86400, 604800}
 TERMINAL = {"imported", "installed", "dismissed", "rejected_invalid", "install_failed"}
+SCHEDULE_KINDS = ("schedule_ics", "schedule_csv")
+CAPABILITY_BY_KIND = {"schedule_ics": "schedule_relay_v1", "schedule_csv": "schedule_csv_v1", "apk": "apk_install_v1"}
+SCHEDULE_OUTCOMES = {"preview_ready", "imported", "dismissed", "rejected_invalid"}
+APK_OUTCOMES = {"preview_ready", "installed", "dismissed", "rejected_invalid", "install_failed"}

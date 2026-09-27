@@ -15,13 +15,14 @@ import time
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_track_point_in_utc_time
 
-from .const import DOMAIN, EVENT_AVAILABLE, EVENT_CHANGED, MAX_BYTES, MAX_APK_BYTES, RETENTIONS, TERMINAL
+from .const import (DOMAIN, EVENT_AVAILABLE, EVENT_CHANGED, MAX_BYTES, MAX_APK_BYTES, RETENTIONS, TERMINAL,
+                    SCHEDULE_KINDS, CAPABILITY_BY_KIND, SCHEDULE_OUTCOMES, APK_OUTCOMES)
 
 
 def safe_filename(value: str, kind: str = "schedule_ics") -> str:
     name = value.replace("\\", "/").split("/")[-1]
     name = re.sub(r"[^\w.() -]", "_", name, flags=re.UNICODE).strip(" .")[:120]
-    extension = ".apk" if kind == "apk" else ".ics"
+    extension = {"apk": ".apk", "schedule_csv": ".csv"}.get(kind, ".ics")
     if not name.lower().endswith(extension) or name.lower() == extension:
         raise ValueError(f"Choose one {extension} file")
     return name
@@ -140,15 +141,15 @@ class Relay:
             temporary.unlink(missing_ok=True)
 
     async def create_from_file(self, filename, temporary, size, sha256, target_ids, retention, kind):
-        if kind not in ("schedule_ics", "apk") or retention not in RETENTIONS or \
+        if kind not in (*SCHEDULE_KINDS, "apk") or retention not in RETENTIONS or \
                 not 0 < size <= (MAX_APK_BYTES if kind == "apk" else MAX_BYTES):
             raise ValueError("Invalid size, kind or retention")
         filename = safe_filename(filename, kind)
         targets = list(dict.fromkeys(target_ids))
         async with self.lock:
-            capability = "apk_install_v1" if kind == "apk" else "schedule_relay_v1"
+            capability = CAPABILITY_BY_KIND[kind]
             if not targets or len(targets) > 100 or any(target not in self.screens or
-                    (kind == "apk" and capability not in self.screens[target].get("capabilities", [])) for target in targets):
+                    (kind != "schedule_ics" and capability not in self.screens[target].get("capabilities", [])) for target in targets):
                 raise ValueError("Choose registered screens")
             transfer_id = secrets.token_hex(16)
             path = self._path(transfer_id)
@@ -212,8 +213,7 @@ class Relay:
                     item["targets"].get(installation_id) is None:
                 raise PermissionError("Transfer unavailable")
             kind = item.get("kind", "schedule_ics")
-            allowed = {"preview_ready", "imported", "dismissed", "rejected_invalid"} if kind == "schedule_ics" else \
-                {"preview_ready", "installed", "dismissed", "rejected_invalid", "install_failed"}
+            allowed = SCHEDULE_OUTCOMES if kind in SCHEDULE_KINDS else APK_OUTCOMES
             if outcome not in allowed:
                 raise ValueError("Outcome does not match transfer kind")
             if item["targets"][installation_id] in TERMINAL:
