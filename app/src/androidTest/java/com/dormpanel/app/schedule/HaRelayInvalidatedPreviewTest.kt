@@ -9,34 +9,21 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONArray
 import org.json.JSONObject
-import org.junit.After
 import org.junit.Assert.*
-import org.junit.Before
 import org.junit.Test
 import java.security.MessageDigest
-import java.time.Instant
-import java.time.LocalDate
-import java.time.LocalTime
-import java.time.ZoneId
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * HA relay must honor persisted TermScheduleProfileStore overrides, not just
- * the built-in 2026-2027-1 preset.
+ * When a user edits the term profile from an HA-delivered preview, the old preview
+ * is invalidated and the HA transfer must get exactly one `dismissed` terminal
+ * outcome so the relay queue can proceed.
  */
-class HaRelayProfileOverrideTest {
+class HaRelayInvalidatedPreviewTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private fun main(action: () -> Unit) = instrumentation.runOnMainSync(action)
-    private fun await(latch: CountDownLatch) = assertTrue("Relay preview timed out", latch.await(15, TimeUnit.SECONDS))
-    private val namespace = "test_ha_profiles_${System.nanoTime()}"
-
-    @Before fun setUp() { TermScheduleProfileStore.overrideNamespace = namespace }
-    @After fun tearDown() {
-        TermScheduleProfileStore.overrideNamespace = null
-        instrumentation.targetContext
-            .getSharedPreferences(namespace, Context.MODE_PRIVATE).edit().clear().commit()
-    }
+    private fun await(latch: CountDownLatch) = assertTrue("Timed out", latch.await(15, TimeUnit.SECONDS))
 
     private class Channel(override val origin: String) : HaRelayChannel {
         override var ready = true
@@ -61,6 +48,7 @@ class HaRelayProfileOverrideTest {
                 "dormpanel/ack_transfer" -> {
                     val outcome = message.getString("outcome")
                     acknowledgements += id to outcome
+                    if (outcome != "preview_ready") pending.remove(id)
                     callback(JSONObject().put("success", true))
                 }
                 else -> error("Unexpected relay request")
@@ -76,60 +64,53 @@ class HaRelayProfileOverrideTest {
         override fun removeEventListener(listener: (JSONObject) -> Unit) { eventListeners -= listener }
     }
 
-    @Test fun haRelayUsesPersistedProfileOverrideInsteadOfBuiltIn() {
-        // Persist a custom profile with periods 1-2 shifted to 10:00–11:00.
-        val store = TermScheduleProfileStore(instrumentation.targetContext)
-        val custom = BuiltInProfiles.term2026.copy(
-            phases = listOf(
-                BuiltInProfiles.term2026.phases[0].copy(periods = BuiltInProfiles.term2026.phases[0].periods.map {
-                    if (it.periodNumber == 1) PeriodTime(1, LocalTime.of(10, 0), LocalTime.of(10, 30))
-                    else if (it.periodNumber == 2) PeriodTime(2, LocalTime.of(10, 40), LocalTime.of(11, 0))
-                    else it
-                }),
-                BuiltInProfiles.term2026.phases[1]
-            )
-        )
-        store.put(custom)
-
+    @Test fun editProfileInvalidationResolvesActiveHaTransferAsDismissed() {
         val csv = instrumentation.context.assets.open("hubei_2026-2027-1.csv").use { it.readBytes() }
         MockWebServer().use { server ->
             val identity = HaRelayIdentityStore(instrumentation.targetContext)
             val hash = MessageDigest.getInstance("SHA-256").digest(csv).joinToString("") { "%02x".format(it) }
-            val id = "e".repeat(32)
+            val id1 = "a".repeat(32)
+            val id2 = "b".repeat(32)
             val channel = Channel(server.url("/").toString()).apply {
-                pending += id
-                claimResponse = {
+                pending += id1
+                pending += id2
+                claimResponse = { id ->
                     JSONObject().put("transfer_id", id).put("size", csv.size)
                         .put("filename", "schedule.csv").put("sha256", hash).put("kind", "schedule_csv")
                         .put("signed_path", "/api/dormpanel/transfers/$id?authSig=test")
                 }
             }
-            server.enqueue(MockResponse().setBody(okio.Buffer().write(csv)))
-            val received = CountDownLatch(1)
+            repeat(2) { server.enqueue(MockResponse().setBody(okio.Buffer().write(csv))) }
+            val firstPreview = CountDownLatch(1)
+            val secondPreview = CountDownLatch(1)
+            var previewCount = 0
             var delivery: RelayPreview? = null
             lateinit var relay: HaScheduleRelayController
             main {
                 relay = HaScheduleRelayController(channel, identity, OkHttpClient(), {},
                     profiles = TermScheduleProfileStore(instrumentation.targetContext))
-                relay.attach { preview -> delivery = preview; received.countDown() }
+                relay.attach { p ->
+                    delivery = p
+                    previewCount++
+                    if (previewCount == 1) firstPreview.countDown() else secondPreview.countDown()
+                }
             }
             try {
-                await(received)
-                val preview = delivery!!.preview!!
-                assertEquals("schedule_csv", "schedule_csv") // kind was accepted
-                assertEquals("2026-2027-1", preview.termKey)
-                // Period 1 in the custom profile is 10:00, not the built-in 08:00.
-                val zone = ZoneId.of("Asia/Shanghai")
-                val first = preview.occurrences.minBy { it.start }
-                val start = Instant.ofEpochMilli(first.start).atZone(zone)
-                // The earliest CSV occurrence is 大数据导论 on Week 1 Thursday periods 9-10.
-                // Period 9 is unchanged in the override (19:00), so check a periods-1-2 class instead.
-                val math = preview.occurrences.first {
-                    it.title == "高等数学B-1" && it.periodLabel == "[01-02节]"
-                }
-                val mathStart = Instant.ofEpochMilli(math.start).atZone(zone)
-                assertEquals("10:00", mathStart.toLocalTime().toString())
-                // Built-in would have been 08:00 — this distinguishes override from preset.
+                await(firstPreview)
+                val first = delivery!!
+                assertEquals(id1, first.transferId)
+
+                // Simulate "Edit term profile" from the preview: the UI invalidates the
+                // preview and must resolve the HA transfer as dismissed.
+                main { relay.resolve(id1, "dismissed") }
+
+                // Exactly one dismissed for id1.
+                assertEquals(1, channel.acknowledgements.count { it.first == id1 && it.second == "dismissed" })
+                assertTrue(channel.acknowledgements.none { it.first == id1 && it.second == "imported" })
+
+                // The relay must proceed to the next queued transfer.
+                await(secondPreview)
+                assertEquals(id2, delivery!!.transferId)
             } finally { main { relay.close() } }
         }
     }

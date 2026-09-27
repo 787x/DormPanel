@@ -27,7 +27,7 @@ class TermScheduleProfileStoreAndroidTest {
 
     @After fun tearDown() {
         TermScheduleProfileStore.overrideNamespace = null
-        context.getSharedPreferences("${namespace}_settings", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences(namespace, Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @Test fun builtIn2026IsReturnedWithoutOverride() {

@@ -82,7 +82,8 @@ class WebDavSettings(context: Context) {
 
 /** Process-owned scheduler; source commits and callbacks return through the main thread. */
 class WebDavSyncController(private val context: Context, private val source: ScheduleSource,
-    val settings: WebDavSettings = WebDavSettings(context.applicationContext), private val client: WebDavClient = WebDavClient()) {
+    val settings: WebDavSettings = WebDavSettings(context.applicationContext), private val client: WebDavClient = WebDavClient(),
+    private val profiles: TermScheduleProfileStore = TermScheduleProfileStore(context)) {
     companion object { const val INTERVAL = 60 * 60 * 1000L }
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -151,7 +152,7 @@ class WebDavSyncController(private val context: Context, private val source: Sch
                 else -> WebDavSelection.latest(client.list(account, remote), "ics")
             }
             val download = client.download(account, item.url)
-            val outcome = TimetableImporter(profiles = TermScheduleProfileStore(context)).parseOutcome(
+            val outcome = TimetableImporter(profiles = profiles).parseOutcome(
                 download.artifact ?: throw WebDavException("Remote file was not downloaded."))
             Pair(outcome, item.copy(etag = download.etag ?: item.etag, lastModified = download.lastModified ?: item.lastModified))
         }, callback)
@@ -178,7 +179,7 @@ class WebDavSyncController(private val context: Context, private val source: Sch
                 val knownEtag = selected.etag ?: if (sameFile) binding.etag else null
                 val knownDate = selected.lastModified ?: if (sameFile) binding.lastModified else null
                 // CSV: profile changes must force re-import even when remote validators are unchanged.
-                val profileStore = TermScheduleProfileStore(context)
+                val profileStore = profiles
                 val currentProfileFingerprint = binding.termKey?.let { term ->
                     profileStore.get(term)?.let { TimetableImporter.profileFingerprint(it) }
                 }
@@ -216,7 +217,7 @@ class WebDavSyncController(private val context: Context, private val source: Sch
                         committed.onSuccess {
                             val isCsv = preview.formatLabel != null
                             val profilePrint = preview.termKey?.let { term ->
-                                TermScheduleProfileStore(context).get(term)?.let { TimetableImporter.profileFingerprint(it) }
+                                profiles.get(term)?.let { TimetableImporter.profileFingerprint(it) }
                             }
                             binding(id)?.let { current ->
                                 update(current.copy(format = if (isCsv) "csv" else "ics",

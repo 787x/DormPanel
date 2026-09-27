@@ -38,7 +38,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             }.getOrNull() ?: "unknown"
         },
         profiles = termProfiles)
-    val webDav = WebDavSyncController(application, schedule)
+    val webDav = WebDavSyncController(application, schedule, profiles = termProfiles)
     val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) } +

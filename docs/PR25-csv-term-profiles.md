@@ -204,8 +204,8 @@ This is stated in the profile UI.
 
 ### Tests actually executed
 
-- `gradlew assembleDebug testDebugUnitTest lintDebug` — **passed** (250 unit tests, 0 failures; lint clean)
-- `tools/test-x08e.ps1` — **passed** on physical X08E (76 instrumentation tests, 0 failures; daily `com.dormpanel.app` left installed)
+- `gradlew assembleDebug testDebugUnitTest lintDebug` — **passed** (259 unit tests, 0 failures; lint clean)
+- `tools/test-x08e.ps1` — **passed** on physical X08E (89 instrumentation tests, 0 failures; daily `com.dormpanel.app` left installed)
 - Home Assistant `python -m unittest discover -s tests` — **passed** (13 tests)
 - `node --check custom_components/dormpanel/frontend/panel.js` — **passed**
 - `git diff --check` — **passed**

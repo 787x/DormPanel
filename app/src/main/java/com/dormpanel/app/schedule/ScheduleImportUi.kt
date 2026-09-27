@@ -316,19 +316,30 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
             "or let a WebDAV CSV source sync again, to regenerate occurrences.", 16f))
         profileStore.list().forEach { profile ->
             val builtIn = profileStore.isBuiltIn(profile.termKey)
+            val hasPreset = BuiltInProfiles.builtIn(profile.termKey) != null
             fields.addView(context.scheduleLabel(
-                "${profile.termKey}${if (builtIn) " · built-in" else " · edited"}\n" +
+                "${profile.termKey}${if (builtIn) " · built-in" else if (hasPreset) " · edited" else " · custom"}\n" +
                 "${profile.timezone} · Week 1 Monday ${profile.week1Monday}\n" +
                 "${profile.phases.size} phase(s)", 17f))
             fields.addView(context.scheduleButton("Edit ${profile.termKey}") {
                 dialog.dismiss(); editProfile(profile.termKey) { termProfiles() }
             })
-            if (builtIn && profile.termKey == BuiltInProfiles.TERM_2026_2027_1) {
-                fields.addView(context.scheduleLabel("Built-in 2026-2027-1 can be reset after editing.", 15f))
-            } else if (!builtIn) {
+            if (builtIn) {
+                fields.addView(context.scheduleLabel("Built-in profile. Edit it to customize.", 15f))
+            } else if (hasPreset) {
                 fields.addView(context.scheduleButton("Reset ${profile.termKey} to built-in") {
                     profileStore.remove(profile.termKey)
                     dialog.dismiss(); termProfiles()
+                })
+            } else {
+                fields.addView(context.scheduleButton("Delete ${profile.termKey}") {
+                    show(AlertDialog.Builder(context).setTitle("Delete ${profile.termKey}?")
+                        .setMessage("Remove the custom term profile ${profile.termKey}? This cannot be undone. Imported classes are not affected until you re-import or re-sync.")
+                        .setNegativeButton("Cancel", null)
+                        .setPositiveButton("Delete profile") { _, _ ->
+                            profileStore.remove(profile.termKey)
+                            dialog.dismiss(); termProfiles()
+                        }.create())
                 })
             }
         }
@@ -370,7 +381,13 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         // Stale-preview guard: if the user edits the profile from this dialog the
         // current occurrences/fingerprint no longer reflect the saved profile.
         var previewInvalidated = false
+        var relayResolved = false
         var previewDialog: AlertDialog? = null
+        fun resolveRelay(outcome: String) {
+            if (relayResolved) return
+            relayResolved = true
+            relayOutcome?.invoke(outcome)
+        }
         val fields = context.scheduleColumn().apply { setPadding(context.dp(16), 0, context.dp(16), 0) }
         val row = LinearLayout(context)
         val summary = context.scheduleColumn()
@@ -392,6 +409,9 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                 if (previewInvalidated) return@scheduleButton
                 previewInvalidated = true
                 previewDialog?.dismiss()
+                // HA transfers must get a terminal outcome; dismissing the dialog
+                // programmatically does not trigger the negative-button/onCancel path.
+                resolveRelay("dismissed")
                 editProfile(preview.termKey!!) { profile ->
                     if (profile != null) {
                         message("Profile saved — preview closed",
@@ -429,8 +449,8 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         val error = context.scheduleLabel("", 16f); fields.addView(error)
         val dialog = show(AlertDialog.Builder(context).setTitle("Timetable import preview")
             .setView(ScrollView(context).apply { addView(fields) })
-            .setNegativeButton("Cancel") { _, _ -> relayOutcome?.invoke("dismissed") }
-            .setOnCancelListener { relayOutcome?.invoke("dismissed") }
+            .setNegativeButton("Cancel") { _, _ -> resolveRelay("dismissed") }
+            .setOnCancelListener { resolveRelay("dismissed") }
             .setPositiveButton("Import", null).create())
         previewDialog = dialog
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -460,7 +480,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                                 format = if (isCsv) "csv" else "ics",
                                 termKey = preview.termKey, profileFingerprint = profilePrint))
                         }
-                        relayOutcome?.invoke("imported")
+                        resolveRelay("imported")
                         dialog.dismiss(); message(if (it.unchanged) "Timetable unchanged" else "Timetable imported",
                         "${it.source.displayName} · ${it.source.occurrenceCount} classes") }
                         .onFailure { error.text = errorText(it); dialog.setCancelable(true)
