@@ -15,6 +15,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import java.time.LocalDate
+import java.time.ZoneId
 
 class ScheduleImportAndroidTest {
     @get:Rule val persistence = IsolatedDashboardRule()
@@ -32,6 +33,52 @@ class ScheduleImportAndroidTest {
         java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "ics-$name.png").outputStream().use {
             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
         }; bitmap.recycle()
+    }
+    @Test fun overnightIcsDetailAllowsNonTimeEditWithoutChangingInstants() {
+        val day = LocalDate.parse("2026-09-04")
+        val zone = ZoneId.of("Asia/Shanghai")
+        val start = day.atTime(23, 0).atZone(zone).toInstant().toEpochMilli()
+        val end = day.plusDays(1).atTime(1, 0).atZone(zone).toInstant().toEpochMilli()
+        val sourceRow = ImportSource("ics", "Night import", "night.ics", "local_document", null,
+            "Night", "hash", 0, zone.id, 1, start, end)
+        val imported = ImportedClassOccurrence("night", "ics", "night-series", null, start, "Night lab",
+            start, end, zone.id, "Old room", "", null)
+        val initial = ScheduleState(sources = listOf(sourceRow), imported = listOf(imported))
+        val store = object : ScheduleStore {
+            override fun load(callback: (Result<ScheduleState>) -> Unit) = callback(Result.success(initial))
+            override fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun putClassOverride(item: ClassOverride?, key: String, callback: (Result<Unit>) -> Unit) =
+                callback(Result.success(Unit))
+            override fun close() = Unit
+        }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var schedule: ScheduleSource
+            lateinit var editors: ScheduleEditors
+            scenario.onActivity { activity ->
+                schedule = ScheduleSource(store)
+                editors = ScheduleEditors(activity, schedule, model(activity).appearance)
+                editors.classDetail(ScheduleProjection.week(schedule.state, day.minusDays(4), zone).single())
+            }
+            onView(withText("Edit")).perform(click())
+            onView(withText("This week")).perform(click())
+            onView(withHint("Location")).perform(replaceText("New room"), closeSoftKeyboard())
+            onView(withHint("Teacher")).perform(replaceText("Professor"), closeSoftKeyboard())
+            onView(withHint("User note")).perform(replaceText("Bring notes"), closeSoftKeyboard())
+            onView(withText("Save")).perform(click())
+            scenario.onActivity {
+                val effective = ScheduleProjection.week(schedule.state, day.minusDays(4), zone).single()
+                assertEquals(start, effective.start.toEpochMilli())
+                assertEquals(end, effective.end.toEpochMilli())
+                assertEquals("New room", effective.entry.location)
+                assertEquals("Professor", effective.teacher)
+                assertEquals("Bring notes", effective.note)
+                assertEquals(start, schedule.state.imported.single().start)
+                editors.close(); schedule.close()
+            }
+        }
     }
     @Test fun previewWeekNavigationEditableDetailAndSourceDeletion() {
         // Same byte-identical fixture as JVM tests, packaged only in the test APK.
@@ -51,7 +98,7 @@ class ScheduleImportAndroidTest {
                         vm.schedule.saveEvent("Calendar remains separate", 1, 2)
                         vm.scheduleSession.mode = ScheduleMode.TIMETABLE
                         vm.scheduleSession.weekStart = LocalDate.parse("2026-08-31")
-                        ui = ScheduleImportUi(activity, vm.schedule, vm.appearance, vm.webDav) {}
+                        ui = ScheduleImportUi(activity, vm.schedule, vm.appearance, vm.webDav, vm.termProfiles) {}
                         ui.preview(preview)
                         assertTrue(vm.schedule.state.sources.isEmpty())
                     }

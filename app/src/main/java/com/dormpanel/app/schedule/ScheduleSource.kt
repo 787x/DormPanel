@@ -66,9 +66,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
             result.onSuccess { loaded ->
                 state = ordered(loaded.copy(events = loaded.events.filter { it.valid() }, entries = loaded.entries.filter { it.valid() },
                     dayAdjustments = loaded.dayAdjustments.filter { it.valid() }, classOverrides = loaded.classOverrides.filter { it.valid() },
-                    profiles = loaded.sources.mapNotNull { item -> item.resolvedTermKey()?.let { term ->
-                        profileResolver(term)?.let { term to it }
-                    } }.toMap(),
+                    profiles = effectiveProfiles(loaded.sources),
                     invalidRecords = loaded.invalidRecords + loaded.events.count { !it.valid() } + loaded.entries.count { !it.valid() } +
                         loaded.dayAdjustments.count { !it.valid() } + loaded.classOverrides.count { !it.valid() }))
                 ready = true
@@ -79,6 +77,15 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     fun subscribe(listener: () -> Unit) { if (!closed) listeners.add(listener) }
     fun unsubscribe(listener: () -> Unit) { listeners.remove(listener) }
     fun refresh() { if (!closed) listeners.toList().forEach { it() } }
+    private fun effectiveProfiles(sources: List<ImportSource>) = sources.mapNotNull { item ->
+        item.resolvedTermKey()?.let { term -> profileResolver(term)?.let { term to it } }
+    }.toMap()
+    /** Call after a profile-store mutation; imported base rows retain their original instants. */
+    fun refreshProfiles() {
+        if (closed || !ready) return
+        val profiles = effectiveProfiles(state.sources)
+        if (profiles != state.profiles) { state = state.copy(profiles = profiles); refresh() }
+    }
     private fun ordered(value: ScheduleState) = value.copy(
         events = value.events.sortedWith(compareBy<CalendarEvent> { it.start }.thenBy { it.title }.thenBy { it.id }),
         entries = value.entries.sortedWith(compareBy<TimetableEntry> { it.day }.thenBy { it.startMinute }.thenBy { it.title }.thenBy { it.id }))
@@ -131,11 +138,10 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         IcsScheduleImporter().commit(preview, store, name, targetId, clock.instant().toEpochMilli()) { result ->
             if (!closed) {
                 result.onSuccess { committed -> if (!committed.unchanged) {
-                    state = state.copy(sources = state.sources.filterNot { it.id == committed.source.id } + committed.source,
+                    val sources = state.sources.filterNot { it.id == committed.source.id } + committed.source
+                    state = state.copy(sources = sources,
                         imported = state.imported.filterNot { it.sourceId == committed.source.id } + committed.occurrences,
-                        profiles = state.profiles + listOfNotNull(committed.source.resolvedTermKey()?.let { term ->
-                            profileResolver(term)?.let { term to it }
-                        }).toMap())
+                        profiles = effectiveProfiles(sources))
                     refresh()
                 } }
                 callback(result)
@@ -146,8 +152,9 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         if (closed || !ready) return
         store.deleteImport(id) { result -> if (!closed) {
             result.onSuccess {
-                state = state.copy(sources = state.sources.filterNot { it.id == id }, imported = state.imported.filterNot { it.sourceId == id },
-                    classOverrides = state.classOverrides.filterNot { it.sourceId == id })
+                val sources = state.sources.filterNot { it.id == id }
+                state = state.copy(sources = sources, imported = state.imported.filterNot { it.sourceId == id },
+                    classOverrides = state.classOverrides.filterNot { it.sourceId == id }, profiles = effectiveProfiles(sources))
                 refresh()
             }
             callback(result)
@@ -192,11 +199,20 @@ object ScheduleProjection {
     }
     private fun monday(date: LocalDate) = date.minusDays((date.dayOfWeek.value - 1).toLong())
     fun profile(state: ScheduleState, occurrence: ClassOccurrence): TermScheduleProfile? =
-        state.sources.firstOrNull { it.id == occurrence.sourceId }?.resolvedTermKey()?.let { state.profiles[it] ?: BuiltInProfiles.builtIn(it) }
+        state.sources.firstOrNull { it.id == occurrence.sourceId }?.resolvedTermKey()?.let { state.profiles[it] }
     fun periods(label: String?): Pair<Int, Int>? {
         val numbers = Regex("\\d+").findAll(label.orEmpty()).mapNotNull { it.value.toIntOrNull() }.toList()
         return if (numbers.isNotEmpty() && numbers.size <= 30 && numbers.first() in 1..30 && numbers.last() in 1..30)
             numbers.first() to numbers.last() else null
+    }
+    fun linkedPeriodTimes(profile: TermScheduleProfile, date: LocalDate, first: Int, last: Int): Pair<Instant, Instant>? {
+        val phase = profile.phaseOn(date) ?: return null
+        val start = phase.period(first)?.start ?: return null
+        val end = phase.period(last)?.end ?: return null
+        val zone = ZoneId.of(profile.timezone)
+        val from = date.atTime(start).atZone(zone).toInstant()
+        val to = date.atTime(end).atZone(zone).toInstant()
+        return if (to > from) from to to else null
     }
     private fun patch(state: ScheduleState, value: ClassOccurrence, edit: ClassOverride, zone: ZoneId): ClassOccurrence? {
         val p = edit.patch()
@@ -208,17 +224,17 @@ object ScheduleProjection {
         val linked = p.timingMode == "linked" || p.timingMode == null && value.linked
         val profile = profile(state, value)
         if (p.timingMode == "linked" && (profile == null || first == null || last == null)) return null
-        val bounds = if (linked && profile != null && first != null && last != null) {
-            val phase = profile.phaseOn(targetDate) ?: return null
-            val start = phase.period(first) ?: return null
-            val end = phase.period(last) ?: return null
-            start.start.toSecondOfDay() / 60 to end.end.toSecondOfDay() / 60
-        } else (p.startMinute ?: value.entry.startMinute) to (p.endMinute ?: value.entry.endMinute)
+        val linkedTimes = if (linked && profile != null && first != null && last != null)
+            linkedPeriodTimes(profile, targetDate, first, last) ?: return null else null
+        val bounds = if (linkedTimes != null)
+            linkedTimes.first.atZone(zone).toLocalTime().toSecondOfDay() / 60 to
+                (linkedTimes.second.atZone(zone).toLocalTime().toSecondOfDay() / 60)
+        else (p.startMinute ?: value.entry.startMinute) to (p.endMinute ?: value.entry.endMinute)
         val overnight = value.end.atZone(zone).toLocalDate() > value.date &&
             p.startMinute == null && p.endMinute == null && p.periodStart == null && p.periodEnd == null && p.timingMode == null
-        if (bounds.second <= bounds.first && !overnight) return null
-        val start = targetDate.atTime(LocalTime.ofSecondOfDay(bounds.first * 60L)).atZone(zone).toInstant()
-        val end = targetDate.plusDays(if (overnight) 1 else 0)
+        if (linkedTimes == null && bounds.second <= bounds.first && !overnight) return null
+        val start = linkedTimes?.first ?: targetDate.atTime(LocalTime.ofSecondOfDay(bounds.first * 60L)).atZone(zone).toInstant()
+        val end = linkedTimes?.second ?: targetDate.plusDays(if (overnight) 1 else 0)
             .atTime(LocalTime.ofSecondOfDay(bounds.second * 60L)).atZone(zone).toInstant()
         return value.copy(entry = value.entry.copy(title = p.title ?: value.entry.title, day = targetDate.dayOfWeek.value,
             startMinute = bounds.first, endMinute = bounds.second, location = p.location ?: value.entry.location),
@@ -252,7 +268,7 @@ object ScheduleProjection {
         val templates = base.mapNotNull { raw ->
             val value = raw.copy(linked = profile(state, raw) != null && periods(raw.periodLabel) != null)
             val edit = state.editsByKey[ClassOverride.key(value.sourceId, value.seriesId, null)]
-            val withEdit = if (edit == null) value else patch(state, value, edit, zone)
+            val withEdit = if (edit == null) value else patch(state, value, edit, zone) ?: value
             withEdit
         }
         val composed = (0L..6L).flatMap { offset ->
@@ -281,8 +297,8 @@ object ScheduleProjection {
         if (!applyThisWeek) return composed.sortedBy { it.start }
         return composed.mapNotNull { value ->
             val edit = state.editsByKey[ClassOverride.key(value.sourceId, value.seriesId, value.anchorDate.toString())]
-            val edited = if (edit == null) value else patch(state, value, edit, zone)
-            edited?.takeUnless { state.daysByDate[it.date.toString()]?.mode == "none" }
+            val edited = if (edit == null) value else patch(state, value, edit, zone) ?: value
+            edited.takeUnless { state.daysByDate[it.date.toString()]?.mode == "none" }
         }.sortedWith(compareBy<ClassOccurrence> { it.start }.thenBy { it.entry.title }.thenBy { it.entry.id })
     }
     fun week(state: ScheduleState, first: LocalDate, zone: ZoneId): List<ClassOccurrence> {

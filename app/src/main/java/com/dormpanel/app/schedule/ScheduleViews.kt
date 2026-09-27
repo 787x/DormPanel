@@ -281,10 +281,10 @@ internal class ScheduleEditors(private val context: Context, private val source:
         fun linkedBounds(): Pair<Int, Int>? {
             val first = firstPeriod.text.toString().toIntOrNull() ?: return null
             val last = lastPeriod.text.toString().toIntOrNull() ?: return null
-            val phase = profile?.phaseOn(targetDate()) ?: return null
-            val s = phase.period(first) ?: return null
-            val e = phase.period(last) ?: return null
-            return (s.start.toSecondOfDay() / 60) to (e.end.toSecondOfDay() / 60)
+            val times = ScheduleProjection.linkedPeriodTimes(profile ?: return null, targetDate(), first, last) ?: return null
+            val zone = source.clock.zone()
+            return (times.first.atZone(zone).toLocalTime().toSecondOfDay() / 60) to
+                (times.second.atZone(zone).toLocalTime().toSecondOfDay() / 60)
         }
         fun updateTimes() {
             firstPeriod.isEnabled = profile != null && timing.selectedItemPosition == 0
@@ -354,7 +354,9 @@ internal class ScheduleEditors(private val context: Context, private val source:
                 linked && (first == null || last == null || first > last || range == null) -> "The selected phase has no definition for those periods."
                 linked && allWeeks && profile!!.phases.any { phase -> phase.period(first!!) == null || phase.period(last!!) == null } ->
                     "Every term phase must define those periods for an all-weeks edit."
-                end <= start -> "End must be after start."
+                end <= start && !(baseline.end.atZone(source.clock.zone()).toLocalDate() > baseline.date &&
+                    !linked && start == baseline.entry.startMinute && end == baseline.entry.endMinute) ->
+                    "End must be after start."
                 !patch.valid(allWeeks) -> "Check the class fields and text lengths."
                 source.saveClassOverride(item.sourceId, item.seriesId, if (allWeeks) null else date, patch) -> null
                 else -> "Could not save class edit."

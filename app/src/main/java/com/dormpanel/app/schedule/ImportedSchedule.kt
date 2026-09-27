@@ -52,10 +52,10 @@ data class ImportSource(@PrimaryKey val id: String, val displayName: String, val
     val importedAt: Long, val timezones: String, val occurrenceCount: Int, val firstStart: Long, val lastEnd: Long,
     val termKey: String? = null)
 
-/** Narrow PR25 compatibility path; arbitrary source names never imply a term. */
-fun ImportSource.resolvedTermKey(): String? = termKey ?: if (
-    calendarName == "湖北大学 2026-2027-1" && filename.lowercase(java.util.Locale.ROOT).endsWith(".csv")
-) BuiltInProfiles.TERM_2026_2027_1 else null
+/** PR25 CSV rows had no termKey; only the exact parser calendar signature may recover it. */
+fun ImportSource.resolvedTermKey(): String? = termKey ?: if (filename.lowercase(java.util.Locale.ROOT).endsWith(".csv"))
+    Regex("湖北大学 ([0-9]{4}-[0-9]{4}-[0-9])").matchEntire(calendarName.orEmpty())?.groupValues?.get(1)
+else null
 
 @Entity(tableName = "imported_timetable_occurrences",
     foreignKeys = [ForeignKey(entity = ImportSource::class, parentColumns = ["id"], childColumns = ["sourceId"], onDelete = ForeignKey.CASCADE)],

@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference
 /** Local SAF adapter and preview UI. All content reads, hashing and parsing run on the worker. */
 class ScheduleImportUi(private val context: Context, private val source: ScheduleSource,
     private val appearance: AppearanceController, private val webDav: WebDavSyncController,
+    private val profileStore: TermScheduleProfileStore,
     private val launchPicker: () -> Unit) {
     private val worker = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
@@ -31,7 +32,6 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     private var receiver: TemporaryLanUploadServer? = null
     private var receiveDialog: AlertDialog? = null
     private var receiveTick: Runnable? = null
-    private val profileStore = TermScheduleProfileStore(context)
     private val importer = TimetableImporter(profiles = profileStore)
     private val themeListener: (AppearanceState) -> Unit = { state -> dialogs.forEach { theme(it, state) } }
     init { appearance.addListener(themeListener) }
@@ -223,6 +223,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         if (BuiltInProfiles.builtIn(termKeyHint) != null) {
             builder.setNeutralButton("Reset to built-in") { _, _ ->
                 profileStore.remove(termKeyHint)
+                source.refreshProfiles()
                 onDone?.invoke(BuiltInProfiles.builtIn(termKeyHint))
             }
         } else if (existing != null) {
@@ -232,6 +233,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                     .setNegativeButton("Cancel", null)
                     .setPositiveButton("Delete profile") { _, _ ->
                         profileStore.remove(existing.termKey)
+                        source.refreshProfiles()
                         onDone?.invoke(null)
                     }.create())
             }
@@ -254,6 +256,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                     error.text = "Profile is missing periods: ${missing.sorted().joinToString(", ")}"; return@setOnClickListener
                 }
                 profileStore.put(profile)
+                source.refreshProfiles()
                 dialog.dismiss()
                 onDone?.invoke(profile)
             }.onFailure { error.text = errorText(it) }
@@ -329,6 +332,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
             } else if (hasPreset) {
                 fields.addView(context.scheduleButton("Reset ${profile.termKey} to built-in") {
                     profileStore.remove(profile.termKey)
+                    source.refreshProfiles()
                     dialog.dismiss(); termProfiles()
                 })
             } else {
@@ -338,6 +342,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                         .setNegativeButton("Cancel", null)
                         .setPositiveButton("Delete profile") { _, _ ->
                             profileStore.remove(profile.termKey)
+                            source.refreshProfiles()
                             dialog.dismiss(); termProfiles()
                         }.create())
                 })

@@ -156,4 +156,105 @@ class ScheduleOverridesTest {
         val unmatched = both.copy(imported = listOf(base.copy(id = "new", seriesId = "different")))
         assertEquals("高等数学B-1", week(unmatched).single().entry.title)
     }
+
+    @Test fun profileRefreshUsesChangedSnapshotWithoutRewritingImportedRows() {
+        val date = monday.plusDays(2)
+        val base = occurrence("a", "series", date)
+        val customSource = importedSource().copy(calendarName = "湖北大学 2027-2028-1", termKey = null)
+        val edit = edit(series = "series", patch = ClassPatch(periodStart = 5, periodEnd = 6, timingMode = "linked"))
+        val initial = ScheduleState(sources = listOf(customSource), imported = listOf(base), classOverrides = listOf(edit))
+        val store = object : ScheduleStore {
+            override fun load(callback: (Result<ScheduleState>) -> Unit) = callback(Result.success(initial))
+            override fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun close() = Unit
+        }
+        fun profile(start: String) = TermScheduleProfile("2027-2028-1", zone.id, monday,
+            listOf(SchedulePhase(monday, listOf(PeriodTime(5, LocalTime.parse(start), LocalTime.parse("14:15")),
+                PeriodTime(6, LocalTime.parse("14:20"), LocalTime.parse("15:00"))))))
+        var current: TermScheduleProfile? = profile("14:00")
+        val source = ScheduleSource(store, profileResolver = { current })
+        var notifications = 0
+        source.subscribe { notifications++ }
+        assertEquals(14 * 60, week(source.state).single().entry.startMinute)
+        current = profile("13:30"); source.refreshProfiles()
+        assertEquals(13 * 60 + 30, week(source.state).single().entry.startMinute)
+        assertEquals(1, notifications)
+        source.refreshProfiles(); assertEquals(1, notifications)
+        current = null; source.refreshProfiles()
+        assertNull(ScheduleProjection.profile(source.state, week(source.state).single()))
+        assertEquals(base.start, source.state.imported.single().start)
+        assertEquals(2, notifications)
+    }
+
+    @Test fun editedBuiltInProfileResetIsVisibleWithoutRestart() {
+        val date = monday.plusDays(2)
+        val base = state(occurrence("a", "series", date)).copy(classOverrides = listOf(edit(series = "series",
+            patch = ClassPatch(periodStart = 5, periodEnd = 6, timingMode = "linked"))))
+        val store = object : ScheduleStore {
+            override fun load(callback: (Result<ScheduleState>) -> Unit) = callback(Result.success(base))
+            override fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit) = callback(Result.success(Unit))
+            override fun close() = Unit
+        }
+        var current = BuiltInProfiles.term2026.copy(phases = BuiltInProfiles.term2026.phases.map { phase ->
+            phase.copy(periods = phase.periods.map { if (it.periodNumber == 5) it.copy(start = LocalTime.of(13, 30)) else it })
+        })
+        val source = ScheduleSource(store, profileResolver = { current })
+        assertEquals(13 * 60 + 30, week(source.state).single().entry.startMinute)
+        current = BuiltInProfiles.term2026; source.refreshProfiles()
+        assertEquals(14 * 60 + 30, week(source.state).single().entry.startMinute)
+    }
+
+    @Test fun linkedTimesUseProfileTimezoneAcrossScopesAndMakeup() {
+        val display = ZoneOffset.UTC
+        val targetWeek = LocalDate.parse("2026-10-12")
+        val wednesday = targetWeek.plusDays(2)
+        val sunday = targetWeek.plusDays(6)
+        val original = occurrence("a", "series", wednesday)
+        val source = importedSource().copy(termKey = "2026-2027-1")
+        val base = ScheduleState(sources = listOf(source), imported = listOf(original),
+            profiles = mapOf(source.termKey!! to BuiltInProfiles.term2026))
+        fun assertUtc(item: ClassOccurrence, date: LocalDate) {
+            assertEquals(date.atTime(6, 0).toInstant(display), item.start)
+            assertEquals(date.atTime(7, 40).toInstant(display), item.end)
+            assertEquals(360, item.entry.startMinute)
+            assertEquals(460, item.entry.endMinute)
+        }
+        val allWeeks = base.copy(classOverrides = listOf(edit(series = "series", patch = ClassPatch(
+            periodStart = 5, periodEnd = 6, timingMode = "linked"))))
+        assertUtc(ScheduleProjection.week(allWeeks, targetWeek, display).single(), wednesday)
+        val moved = base.copy(classOverrides = listOf(edit(series = "series", date = wednesday,
+            patch = ClassPatch(date = targetWeek.plusDays(4).toString(), timingMode = "linked"))))
+        assertUtc(ScheduleProjection.week(moved, targetWeek, display).single(), targetWeek.plusDays(4))
+        val makeup = base.copy(dayAdjustments = listOf(DayAdjustment(sunday.toString(), "weekday", 3)))
+        assertUtc(ScheduleProjection.week(makeup, targetWeek, display).single { it.date == sunday }, sunday)
+    }
+
+    @Test fun overnightImportedClassKeepsItsInstantsForNonTimeEdits() {
+        val date = monday.plusDays(2)
+        val start = date.atTime(23, 0).atZone(zone).toInstant()
+        val end = date.plusDays(1).atTime(1, 0).atZone(zone).toInstant()
+        val base = occurrence("overnight", "night", date, periods = null).copy(start = start.toEpochMilli(),
+            end = end.toEpochMilli(), originalStart = start.toEpochMilli())
+        val edited = state(base).copy(classOverrides = listOf(edit(series = "night", date = date,
+            patch = ClassPatch(title = "Night lab", location = "Lab", teacher = "Professor", note = "Bring notes"))))
+        val result = week(edited).single()
+        assertEquals(start, result.start); assertEquals(end, result.end)
+        assertEquals(23 * 60, result.entry.startMinute); assertEquals(60, result.entry.endMinute)
+        assertEquals("Night lab", result.entry.title); assertEquals("Professor", result.teacher)
+    }
+
+    @Test fun oldCsvTermRecoveryRequiresExactParserSignature() {
+        val old = importedSource().copy(calendarName = "湖北大学 2027-2028-1", termKey = null)
+        assertEquals("2027-2028-1", old.resolvedTermKey())
+        assertNull(old.copy(calendarName = "Personal 2027-2028-1").resolvedTermKey())
+        assertNull(old.copy(filename = "personal.ics").resolvedTermKey())
+        assertNull(old.copy(calendarName = "湖北大学 2027-2028-1 extra").resolvedTermKey())
+        assertNull(old.copy(calendarName = null, displayName = "湖北大学 2027-2028-1").resolvedTermKey())
+    }
 }
