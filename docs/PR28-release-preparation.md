@@ -14,6 +14,14 @@ signing inputs were supplied through process environment variables. No signing
 material or password is committed. Artifacts remain in ignored `artifacts/release/`;
 they have not been uploaded or published.
 
+The final candidate was rebuilt from clean source commit
+`0abc0a4b90a21f2c4d92c1f79da9df73206c981d`. The subsequent verification-document
+commit only records these results; application, HA integration, test, and release
+tooling sources are identical. AGP's `extractReleaseVersionControlInfo` records
+that source revision; rebuilding after a commit can change the APK hash even when
+application code is unchanged. The hashes below identify the final local files,
+which were independently reverified after that committed-source build.
+
 | Metadata | Verified result |
 | --- | --- |
 | APK | `DormPanel-0.1.1.apk` |
@@ -22,7 +30,7 @@ they have not been uploaded or published.
 | minSdk / targetSdk | `28` / `37` (unchanged) |
 | Debuggable | **false** (`aapt2 dump badging` has no `application-debuggable`) |
 | Signer certificate SHA-256 | `32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7` |
-| APK SHA-256 | `8e2624754a3ae6efd1bb656267f6fabdc1a0faf24f5e451741985130cc52dfa6` |
+| APK SHA-256 | `5eb359f1ea39667ddff1b68650d8ead7f66d64dcf046982356941d2c42bd385b` |
 | APK size | 15,888,920 bytes |
 | APK sidecar | `DormPanel-0.1.1.apk.sha256` (hash and filename independently checked) |
 | HA archive | `DormPanel-HA-0.1.1.zip` |
@@ -128,6 +136,7 @@ Local logs/reports: `build/pr28/android-checks.log`, `unit-tests-rerun.log`,
 `android-checks-final.log`, `ha-tests.log`, `emulator-full.log`,
 `emulator-full-results.xml`, `emulator-applicable.log`,
 `emulator-applicable-results.xml`, `release-build.log`,
+`release-build-committed.log`, `release-metadata.json`,
 `release-gates.log`, `apksigner-verify.log`, and `aapt2-badging.log`.
 
 ## Pending X08E final acceptance
