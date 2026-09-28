@@ -223,13 +223,13 @@ internal class ScheduleEditors(private val context: Context, private val source:
         val withoutWeek = source.state.copy(classOverrides = source.state.classOverrides.filterNot {
             allWeeks && it.sourceId == item.sourceId && it.seriesId == item.seriesId && it.anchorDate != null
         })
-        val draft = if (allWeeks) ScheduleProjection.week(withoutWeek, monday, source.clock.zone())
+        val draft = if (allWeeks) ScheduleProjection.academicWeek(withoutWeek, monday, source.clock.zone())
             .firstOrNull { it.seriesId == item.seriesId && it.sourceId == item.sourceId &&
                 it.imported?.id == item.imported?.id } ?: item else item
         val lower = source.state.copy(classOverrides = source.state.classOverrides.filterNot {
             it.key == key || allWeeks && it.sourceId == item.sourceId && it.seriesId == item.seriesId && it.anchorDate != null
         })
-        val baseline = ScheduleProjection.week(lower, date.minusDays((date.dayOfWeek.value - 1).toLong()), source.clock.zone())
+        val baseline = ScheduleProjection.academicWeek(lower, date.minusDays((date.dayOfWeek.value - 1).toLong()), source.clock.zone())
             .firstOrNull { it.seriesId == item.seriesId && it.sourceId == item.sourceId &&
                 it.imported?.id == item.imported?.id && (allWeeks || it.anchorDate == date) } ?: draft
         val profile = ScheduleProjection.profile(source.state, item)
@@ -237,8 +237,8 @@ internal class ScheduleEditors(private val context: Context, private val source:
         val location = input("Location", draft.entry.location)
         val teacher = input("Teacher", draft.teacher)
         val note = input("User note", draft.note, true)
-        var selectedDate = draft.date
-        var selectedWeekday = if (allWeeks && draft.copiedFrom != null) draft.copiedFrom.dayOfWeek else draft.date.dayOfWeek
+        var selectedDate = draft.academicDate
+        var selectedWeekday = if (allWeeks && draft.copiedFrom != null) draft.copiedFrom.dayOfWeek else draft.academicDate.dayOfWeek
         var start = draft.entry.startMinute
         var end = draft.entry.endMinute
         val existingRange = ScheduleProjection.periods(draft.periodLabel)
@@ -339,8 +339,8 @@ internal class ScheduleEditors(private val context: Context, private val source:
             val last = lastPeriod.text.toString().toIntOrNull()
             val patch = ClassPatch(
                 title = title.text.toString().trim().takeIf { it != baseline.entry.title },
-                weekday = if (allWeeks && !multiWeekday) selectedWeekday.takeIf { it.value != baseline.date.dayOfWeek.value }?.value else null,
-                date = if (!allWeeks) selected.toString().takeIf { selected != baseline.date } else null,
+                weekday = if (allWeeks && !multiWeekday) selectedWeekday.takeIf { it.value != baseline.academicDate.dayOfWeek.value }?.value else null,
+                date = if (!allWeeks) selected.toString().takeIf { selected != baseline.academicDate } else null,
                 periodStart = if (linked) first?.takeIf { it != baseRange?.first } else null,
                 periodEnd = if (linked) last?.takeIf { it != baseRange?.second } else null,
                 timingMode = if (linked != baseline.linked) if (linked) "linked" else "custom" else null,

@@ -179,23 +179,26 @@ class ScheduleSession(clock: ScheduleClock, private val modeStore: ScheduleModeS
     fun select(date: LocalDate) { selectedDate = date; month = YearMonth.from(date) }
     // Rollover retains explicit selection; Today is the deterministic way to follow the new day.
 }
-/** One effective class. anchorDate identifies the composed day before a this-week move. */
+/** date is display-local. academicDate resolves profile phases; anchorDate is the stable pre-move academic identity. */
 data class ClassOccurrence(val entry: TimetableEntry, val date: LocalDate, val start: Instant, val end: Instant,
     val imported: ImportedClassOccurrence? = null, val anchorDate: LocalDate = date,
     val seriesId: String = imported?.seriesId ?: entry.id, val sourceId: String? = imported?.sourceId,
     val periodLabel: String? = imported?.periodLabel, val teacher: String = "", val note: String = "",
     val allWeeksEdited: Boolean = false, val thisWeekEdited: Boolean = false,
-    val copiedFrom: LocalDate? = null, val linked: Boolean = false)
+    val copiedFrom: LocalDate? = null, val linked: Boolean = false, val academicDate: LocalDate = date)
 enum class ClassStatus { CURRENT, NEXT_TODAY, NO_MORE_TODAY }
 data class TimetableCardContent(val status: ClassStatus, val occurrences: List<ClassOccurrence>)
 object ScheduleProjection {
     fun weekStart(date: LocalDate, locale: Locale): LocalDate = date.minusDays((date.dayOfWeek.value - weekDays(locale).first().value + 7L) % 7)
-    private fun importedClass(item: ImportedClassOccurrence, zone: ZoneId): ClassOccurrence {
+    private fun importedClass(state: ScheduleState, item: ImportedClassOccurrence, zone: ZoneId): ClassOccurrence {
         val start = Instant.ofEpochMilli(item.start).atZone(zone)
         val end = Instant.ofEpochMilli(item.end).atZone(zone)
+        // CSV source timezone preserves its academic date even if the active profile timezone changes.
+        val academic = if (state.sources.firstOrNull { it.id == item.sourceId }?.resolvedTermKey() != null)
+            start.toInstant().atZone(ZoneId.of(item.timezone)).toLocalDate() else start.toLocalDate()
         return ClassOccurrence(TimetableEntry(item.id, item.title, start.dayOfWeek.value,
             start.hour * 60 + start.minute, end.hour * 60 + end.minute, item.location), start.toLocalDate(),
-            start.toInstant(), end.toInstant(), item)
+            start.toInstant(), end.toInstant(), item, anchorDate = academic, academicDate = academic)
     }
     private fun monday(date: LocalDate) = date.minusDays((date.dayOfWeek.value - 1).toLong())
     fun profile(state: ScheduleState, occurrence: ClassOccurrence): TermScheduleProfile? =
@@ -216,7 +219,7 @@ object ScheduleProjection {
     }
     private fun patch(state: ScheduleState, value: ClassOccurrence, edit: ClassOverride, zone: ZoneId): ClassOccurrence? {
         val p = edit.patch()
-        val targetDate = p.date?.let { LocalDate.parse(it) } ?: p.weekday?.let { monday(value.date).plusDays((it - 1).toLong()) } ?: value.date
+        val targetDate = p.date?.let { LocalDate.parse(it) } ?: p.weekday?.let { monday(value.academicDate).plusDays((it - 1).toLong()) } ?: value.academicDate
         if (p.date != null && monday(targetDate) != monday(value.anchorDate)) return null
         val original = periods(value.periodLabel)
         val first = p.periodStart ?: original?.first
@@ -233,28 +236,31 @@ object ScheduleProjection {
         val overnight = value.end.atZone(zone).toLocalDate() > value.date &&
             p.startMinute == null && p.endMinute == null && p.periodStart == null && p.periodEnd == null && p.timingMode == null
         if (linkedTimes == null && bounds.second <= bounds.first && !overnight) return null
-        val start = linkedTimes?.first ?: targetDate.atTime(LocalTime.ofSecondOfDay(bounds.first * 60L)).atZone(zone).toInstant()
-        val end = linkedTimes?.second ?: targetDate.plusDays(if (overnight) 1 else 0)
+        val displayTarget = value.date.plusDays(targetDate.toEpochDay() - value.academicDate.toEpochDay())
+        val start = linkedTimes?.first ?: displayTarget.atTime(LocalTime.ofSecondOfDay(bounds.first * 60L)).atZone(zone).toInstant()
+        val end = linkedTimes?.second ?: displayTarget.plusDays(if (overnight) 1 else 0)
             .atTime(LocalTime.ofSecondOfDay(bounds.second * 60L)).atZone(zone).toInstant()
-        return value.copy(entry = value.entry.copy(title = p.title ?: value.entry.title, day = targetDate.dayOfWeek.value,
+        val displayDate = start.atZone(zone).toLocalDate()
+        return value.copy(entry = value.entry.copy(title = p.title ?: value.entry.title, day = displayDate.dayOfWeek.value,
             startMinute = bounds.first, endMinute = bounds.second, location = p.location ?: value.entry.location),
-            date = targetDate, start = start, end = end,
+            date = displayDate, academicDate = targetDate, start = start, end = end,
             periodLabel = if (p.periodStart != null || p.periodEnd != null)
                 "[${(first!!..last!!).joinToString("-") { "%02d".format(it) }}节]" else value.periodLabel,
             teacher = p.teacher ?: value.teacher, note = p.note ?: value.note,
             allWeeksEdited = value.allWeeksEdited || edit.anchorDate == null,
             thisWeekEdited = value.thisWeekEdited || edit.anchorDate != null, linked = linked)
     }
-    private fun onDate(value: ClassOccurrence, date: LocalDate, zone: ZoneId, anchor: LocalDate = value.anchorDate): ClassOccurrence {
-        if (date == value.date) return value.copy(anchorDate = anchor)
-        val start = date.atTime(LocalTime.ofSecondOfDay(value.entry.startMinute * 60L)).atZone(zone).toInstant()
-        val endDate = date.plusDays(if (value.end.atZone(zone).toLocalDate() > value.date) 1 else 0)
+    private fun onAcademicDate(value: ClassOccurrence, date: LocalDate, zone: ZoneId, anchor: LocalDate): ClassOccurrence {
+        if (date == value.academicDate) return value.copy(anchorDate = anchor)
+        val displayDate = value.date.plusDays(date.toEpochDay() - value.academicDate.toEpochDay())
+        val start = displayDate.atTime(LocalTime.ofSecondOfDay(value.entry.startMinute * 60L)).atZone(zone).toInstant()
+        val endDate = displayDate.plusDays(if (value.end.atZone(zone).toLocalDate() > value.date) 1 else 0)
         val end = endDate.atTime(LocalTime.ofSecondOfDay(value.entry.endMinute * 60L)).atZone(zone).toInstant()
-        return value.copy(date = date, anchorDate = anchor, start = start, end = end,
-            entry = value.entry.copy(day = date.dayOfWeek.value))
+        return value.copy(date = displayDate, academicDate = date, anchorDate = anchor, start = start, end = end,
+            entry = value.entry.copy(day = displayDate.dayOfWeek.value))
     }
     /** Base → all-weeks → target day composition → this-week. Source-day adjustments are never copied. */
-    private fun academicWeek(state: ScheduleState, first: LocalDate, zone: ZoneId, applyThisWeek: Boolean = true): List<ClassOccurrence> {
+    internal fun academicWeek(state: ScheduleState, first: LocalDate, zone: ZoneId): List<ClassOccurrence> {
         val monday = monday(first)
         val base = (0L..6L).flatMap { offset ->
             val date = monday.plusDays(offset)
@@ -263,8 +269,9 @@ object ScheduleProjection {
                 val end = date.atTime(LocalTime.ofSecondOfDay(entry.endMinute * 60L)).atZone(zone).toInstant()
                 ClassOccurrence(entry, date, start, end)
             }
-        } + state.importedIndex.range(monday.atStartOfDay(zone).toInstant().toEpochMilli(),
-            monday.plusDays(7).atStartOfDay(zone).toInstant().toEpochMilli()).map { importedClass(it, zone) }
+        } + state.importedIndex.range(monday.minusDays(2).atStartOfDay(zone).toInstant().toEpochMilli(),
+            monday.plusDays(9).atStartOfDay(zone).toInstant().toEpochMilli()).map { importedClass(state, it, zone) }
+            .filter { it.academicDate >= monday && it.academicDate < monday.plusDays(7) }
         val templates = base.mapNotNull { raw ->
             val value = raw.copy(linked = profile(state, raw) != null && periods(raw.periodLabel) != null)
             val edit = state.editsByKey[ClassOverride.key(value.sourceId, value.seriesId, null)]
@@ -278,8 +285,8 @@ object ScheduleProjection {
                 "none" -> emptyList()
                 "weekday" -> {
                     val sourceDate = monday.plusDays((day.weekday!! - 1).toLong())
-                    templates.filter { it.date == sourceDate }.mapNotNull { template ->
-                        var copied = onDate(template, target, zone, target).copy(copiedFrom = sourceDate)
+                    templates.filter { it.academicDate == sourceDate }.mapNotNull { template ->
+                        var copied = onAcademicDate(template, target, zone, target).copy(copiedFrom = sourceDate)
                         val range = periods(copied.periodLabel)
                         val term = profile(state, copied)
                         if (copied.linked && range != null && term != null) {
@@ -291,10 +298,9 @@ object ScheduleProjection {
                         copied
                     }
                 }
-                else -> templates.filter { it.date == target }.map { onDate(it, target, zone) }
+                else -> templates.filter { it.academicDate == target }
             }
         }
-        if (!applyThisWeek) return composed.sortedBy { it.start }
         return composed.mapNotNull { value ->
             val edit = state.editsByKey[ClassOverride.key(value.sourceId, value.seriesId, value.anchorDate.toString())]
             val edited = if (edit == null) value else patch(state, value, edit, zone) ?: value
@@ -303,8 +309,10 @@ object ScheduleProjection {
     }
     fun week(state: ScheduleState, first: LocalDate, zone: ZoneId): List<ClassOccurrence> {
         val start = first.atStartOfDay(zone).toInstant()
-        val carry = academicWeek(state, first.minusWeeks(1), zone).filter { it.start < start && it.end > start }
-        return (carry + academicWeek(state, first, zone)).sortedBy { it.start }
+        val end = first.plusDays(7).atStartOfDay(zone).toInstant()
+        // An adjacent academic week can resolve into this display week, including across Sunday/Monday.
+        return (-1L..1L).flatMap { academicWeek(state, first.plusWeeks(it), zone) }
+            .filter { it.start < end && it.end > start }.sortedBy { it.start }
     }
     fun weekDays(locale: Locale): List<DayOfWeek> {
         val first = WeekFields.of(locale).firstDayOfWeek
@@ -325,7 +333,7 @@ object ScheduleProjection {
     fun occurrences(state: ScheduleState, clock: ScheduleClock): List<ClassOccurrence> {
         val today = clock.today()
         val futureWeeks = state.importedIndex.upcoming(clock.instant().toEpochMilli(), 16).map {
-            monday(Instant.ofEpochMilli(it.start).atZone(clock.zone()).toLocalDate())
+            monday(importedClass(state, it, clock.zone()).academicDate)
         }
         val weeks = ((-1L..2L).map { monday(today).plusWeeks(it) } + futureWeeks).distinct()
         return weeks.flatMap { academicWeek(state, it, clock.zone()) }

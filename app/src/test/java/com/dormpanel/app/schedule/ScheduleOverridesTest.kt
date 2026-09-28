@@ -249,6 +249,118 @@ class ScheduleOverridesTest {
         assertEquals("Night lab", result.entry.title); assertEquals("Professor", result.teacher)
     }
 
+    @Test fun linkedMondayDisplaysOnSundayAndMetadataEditsKeepAcademicIdentityAndInstants() {
+        val display = ZoneId.of("America/New_York")
+        val academic = LocalDate.parse("2026-10-12")
+        val displayDate = academic.minusDays(1)
+        val start = academic.atTime(8, 0).atZone(zone).toInstant()
+        val end = academic.atTime(9, 40).atZone(zone).toInstant()
+        val row = occurrence("morning", "morning", academic, periods = "[01-02节]").copy(
+            start = start.toEpochMilli(), end = end.toEpochMilli(), originalStart = start.toEpochMilli())
+        val base = state(row)
+        val displayWeek = academic.minusWeeks(1)
+        fun projected(data: ScheduleState) = ScheduleProjection.week(data, displayWeek, display).single()
+        fun assertPresentation(item: ClassOccurrence) {
+            assertEquals(Instant.parse("2026-10-12T00:00:00Z"), item.start)
+            assertEquals(Instant.parse("2026-10-12T01:40:00Z"), item.end)
+            assertEquals(displayDate, item.date)
+            assertEquals(item.start.atZone(display).toLocalDate(), item.date)
+            assertEquals(7, item.entry.day)
+            assertEquals(20 * 60, item.entry.startMinute)
+            assertEquals(21 * 60 + 40, item.entry.endMinute)
+            assertEquals(academic, item.academicDate)
+            assertEquals(academic, item.anchorDate)
+        }
+        assertPresentation(projected(base))
+        val thisWeek = base.copy(classOverrides = listOf(edit(series = "morning", date = academic,
+            patch = ClassPatch(teacher = "Professor", note = "Bring notes"))))
+        val weekly = projected(thisWeek)
+        assertPresentation(weekly)
+        assertEquals("Professor", weekly.teacher); assertEquals("Bring notes", weekly.note)
+        val allWeeks = base.copy(classOverrides = listOf(edit(series = "morning",
+            patch = ClassPatch(title = "Morning lab", location = "New room"))))
+        val recurring = projected(allWeeks)
+        assertPresentation(recurring)
+        assertEquals("Morning lab", recurring.entry.title); assertEquals("New room", recurring.entry.location)
+        listOf(ClassPatch(teacher = "Only teacher"), ClassPatch(note = "Only note")).forEach { patch ->
+            val metadataOnly = projected(base.copy(classOverrides = listOf(edit(series = "morning",
+                date = academic, patch = patch))))
+            assertPresentation(metadataOnly)
+            assertEquals(row.title, metadataOnly.entry.title)
+            assertEquals(row.location, metadataOnly.entry.location)
+            assertEquals(patch.teacher ?: "", metadataOnly.teacher)
+            assertEquals(patch.note ?: "", metadataOnly.note)
+        }
+        val combined = projected(allWeeks.copy(classOverrides = allWeeks.classOverrides + thisWeek.classOverrides))
+        assertPresentation(combined)
+        assertEquals("Morning lab", combined.entry.title); assertEquals("Professor", combined.teacher)
+        assertEquals(row, thisWeek.imported.single())
+        assertTrue(ScheduleProjection.week(thisWeek, academic, display).isEmpty())
+        val clock = object : ScheduleClock {
+            override fun instant() = displayDate.atTime(19, 0).atZone(display).toInstant()
+            override fun zone() = display
+            override fun locale() = java.util.Locale.US
+        }
+        val card = ScheduleProjection.timetableCard(thisWeek, clock, 2, 1)
+        assertEquals(ClassStatus.NEXT_TODAY, card.status)
+        assertPresentation(card.occurrences.single())
+        assertEquals(start, ScheduleProjection.nextBoundary(thisWeek, clock))
+    }
+
+    @Test fun linkedDateMoveKeepsOriginalAcademicAnchorAcrossDisplayWeekBoundary() {
+        val display = ZoneId.of("America/New_York")
+        val originalDate = LocalDate.parse("2026-10-12")
+        val target = originalDate.plusDays(2)
+        val start = originalDate.atTime(8, 0).atZone(zone).toInstant().toEpochMilli()
+        val end = originalDate.atTime(9, 40).atZone(zone).toInstant().toEpochMilli()
+        val row = occurrence("morning", "morning", originalDate, periods = "[01-02节]").copy(
+            start = start, end = end, originalStart = start)
+        val data = state(row).copy(classOverrides = listOf(edit(series = "morning", date = originalDate,
+            patch = ClassPatch(date = target.toString(), note = "Moved"))))
+        val moved = ScheduleProjection.week(data, originalDate, display).single()
+        assertEquals(target.atTime(8, 0).atZone(zone).toInstant(), moved.start)
+        assertEquals(target.atTime(9, 40).atZone(zone).toInstant(), moved.end)
+        assertEquals(target.minusDays(1), moved.date)
+        assertEquals(target, moved.academicDate)
+        assertEquals(originalDate, moved.anchorDate)
+        assertEquals("Moved", moved.note)
+        assertTrue(ScheduleProjection.week(data, originalDate.minusWeeks(1), display).isEmpty())
+    }
+
+    @Test fun makeupResolvesTargetAcademicPhaseBeforeCrossingDisplayDateBoundary() {
+        val display = ZoneId.of("America/New_York")
+        val sourceDate = LocalDate.parse("2026-10-05")
+        val target = LocalDate.parse("2026-10-08")
+        val profile = TermScheduleProfile(BuiltInProfiles.TERM_2026_2027_1, zone.id, LocalDate.parse("2026-08-31"),
+            listOf(SchedulePhase(LocalDate.parse("2026-08-31"), listOf(
+                PeriodTime(1, LocalTime.of(8, 0), LocalTime.of(8, 45)),
+                PeriodTime(2, LocalTime.of(8, 55), LocalTime.of(9, 40)))),
+                SchedulePhase(target, listOf(PeriodTime(1, LocalTime.of(9, 0), LocalTime.of(9, 45)),
+                    PeriodTime(2, LocalTime.of(9, 55), LocalTime.of(10, 40))))))
+        assertNull(profile.validate())
+        val start = sourceDate.atTime(8, 0).atZone(zone).toInstant().toEpochMilli()
+        val end = sourceDate.atTime(9, 40).atZone(zone).toInstant().toEpochMilli()
+        val row = occurrence("morning", "morning", sourceDate, periods = "[01-02节]").copy(
+            start = start, end = end, originalStart = start)
+        val base = state(row).copy(profiles = mapOf(profile.termKey to profile),
+            dayAdjustments = listOf(DayAdjustment(target.toString(), "weekday", 1)))
+        val data = base.copy(classOverrides = listOf(edit(series = "morning", date = target,
+            patch = ClassPatch(teacher = "Makeup teacher", note = "Keep target phase"))))
+        val copied = ScheduleProjection.week(data, sourceDate, display).single()
+        assertEquals(Instant.parse("2026-10-08T01:00:00Z"), copied.start)
+        assertEquals(Instant.parse("2026-10-08T02:40:00Z"), copied.end)
+        assertEquals(target.minusDays(1), copied.date)
+        assertEquals(3, copied.entry.day)
+        assertEquals(21 * 60, copied.entry.startMinute)
+        assertEquals(22 * 60 + 40, copied.entry.endMinute)
+        assertEquals(target, copied.academicDate); assertEquals(target, copied.anchorDate)
+        assertEquals(sourceDate, copied.copiedFrom)
+        assertEquals("Makeup teacher", copied.teacher)
+        val baseline = ScheduleProjection.week(base, sourceDate, display).single()
+        assertEquals(baseline.start, copied.start); assertEquals(baseline.end, copied.end)
+        assertEquals(baseline.date, copied.date)
+    }
+
     @Test fun oldCsvTermRecoveryRequiresExactParserSignature() {
         val old = importedSource().copy(calendarName = "湖北大学 2027-2028-1", termKey = null)
         assertEquals("2027-2028-1", old.resolvedTermKey())
