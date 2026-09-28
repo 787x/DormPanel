@@ -10,6 +10,10 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repositoryRoot
 
+$releaseVersion = '0.1.1'
+$releaseVersionCode = '3'
+$releasePackage = 'com.dormpanel.app'
+
 function Fail([string]$Message) {
     Write-Error $Message
     exit 1
@@ -102,12 +106,13 @@ Remove-Item -LiteralPath $sigOutputFile, $sigErrFile -Force -ErrorAction Silentl
 if ($process.ExitCode -ne 0) { Fail ("APK signature verification failed.`n" + $sigOutput) }
 $sigOutput | Write-Host
 
-$sha256Line = ($sigOutput -split "`r?`n") | Where-Object { $_ -match 'SHA-256 digest:' } | Select-Object -First 1
-if (-not $sha256Line) { Fail 'Could not read the signer certificate SHA-256.' }
+$sha256Lines = @(($sigOutput -split "`r?`n") | Where-Object { $_ -match '^.+ certificate SHA-256 digest: [0-9a-fA-F]{64}\s*$' })
+if ($sha256Lines.Count -ne 1) { Fail 'Expected exactly one signer certificate SHA-256.' }
+$sha256Line = $sha256Lines[0]
 $signerSha256 = ($sha256Line -split 'SHA-256 digest:\s*', 2)[1].Trim()
 Write-Host "Signer certificate SHA-256: $signerSha256"
 
-# Expected public fingerprint of the approved 0.1.0 identity (Android Debug
+# Expected public fingerprint of the unchanged approved release identity (Android Debug
 # keypair promoted to the DormPanel release identity on this machine).
 $expectedSigner = '32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7'
 if ($signingReady -and $signerSha256.ToLowerInvariant() -ne $expectedSigner) {
@@ -126,26 +131,32 @@ if ($aapt2) {
     Remove-Item -LiteralPath $badgingFile, $badgingErr -Force -ErrorAction SilentlyContinue
     if ($badgingProcess.ExitCode -ne 0) { Fail ("aapt2 dump badging failed.`n" + $badging) }
     $badging | Write-Host
-    if ($badging -notmatch "package: name='com\.dormpanel\.app'") {
-        Fail 'applicationId is not com.dormpanel.app'
+    $packageLine = ($badging -split "`r?`n") | Where-Object { $_ -match '^package:' } | Select-Object -First 1
+    if ($packageLine -notmatch ("name='" + [regex]::Escape($releasePackage) + "'")) {
+        Fail "applicationId is not $releasePackage"
     }
-    if ($badging -notmatch "versionCode='2'") {
-        Fail "versionCode is not 2"
+    if ($packageLine -notmatch ("versionCode='" + $releaseVersionCode + "'")) {
+        Fail "versionCode is not $releaseVersionCode"
     }
-    if ($badging -notmatch "versionName='0\.1\.0'") {
-        Fail "versionName is not 0.1.0"
+    if ($packageLine -notmatch ("versionName='" + [regex]::Escape($releaseVersion) + "'")) {
+        Fail "versionName is not $releaseVersion"
     }
     if ($badging -match 'application-debuggable') {
         Fail 'Release APK is debuggable'
     }
 } else {
-    Write-Warning 'aapt2 not found; skipping badging metadata checks.'
+    Fail 'aapt2 was not found; official release metadata must be verified.'
 }
 
 # --- Artifact names and sidecars --------------------------------------------
+$haRoot = Join-Path $repositoryRoot 'homeassistant\custom_components\dormpanel'
+if (-not (Test-Path -LiteralPath $haRoot)) { Fail 'HA integration source tree is missing.' }
+$haManifest = Get-Content -LiteralPath (Join-Path $haRoot 'manifest.json') -Raw | ConvertFrom-Json
+if ($haManifest.version -cne $releaseVersion) { Fail "HA integration version is not $releaseVersion" }
+
 $outDir = Join-Path $repositoryRoot 'artifacts\release'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-$apkName = 'DormPanel-0.1.0.apk'
+$apkName = "DormPanel-$releaseVersion.apk"
 $apkOut = Join-Path $outDir $apkName
 Copy-Item $apk.FullName $apkOut -Force
 
@@ -157,9 +168,7 @@ Write-Host "APK SHA-256: $apkHash"
 Write-Host "Sidecar: $sidecar"
 
 # --- HA integration archive (deterministic file set) ------------------------
-$haRoot = Join-Path $repositoryRoot 'homeassistant\custom_components\dormpanel'
-if (-not (Test-Path -LiteralPath $haRoot)) { Fail 'HA integration source tree is missing.' }
-$haZip = Join-Path $outDir 'DormPanel-HA-0.1.0.zip'
+$haZip = Join-Path $outDir "DormPanel-HA-$releaseVersion.zip"
 if (Test-Path -LiteralPath $haZip) { Remove-Item -LiteralPath $haZip -Force }
 
 $includeNames = @('*.py', '*.json', '*.js', '*.md', '*.txt')
@@ -193,10 +202,17 @@ try {
     $zip.Dispose()
 }
 Write-Host "HA archive: $haZip"
+$haHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $haZip).Hash.ToLowerInvariant()
+Write-Host "HA ZIP SHA-256: $haHash"
 
 Write-Host ''
 Write-Host 'Release artifacts:'
-Get-ChildItem -LiteralPath $outDir | ForEach-Object { Write-Host "  $($_.Name)" }
+foreach ($artifact in @($apkOut, $sidecar, $haZip)) {
+    if (-not (Test-Path -LiteralPath $artifact -PathType Leaf) -or (Get-Item -LiteralPath $artifact).Length -eq 0) {
+        Fail "Expected release artifact is missing or empty: $artifact"
+    }
+    Write-Host "  $([System.IO.Path]::GetFileName($artifact))"
+}
 Write-Host ''
 Write-Host 'Reminder: APK update (adb install -r) keeps app data. Uninstall/reinstall does not.'
 Write-Host 'Do not commit signing material, keystore files, or passwords.'

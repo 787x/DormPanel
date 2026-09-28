@@ -17,11 +17,15 @@ not as a general tablet launcher.
 
 Other Android 9+ landscape devices may work, but only the X08E is validated.
 
+The 0.1.1 release candidate is prepared for final X08E acceptance, which is still
+pending. See [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes since 0.1.0
+and the distinction between prior checks and candidate acceptance.
+
 ## Install / update
 
 ### APK installation
 
-1. Copy `DormPanel-0.1.0.apk` to the device (USB, `adb push`, or any file transfer).
+1. Copy `DormPanel-0.1.1.apk` to the device (USB, `adb push`, or any file transfer).
 2. Open the APK on the device and confirm installation.
 3. If Android asks, grant **Install unknown apps** for the app you are installing from.
 
@@ -30,7 +34,7 @@ Other Android 9+ landscape devices may work, but only the X08E is validated.
 Always update in place:
 
 ```bash
-adb install -r DormPanel-0.1.0.apk
+adb install -r DormPanel-0.1.1.apk
 ```
 
 or install the new APK over the existing one from the system installer.
@@ -62,11 +66,16 @@ other necessary supplemental calls — not as an entity-state fallback.
 2. Enter the HA URL (for example `http://homeassistant.local:8123`) and a long-lived access token.
 3. Save. Status should become **CONNECTED**.
 
+HA and WebDAV settings also offer **Fill from phone** on a trusted LAN. Phone
+submission fills the open fields; Test and Save remain explicit device actions.
+The temporary form uses plain HTTP. HA **Advanced settings** starts collapsed;
+**Preferred weather** remains directly visible.
+
 ### Custom integration (`custom_components/dormpanel`)
 
 Optional, required for timetable and APK relay features:
 
-1. Unpack `DormPanel-HA-0.1.0.zip` into the HA `config` directory so you have
+1. Unpack `DormPanel-HA-0.1.1.zip` into the HA `config` directory so you have
    `config/custom_components/dormpanel/`.
 2. Restart Home Assistant.
 3. **Settings → Devices & Services → Add Integration → DormPanel**.
@@ -100,9 +109,10 @@ Notes on the optional Boolean helpers:
 
 ### Timetable relay
 
-From the HA DormPanel panel, send an ICS timetable to a registered X08E over the
-existing WebSocket connection. The device previews the file and imports it only
-after local confirmation.
+From the HA DormPanel panel, send an ICS or supported Hubei University CSV
+timetable to a registered X08E over the existing WebSocket connection. The device
+previews the file and imports it only after local confirmation. CSV relay
+requires the device's `schedule_csv_v1` capability.
 
 ### APK relay
 
@@ -118,8 +128,8 @@ One WebDAV account is configured **globally** in Control Center
 
 Timetable page owns the sync bindings:
 
-- select a specific ICS file, or
-- select a folder and always use the newest ICS in it;
+- select a specific ICS or supported CSV file, or
+- select a folder and use the newest file of the selected format (ICS or CSV);
 - hourly automatic sync;
 - **Sync now** for manual sync.
 
