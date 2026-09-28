@@ -64,7 +64,7 @@ class WebDavSyncAndroidTest {
                 scenario.onActivity { activity ->
                     val vm = model(activity)
                     vm.webDav.settings.saveAccount(WebDavAccount(serverUrl, "user", "secret"))
-                    ui = ScheduleImportUi(activity, vm.schedule, vm.appearance, vm.webDav) {}
+                    ui = ScheduleImportUi(activity, vm.schedule, vm.appearance, vm.webDav, vm.termProfiles) {}
                     ui!!.sources()
                 }
                 waitText("Add WebDAV timetable")

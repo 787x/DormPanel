@@ -17,6 +17,21 @@ data class TimetableRow(@PrimaryKey val id: String, val title: String, val day: 
 interface ScheduleDao {
     @Query("SELECT * FROM events ORDER BY start, title, id") fun events(): List<EventRow>
     @Query("SELECT * FROM timetable ORDER BY day, startMinute, title, id") fun entries(): List<TimetableRow>
+    @Query("SELECT * FROM day_adjustments LIMIT 1001") fun dayAdjustments(): List<DayAdjustment>
+    @Query("SELECT * FROM class_overrides LIMIT 5001") fun classOverrides(): List<ClassOverride>
+    @Query("SELECT COUNT(*) FROM day_adjustments") fun dayAdjustmentCount(): Int
+    @Query("SELECT COUNT(*) FROM class_overrides") fun classOverrideCount(): Int
+    @Query("""SELECT COALESCE(SUM(length(key) + length(COALESCE(sourceId,'')) + length(seriesId) +
+        length(COALESCE(anchorDate,'')) + length(COALESCE(title,'')) + length(COALESCE(date,'')) +
+        length(COALESCE(timingMode,'')) + length(COALESCE(location,'')) +
+        length(COALESCE(teacher,'')) + length(COALESCE(note,''))), 0) FROM class_overrides""")
+    fun classOverrideTextCharacters(): Long
+    @Insert(onConflict = OnConflictStrategy.REPLACE) fun put(row: DayAdjustment)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) fun put(row: ClassOverride)
+    @Query("DELETE FROM day_adjustments WHERE date = :date") fun deleteDayAdjustment(date: String)
+    @Query("DELETE FROM class_overrides WHERE key = :key") fun deleteClassOverride(key: String)
+    @Query("DELETE FROM class_overrides WHERE sourceId = :sourceId") fun deleteSourceOverrides(sourceId: String)
+    @Query("DELETE FROM class_overrides WHERE sourceId IS NULL AND seriesId = :seriesId") fun deleteLocalOverrides(seriesId: String)
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun put(row: EventRow)
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun put(row: TimetableRow)
     @Query("DELETE FROM events WHERE id = :id") fun deleteEvent(id: String)
@@ -35,7 +50,8 @@ interface ScheduleDao {
     @Query("DELETE FROM imported_timetable_occurrences WHERE sourceId = :id") fun deleteOccurrences(id: String)
     @Query("DELETE FROM import_sources WHERE id = :id") fun deleteSource(id: String)
 }
-@Database(entities = [EventRow::class, TimetableRow::class, ImportSource::class, ImportedClassOccurrence::class], version = 2, exportSchema = false)
+@Database(entities = [EventRow::class, TimetableRow::class, ImportSource::class, ImportedClassOccurrence::class,
+    DayAdjustment::class, ClassOverride::class], version = 3, exportSchema = false)
 abstract class ScheduleDatabase : RoomDatabase() {
     abstract fun dao(): ScheduleDao
     companion object {
@@ -55,13 +71,24 @@ abstract class ScheduleDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_imported_timetable_occurrences_end_start ON imported_timetable_occurrences(end, start)")
             }
         }
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE import_sources ADD COLUMN termKey TEXT")
+                db.execSQL("CREATE TABLE IF NOT EXISTS day_adjustments (date TEXT NOT NULL PRIMARY KEY, mode TEXT NOT NULL, weekday INTEGER, label TEXT NOT NULL)")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS class_overrides (key TEXT NOT NULL PRIMARY KEY,
+                    sourceId TEXT, seriesId TEXT NOT NULL, anchorDate TEXT, title TEXT, weekday INTEGER,
+                    date TEXT, periodStart INTEGER, periodEnd INTEGER, timingMode TEXT,
+                    startMinute INTEGER, endMinute INTEGER, location TEXT, teacher TEXT, note TEXT)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_class_overrides_sourceId ON class_overrides(sourceId)")
+            }
+        }
     }
 }
 object ScheduleStores {
     @Volatile var overrideFactory: ((Context) -> ScheduleStore)? = null
     fun create(context: Context): ScheduleStore = overrideFactory?.invoke(context) ?: RoomScheduleStore(
         Room.databaseBuilder(context.applicationContext, ScheduleDatabase::class.java, "schedule.db")
-            .addMigrations(ScheduleDatabase.MIGRATION_1_2).build())
+            .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3).build())
 }
 /** Admission/close share a lock. Accepted writes drain; neither close nor Activity teardown waits. */
 class RoomScheduleStore(private val database: ScheduleDatabase,
@@ -75,11 +102,14 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     }
     override fun load(callback: (Result<ScheduleState>) -> Unit) = submit(callback) {
         database.runInTransaction<ScheduleState> {
+            check(database.dao().dayAdjustmentCount() <= 1000 && database.dao().classOverrideCount() <= 5000 &&
+                database.dao().classOverrideTextCharacters() <= 2_000_000L) { "Stored override limit exceeded" }
             ScheduleState(database.dao().events().map { CalendarEvent(it.id, it.title, it.start, it.end, it.note) },
                 database.dao().entries().map { TimetableEntry(it.id, it.title, it.day, it.startMinute, it.endMinute, it.location) },
                 sources = database.dao().sources(), imported = database.dao().imported().also {
                     check(it.size <= ImportLimits.STORED_OCCURRENCES) { "Stored occurrence limit exceeded" }
-                })
+                }, dayAdjustments = database.dao().dayAdjustments().also { check(it.size <= 1000) },
+                classOverrides = database.dao().classOverrides().also { check(it.size <= 5000) })
         }
     }
     override fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit) = submit(callback) {
@@ -89,7 +119,15 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         database.dao().put(TimetableRow(entry.id, entry.title, entry.day, entry.startMinute, entry.endMinute, entry.location))
     }
     override fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit) = submit(callback) { database.dao().deleteEvent(id) }
-    override fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit) = submit(callback) { database.dao().deleteEntry(id) }
+    override fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
+        database.runInTransaction { database.dao().deleteEntry(id); database.dao().deleteLocalOverrides(id) }
+    }
+    override fun putDayAdjustment(item: DayAdjustment?, date: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
+        if (item == null) database.dao().deleteDayAdjustment(date) else database.dao().put(item)
+    }
+    override fun putClassOverride(item: ClassOverride?, key: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
+        if (item == null) database.dao().deleteClassOverride(key) else database.dao().put(item)
+    }
     override fun commitImport(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,
         callback: (Result<ImportCommit>) -> Unit) = submit(callback) {
         database.runInTransaction<ImportCommit> {
@@ -111,7 +149,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         }
     }
     override fun deleteImport(id: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
-        database.runInTransaction { database.dao().deleteSource(id) }
+        database.runInTransaction { database.dao().deleteSourceOverrides(id); database.dao().deleteSource(id) }
     }
     @Synchronized override fun close() {
         if (closed) return

@@ -80,7 +80,8 @@ class MainActivity : AppCompatActivity() {
                 true
             }
         }
-        scheduleImports = com.dormpanel.app.schedule.ScheduleImportUi(this, dashboardViewModel.schedule, dashboardViewModel.appearance, dashboardViewModel.webDav) {
+        scheduleImports = com.dormpanel.app.schedule.ScheduleImportUi(this, dashboardViewModel.schedule, dashboardViewModel.appearance,
+            dashboardViewModel.webDav, dashboardViewModel.termProfiles) {
             // Generic MIME allows .ics/.csv documents from providers that do not report text/calendar or text/csv.
             timetablePicker.launch(arrayOf("text/calendar", "text/csv", "text/comma-separated-values", "*/*"))
         }
