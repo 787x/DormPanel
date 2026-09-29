@@ -58,7 +58,10 @@ class ScheduleImportAndroidTest {
             lateinit var schedule: ScheduleSource
             lateinit var editors: ScheduleEditors
             scenario.onActivity { activity ->
-                schedule = ScheduleSource(store)
+                // Keep the editor's clock in the fixture's projection zone, even on a UTC emulator.
+                schedule = ScheduleSource(store, object : ScheduleClock by DeviceScheduleClock {
+                    override fun zone() = zone
+                })
                 editors = ScheduleEditors(activity, schedule, model(activity).appearance)
                 editors.classDetail(ScheduleProjection.week(schedule.state, day.minusDays(4), zone).single())
             }
