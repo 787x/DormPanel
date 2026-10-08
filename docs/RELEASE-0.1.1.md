@@ -2,9 +2,9 @@
 
 Changes since 0.1.0 only, from merged PR25–PR27. The feature set is frozen.
 Android package `com.dormpanel.app` uses versionCode **3**, versionName **0.1.1**;
-the Home Assistant custom integration is **0.1.1**. This is preparation for later
-final acceptance on the Android 9 / API 28, 1280×800 X08E, not a claim of final
-physical acceptance or a published release.
+the Home Assistant custom integration is **0.1.1**. Signed-candidate physical
+X08E evidence is now recorded in [PR29](PR29-release-acceptance.md), including
+its observation limits. This does not publish a release.
 
 ## Hubei University CSV and Term Schedule Profiles
 
@@ -107,10 +107,11 @@ The approved signer certificate SHA-256 remains:
 
 `tools/build-release.ps1` checks the signer, package, version, non-debuggable APK,
 HA manifest version, and required artifacts. Signing inputs and local candidate
-artifacts remain outside Git. Artifact hashes and executed checks are recorded in
-[PR28 verification](PR28-release-preparation.md).
+artifacts remain outside Git. Release-preparation checks are recorded in
+[PR28 verification](PR28-release-preparation.md); the installed runtime candidate
+hashes and physical evidence are in [PR29](PR29-release-acceptance.md).
 
-## Established checks and pending final acceptance
+## Established checks and physical acceptance evidence
 
 The behaviors above are implemented in merged PR25–PR27 and covered by repository
 tests. PR25 records its earlier physical X08E testbed run; historical final 0.1.0
@@ -121,8 +122,11 @@ PR28 automated and API 28 / 1280×800 emulator results are reported separately i
 the verification record. Emulator results cannot establish Xiaomi service
 coexistence, OEM media/brightness capabilities, or hardware long-running stability.
 
-**Final 0.1.1 X08E acceptance is pending.** The daily device is unavailable and this
-candidate has not been installed on it. In-place signed 0.1.0 → 0.1.1 data/Keystore
-retention, device UI/phone entry, real HA CSV/APK relay and WebDAV regression,
-XiaoAI/alarms/Bluetooth Mesh coexistence, and hardware soak remain final acceptance
-work. No tag, GitHub Release, or published asset is created by PR28.
+The signed 0.1.1 candidate has now been installed and exercised on the physical
+X08E. [PR29](PR29-release-acceptance.md) records the unfiltered 98-case suite,
+in-place upgrade/state preservation, phone entry, live HA CSV/WebDAV paths,
+Xiaomi coexistence/boot and a >4h physical observation window. The daily baseline
+was an approved signed 0.1.0-labelled build, not byte-identical to published
+v0.1.0. Scheduled soak checkpoint gaps and optional unverified paths are disclosed
+in that record; sparse snapshots are not continuous telemetry. No 0.1.1 tag,
+GitHub Release or published asset has been created.
