@@ -17,10 +17,9 @@ not as a general tablet launcher.
 
 Other Android 9+ landscape devices may work, but only the X08E is validated.
 
-The signed 0.1.1 candidate has physical X08E evidence recorded in
+The signed 0.1.1 build has physical X08E evidence recorded in
 [final acceptance](docs/PR29-release-acceptance.md), including the soak observation
 limits. See [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes since 0.1.0.
-No 0.1.1 tag or GitHub Release has been published.
 
 ## Install / update
 

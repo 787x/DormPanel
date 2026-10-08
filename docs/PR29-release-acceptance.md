@@ -50,7 +50,7 @@ dedicated live HA/Xiaomi observations below are separate evidence.
 
 ## LIVE — daily provenance, baseline and in-place upgrade
 
-The physical upgrade was **current daily 0.1.0-labelled signed build →0.1.1**.
+The physical upgrade was **current daily 0.1.0-labelled signed build → 0.1.1**.
 The installed baseline was debuggable and signed by the approved certificate,
 but was not byte-identical to canonical published v0.1.0:
 
@@ -101,7 +101,7 @@ persistence/migration tests are distinct evidence.
   LIVE recovery, supported separately by AUTO immutable-source tests, not a
   private byte-level database comparison.
 - Temporary day adjustments, profile changes, class edits, imported test sources,
-  WebDAV binding and HA transfer were cleaned up. Original131-class source,
+  WebDAV binding and HA transfer were cleaned up. Original 131-class source,
   configuration and real device state remained. Final native UI navigation and
   source/state checks succeeded and returned to the dashboard.
 
@@ -113,7 +113,7 @@ connect and never Android Save. Both Android dialogs showed Received from phone.
 They were dismissed without Save; reopening restored the original URLs and
 empty secret-entry fields. HA stayed usable; WebDAV connection test succeeded
 with preserved credentials. Advanced started collapsed and Preferred weather
-remained visible outside it. AUTO98-case suite independently covered field
+remained visible outside it. AUTO 98-case suite independently covered field
 mapping/no-save behavior. Exact human-entered disposable bytes were not separately
 compared; no real secret was requested or displayed.
 
@@ -179,8 +179,9 @@ Unobserved transient CPU/reconnect behavior cannot be excluded from sparse data.
 
 ## Final state and scope
 
-Final checks retained code 3 / name 0.1.1, unchanged install/update timestamps,
-original 131-class source, no disposable labels, HA/WebDAV, dark / opacity 20%,
+Final checks retained code 3 / name 0.1.1 and install/update timestamps unchanged
+since the in-place 0.1.1 upgrade. They also retained the original 131-class source,
+no disposable labels, HA/WebDAV, dark / opacity 20%,
 automatic brightness/Follow system/Keep awake/startup, override 45%, media 50% and
 system timeout. Dashboard returned to foreground. Artifact hashes and frozen
 production/test/build source unchanged; no data/credential loss or runtime
