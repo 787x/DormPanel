@@ -17,9 +17,14 @@ not as a general tablet launcher.
 
 Other Android 9+ landscape devices may work, but only the X08E is validated.
 
-The signed 0.1.1 build has physical X08E evidence recorded in
-[final acceptance](docs/PR29-release-acceptance.md), including the soak observation
-limits. See [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes since 0.1.0.
+The signed 0.1.1 candidate was physically exercised on X08E on 2026-10-07–08
+(Asia/Shanghai). Separately, the unfiltered X08E instrumentation testbed suite
+passed **98/98**. The signed, non-debuggable APK was verified in an in-place
+upgrade, with live HA CSV/WebDAV, phone entry, Xiaomi coexistence/boot, and a
+**>4h** physical observation window. See [PR29 physical acceptance]
+(docs/PR29-release-acceptance.md) for artifact identities, evidence types and
+observation limits, and [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes
+since 0.1.0. PR29 recorded acceptance evidence only; it did not publish a release.
 
 ## Install / update
 
@@ -43,6 +48,14 @@ or install the new APK over the existing one from the system installer.
 | --- | --- |
 | APK update (`adb install -r` / Android update) | **Kept** — dashboard, HA credentials, relay identity, WebDAV account, schedules, productivity data, settings |
 | Uninstall + reinstall | **Not guaranteed** — Android Keystore-backed secrets and app-local data are lost |
+
+PR29 physically verified an `adb install -r` upgrade from an approved-signer
+**daily 0.1.0-labelled build**, not a byte-identical copy of the canonical
+published v0.1.0 APK. The v2→v3 schedule migration retained the original source
+and 131 occurrences; exercised dashboard state, preferences, HA/WebDAV
+configuration, and relay identity survived. Nonempty daily Todo/Memo retention
+was not physically exercised because the baseline had no such data; isolated
+persistence/migration tests provide separate evidence.
 
 Uninstall/reinstall is **not** a supported upgrade path. A previous test incident
 confirmed that migration after uninstall is not possible for Keystore-backed state.
@@ -114,6 +127,11 @@ timetable to a registered X08E over the existing WebSocket connection. The devic
 previews the file and imports it only after local confirmation. CSV relay
 requires the device's `schedule_csv_v1` capability.
 
+PR29 live-verified a sanitized Hubei CSV over HA `schedule_csv`:
+`preview_ready` → `imported` after local confirmation. Native HA light control
+was independently observed on the HA server, and live sensor state populated.
+A separate live HA APK-relay run was not documented as exercised by PR29.
+
 ### APK relay
 
 From the HA DormPanel panel, send an APK to a registered X08E. The device
@@ -134,6 +152,11 @@ Timetable page owns the sync bindings:
 - **Sync now** for manual sync.
 
 The Apps page owns one-shot APK browsing/install from the same WebDAV account.
+
+PR29 verified authentication with preserved WebDAV credentials, browsing and
+importing a human-confirmed sanitized CSV into a separate local source, and
+`Sync now` → `Already up to date`. The original remote file was untouched.
+Optional profile-sensitive live resync was not exercised.
 
 ## Device controls
 
@@ -163,13 +186,18 @@ HA commands cannot be applied.
 - On X08E, `BOOT_COMPLETED` may arrive noticeably after `sys.boot_completed`.
   Startup is therefore later than on typical Android devices.
 - **Open MIUI Home** (Control Center) returns to the Xiaomi launcher.
-- DormPanel is not a Home launcher. It is designed not to replace MIUI Home,
-XiaoAI, the Bluetooth Mesh gateway, or the system alarm app. Final 0.1.0
-acceptance physically exercised Xiaomi coexistence: XiaoAI produced a visible
-response while DormPanel was running, and a Xiaomi BLE/Mesh Yeelight device was
-controlled through the normal Xiaomi path with the resulting state reflected in
-Home Assistant. XiaoAI wake-word audible response was not captured during final
-acceptance.
+- DormPanel is not a Home launcher and does not replace MIUI Home, XiaoAI,
+  the Bluetooth Mesh gateway, or the native alarm app. In signed **0.1.1**
+  physical X08E acceptance, **Open MIUI Home** reached the Xiaomi launcher;
+  a human confirmed visible XiaoAI response **and heard wake-word audio**,
+  plus successful Bluetooth Mesh control with the prior state restored.
+  Native Xiaomi/Mesh/Bluetooth services were observed.
+- With **Start after boot** already enabled, one normal reboot reached
+  DormPanel through the existing boot path after OEM startup ordering.
+  **Native alarm firing was not separately tested.** See
+  [PR29 acceptance](docs/PR29-release-acceptance.md) for evidence and limits;
+  prior 0.1.0 acceptance remains documented in
+  [PR24](docs/PR24-release-acceptance.md).
 
 ## APK install sources
 
@@ -234,9 +262,26 @@ remains backup-eligible.
 - Boot startup may occur noticeably after `sys.boot_completed` because X08E
   delivers `BOOT_COMPLETED` late.
 - **Split APK bundles (XAPK/APKS) are unsupported.** Single-APK only.
-- Xiaomi coexistence was physically exercised during final 0.1.0 acceptance:
-XiaoAI produced a visible response, and the Xiaomi BLE/Mesh Yeelight control
-path was exercised with the resulting state reflected in Home Assistant.
+- **0.1.1 physical soak has sparse observations.** The X08E device/process
+  observation window lasted **4h 10m 40s**, with successful samples at
+  09:03:16, 11:48:23, and 13:13:57 (2026-10-08, Asia/Shanghai). Planned
+  +1h/+2h metrics are **UNVERIFIED** due to ADB absence; the collector did not
+  retain its scheduled final point. Later final checks do not establish four
+  successful scheduled checkpoints or continuous telemetry. Unobserved transient
+  CPU/reconnection behavior cannot be excluded.
+- **0.1.1 upgrade scope:** PR29 used an approved-signer daily 0.1.0-labelled
+  baseline, not the canonical published v0.1.0 APK; nonempty daily Todo/Memo
+  retention was not physically exercised.
+- **Optional live paths not verified by PR29:** native alarm firing,
+  profile-sensitive WebDAV live resync, and the opt-in real-light and
+  granted-`WRITE_SETTINGS` tests without their prerequisites. JUnit case
+  results alone do not establish these optional live paths.
+- **Other evidence limits:** exact disposable phone-form bytes were not
+  independently compared; timetable-edit restoration was verified
+  functionally rather than by byte-level database comparison; earlier
+  empty UTP `status -1` results did not reproduce but have unknown root cause;
+  UI observation latency was not a frame-rate benchmark. See
+  [PR29 acceptance](docs/PR29-release-acceptance.md).
 
 ## Build
 
