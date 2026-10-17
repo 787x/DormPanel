@@ -67,6 +67,62 @@ class ProductivityAndroidTest {
         }
         bitmap.recycle()
     }
+    @Test fun todoTallSizesUseAvailableHeightAndSurviveRestore() {
+        var id = ""
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            ready(scenario)
+            id = add(scenario, "todo").single()
+            scenario.onActivity { activity ->
+                val vm = model(activity)
+                val policy = vm.registry.provider("todo")!!.sizePolicy
+                assertEquals(CardSize(2, 3), policy.snap(CardSize(2, 3), CardSize(8, 6)))
+                assertTrue(policy.allows(CardSize(2, 6)))
+                assertTrue(policy.allows(CardSize(8, 6)))
+                assertFalse(policy.allows(CardSize(1, 3)))
+                repeat(30) { vm.productivity.addTodo(id, "Task ${it + 1}") }
+                assertTrue(vm.stateHolder.resize(id, CardSize(2, 2)) is LayoutMutationResult.Success)
+            }
+            instrumentation.waitForIdleSync()
+            var compactLines = 0
+            fun checkPreview(activity: MainActivity): Int {
+                val view = activity.window.decorView.findViewWithTag<ProductivityCardView>(id)
+                val body = view.getChildAt(1) as android.widget.TextView
+                val detail = view.getChildAt(2)
+                assertTrue(body.lineCount > 0)
+                assertTrue("Task count must fit inside the card", detail.bottom <= view.height - view.paddingBottom)
+                assertTrue("Preview must not overlap the count", body.bottom <= detail.top)
+                return body.maxLines
+            }
+            scenario.onActivity { activity ->
+                compactLines = checkPreview(activity)
+                assertTrue(model(activity).stateHolder.resize(id, CardSize(2, 3)) is LayoutMutationResult.Success)
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                assertTrue("A taller Todo must show more lines", checkPreview(activity) > compactLines)
+                val placed = model(activity).stateHolder.state.cards.single()
+                val repaired = DashboardLayoutRepair(DashboardGridPolicy.definition, model(activity).registry)
+                    .repair(listOf(RawDashboardCard.from(placed)))
+                assertEquals(listOf(placed), repaired.cards)
+                assertTrue(repaired.quarantine.isEmpty())
+            }
+            screenshot("todo-2x3")
+            listOf(CardSize(2, 6), CardSize(3, 4), CardSize(8, 6), CardSize(2, 1), CardSize(2, 3)).forEach { size ->
+                scenario.onActivity { activity ->
+                    assertTrue(model(activity).stateHolder.resize(id, size) is LayoutMutationResult.Success)
+                }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { checkPreview(it) }
+            }
+        }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            ready(scenario)
+            scenario.onActivity { activity ->
+                assertEquals(CardSize(2, 3), model(activity).stateHolder.state.cards.single { it.id == id }.size)
+                assertEquals(30, model(activity).productivity.state(id).todos.size)
+            }
+        }
+    }
     @Test fun catalogPickerIndependentOwnersRepairAndEditMode() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             ready(scenario)

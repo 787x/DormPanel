@@ -27,7 +27,11 @@ class ProductivityCardProvider(override val typeKey: String, private val source:
     override val displayMetadata = CardDisplayMetadata(typeKey, "", when (typeKey) {
         "todo" -> R.string.productivity_todo; "memo" -> R.string.productivity_memo; else -> R.string.productivity_timer
     }, R.string.productivity_local)
-    override val sizePolicy = ExplicitCardSizePolicy(listOf(CardSize(2, 1), CardSize(2, 2), CardSize(3, 2)))
+    override val sizePolicy = if (typeKey == "todo") {
+        RangeCardSizePolicy(CardSize(2, 1), CardSize(DashboardGridPolicy.definition.columns, DashboardGridPolicy.definition.rows))
+    } else {
+        ExplicitCardSizePolicy(listOf(CardSize(2, 1), CardSize(2, 2), CardSize(3, 2)))
+    }
     override val defaultSize = CardSize(2, 2)
     override fun createView(context: Context): View = ProductivityCardView(context, appearance, source, typeKey)
     override fun bind(view: View, card: PlacedCard, interactions: CardInteractionScope) = (view as ProductivityCardView).bind(card, interactions)
@@ -71,18 +75,30 @@ class ProductivityCardView(context: Context, appearance: AppearanceController, p
     }
     override fun onVisibilityAggregated(isVisible: Boolean) { super.onVisibilityAggregated(isVisible); visible = isVisible; if (isBound) refresh() }
     override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); if (isBound) refresh() }
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (kind == "todo" && MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
+            measureChild(heading, widthMeasureSpec, heightMeasureSpec)
+            measureChild(detail, widthMeasureSpec, heightMeasureSpec)
+            // Use the actual height so taller cards and larger system fonts both fit,
+            // while keeping the heading and remaining-task count visible.
+            val available = MeasureSpec.getSize(heightMeasureSpec) - paddingTop - paddingBottom -
+                heading.measuredHeight - detail.measuredHeight
+            body.maxLines = (available / body.lineHeight.coerceAtLeast(1)).coerceAtLeast(1)
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
     override fun render() {
         subscribe(); ticker.stop()
         val state = source.state(card.id)
         val large = card.size.rowSpan > 1
         heading.setText(when (kind) { "todo" -> R.string.productivity_todo; "memo" -> R.string.productivity_memo; else -> R.string.productivity_timer })
         body.textSize = if (kind == "timer") 32f else 20f
-        body.maxLines = if (!large) 1 else if (card.size.columnSpan >= 3) 5 else 3
+        if (kind != "todo") body.maxLines = if (!large) 1 else if (card.size.columnSpan >= 3) 5 else 3
         detail.show(kind != "memo")
         when (kind) {
             "todo" -> {
                 val incomplete = state.todos.filterNot { it.completed }
-                body.text = incomplete.take(body.maxLines).joinToString("\n") { "• ${it.text}" }.ifEmpty { context.getString(R.string.productivity_todo_empty) }
+                body.text = incomplete.joinToString("\n") { "• ${it.text}" }.ifEmpty { context.getString(R.string.productivity_todo_empty) }
                 detail.text = resources.getQuantityString(R.plurals.productivity_remaining, incomplete.size, incomplete.size)
             }
             "memo" -> body.text = state.memo.ifEmpty { context.getString(R.string.productivity_memo_empty) }
