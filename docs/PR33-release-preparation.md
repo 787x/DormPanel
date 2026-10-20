@@ -3,7 +3,7 @@
 Prepared from merged PR32 / main `a89b4b49a9b32ab981987334620482664e9eb74b`.
 GitHub PR32 reports MERGED; remote main was independently fetched and matched.
 No PR32 merge operation was performed. This PR changes release metadata,
-phone release signing, build/verification tools and documentation only. It adds
+phone release signing, build/verification tools, one test synchronization fix and documentation only. It adds
 no UI, protocol, algorithm, database migration, permission or background work.
 
 ## Release identity and tooling
@@ -96,7 +96,7 @@ and instrumentation builds and passed. No product/test assertions were changed.
 
 The final build ran `tools/build-release.ps1` with locally supplied signing
 environment against clean source commit
-`1f505117429895e40a38109c1f0cf525da53729a`. Both APKs embed that revision in
+`e3423d212004e22b2be2bac4ab8fcc8a9e6b7d92`. Both APKs embed that revision in
 `META-INF/version-control-info.textproto`. Later commits only record verification
 evidence; application, signing and build-tool sources are identical. Rebuilding
 after another commit can change APK bytes due to embedded version-control data;
@@ -106,8 +106,8 @@ All files are in ignored `artifacts/release/0.1.2-rc.1/`:
 
 | File | Bytes | SHA-256 |
 | --- | --- | --- |
-| `DormPanel-X08E-0.1.2-rc.1.apk` | 16,035,756 | `b6a8e49834771ec5e5b9ffc5435c7def458b4c71432914c01a4ecf313687218a` |
-| `DormPanel-Phone-0.1.2-rc.1.apk` | 9,736,703 | `3165af3fa16e32b9633f4c47143e83f1dc7f4fb6d00e145ff1fe9e20fb11a80e` |
+| `DormPanel-X08E-0.1.2-rc.1.apk` | 16,035,756 | `ba7135315d251e0f2425e1eeeb8e11748410e18c74c9c0cb29c506fe99a0a20f` |
+| `DormPanel-Phone-0.1.2-rc.1.apk` | 9,736,703 | `16a6f581fd87d9f7a88ca58b031309554a27f5dc00487dc32482d87a45ade79c` |
 | `DormPanel-HA-0.1.1.zip` | 11,756 | `c5bfa82cd60d153c76cdc6b2317b791b2bb228f6a114e828823bcae176171ef7` |
 
 Both APK sidecars were freshly generated from these final copied bytes and
@@ -147,20 +147,25 @@ adb -s emulator-5556 shell am instrument -w -r com.dormpanel.timetable.test/andr
   applicable emulator run; it remains required on hardware. No product assertion
   was changed. Opt-in live-light and granted WRITE_SETTINGS paths can return
   without prerequisites; these entries do not prove live hardware behavior.
-- Phone debug runner **10/10 passed on API 37**. The **final signed release APK**
-  was then installed with `adb install -r`; the same **10/10 passed again**
-  (81.211 s), including binding, editing/import/source/profile management,
-  offline reopening and both conflict choices.
+- Phone debug runner **10/10 passed on API 37**. Initial signed-candidate tests
+  also passed **10/10** there. After the test wait correction below and final
+  committed-source rebuild, both **final signed release APK** runs passed:
+  **API 28 10/10** (78.170 s) and **API 37 10/10** (82.062 s), including binding,
+  editing/import/source/profile management, offline reopening and both conflict
+  choices. API 28 used confirmed portrait logical **900×1600 / 350 dpi** with
+  rotation locked before the runner; original display/density/rotation settings
+  were restored afterward and X08E dashboard returned to 1280×800 / 160 dpi.
 - Against the final API 37 phone release APK, `PhoneBidirectionalRestartTest`
   seed → `am force-stop com.dormpanel.timetable` → verify used one UUID:
   **1/1 in each phase passed**, covering baseline, offline modifications,
   deletion, catalog, pending receipt/capture and remaining dirty state after
   receipt recovery. This is real emulator process interruption, not physical
   device evidence.
-- Final signed X08E RC installed over the emulator's approved-signed,
+- The initial signed X08E candidate installed over the emulator's approved-signed,
   debuggable 0.1.1-labelled development installation (code 3); `am start -W`
   succeeded and installed metadata shows code **4**, RC name and no DEBUGGABLE
-  flag. The 1280×800 dashboard screenshot was inspected. This is an emulator
+  flag. The selected final X08E APK was then installed and launched again after
+  the test-only correction. The 1280×800 dashboard screenshots were inspected. This is an emulator
   smoke test, **not** an upgrade from the canonical signed 0.1.1 on real X08E.
 - API 37 release phone empty/offline screen screenshot was inspected: controls,
   dates and status are legible on a black background. No real account was used.
@@ -170,11 +175,35 @@ com.dormpanel.phone.PhoneBidirectionalRestartTest -e pr32Run <UUID> -e
 pr32Phase seed|verify`. Full suite counts require `OK (N tests)` and no failure
 statuses in logs; ADB command exit status alone is insufficient.
 
+### Failed attempts and necessary test correction
+
+API 28's initial signed-phone run failed **3/10**, and a second attempt failed
+**2/10** while rotation was still changing. `wm size 1080x1920` was actually
+clamped to 1080×1600 and the first run used a rotated short window; UI failures
+reported rows outside Espresso's visibility constraints or missing detail controls.
+After confirming stable 900×1600 portrait, UI cases passed but the shared-sync
+case still failed **1/10** at `PhoneSharedScheduleTest.kt`'s `saveEntry` assertion.
+
+The test recreates a publisher controller and immediately edits. Controller
+initialization starts asynchronous receipt recovery; on API 28 it could enter the
+existing `applyingSnapshot` transaction gate before that edit. `saveEntry` correctly
+returns false during that gate. The test now waits on the main thread for controller
+recovery and that gate to finish, then performs the **same assertTrue(saveEntry)**.
+No timeout increase, assertion removal, production behavior or sync algorithm change
+was made. Both full signed-phone suites passed afterward. Initial failure logs remain
+under `artifacts/pr33/phone-release-api28*.log`; they are not overwritten as passes.
+
+Because this is a test-only correction, final APK ZIP entry bytes were independently
+compared with the earlier tested candidate: for **both apps** the only changed ZIP
+entry is `META-INF/version-control-info.textproto`; runtime DEX/resources are identical.
+Signing block/file hashes changed and all final hashes/sidecars were recalculated.
+
 Local logs/screenshots and `final-candidates.json` are retained under ignored
 `artifacts/pr33/`, including `release-final.log`, `verify-final.log`,
 `native-negative-final.log`, `release-guards.log`, `android-checks.log`,
 `ha-tests.log`, `frontend-check.log`, `core-api28.log`, `core-api37.log`,
-`x08e-api28.log`, `phone-api37.log`, `phone-release-api37.log` and restart logs.
+`x08e-api28.log`, `phone-api37.log`, `phone-release-api28-fixed.log`,
+`phone-release-api37-fixed.log`, `runtime-identity.log` and restart logs.
 
 ## Physical acceptance still required
 
