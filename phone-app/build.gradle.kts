@@ -6,9 +6,36 @@ android {
         applicationId = "com.dormpanel.timetable"
         minSdk = 28
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.2-rc.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+    // Both apps retain the approved identity. Secrets stay on the build machine.
+    signingConfigs {
+        create("release") {
+            val keystorePath = providers.gradleProperty("dormpanel.release.keystore")
+                .orElse(providers.environmentVariable("DORMPANEL_RELEASE_KEYSTORE")).orNull
+            val alias = providers.gradleProperty("dormpanel.release.keyAlias")
+                .orElse(providers.environmentVariable("DORMPANEL_RELEASE_KEY_ALIAS")).orNull
+            val storePassword = providers.gradleProperty("dormpanel.release.storePassword")
+                .orElse(providers.environmentVariable("DORMPANEL_RELEASE_STORE_PASSWORD")).orNull
+            val keyPassword = providers.gradleProperty("dormpanel.release.keyPassword")
+                .orElse(providers.environmentVariable("DORMPANEL_RELEASE_KEY_PASSWORD")).orNull
+            if (keystorePath != null && alias != null && storePassword != null && keyPassword != null) {
+                storeFile = file(keystorePath)
+                keyAlias = alias
+                this.storePassword = storePassword
+                this.keyPassword = keyPassword
+            }
+        }
+    }
+    buildTypes {
+        release {
+            isDebuggable = false
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("release").takeIf { it.storeFile != null }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
