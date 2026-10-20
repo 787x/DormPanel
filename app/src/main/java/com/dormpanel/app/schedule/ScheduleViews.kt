@@ -183,11 +183,11 @@ internal class ScheduleEditors(private val context: Context, private val source:
             if (item.teacher.isNotBlank()) append("\nTeacher: ").append(item.teacher)
             if (item.note.isNotBlank()) append("\nNote: ").append(item.note)
             append("\n\n").append(if (owner == null) "Local recurring class" else "Imported from ${owner.displayName}")
-            if (item.imported != null) append("\nSource timezone: ").append(item.imported.timezone)
+            if (item.imported != null) append("\nSource timezone: ").append(item.imported?.timezone)
             if (item.copiedFrom != null) append("\nCopied from ${item.copiedFrom}")
             if (item.thisWeekEdited || item.allWeeksEdited) append("\nLocal edit active")
             if (owner != null) append("\nSource data stays unchanged; local overrides can be applied.")
-            if (item.imported?.description?.isNotBlank() == true) append("\n\nSource information:\n").append(item.imported.description)
+            if (item.imported?.description?.isNotBlank() == true) append("\n\nSource information:\n").append(item.imported?.description)
         }
         val content = context.scheduleColumn().apply { addView(context.scheduleLabel(info, 18f)) }
         val weekly = source.state.editsByKey[ClassOverride.key(item.sourceId, item.seriesId, item.anchorDate.toString())] != null
@@ -217,28 +217,16 @@ internal class ScheduleEditors(private val context: Context, private val source:
 
     private fun classEditor(item: ClassOccurrence, allWeeks: Boolean) {
         if (!enabled() || !source.ready) return
-        val date = item.anchorDate
-        val key = ClassOverride.key(item.sourceId, item.seriesId, if (allWeeks) null else date.toString())
-        val monday = date.minusDays((date.dayOfWeek.value - 1).toLong())
-        val withoutWeek = source.state.copy(classOverrides = source.state.classOverrides.filterNot {
-            allWeeks && it.sourceId == item.sourceId && it.seriesId == item.seriesId && it.anchorDate != null
-        })
-        val draft = if (allWeeks) ScheduleProjection.academicWeek(withoutWeek, monday, source.clock.zone())
-            .firstOrNull { it.seriesId == item.seriesId && it.sourceId == item.sourceId &&
-                it.imported?.id == item.imported?.id } ?: item else item
-        val lower = source.state.copy(classOverrides = source.state.classOverrides.filterNot {
-            it.key == key || allWeeks && it.sourceId == item.sourceId && it.seriesId == item.seriesId && it.anchorDate != null
-        })
-        val baseline = ScheduleProjection.academicWeek(lower, date.minusDays((date.dayOfWeek.value - 1).toLong()), source.clock.zone())
-            .firstOrNull { it.seriesId == item.seriesId && it.sourceId == item.sourceId &&
-                it.imported?.id == item.imported?.id && (allWeeks || it.anchorDate == date) } ?: draft
-        val profile = ScheduleProjection.profile(source.state, item)
+        val session = ClassEditSession(source.state, item, allWeeks, source.clock.zone())
+        val date = session.date
+        val draft = session.draft
+        val profile = session.profile
         val title = input("Course name", draft.entry.title)
         val location = input("Location", draft.entry.location)
         val teacher = input("Teacher", draft.teacher)
         val note = input("User note", draft.note, true)
         var selectedDate = draft.academicDate
-        var selectedWeekday = if (allWeeks && draft.copiedFrom != null) draft.copiedFrom.dayOfWeek else draft.academicDate.dayOfWeek
+        var selectedWeekday = if (allWeeks && draft.copiedFrom != null) requireNotNull(draft.copiedFrom).dayOfWeek else draft.academicDate.dayOfWeek
         var start = draft.entry.startMinute
         var end = draft.entry.endMinute
         val existingRange = ScheduleProjection.periods(draft.periodLabel)
@@ -253,9 +241,7 @@ internal class ScheduleEditors(private val context: Context, private val source:
                 days.map { it.name.lowercase().replaceFirstChar(Char::uppercase) })
             setSelection(days.indexOf(selectedWeekday))
         }
-        val multiWeekday = item.sourceId != null && source.state.imported.filter {
-            it.sourceId == item.sourceId && it.seriesId == item.seriesId
-        }.map { Instant.ofEpochMilli(it.start).atZone(source.clock.zone()).dayOfWeek }.distinct().size > 1
+        val multiWeekday = session.multiWeekday
         if (allWeeks) {
             weekdaySpinner.isEnabled = !multiWeekday
             fields.addView(context.scheduleLabel(if (multiWeekday) "Weekday is fixed for this multi-day series" else "Weekday", 17f))
@@ -332,35 +318,14 @@ internal class ScheduleEditors(private val context: Context, private val source:
         updateTimes()
         editor(if (allWeeks) "Edit all weeks" else "Edit this week", fields, null) {
             val linked = profile != null && timing.selectedItemPosition == 0
-            val range = if (linked) linkedBounds() else null
             val selected = targetDate()
-            val baseRange = ScheduleProjection.periods(baseline.periodLabel)
-            val first = firstPeriod.text.toString().toIntOrNull()
-            val last = lastPeriod.text.toString().toIntOrNull()
-            val patch = ClassPatch(
-                title = title.text.toString().trim().takeIf { it != baseline.entry.title },
-                weekday = if (allWeeks && !multiWeekday) selectedWeekday.takeIf { it.value != baseline.academicDate.dayOfWeek.value }?.value else null,
-                date = if (!allWeeks) selected.toString().takeIf { selected != baseline.academicDate } else null,
-                periodStart = if (linked) first?.takeIf { it != baseRange?.first } else null,
-                periodEnd = if (linked) last?.takeIf { it != baseRange?.second } else null,
-                timingMode = if (linked != baseline.linked) if (linked) "linked" else "custom" else null,
-                startMinute = if (!linked) start.takeIf { it != baseline.entry.startMinute || baseline.linked } else null,
-                endMinute = if (!linked) end.takeIf { it != baseline.entry.endMinute || baseline.linked } else null,
-                location = location.text.toString().trim().takeIf { it != baseline.entry.location },
-                teacher = teacher.text.toString().trim().takeIf { it != baseline.teacher },
-                note = note.text.toString().trim().takeIf { it != baseline.note })
-            when {
-                title.text.isBlank() -> "Enter a course name."
-                linked && (first == null || last == null || first > last || range == null) -> "The selected phase has no definition for those periods."
-                linked && allWeeks && profile!!.phases.any { phase -> phase.period(first!!) == null || phase.period(last!!) == null } ->
-                    "Every term phase must define those periods for an all-weeks edit."
-                end <= start && !(baseline.end.atZone(source.clock.zone()).toLocalDate() > baseline.date &&
-                    !linked && start == baseline.entry.startMinute && end == baseline.entry.endMinute) ->
-                    "End must be after start."
-                !patch.valid(allWeeks) -> "Check the class fields and text lengths."
-                source.saveClassOverride(item.sourceId, item.seriesId, if (allWeeks) null else date, patch) -> null
-                else -> "Could not save class edit."
-            }
+            val patch = runCatching { session.patch(title.text.toString(), location.text.toString(),
+                teacher.text.toString(), note.text.toString(), selected, selectedWeekday, linked,
+                firstPeriod.text.toString().toIntOrNull(), lastPeriod.text.toString().toIntOrNull(), start, end) }
+            patch.fold(onSuccess = {
+                if (source.saveClassOverride(item.sourceId, item.seriesId, if (allWeeks) null else date, it)) null
+                else "Could not save class edit."
+            }, onFailure = { it.message ?: "Invalid class edit." })
         }
     }
     fun entry(existing: TimetableEntry? = null) {

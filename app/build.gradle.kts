@@ -68,14 +68,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    sourceSets.getByName("androidTest").assets.srcDir("src/test/resources/schedule")
+    sourceSets.getByName("test").resources.srcDir("../schedule-core/src/test/resources")
+    sourceSets.getByName("androidTest").assets.srcDir("../schedule-core/src/test/resources/schedule")
 }
 
 dependencies {
-    implementation("net.sf.biweekly:biweekly:0.6.8") {
-        // Only the text ICS reader is used; no JSON/XML codecs or timezone downloads.
-        exclude(group = "com.fasterxml.jackson.core")
-    }
+    implementation(project(":schedule-core"))
     implementation("androidx.recyclerview:recyclerview:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.zxing:core:3.5.4")

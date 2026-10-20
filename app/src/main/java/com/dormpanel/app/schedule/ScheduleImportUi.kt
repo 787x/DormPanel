@@ -208,8 +208,8 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         val phaseInput = EditText(context).apply {
             hint = "2026-08-31\n1 08:00 08:45\n2 08:55 09:40\n...\n\n2026-10-08\n1 08:00 08:45"
             contentDescription = "Schedule phases"; minLines = 6
-            setText(existing?.let { phasesToText(it) }
-                ?: if (hasKnownPreset) phasesToText(BuiltInProfiles.term2026) else "")
+            setText(existing?.let { TermProfileForm.phasesToText(it) }
+                ?: if (hasKnownPreset) TermProfileForm.phasesToText(BuiltInProfiles.term2026) else "")
         }
         fields.addView(phaseInput)
         if (structure != null) {
@@ -241,7 +241,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         val dialog = show(builder.setPositiveButton("Save", null).create())
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val parsed = runCatching {
-                parseProfileForm(termInput.text.toString(), tzInput.text.toString(),
+                TermProfileForm.parseProfileForm(termInput.text.toString(), tzInput.text.toString(),
                     week1Input.text.toString(), phaseInput.text.toString())
             }
             parsed.onSuccess { profile ->
@@ -261,50 +261,6 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                 onDone?.invoke(profile)
             }.onFailure { error.text = errorText(it) }
         }
-    }
-
-    private fun phasesToText(profile: TermScheduleProfile): String = profile.phases
-        .sortedBy { it.effectiveFrom }
-        .joinToString("\n\n") { phase ->
-            (listOf(phase.effectiveFrom.toString()) + phase.periods.sortedBy { it.periodNumber }
-                .map { "${it.periodNumber} ${it.start} ${it.end}" }).joinToString("\n")
-        }
-
-    private fun parseProfileForm(term: String, timezone: String, week1: String, phasesText: String): TermScheduleProfile {
-        val termKey = term.trim()
-        importCheck(termKey.isNotBlank(), "Term key is required.")
-        val zone = timezone.trim()
-        importCheck(runCatching { java.time.ZoneId.of(zone) }.isSuccess, "Unknown timezone: $zone")
-        val monday = runCatching { java.time.LocalDate.parse(week1.trim()) }.getOrElse {
-            throw ScheduleImportException("Week 1 Monday must be yyyy-MM-dd.")
-        }
-        val phases = mutableListOf<SchedulePhase>()
-        var currentFrom: java.time.LocalDate? = null
-        var currentPeriods = mutableListOf<PeriodTime>()
-        fun flush() {
-            val from = currentFrom ?: return
-            phases += SchedulePhase(from, currentPeriods.toList())
-            currentFrom = null
-            currentPeriods = mutableListOf()
-        }
-        phasesText.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.forEach { line ->
-            val date = runCatching { java.time.LocalDate.parse(line) }.getOrNull()
-            if (date != null && !line.contains(' ')) {
-                flush(); currentFrom = date
-            } else {
-                importCheck(currentFrom != null, "Each period line must follow a yyyy-MM-dd phase date.")
-                val parts = line.split(Regex("\\s+"))
-                importCheck(parts.size == 3, "Period line must be: number start end")
-                val number = parts[0].toIntOrNull() ?: throw ScheduleImportException("Invalid period number.")
-                val start = runCatching { java.time.LocalTime.parse(parts[1]) }.getOrElse { throw ScheduleImportException("Invalid start time.") }
-                val end = runCatching { java.time.LocalTime.parse(parts[2]) }.getOrElse { throw ScheduleImportException("Invalid end time.") }
-                importCheck(end > start, "Period end must be after start.")
-                currentPeriods += PeriodTime(number, start, end)
-            }
-        }
-        flush()
-        importCheck(phases.isNotEmpty(), "At least one schedule phase is required.")
-        return TermScheduleProfile(termKey, zone, monday, phases)
     }
 
     /** Shows profile management and allows edit/create/reset. */

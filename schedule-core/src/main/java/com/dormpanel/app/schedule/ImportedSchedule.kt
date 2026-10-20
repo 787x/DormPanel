@@ -20,7 +20,7 @@ object ImportLimits {
 }
 
 class ScheduleImportException(message: String) : IllegalArgumentException(message)
-internal fun importCheck(condition: Boolean, message: String) {
+fun importCheck(condition: Boolean, message: String) {
     if (!condition) throw ScheduleImportException(message)
 }
 
@@ -29,7 +29,7 @@ class ScheduleArtifact(val filename: String, bytes: ByteArray, val mimeType: Str
     val kind: String = "local_document", val locator: String? = null) {
     init { importCheck(bytes.size <= ImportLimits.BYTES, "Timetable file exceeds the 1 MiB size limit.") }
     private val payload = bytes.copyOf()
-    internal fun bytes() = payload.copyOf()
+    fun bytes() = payload.copyOf()
     companion object {
         fun read(filename: String, input: InputStream, mimeType: String? = null,
             kind: String = "local_document", locator: String? = null): ScheduleArtifact {
@@ -114,7 +114,7 @@ class IcsScheduleImporter(private val parser: IcsScheduleParser = BiweeklySchedu
     }
 }
 
-internal fun digest(bytes: ByteArray): String {
+fun digest(bytes: ByteArray): String {
     val hash = MessageDigest.getInstance("SHA-256").digest(bytes)
     val hex = "0123456789abcdef"
     return CharArray(hash.size * 2) { index ->

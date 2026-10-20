@@ -12,7 +12,7 @@ import java.nio.charset.StandardCharsets
  * Handles quoted multiline fields; never splits on raw commas inside quotes.
  * Lightweight and Android 9 safe — no spreadsheet dependency.
  */
-internal object CsvReader {
+object CsvReader {
     /** Decodes timetable bytes. UTF-8 BOM, then strict UTF-8, then GB18030 fallback. */
     fun decode(bytes: ByteArray): String {
         var data = bytes
@@ -50,7 +50,7 @@ internal object CsvReader {
      * Parses one CSV document into rows of columns.
      * Accepts CRLF, LF, or CR row endings and quoted fields containing commas/newlines.
      */
-    fun parse(text: String): List<List<String>> {
+    internal fun parse(text: String): List<List<String>> {
         val rows = mutableListOf<List<String>>()
         var row = mutableListOf<String>()
         val field = StringBuilder()
