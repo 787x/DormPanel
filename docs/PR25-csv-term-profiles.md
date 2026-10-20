@@ -12,7 +12,7 @@ Existing ICS import behavior, fingerprints, and already-imported data remain com
 
 ## Sanitized regression fixture
 
-`app/src/test/resources/schedule/hubei_2026-2027-1.csv` is a sanitized copy of a real
+`schedule-core/src/test/resources/schedule/hubei_2026-2027-1.csv` is a sanitized copy of a real
 Hubei University personal timetable export. Personal name/class/major header fields were
 replaced with obvious test values. Structure, quoting, UTF-8 BOM, multiline course cells,
 course titles, week/period semantics, and the military-training note are preserved.
