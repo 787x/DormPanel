@@ -61,11 +61,11 @@ class PhoneSharedScheduleRestartTest {
                     assertTrue(ready)
                     scenario.onActivity {
                         val v = it.source.state
-                        assertTrue(it.source.readOnly); assertEquals(first.revision, v.sync!!.revision)
+                        assertFalse(it.source.readOnly); assertEquals(first.revision, v.sync!!.revision)
                         assertEquals("local", v.entries.single().id); assertEquals("stable-source", v.sources.single().id)
                         assertEquals("stable-instance", v.imported.single().id); assertEquals(3, v.classOverrides.size)
                         assertEquals(first.state.profiles, v.profiles); assertEquals("Asia/Shanghai", v.profiles["custom-term"]!!.timezone)
-                        assertFalse(it.source.saveEntry("Forbidden", 1, 1, 2))
+                        assertTrue(it.source.saveEntry(v.entries.single().title, v.entries.single().day, v.entries.single().startMinute, v.entries.single().endMinute, v.entries.single().location, v.entries.single().id))
                     }
                     assertEquals("{}", context.getSharedPreferences(namespace, 0).getString("overrides", "{}"))
                 }

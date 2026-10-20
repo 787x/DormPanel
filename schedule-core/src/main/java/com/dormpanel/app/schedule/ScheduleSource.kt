@@ -62,7 +62,19 @@ interface ScheduleStore {
 class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock = DeviceScheduleClock,
     private val profileResolver: (String) -> TermScheduleProfile? = { BuiltInProfiles.builtIn(it) }) {
     var applyingSnapshot = false; private set
-    val readOnly get() = state.sync != null
+    /** PR32 bindings are writable. Short transactional reloads use applyingSnapshot separately. */
+    val readOnly = false
+    val syncStore get() = store as? RoomScheduleStore
+    var localCommitted: (() -> Unit)? = null
+    internal fun pauseForSync() { applyingSnapshot = true; refresh() }
+    fun reload(callback: (Result<Unit>) -> Unit = {}) {
+        if (closed) { callback(Result.failure(IllegalStateException("Schedule source closed"))); return }
+        applyingSnapshot = true
+        store.load { result ->
+            result.onSuccess { state = ordered(if (it.sync == null) it.copy(profiles = effectiveProfiles(it.sources)) else it); ready = true }.onFailure { error = true }
+            applyingSnapshot = false; refresh(); callback(result.map { })
+        }
+    }
     fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) = store.exportSnapshot(datasetId, parent, generation, callback)
     fun applySnapshot(bytes: ByteArray, callback: (Result<Unit>) -> Unit) {
         if (closed || !ready || applyingSnapshot) { callback(Result.failure(IllegalStateException("Timetable is busy"))); return }
@@ -102,13 +114,24 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     /** Call after a profile-store mutation; imported base rows retain their original instants. */
     fun refreshProfiles() {
         if (closed || !ready || readOnly || applyingSnapshot) return
-        val profiles = effectiveProfiles(state.sources)
-        if (profiles != state.profiles) { state = state.copy(profiles = profiles); refresh() }
+        if (state.sync != null) {
+            val catalog = syncStore?.sharedCatalog() ?: return
+            if (state.profiles != catalog.first || state.customProfileKeys != catalog.second) {
+                state = state.copy(profiles = catalog.first, customProfileKeys = catalog.second); refresh()
+            }
+            localCommitted?.invoke()
+        } else {
+            val profiles = effectiveProfiles(state.sources)
+            if (profiles != state.profiles) { state = state.copy(profiles = profiles); refresh() }
+            localCommitted?.invoke()
+        }
     }
     private fun ordered(value: ScheduleState) = value.copy(
         events = value.events.sortedWith(compareBy<CalendarEvent> { it.start }.thenBy { it.title }.thenBy { it.id }),
         entries = value.entries.sortedWith(compareBy<TimetableEntry> { it.day }.thenBy { it.startMinute }.thenBy { it.title }.thenBy { it.id }))
-    private val completion: (Result<Unit>) -> Unit = { if (!closed && it.isFailure) { error = true; refresh() } }
+    private val completion: (Result<Unit>) -> Unit = { if (!closed) {
+        if (it.isFailure) { error = true; refresh() } else localCommitted?.invoke()
+    } }
     fun saveEvent(title: String, start: Long, end: Long, note: String = "", id: String? = null): Boolean {
         val event = CalendarEvent(id ?: UUID.randomUUID().toString(), title.trim(), start, end, note.trim())
         if (closed || !ready || readOnly || applyingSnapshot || !event.valid() || (id != null && state.events.none { it.id == id })) return false
@@ -160,9 +183,10 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
                     val sources = state.sources.filterNot { it.id == committed.source.id } + committed.source
                     state = state.copy(sources = sources,
                         imported = state.imported.filterNot { it.sourceId == committed.source.id } + committed.occurrences,
-                        profiles = effectiveProfiles(sources))
+                        profiles = if (state.sync != null) state.profiles else effectiveProfiles(sources))
                     refresh()
                 } }
+                if (result.isSuccess) localCommitted?.invoke()
                 callback(result)
             }
         }
@@ -173,9 +197,10 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
             result.onSuccess {
                 val sources = state.sources.filterNot { it.id == id }
                 state = state.copy(sources = sources, imported = state.imported.filterNot { it.sourceId == id },
-                    classOverrides = state.classOverrides.filterNot { it.sourceId == id }, profiles = effectiveProfiles(sources))
+                    classOverrides = state.classOverrides.filterNot { it.sourceId == id }, profiles = if (state.sync != null) state.profiles else effectiveProfiles(sources))
                 refresh()
             }
+            if (result.isSuccess) localCommitted?.invoke()
             callback(result)
         } }
     }

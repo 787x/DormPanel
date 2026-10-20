@@ -1,5 +1,7 @@
 # PR31 — WebDAV 完整课表单向同步
 
+本文记录 PR31 的历史行为。双端可写及原位升级见 [PR32](PR32-bidirectional-timetable-sync.md)。
+
 PR30 已合并后在 main 上开发。PR31 只有 X08E 发布、手机只读跟随；没有手机回写、多写者合并、HA 同步或常驻后台服务。没有修改正式 applicationId、版本、签名、数据库文件名、已有 WebDAV 偏好键或 Keystore alias。
 
 ## 使用

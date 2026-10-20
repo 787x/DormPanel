@@ -158,6 +158,7 @@ class MainActivity : AppCompatActivity() {
         dashboardViewModel.apps.refresh()
         if (::apkImports.isInitialized) apkImports.refreshPermission()
         dashboardViewModel.schedule.refresh()
+        dashboardViewModel.sharedSchedule.sync()
         dashboardViewModel.deviceControls.refreshAudio()
         dashboardViewModel.deviceControls.refreshSystemBrightness()
         contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, volumeObserver)

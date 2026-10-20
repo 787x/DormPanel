@@ -152,10 +152,16 @@ class TermScheduleProfileStore(context: Context) {
     var synchronizedProfiles: (() -> Map<String, TermScheduleProfile>?)? = null
     var synchronizedCustomKeys: (() -> Set<String>)? = null
     var editable: () -> Boolean = { true }
+    internal var sharedStore: RoomScheduleStore? = null
+    var committed: (() -> Unit)? = null
     fun hasCustomProfiles(): Boolean = JSONObject(prefs.getString(KEY_OVERRIDES, "{}") ?: "{}").length() > 0
     /** Export never silently drops a malformed preference entry; preserve override provenance too. */
     fun snapshotCatalog(): Pair<Map<String, TermScheduleProfile>, Set<String>> {
+        sharedStore?.sharedCatalog()?.let { return it }
         synchronizedProfiles?.invoke()?.let { return it to (synchronizedCustomKeys?.invoke() ?: emptySet()) }
+        return preferenceCatalog()
+    }
+    internal fun preferenceCatalog(): Pair<Map<String, TermScheduleProfile>, Set<String>> {
         val raw = JSONObject(prefs.getString(KEY_OVERRIDES, "{}") ?: "{}")
         val custom = raw.keys().asSequence().associateWith { key ->
             requireNotNull(fromJson(key, raw.getJSONObject(key))).also { require(it.termKey == key) }
@@ -167,6 +173,7 @@ class TermScheduleProfileStore(context: Context) {
 
     /** Override if present, else built-in for known terms, else null. */
     fun get(termKey: String): TermScheduleProfile? {
+        sharedStore?.sharedCatalog()?.let { return it.first[termKey.trim()] }
         synchronizedProfiles?.invoke()?.let { return it[termKey.trim()] }
         val trimmed = termKey.trim()
         overrides()[trimmed]?.let { return it }
@@ -174,6 +181,7 @@ class TermScheduleProfileStore(context: Context) {
     }
 
     fun isBuiltIn(termKey: String): Boolean {
+        sharedStore?.sharedCatalog()?.let { return termKey.trim() in it.first && termKey.trim() !in it.second }
         synchronizedProfiles?.invoke()?.let { catalog ->
             return termKey.trim() in catalog && termKey.trim() !in (synchronizedCustomKeys?.invoke() ?: emptySet())
         }
@@ -182,9 +190,10 @@ class TermScheduleProfileStore(context: Context) {
 
     fun put(profile: TermScheduleProfile) {
         check(editable()) { "Timetable is read-only or applying a snapshot" }
-        check(synchronizedProfiles?.invoke() == null) { "Read-only shared timetable" }
         val problem = profile.validate()
         require(problem == null) { problem ?: "Invalid term profile." }
+        if (sharedStore?.changeProfile(profile, profile.termKey.trim()) == true) { committed?.invoke(); return }
+        check(synchronizedProfiles?.invoke() == null) { "Shared catalog unavailable" }
         val all = overrides()
         all[profile.termKey.trim()] = profile
         save(all)
@@ -193,12 +202,14 @@ class TermScheduleProfileStore(context: Context) {
     /** Removes a user override so the built-in preset applies again (if any). */
     fun remove(termKey: String) {
         check(editable()) { "Timetable is read-only or applying a snapshot" }
-        check(synchronizedProfiles?.invoke() == null) { "Read-only shared timetable" }
+        if (sharedStore?.changeProfile(null, termKey.trim()) == true) { committed?.invoke(); return }
+        check(synchronizedProfiles?.invoke() == null) { "Shared catalog unavailable" }
         val all = overrides()
         if (all.remove(termKey.trim()) != null) save(all)
     }
 
     fun list(): List<TermScheduleProfile> {
+        sharedStore?.sharedCatalog()?.let { return it.first.values.sortedBy { p -> p.termKey } }
         synchronizedProfiles?.invoke()?.let { return it.values.sortedBy { p -> p.termKey } }
         val merged = linkedMapOf<String, TermScheduleProfile>()
         BuiltInProfiles.builtIn(BuiltInProfiles.TERM_2026_2027_1)?.let {
@@ -219,10 +230,17 @@ class TermScheduleProfileStore(context: Context) {
         return result
     }
 
+    internal fun changePreference(profile: TermScheduleProfile?, key: String) {
+        val all = overrides()
+        if (profile == null) all.remove(key) else all[key] = profile
+        save(all)
+    }
+
     private fun save(overrides: Map<String, TermScheduleProfile>) {
         val root = JSONObject()
         overrides.forEach { (key, profile) -> root.put(key, toJson(profile)) }
-        prefs.edit().putString(KEY_OVERRIDES, root.toString()).apply()
+        check(prefs.edit().putString(KEY_OVERRIDES, root.toString()).commit()) { "Term configuration save failed" }
+        committed?.invoke()
     }
 
     private fun toJson(profile: TermScheduleProfile): JSONObject = JSONObject()

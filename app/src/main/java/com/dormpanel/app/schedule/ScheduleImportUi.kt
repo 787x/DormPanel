@@ -224,7 +224,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
             .setNegativeButton("Cancel") { _, _ -> onDone?.invoke(null) }
         if (BuiltInProfiles.builtIn(termKeyHint) != null) {
             builder.setNeutralButton("Reset to built-in") { _, _ ->
-                profileStore.remove(termKeyHint)
+                removeProfile(termKeyHint)
                 source.refreshProfiles()
                 onDone?.invoke(BuiltInProfiles.builtIn(termKeyHint))
             }
@@ -234,7 +234,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                     .setMessage("Remove the custom term profile ${existing.termKey}? Imported classes are not affected until you re-import or re-sync.")
                     .setNegativeButton("Cancel", null)
                     .setPositiveButton("Delete profile") { _, _ ->
-                        profileStore.remove(existing.termKey)
+                        removeProfile(existing.termKey)
                         source.refreshProfiles()
                         onDone?.invoke(null)
                     }.create())
@@ -266,6 +266,11 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     }
 
     /** Shows profile management and allows edit/create/reset. */
+    private fun removeProfile(key: String) {
+        runCatching { profileStore.remove(key) }.onFailure {
+            message("Term configuration", "Could not remove this profile. Remove its associated import sources first, then try again. Existing data was retained.")
+        }
+    }
     fun termProfiles() {
         if (closed || busy) return
         val fields = context.scheduleColumn()
@@ -289,7 +294,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                 fields.addView(context.scheduleLabel("Built-in profile. Edit it to customize.", 15f))
             } else if (hasPreset) {
                 fields.addView(context.scheduleButton("Reset ${profile.termKey} to built-in") {
-                    profileStore.remove(profile.termKey)
+                    removeProfile(profile.termKey)
                     source.refreshProfiles()
                     dialog.dismiss(); termProfiles()
                 })
@@ -299,7 +304,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                         .setMessage("Remove the custom term profile ${profile.termKey}? This cannot be undone. Imported classes are not affected until you re-import or re-sync.")
                         .setNegativeButton("Cancel", null)
                         .setPositiveButton("Delete profile") { _, _ ->
-                            profileStore.remove(profile.termKey)
+                            removeProfile(profile.termKey)
                             source.refreshProfiles()
                             dialog.dismiss(); termProfiles()
                         }.create())
