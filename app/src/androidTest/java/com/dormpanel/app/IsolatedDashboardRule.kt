@@ -24,7 +24,8 @@ class IsolatedDashboardRule : ExternalResource() {
         com.dormpanel.app.schedule.ScheduleStores.overrideFactory = {
             val executor = Executors.newSingleThreadExecutor()
             executors += executor
-            com.dormpanel.app.schedule.RoomScheduleStore(scheduleDatabase, executor, closeDatabase = false)
+            com.dormpanel.app.schedule.RoomScheduleStore(scheduleDatabase, executor, closeDatabase = false,
+                profiles = com.dormpanel.app.schedule.TermScheduleProfileStore(context))
         }
         database = Room.inMemoryDatabaseBuilder(context, DashboardDatabase::class.java).build()
         productivityDatabase = Room.inMemoryDatabaseBuilder(context, com.dormpanel.app.productivity.ProductivityDatabase::class.java).build()

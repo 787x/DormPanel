@@ -28,8 +28,10 @@ data class WebDavItem(val url: String, val name: String, val folder: Boolean, va
 data class WebDavDownload(val artifact: ScheduleArtifact?, val etag: String?, val lastModified: String?)
 
 /** One-origin, bounded WebDAV transport. Request errors contain only fixed, credential-free text. */
-class WebDavClient(private val http: OkHttpClient = OkHttpClient.Builder().followRedirects(false)
+class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(false)
     .followSslRedirects(false).connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()) {
+    private val http = http.newBuilder().followRedirects(false).followSslRedirects(false)
+        .callTimeout(if (http.callTimeoutMillis > 0) http.callTimeoutMillis.toLong() else 60_000L, TimeUnit.MILLISECONDS).build()
     companion object {
         const val MAX_XML = 512 * 1024
         private val OK_STATUS = Regex("\\s200(?:\\s|$)")
@@ -46,7 +48,7 @@ class WebDavClient(private val http: OkHttpClient = OkHttpClient.Builder().follo
     }
     private fun sameOrigin(a: HttpUrl, b: HttpUrl) = a.scheme == b.scheme && a.host == b.host && a.port == b.port
     private fun execute(account: WebDavAccount, target: HttpUrl, method: String, depth: Int? = null,
-        etag: String? = null, lastModified: String? = null): Response {
+        etag: String? = null, lastModified: String? = null, payload: ByteArray? = null, match: String? = null, create: Boolean = false): Response {
         val base = url(account.baseUrl)
         if (!sameOrigin(base, target)) throw WebDavException("Remote resource belongs to another server.")
         var current = target
@@ -54,8 +56,10 @@ class WebDavClient(private val http: OkHttpClient = OkHttpClient.Builder().follo
             val request = Request.Builder().url(current).header("Authorization", Credentials.basic(account.username, account.password))
                 .apply { if (depth != null) header("Depth", depth.toString())
                     if (etag != null) header("If-None-Match", etag)
+                    if (create) header("If-None-Match", "*")
+                    if (match != null) header("If-Match", match)
                     if (lastModified != null && etag == null) header("If-Modified-Since", lastModified) }
-                .method(method, if (method == "PROPFIND") PROPERTIES.toRequestBody("application/xml; charset=utf-8".toMediaType()) else null).build()
+                .method(method, if (payload != null) payload.toRequestBody("application/octet-stream".toMediaType()) else if (method == "PROPFIND") PROPERTIES.toRequestBody("application/xml; charset=utf-8".toMediaType()) else null).build()
             val response = try { http.newCall(request).execute() } catch (_: IOException) { throw WebDavException("Network unavailable or timed out.") }
             if (response.code in listOf(301, 302, 307, 308)) {
                 val location = response.header("Location")
@@ -66,6 +70,7 @@ class WebDavClient(private val http: OkHttpClient = OkHttpClient.Builder().follo
                 if (next.encodedPath.trimEnd('/') != current.encodedPath.trimEnd('/'))
                     throw WebDavException("WebDAV redirected to a different resource.")
                 if (redirect == 3 || next == current) throw WebDavException("Too many WebDAV redirects.")
+                url(next.toString())
                 current = next
             } else return response
         }
@@ -122,6 +127,39 @@ class WebDavClient(private val http: OkHttpClient = OkHttpClient.Builder().follo
             val body = response.body ?: throw WebDavException("Empty remote file.")
             return body.byteStream().use { consume(it, body.contentLength()) }
         }
+    }
+    /** Shared-snapshot transport uses the same URL, origin, redirect and authentication rules. */
+    data class Resource(val bytes: ByteArray, val etag: String?)
+    fun readResource(account: WebDavAccount, remote: String, limit: Int): Resource? {
+        execute(account, url(remote), "GET").use { response ->
+            if (response.code == 404) return null
+            status(response, 200)
+            try {
+                val body = response.body ?: throw WebDavException("Empty WebDAV response.")
+                if (body.contentLength() > limit) throw WebDavException("Shared timetable exceeds size limit.")
+                val output = java.io.ByteArrayOutputStream()
+                body.byteStream().use { stream ->
+                    val buffer = ByteArray(8192)
+                    while (true) { val n = stream.read(buffer); if (n < 0) break
+                        if (output.size().toLong() + n > limit) throw WebDavException("Shared timetable exceeds size limit.")
+                        output.write(buffer, 0, n)
+                    }
+                }
+                return Resource(output.toByteArray(), response.header("ETag"))
+            } catch (_: IOException) { throw WebDavException("Network unavailable or incomplete download.") }
+        }
+    }
+    fun conditionalPut(account: WebDavAccount, remote: String, bytes: ByteArray, expected: String?): Int {
+        if (expected != null) requireStrongEtag(expected)
+        execute(account, url(remote), "PUT", payload = bytes, match = expected, create = expected == null).use { response ->
+            if (response.code in listOf(409, 412)) return response.code
+            if (response.code !in listOf(200, 201, 204)) status(response, 201)
+            return response.code
+        }
+    }
+    fun requireStrongEtag(etag: String?): String {
+        if (etag == null || !etag.matches(Regex("\"[^\"\r\n]+\""))) throw WebDavException("Server must supply a strong ETag; unsafe publication refused.")
+        return etag
     }
     fun filename(url: HttpUrl): String = url.encodedPathSegments.lastOrNull()?.let {
         runCatching { URLDecoder.decode(it.replace("+", "%2B"), "UTF-8") }.getOrDefault(it)

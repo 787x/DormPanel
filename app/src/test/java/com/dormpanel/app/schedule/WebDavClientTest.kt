@@ -62,7 +62,7 @@ class WebDavClientTest {
             assertEquals(server.url("/dav/current.ics").toString(), item.url)
             val result = client.download(account, item.url)
             assertEquals("webdav", result.artifact!!.kind)
-            assertFalse(result.artifact.locator!!.contains("u:p"))
+            assertFalse(result.artifact!!.locator!!.contains("u:p"))
             assertEquals("\"v2\"", result.etag)
         }
     }

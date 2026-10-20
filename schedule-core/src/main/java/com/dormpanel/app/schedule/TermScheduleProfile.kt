@@ -148,17 +148,41 @@ class TermScheduleProfileStore(context: Context) {
     private val prefs = context.getSharedPreferences(
         overrideNamespace ?: "term_schedule_profiles", Context.MODE_PRIVATE)
 
+    /** Follower catalogs are committed with courses in Room; preferences remain untouched. */
+    var synchronizedProfiles: (() -> Map<String, TermScheduleProfile>?)? = null
+    var synchronizedCustomKeys: (() -> Set<String>)? = null
+    var editable: () -> Boolean = { true }
+    fun hasCustomProfiles(): Boolean = JSONObject(prefs.getString(KEY_OVERRIDES, "{}") ?: "{}").length() > 0
+    /** Export never silently drops a malformed preference entry; preserve override provenance too. */
+    fun snapshotCatalog(): Pair<Map<String, TermScheduleProfile>, Set<String>> {
+        synchronizedProfiles?.invoke()?.let { return it to (synchronizedCustomKeys?.invoke() ?: emptySet()) }
+        val raw = JSONObject(prefs.getString(KEY_OVERRIDES, "{}") ?: "{}")
+        val custom = raw.keys().asSequence().associateWith { key ->
+            requireNotNull(fromJson(key, raw.getJSONObject(key))).also { require(it.termKey == key) }
+        }
+        val catalog = linkedMapOf(BuiltInProfiles.term2026.termKey to BuiltInProfiles.term2026)
+        catalog.putAll(custom)
+        return catalog to custom.keys
+    }
+
     /** Override if present, else built-in for known terms, else null. */
     fun get(termKey: String): TermScheduleProfile? {
+        synchronizedProfiles?.invoke()?.let { return it[termKey.trim()] }
         val trimmed = termKey.trim()
         overrides()[trimmed]?.let { return it }
         return BuiltInProfiles.builtIn(trimmed)
     }
 
-    fun isBuiltIn(termKey: String): Boolean =
-        BuiltInProfiles.builtIn(termKey.trim()) != null && !overrides().containsKey(termKey.trim())
+    fun isBuiltIn(termKey: String): Boolean {
+        synchronizedProfiles?.invoke()?.let { catalog ->
+            return termKey.trim() in catalog && termKey.trim() !in (synchronizedCustomKeys?.invoke() ?: emptySet())
+        }
+        return BuiltInProfiles.builtIn(termKey.trim()) != null && !overrides().containsKey(termKey.trim())
+    }
 
     fun put(profile: TermScheduleProfile) {
+        check(editable()) { "Timetable is read-only or applying a snapshot" }
+        check(synchronizedProfiles?.invoke() == null) { "Read-only shared timetable" }
         val problem = profile.validate()
         require(problem == null) { problem ?: "Invalid term profile." }
         val all = overrides()
@@ -168,11 +192,14 @@ class TermScheduleProfileStore(context: Context) {
 
     /** Removes a user override so the built-in preset applies again (if any). */
     fun remove(termKey: String) {
+        check(editable()) { "Timetable is read-only or applying a snapshot" }
+        check(synchronizedProfiles?.invoke() == null) { "Read-only shared timetable" }
         val all = overrides()
         if (all.remove(termKey.trim()) != null) save(all)
     }
 
     fun list(): List<TermScheduleProfile> {
+        synchronizedProfiles?.invoke()?.let { return it.values.sortedBy { p -> p.termKey } }
         val merged = linkedMapOf<String, TermScheduleProfile>()
         BuiltInProfiles.builtIn(BuiltInProfiles.TERM_2026_2027_1)?.let {
             merged[it.termKey] = it
