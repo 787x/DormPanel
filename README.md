@@ -26,6 +26,11 @@ upgrade, with live HA CSV/WebDAV, phone entry, Xiaomi coexistence/boot, and a
 observation limits, and [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes
 since 0.1.0. PR29 recorded acceptance evidence only; it did not publish a release.
 
+0.1.2-rc.1 is being prepared for X08E and the independent Android phone timetable
+app. See [RC notes](docs/RELEASE-0.1.2-rc.1.md) and
+[PR33 checks](docs/PR33-release-preparation.md). This is not a published release
+or a claim of physical RC acceptance; the 0.1.1 evidence above remains historical.
+
 ## Install / update
 
 ### APK installation

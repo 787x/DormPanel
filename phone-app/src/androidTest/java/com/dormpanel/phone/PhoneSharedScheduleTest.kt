@@ -136,7 +136,15 @@ class PhoneSharedScheduleTest {
                         controller!!.close()
                         controller = SharedScheduleController(context, writer!!, publisherAccount, publisherSettings)
                     }
-                    instrumentation.runOnMainSync { assertTrue(writer!!.saveEntry("New revision", 3, 700, 745, id = "local")) }
+                    // Recreating the controller starts an asynchronous receipt recovery.
+                    // Submit the edit only outside its brief transactional UI write gate.
+                    waitFor(scenario) {
+                        if (controller!!.busy || writer!!.applyingSnapshot) false
+                        else {
+                            assertTrue(writer!!.saveEntry("New revision", 3, 700, 745, id = "local"))
+                            true
+                        }
+                    }
                     writerProfiles.put(writerProfiles.get("custom-term")!!.copy(timezone = "Asia/Tokyo"))
                     instrumentation.runOnMainSync { controller!!.publish() }
                     waitFor(scenario) { !controller!!.busy }

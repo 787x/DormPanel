@@ -41,3 +41,6 @@ signing.properties
 
 # Local PR32 verification logs and screenshots
 /artifacts/pr32/
+
+# Local RC verification logs, screenshots and candidate fixtures
+/artifacts/pr33/

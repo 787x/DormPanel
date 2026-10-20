@@ -3,216 +3,89 @@ param(
     [string]$KeyAlias = $env:DORMPANEL_RELEASE_KEY_ALIAS,
     [string]$StorePassword = $env:DORMPANEL_RELEASE_STORE_PASSWORD,
     [string]$KeyPassword = $env:DORMPANEL_RELEASE_KEY_PASSWORD,
+    [string]$BuildToolsDirectory,
     [switch]$SkipTests
 )
-
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-Set-Location $repositoryRoot
+. (Join-Path $PSScriptRoot 'release-validation.ps1')
 
-$releaseVersion = '0.1.1'
-$releaseVersionCode = '3'
-$releasePackage = 'com.dormpanel.app'
-
-function Fail([string]$Message) {
-    Write-Error $Message
-    exit 1
+function Invoke-Gradle([string[]]$Tasks) {
+    & (Join-Path $repositoryRoot 'gradlew.bat') @Tasks
+    if ($LASTEXITCODE -ne 0) { throw "Gradle failed ($LASTEXITCODE): $($Tasks -join ' ')" }
 }
 
-function Invoke-Checked {
-    param([string]$FilePath, [string[]]$Arguments, [string]$Label)
-    Write-Host ">> $Label"
-    & $FilePath @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        Fail "$Label failed with exit code $LASTEXITCODE"
-    }
-}
-
-# --- Resolve signing inputs (values are never printed) -----------------------
+# Existing approved keypair only; never invent passwords or use a debug fallback.
 if (-not $Keystore) { $Keystore = Join-Path $env:USERPROFILE '.dormpanel\dormpanel-release.jks' }
 if (-not $KeyAlias) { $KeyAlias = 'androiddebugkey' }
-if (-not $StorePassword) { $StorePassword = $env:DORMPANEL_RELEASE_STORE_PASSWORD }
-if (-not $KeyPassword) { $KeyPassword = $env:DORMPANEL_RELEASE_KEY_PASSWORD }
-
-$signingReady = $true
-if (-not (Test-Path -LiteralPath $Keystore)) {
-    Write-Warning "Release keystore not found at '$Keystore'."
-    $signingReady = $false
+if (-not (Test-Path -LiteralPath $Keystore -PathType Leaf) -or -not $StorePassword -or -not $KeyPassword) {
+    throw 'Official RC build requires a keystore and both DORMPANEL_RELEASE_STORE_PASSWORD / DORMPANEL_RELEASE_KEY_PASSWORD. No unsigned or debug fallback.'
 }
-if (-not $StorePassword -or -not $KeyPassword) {
-    Write-Warning 'DORMPANEL_RELEASE_STORE_PASSWORD and/or DORMPANEL_RELEASE_KEY_PASSWORD are not set.'
-    Write-Warning 'Refusing to print or invent signing passwords. Export them, or place them in a local gradle.properties that is not committed.'
-    $signingReady = $false
-}
-
-if (-not $signingReady) {
-    Fail 'Official release builds require signing inputs. Set DORMPANEL_RELEASE_KEYSTORE / DORMPANEL_RELEASE_KEY_ALIAS / DORMPANEL_RELEASE_STORE_PASSWORD / DORMPANEL_RELEASE_KEY_PASSWORD.'
-}
-
-# Prefer gradle property files when present so passwords stay out of the shell history.
-$gradleProps = @()
-if ($signingReady) {
-    $gradleProps += "-Pdormpanel.release.keystore=$Keystore"
-    $gradleProps += "-Pdormpanel.release.keyAlias=$KeyAlias"
+$Keystore = (Resolve-Path -LiteralPath $Keystore).Path
+$tools = Get-AndroidReleaseTools $BuildToolsDirectory
+$envNames = @('DORMPANEL_RELEASE_KEYSTORE', 'DORMPANEL_RELEASE_KEY_ALIAS', 'DORMPANEL_RELEASE_STORE_PASSWORD', 'DORMPANEL_RELEASE_KEY_PASSWORD')
+$oldEnvironment = @{}
+foreach ($name in $envNames) { $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+Push-Location $repositoryRoot
+try {
     $env:DORMPANEL_RELEASE_KEYSTORE = $Keystore
     $env:DORMPANEL_RELEASE_KEY_ALIAS = $KeyAlias
     $env:DORMPANEL_RELEASE_STORE_PASSWORD = $StorePassword
     $env:DORMPANEL_RELEASE_KEY_PASSWORD = $KeyPassword
-}
-
-# --- Build ------------------------------------------------------------------
-if (-not $SkipTests) {
-    Invoke-Checked -FilePath '.\gradlew.bat' -Arguments @('testDebugUnitTest') -Label 'Unit tests'
-}
-
-Invoke-Checked -FilePath '.\gradlew.bat' -Arguments (@('assembleRelease') + $gradleProps) -Label 'assembleRelease'
-
-$apk = Get-ChildItem -Path 'app\build\outputs\apk\release' -Filter '*.apk' -File |
-    Where-Object { $_.Name -notlike '*androidTest*' } |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-if (-not $apk) { Fail 'Release APK was not produced.' }
-
-$apksigner = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Android\Sdk\build-tools') -Directory |
-    Sort-Object Name -Descending |
-    ForEach-Object { Join-Path $_.FullName 'apksigner.bat' } |
-    Where-Object { Test-Path $_ } |
-    Select-Object -First 1
-if (-not $apksigner) { $apksigner = Get-Command apksigner -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source }
-if (-not $apksigner) { Fail 'apksigner was not found. Install Android build-tools.' }
-
-$aapt2 = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Android\Sdk\build-tools') -Directory |
-    Sort-Object Name -Descending |
-    ForEach-Object { Join-Path $_.FullName 'aapt2.exe' } |
-    Where-Object { Test-Path $_ } |
-    Select-Object -First 1
-if (-not $aapt2) {
-    $aapt2 = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Android\Sdk\build-tools') -Directory |
-        Sort-Object Name -Descending |
-        ForEach-Object { Join-Path $_.FullName 'aapt2.bat' } |
-        Where-Object { Test-Path $_ } |
-        Select-Object -First 1
-}
-
-Write-Host ">> Verifying APK signature: $($apk.FullName)"
-$sigOutputFile = Join-Path $env:TEMP ("dormpanel-apksigner-" + [guid]::NewGuid().ToString('n') + ".txt")
-$sigErrFile = $sigOutputFile + ".err"
-$apksignerArgs = @('verify', '--print-certs', $apk.FullName)
-$process = Start-Process -FilePath $apksigner -ArgumentList $apksignerArgs -NoNewWindow -Wait -PassThru -RedirectStandardOutput $sigOutputFile -RedirectStandardError $sigErrFile
-$sigOutput = ''
-if (Test-Path -LiteralPath $sigOutputFile) { $sigOutput += (Get-Content -LiteralPath $sigOutputFile -Raw) }
-if (Test-Path -LiteralPath $sigErrFile) { $sigOutput += (Get-Content -LiteralPath $sigErrFile -Raw) }
-Remove-Item -LiteralPath $sigOutputFile, $sigErrFile -Force -ErrorAction SilentlyContinue
-if ($process.ExitCode -ne 0) { Fail ("APK signature verification failed.`n" + $sigOutput) }
-$sigOutput | Write-Host
-
-$sha256Lines = @(($sigOutput -split "`r?`n") | Where-Object { $_ -match '^.+ certificate SHA-256 digest: [0-9a-fA-F]{64}\s*$' })
-if ($sha256Lines.Count -ne 1) { Fail 'Expected exactly one signer certificate SHA-256.' }
-$sha256Line = $sha256Lines[0]
-$signerSha256 = ($sha256Line -split 'SHA-256 digest:\s*', 2)[1].Trim()
-Write-Host "Signer certificate SHA-256: $signerSha256"
-
-# Expected public fingerprint of the unchanged approved release identity (Android Debug
-# keypair promoted to the DormPanel release identity on this machine).
-$expectedSigner = '32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7'
-if ($signingReady -and $signerSha256.ToLowerInvariant() -ne $expectedSigner) {
-    Fail "Signer certificate SHA-256 '$signerSha256' does not match the expected release identity '$expectedSigner'."
-}
-
-# --- Package / version metadata ---------------------------------------------
-if ($aapt2) {
-    Write-Host '>> Reading APK metadata'
-    $badgingFile = Join-Path $env:TEMP ("dormpanel-aapt2-" + [guid]::NewGuid().ToString('n') + ".txt")
-    $badgingErr = $badgingFile + ".err"
-    $badgingProcess = Start-Process -FilePath $aapt2 -ArgumentList @('dump', 'badging', $apk.FullName) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $badgingFile -RedirectStandardError $badgingErr
-    $badging = ''
-    if (Test-Path -LiteralPath $badgingFile) { $badging += (Get-Content -LiteralPath $badgingFile -Raw) }
-    if (Test-Path -LiteralPath $badgingErr) { $badging += (Get-Content -LiteralPath $badgingErr -Raw) }
-    Remove-Item -LiteralPath $badgingFile, $badgingErr -Force -ErrorAction SilentlyContinue
-    if ($badgingProcess.ExitCode -ne 0) { Fail ("aapt2 dump badging failed.`n" + $badging) }
-    $badging | Write-Host
-    $packageLine = ($badging -split "`r?`n") | Where-Object { $_ -match '^package:' } | Select-Object -First 1
-    if ($packageLine -notmatch ("name='" + [regex]::Escape($releasePackage) + "'")) {
-        Fail "applicationId is not $releasePackage"
+    # Existing Gradle properties take precedence; final signer gates catch mismatches.
+    if (-not $SkipTests) {
+        Invoke-Gradle @(':app:testDebugUnitTest', ':schedule-core:testDebugUnitTest', ':phone-app:testDebugUnitTest')
     }
-    if ($packageLine -notmatch ("versionCode='" + $releaseVersionCode + "'")) {
-        Fail "versionCode is not $releaseVersionCode"
+    # Remove only checked repository APK outputs; never select a stale artifact.
+    foreach ($app in $releaseApps) {
+        $output = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "$($app.Module)\build\outputs\apk\release"))
+        if (-not $output.StartsWith($repositoryRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'APK output path escaped repository.'
+        }
+        if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Recurse -Force }
     }
-    if ($packageLine -notmatch ("versionName='" + [regex]::Escape($releaseVersion) + "'")) {
-        Fail "versionName is not $releaseVersion"
+    Invoke-Gradle @(':app:assembleRelease', ':phone-app:assembleRelease')
+    $outDir = Join-Path $repositoryRoot "artifacts\release\$releaseVersion"
+    $staging = Join-Path $repositoryRoot ("artifacts\release\.staging-" + [guid]::NewGuid().ToString('n'))
+    New-Item -ItemType Directory -Path $staging | Out-Null
+    foreach ($app in $releaseApps) {
+        # Exact AGP output, never newest-file or wildcard selection.
+        $source = Join-Path $repositoryRoot "$($app.Module)\build\outputs\apk\release\$($app.Module)-release.apk"
+        Assert-ReleaseApk $source $app $tools
+        $apk = Join-Path $staging "DormPanel-$($app.Device)-$releaseVersion.apk"
+        Copy-Item -LiteralPath $source -Destination $apk
+        $hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-Content -LiteralPath "$apk.sha256" -Encoding ascii -Value "$hash  $([IO.Path]::GetFileName($apk))"
     }
-    if ($badging -match 'application-debuggable') {
-        Fail 'Release APK is debuggable'
-    }
-} else {
-    Fail 'aapt2 was not found; official release metadata must be verified.'
-}
+    Assert-ReleaseDirectory $staging $tools
 
-# --- Artifact names and sidecars --------------------------------------------
-$haRoot = Join-Path $repositoryRoot 'homeassistant\custom_components\dormpanel'
-if (-not (Test-Path -LiteralPath $haRoot)) { Fail 'HA integration source tree is missing.' }
-$haManifest = Get-Content -LiteralPath (Join-Path $haRoot 'manifest.json') -Raw | ConvertFrom-Json
-if ($haManifest.version -cne $releaseVersion) { Fail "HA integration version is not $releaseVersion" }
-
-$outDir = Join-Path $repositoryRoot 'artifacts\release'
-New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-$apkName = "DormPanel-$releaseVersion.apk"
-$apkOut = Join-Path $outDir $apkName
-Copy-Item $apk.FullName $apkOut -Force
-
-$apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $apkOut).Hash.ToLowerInvariant()
-$sidecar = "$apkOut.sha256"
-# Standard `<hash>  <filename>` form so sha256sum -c works.
-Set-Content -LiteralPath $sidecar -Value "$apkHash  $apkName" -Encoding ascii
-Write-Host "APK SHA-256: $apkHash"
-Write-Host "Sidecar: $sidecar"
-
-# --- HA integration archive (deterministic file set) ------------------------
-$haZip = Join-Path $outDir "DormPanel-HA-$releaseVersion.zip"
-if (Test-Path -LiteralPath $haZip) { Remove-Item -LiteralPath $haZip -Force }
-
-$includeNames = @('*.py', '*.json', '*.js', '*.md', '*.txt')
-$files = Get-ChildItem -LiteralPath $haRoot -Recurse -File |
-    Where-Object {
-        $_.FullName -notmatch '\\__pycache__\\' -and
-        $_.Extension -ne '.pyc' -and
-        $_.Name -ne '.DS_Store' -and
-        $_.FullName -notmatch '\\\.storage\\' -and
-        $_.FullName -notmatch '\\transfer' -and
+    # HA has its own version lifecycle. Never label it with Android's RC version.
+    $haVersion = '0.1.1'
+    $haRoot = Join-Path $repositoryRoot 'homeassistant\custom_components\dormpanel'
+    $manifest = Get-Content -LiteralPath (Join-Path $haRoot 'manifest.json') -Raw | ConvertFrom-Json
+    if ($manifest.version -cne $haVersion) { throw "Unexpected HA manifest version (expected $haVersion)." }
+    $haZip = Join-Path $staging "DormPanel-HA-$haVersion.zip"
+    $files = @(Get-ChildItem -LiteralPath $haRoot -Recurse -File | Where-Object {
+        $_.FullName -notmatch '\\(__pycache__|\.storage|transfer[^\\]*)\\' -and
         $_.Name -notmatch 'credential|secret|token' -and
         $_.Extension -in '.py', '.json', '.js', '.md', '.txt', '.css', '.html'
-    } |
-    Sort-Object { $_.FullName.Substring($haRoot.Length).TrimStart('\','/') }
-
-if ($files.Count -eq 0) { Fail 'No HA integration files selected for packaging.' }
-
-Add-Type -AssemblyName System.IO.Compression | Out-Null
-Add-Type -AssemblyName System.IO.Compression.FileSystem | Out-Null
-$zip = [System.IO.Compression.ZipFile]::Open($haZip, [System.IO.Compression.ZipArchiveMode]::Create)
-try {
-    foreach ($file in $files) {
-        $relative = $file.FullName.Substring($haRoot.Length).TrimStart('\', '/')
-        # Archive path is always custom_components/dormpanel/...
-        $entryName = 'custom_components/dormpanel/' + ($relative -replace '\\', '/')
-        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $entryName,
-            [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
-        Write-Host "  + $entryName"
-    }
+    } | Sort-Object FullName)
+    if ($files.Count -eq 0) { throw 'No HA source files.' }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::Open($haZip, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in $files) {
+            $entry = 'custom_components/dormpanel/' + $file.FullName.Substring($haRoot.Length).TrimStart('\', '/').Replace('\', '/')
+            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $entry) | Out-Null
+        }
+    } finally { $zip.Dispose() }
+    # All staging gates pass before copying candidates into the final directory.
+    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+    Get-ChildItem -LiteralPath $staging -File | Copy-Item -Destination $outDir -Force
+    Assert-ReleaseDirectory $outDir $tools
+    Write-Host "HA archive (actual integration version $haVersion): $outDir\DormPanel-HA-$haVersion.zip"
+    Write-Host "Local RC candidates: $outDir. No tag or Release created; physical acceptance pending."
 } finally {
-    $zip.Dispose()
+    foreach ($name in $envNames) { [Environment]::SetEnvironmentVariable($name, $oldEnvironment[$name], 'Process') }
+    Pop-Location
 }
-Write-Host "HA archive: $haZip"
-$haHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $haZip).Hash.ToLowerInvariant()
-Write-Host "HA ZIP SHA-256: $haHash"
-
-Write-Host ''
-Write-Host 'Release artifacts:'
-foreach ($artifact in @($apkOut, $sidecar, $haZip)) {
-    if (-not (Test-Path -LiteralPath $artifact -PathType Leaf) -or (Get-Item -LiteralPath $artifact).Length -eq 0) {
-        Fail "Expected release artifact is missing or empty: $artifact"
-    }
-    Write-Host "  $([System.IO.Path]::GetFileName($artifact))"
-}
-Write-Host ''
-Write-Host 'Reminder: APK update (adb install -r) keeps app data. Uninstall/reinstall does not.'
-Write-Host 'Do not commit signing material, keystore files, or passwords.'
