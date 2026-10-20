@@ -32,3 +32,6 @@ signing.properties
 # Local release artifacts
 /artifacts/release/
 /artifacts/release-audit/
+
+# Local PR30 verification logs and screenshots
+/artifacts/pr30/

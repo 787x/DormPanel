@@ -25,4 +25,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "DormPanel"
-include(":app")
+include(":app", ":schedule-core", ":phone-app")
