@@ -55,7 +55,7 @@ class ScheduleSnapshotPersistenceTest {
             val reusedRevision = exported.copy(state = exported.state.copy(entries = exported.state.entries.map { it.copy(title = "Changed content with reused revision") }))
             assertTrue(call<Unit> { phone.applySnapshot(ScheduleSnapshotCodec.encode(reusedRevision), it) }.isFailure)
             assertEquals(first, call<ScheduleState>(phone::load).getOrThrow())
-            assertTrue(call<Unit> { phone.put(TimetableEntry("forbidden", "Edit", 1, 1, 2), it) }.isFailure)
+            assertTrue(call<Unit> { phone.put(first.entries.single(), it) }.isSuccess)
             val next = exported.copy(revision = UUID.randomUUID().toString(), parentRevision = exported.revision, generation = 2,
                 state = exported.state.copy(entries = exported.state.entries.map { it.copy(title = "New revision") },
                     profiles = exported.state.profiles.mapValues { (_, p) -> p.copy(timezone = "Asia/Tokyo") }))

@@ -38,3 +38,6 @@ signing.properties
 
 # Local PR31 verification logs and screenshots
 /artifacts/pr31/
+
+# Local PR32 verification logs and screenshots
+/artifacts/pr32/

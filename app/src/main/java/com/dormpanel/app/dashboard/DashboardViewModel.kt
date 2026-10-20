@@ -29,7 +29,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val apkInstall = com.dormpanel.app.apps.ApkInstallController(application, apps)
     val productivity = ProductivitySource(ProductivityStores.create(application), AndroidProductivityClock)
     val termProfiles = TermScheduleProfileStore(application)
-    val schedule = ScheduleSource(ScheduleStores.create(application), profileResolver = termProfiles::get)
+    val schedule = ScheduleSource(ScheduleStores.create(application, termProfiles), profileResolver = termProfiles::get)
     val haRelay = HaScheduleRelayController(dataSource.ha.relayChannel, dataSource.relayIdentity,
         dataSource.relayHttp, { dataSource.relayStatus = it }, apkInstall,
         appVersion = {
@@ -51,6 +51,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     init {
+        termProfiles.editable = { schedule.ready && !schedule.applyingSnapshot }
         // Reconcile any PackageInstaller session interrupted by process death
         // before the live HA relay callback was registered. Recovered terminal
         // outcomes are queued on the single HA relay state machine so they are

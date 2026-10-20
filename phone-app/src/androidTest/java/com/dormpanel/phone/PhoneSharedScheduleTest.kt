@@ -47,7 +47,7 @@ class PhoneSharedScheduleTest {
             return MockResponse().setResponseCode(if (old == null) 201 else 204)
         }
     }
-    @Test fun publishPreviewConfirmUpdateReadOnlyAndOfflineReopen() {
+    @Test fun publishPreviewConfirmBidirectionalEditingAndOfflineReopen() {
         val context = instrumentation.targetContext
         val token = UUID.randomUUID().toString()
         val writerName = "writer-$token.db"; val phoneName = "follower-$token.db"
@@ -87,8 +87,9 @@ class PhoneSharedScheduleTest {
                     Room.databaseBuilder(c, ScheduleDatabase::class.java, phoneName).build(),
                     Executors.newSingleThreadExecutor().also { executors += it }, profiles = TermScheduleProfileStore(c)) }
                 ActivityScenario.launch(TimetableActivity::class.java).use { scenario ->
-                    waitFor(scenario) { it.source.ready }
+                    waitFor(scenario) { it.source.ready && it.hasWindowFocus() && !it.sharedSync.busy && !controller!!.busy }
                     scenario.onActivity { dialog = SharedScheduleDialog.show(it, writer!!, controller!!, true) }
+                    waitFor(scenario) { dialog?.window?.decorView?.hasWindowFocus() == true }
                     onView(withText("首次创建共享课表")).perform(scrollTo(), click())
                     waitFor(scenario) { !controller!!.busy }
                     assertNotNull(publisherSettings.publishedRevision)
@@ -98,7 +99,7 @@ class PhoneSharedScheduleTest {
                     Thread.sleep(350) // Native window dismissal is not tracked by Espresso idleness.
 
                     onView(withText("管理")).perform(click())
-                    onView(withText("WebDAV 共享课表（只读订阅）")).perform(click())
+                    onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
                     onView(withHint("WebDAV 服务地址")).perform(scrollTo(), replaceText(account.baseUrl), closeSoftKeyboard())
                     onView(withHint("用户名")).perform(scrollTo(), replaceText("user"), closeSoftKeyboard())
                     onView(withHint("密码（留空保留已保存密码）")).perform(scrollTo(), replaceText("secret"), closeSoftKeyboard())
@@ -112,17 +113,17 @@ class PhoneSharedScheduleTest {
                     }
                     scenario.onActivity { assertFalse(it.source.readOnly); assertTrue(it.source.state.entries.isEmpty()) }
                     onView(withText("确认下载并绑定")).perform(click())
-                    waitFor(scenario) { it.source.readOnly && !it.source.applyingSnapshot }
+                    waitFor(scenario) { it.source.state.sync != null && !it.source.applyingSnapshot }
                     onView(withText("关闭")).perform(click())
-                    onView(withText("＋ 课程")).check(doesNotExist())
-                    onView(withText("日期调整")).check(doesNotExist())
+                    onView(withText("＋ 课程")).check(matches(isDisplayed()))
+                    onView(withText("日期调整")).check(matches(isDisplayed()))
                     scenario.onActivity {
                         assertEquals("stable-source", it.source.state.sources.single().id)
                         assertEquals("stable-instance", it.source.state.imported.single().id)
                         assertEquals(3, it.source.state.classOverrides.size)
                         assertEquals(seed.state.profiles, it.source.state.profiles)
-                        assertFalse(it.source.saveEntry("forbidden", 1, 1, 2))
-                        assertFalse(it.source.saveDayAdjustment(java.time.LocalDate.parse("2026-10-12"), "none"))
+                        val entry = it.source.state.entries.single()
+                        assertTrue(it.source.saveEntry(entry.title, entry.day, entry.startMinute, entry.endMinute, entry.location, entry.id))
                     }
                     val secrets = context.getSharedPreferences("${followerNamespace}_credentials", 0).getString("payload", null)!!
                     assertFalse(secrets.contains("secret")); assertEquals("secret", WebDavSettings(context).account()!!.password)
@@ -142,6 +143,7 @@ class PhoneSharedScheduleTest {
                     assertNotEquals(firstId, publisherSettings.publishedRevision)
                     assertEquals(2L, publisherSettings.publishedGeneration)
                     onView(withText("管理")).perform(click())
+                    onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
                     onView(withText("立即同步")).perform(scrollTo(), click())
                     waitFor(scenario) { it.source.state.entries.singleOrNull()?.title == "New revision" && !it.source.applyingSnapshot }
                     scenario.onActivity { assertEquals("Asia/Tokyo", it.source.state.profiles["custom-term"]!!.timezone) }
@@ -149,21 +151,22 @@ class PhoneSharedScheduleTest {
                     // Bad remote bytes must leave the successful revision intact.
                     dav.files["/share/snapshot-${publisherSettings.publishedRevision}.dps"] = byteArrayOf(1, 2)
                     onView(withText("管理")).perform(click())
+                    onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
                     onView(withText("立即同步")).perform(scrollTo(), click())
                     waitFor(scenario) { !it.sharedSync.busy }
-                    scenario.onActivity { assertEquals("New revision", it.source.state.entries.single().title); assertTrue(it.sharedSync.status.contains("checksum")) }
+                    scenario.onActivity { assertEquals("New revision", it.source.state.entries.single().title); assertTrue(it.sharedSync.status.contains("同步失败")) }
                     onView(withText("关闭")).perform(click())
                     dav.offline = true
                 }
                 ActivityScenario.launch(TimetableActivity::class.java).use { scenario ->
-                    waitFor(scenario) { it.source.ready && it.source.readOnly }
+                    waitFor(scenario) { it.source.ready && it.source.state.sync != null }
                     waitFor(scenario) { !it.sharedSync.busy }
                     scenario.onActivity {
                         assertEquals("New revision", it.source.state.entries.single().title)
                         assertEquals("Asia/Tokyo", it.source.state.profiles["custom-term"]!!.timezone)
                         assertTrue(it.sharedSync.status.contains("离线"))
                     }
-                    onView(withText("＋ 课程")).check(doesNotExist())
+                    onView(withText("＋ 课程")).check(matches(isDisplayed()))
                     instrumentation.waitForIdleSync()
                     val image = instrumentation.uiAutomation.takeScreenshot()
                     java.io.File(context.getExternalFilesDir(null), "pr31-follower.png").outputStream().use { image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; image.recycle()

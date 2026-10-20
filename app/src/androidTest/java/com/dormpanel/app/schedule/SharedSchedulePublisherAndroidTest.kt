@@ -71,7 +71,7 @@ class SharedSchedulePublisherAndroidTest {
                         assertFalse(vm.schedule.readOnly)
                         assertTrue(vm.schedule.saveEntry("Later edit", 2, 600, 645))
                     }
-                    onView(withText("发布新版快照")).perform(scrollTo(), click())
+                    onView(withText("立即同步")).perform(scrollTo(), click())
                     waitFor(scenario) { !it.sharedSchedule.busy }
                     val second = SharedScheduleTransport().inspect(account, server.url("/shared/").toString())
                     assertEquals(2L, second.snapshot.generation); assertEquals(first.head.revision, second.snapshot.parentRevision)

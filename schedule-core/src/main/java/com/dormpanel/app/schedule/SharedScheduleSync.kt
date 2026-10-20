@@ -19,6 +19,8 @@ data class SharedScheduleHead(val datasetId: String, val revision: String, val s
         }
     }
 }
+class SharedScheduleRace : IllegalStateException("远端已变化，正在重新比较")
+
 data class SharedScheduleRemote(val head: SharedScheduleHead, val etag: String?, val bytes: ByteArray, val snapshot: ScheduleSnapshot)
 class SharedScheduleTransport(private val client: WebDavClient = WebDavClient()) {
     fun folder(account: WebDavAccount, raw: String): String {
@@ -32,12 +34,17 @@ class SharedScheduleTransport(private val client: WebDavClient = WebDavClient())
     fun inspect(account: WebDavAccount, dir: String): SharedScheduleRemote {
         val pointer = head(account, dir) ?: throw WebDavException("Shared timetable has not been published in this folder.")
         val h = SharedScheduleHead.parse(pointer.bytes)
-        val payload = client.readResource(account, path(account, dir, "snapshot-${h.revision}.dps"), ScheduleSnapshotCodec.MAX_BYTES)
-            ?: throw WebDavException("Published snapshot is missing; cached timetable retained.")
-        require(digest(payload.bytes) == h.sha256) { "Published snapshot checksum failed" }
+        val (bytes, snapshot) = historical(account, dir, h.datasetId, h.revision)
+        require(digest(bytes) == h.sha256) { "Published snapshot checksum failed" }
+        return SharedScheduleRemote(h, pointer.etag, bytes, snapshot)
+    }
+    fun historical(account: WebDavAccount, dir: String, dataset: String, revision: String): Pair<ByteArray, ScheduleSnapshot> {
+        require(UUID.fromString(revision).toString() == revision)
+        val payload = client.readResource(account, path(account, dir, "snapshot-$revision.dps"), ScheduleSnapshotCodec.MAX_BYTES)
+            ?: throw WebDavException("共同基线历史快照缺失；保留本地数据，请恢复共享目录中的历史快照")
         val snapshot = ScheduleSnapshotCodec.decode(payload.bytes)
-        require(snapshot.datasetId == h.datasetId && snapshot.revision == h.revision) { "Published snapshot identity mismatch" }
-        return SharedScheduleRemote(h, pointer.etag, payload.bytes, snapshot)
+        require(snapshot.datasetId == dataset && snapshot.revision == revision) { "Historical snapshot identity mismatch" }
+        return payload.bytes to snapshot
     }
     /** A unique disposable namespace: never probes user files. Retained as diagnostic history. */
     fun diagnose(account: WebDavAccount, dir: String): String {
@@ -61,8 +68,8 @@ class SharedScheduleTransport(private val client: WebDavClient = WebDavClient())
         val current = head(account, dir)
         if (expectedRevision == null) check(current == null) { "Shared folder already contains a dataset; first publication refused" }
         else {
-            check(current != null && SharedScheduleHead.parse(current.bytes).let { it.datasetId == snapshot.datasetId && it.revision == expectedRevision } &&
-                current.etag == expectedEtag) { "Remote revision changed; publication refused" }
+            if (current == null || !SharedScheduleHead.parse(current.bytes).let { it.datasetId == snapshot.datasetId && it.revision == expectedRevision } ||
+                current.etag != expectedEtag) throw SharedScheduleRace()
             client.requireStrongEtag(expectedEtag)
             check(snapshot.generation == inspect(account, dir).snapshot.generation + 1) { "Publication generation mismatch" }
         }
@@ -73,9 +80,7 @@ class SharedScheduleTransport(private val client: WebDavClient = WebDavClient())
         check(verified.bytes.contentEquals(bytes)) { "Uploaded snapshot verification failed" }
         ScheduleSnapshotCodec.decode(verified.bytes)
         val pointer = SharedScheduleHead(snapshot.datasetId, snapshot.revision, digest(bytes))
-        check(client.conditionalPut(account, path(account, dir, "dormpanel-head-v1"), pointer.bytes(), expectedEtag) in listOf(200, 201, 204)) {
-            "Publication conflict (409/412); remote version retained"
-        }
+        if (client.conditionalPut(account, path(account, dir, "dormpanel-head-v1"), pointer.bytes(), expectedEtag) !in listOf(200, 201, 204)) throw SharedScheduleRace()
         val result = head(account, dir) ?: error("Publication could not be verified; check remote before retry")
         check(result.bytes.contentEquals(pointer.bytes())) { "Remote changed after publication; check before retry" }
         return client.requireStrongEtag(result.etag)
@@ -88,7 +93,10 @@ class SharedScheduleSettings(context: Context) {
     private val prefs = context.getSharedPreferences(overrideNamespace ?: "shared_schedule_v1", Context.MODE_PRIVATE)
     var folder: String
         get() = prefs.getString("folder", "").orEmpty()
-        set(v) { check(prefs.edit().putString("folder", v).commit()) }
+        set(v) {
+            if (v.isNotBlank()) WebDavClient().url(v) // reject credentials/query before plain preferences
+            check(prefs.edit().putString("folder", v).commit())
+        }
     val datasetId: String get() {
         prefs.getString("dataset", null)?.let { return it }
         val value = UUID.randomUUID().toString(); check(prefs.edit().putString("dataset", value).commit()); return value
@@ -105,100 +113,148 @@ class SharedScheduleSettings(context: Context) {
     val publishedEtag get() = prefs.getString("published_etag", null)
     val lastSuccess get() = prefs.getLong("last_success", 0)
     val lastResult get() = prefs.getString("last_result", "未配置").orEmpty()
+    fun retryAllowed(): Boolean {
+        val attempts = prefs.getInt("retry_attempts", 0) + 1
+        check(prefs.edit().putInt("retry_attempts", attempts).commit())
+        return attempts <= 6
+    }
+    fun resetRetries() { check(prefs.edit().remove("retry_attempts").commit()) }
     fun result(message: String, success: Boolean = false) {
         val edit = prefs.edit().putString("last_result", message)
-        if (success) edit.putLong("last_success", System.currentTimeMillis())
+        if (success) edit.putLong("last_success", System.currentTimeMillis()).remove("retry_attempts")
         check(edit.commit())
     }
     fun published(revision: String, etag: String, generation: Long) {
         check(prefs.edit().putString("published_revision", revision).putString("published_etag", etag).putLong("published_generation", generation)
             .remove("pending_revision").remove("pending_hash").remove("pending_generation").commit())
-        result("发布成功", true)
     }
 }
 
-/** Network and orchestration live outside Views. No timers or background service. */
+/** UI lifecycle adapter. Durable jobs handle retry and process restarts. */
 class SharedScheduleController(context: Context, private val source: ScheduleSource,
     val accounts: WebDavSettings = WebDavSettings(context), val settings: SharedScheduleSettings = SharedScheduleSettings(context),
     private val transport: SharedScheduleTransport = SharedScheduleTransport()) {
+    private val context = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private var closed = false
     var busy = false; private set
     var status = settings.lastResult; private set
+    var conflicts: List<ScheduleMerge.Conflict> = emptyList(); private set
+    private var savedConflict = false
     var changed: (() -> Unit)? = null
+    private val localListener: () -> Unit = {
+        if (settings.folder.isNotBlank()) {
+            status = if (savedConflict) "存在冲突 · 本地修改已保存" else "有待上传修改"
+            settings.resetRetries(); settings.result(status); notifyChanged()
+            ScheduleSyncJobs.schedule(this.context)
+            main.removeCallbacks(automatic); main.postDelayed(automatic, 1500)
+        }
+    }
+    private val automatic = Runnable { sync() }
+    private var initialChecked = false
+    private val readyListener: () -> Unit = {
+        if (!closed && source.ready && !initialChecked) { initialChecked = true; sync() }
+        else if (!closed && !busy) { status = settings.lastResult; notifyChanged() }
+    }
+    init {
+        source.localCommitted = localListener; source.subscribe(readyListener); SharedScheduleViews.add(source)
+        main.post { readyListener() }
+    }
     private fun notifyChanged() { if (!closed) changed?.invoke() }
     private fun account() = accounts.account() ?: throw WebDavException("WebDAV credentials unavailable; configure account")
     private fun failure(error: Throwable) {
-        // Do not surface server bodies, URLs, passwords or implementation exception text.
         status = when (error) {
-            is WebDavException -> if (error.reason.startsWith("Network")) "离线 / 超时；显示缓存课表" else error.reason
-            is IllegalArgumentException, is IllegalStateException -> error.message?.takeIf { it.length <= 220 } ?: "无效快照或服务器不兼容"
-            else -> "同步失败；保留已缓存课表"
+            is ScheduleHistoryPending -> error.message!!
+            is WebDavException -> if (error.reason.startsWith("Network")) "离线 / 等待重试；本地修改已保留" else error.reason
+            else -> "同步失败；本地数据已保留。请检查账号、历史快照或远端版本。"
         }
+        if (savedConflict) status = "存在冲突 · $status"
         settings.result(status); busy = false; notifyChanged()
+        if (settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
     }
     private fun <T> run(task: () -> T, done: (T) -> Unit) {
         if (busy || closed) return
-        busy = true; status = "同步中"; notifyChanged()
+        busy = true; status = "正在同步"; notifyChanged()
         worker.execute { val result = runCatching(task); main.post { if (!closed) result.onSuccess(done).onFailure(::failure) } }
     }
-    private fun complete(message: String) { settings.result(message, true); status = message; busy = false; notifyChanged() }
+    private fun complete(message: String, verified: Boolean = true) {
+        settings.result(message, verified); status = message; busy = false; notifyChanged()
+    }
     fun inspect(done: (SharedScheduleRemote) -> Unit) = run({ transport.inspect(account(), settings.folder) }) {
         busy = false; status = "快照已验证，等待确认"; notifyChanged(); done(it)
     }
     fun bind(remote: SharedScheduleRemote) {
         if (busy || closed) return
-        busy = true; status = "同步中"; notifyChanged()
-        source.applySnapshot(remote.bytes) { if (!closed) it.onSuccess { complete("已更新 · 只读跟随") }.onFailure(::failure) }
+        busy = true; status = "正在同步"; notifyChanged()
+        source.applySnapshot(remote.bytes) { if (!closed) it.onSuccess {
+            complete("已同步 · 双端可编辑"); ScheduleSyncJobs.schedule(context)
+        }.onFailure(::failure) }
     }
-    fun sync() {
-        if (!source.ready || source.state.sync == null || settings.folder.isBlank()) return
-        run({ transport.inspect(account(), settings.folder) }) { remote ->
-            if (remote.head.datasetId != source.state.sync?.datasetId) { failure(IllegalStateException("远端 dataset 已变化；拒绝替换")); return@run }
-            // Reapply also validates content of an allegedly unchanged revision.
-            val same = source.state.sync?.revision == remote.head.revision
-            source.applySnapshot(remote.bytes) { if (!closed) it.onSuccess { complete(if (same) "未变化 · 只读跟随" else "已更新 · 只读跟随") }.onFailure(::failure) }
-        }
-    }
-    fun diagnose() = run({ transport.diagnose(account(), settings.folder) }) { complete(it) }
-    fun publish() {
-        if (busy || closed || !source.ready) return
-        busy = true; status = "同步中"; notifyChanged()
-        worker.execute {
-            val recovered = runCatching {
-                if (settings.pendingRevision != null) {
-                    val a = account()
-                    val head = transport.head(a, settings.folder)?.let { SharedScheduleHead.parse(it.bytes) }
-                    if (head?.revision == settings.pendingRevision) {
-                        val remote = transport.inspect(a, settings.folder)
-                        check(remote.head.datasetId == settings.datasetId && remote.head.sha256 == settings.pendingHash &&
-                            remote.snapshot.generation == settings.pendingGeneration) { "Pending publication does not match remote" }
-                        settings.published(remote.head.revision, WebDavClient().requireStrongEtag(remote.etag), remote.snapshot.generation)
+    fun sync() { settings.resetRetries(); synchronize(false) }
+    fun publish() { settings.resetRetries(); synchronize(true) }
+    private fun synchronize(create: Boolean) {
+        if (!source.ready || settings.folder.isBlank() || source.syncStore == null) return
+        run({
+            synchronized(SharedScheduleRunLock) {
+                val frame = source.syncStore!!.syncFrame()
+                val storedConflicts = frame.conflict?.let { remote ->
+                    val ancestor = if (frame.pending?.revision == remote.revision) requireNotNull(frame.captured) else requireNotNull(frame.baseline).state
+                    ScheduleMerge.merge(ancestor, frame.local, remote.state).conflicts
+                }.orEmpty()
+                main.post { if (!closed) {
+                    savedConflict = frame.conflict != null; conflicts = storedConflicts
+                    if (savedConflict) { status = "正在同步 · 已保存冲突"; notifyChanged() }
+                } }
+                if (!create && frame.baseline == null && frame.pending == null && settings.publishedRevision == null && settings.pendingRevision == null) {
+                    return@synchronized ScheduleSyncEngine.Outcome("尚未绑定共享课表") to null
+                }
+                val outcome = ScheduleSyncEngine(VisibleScheduleSyncStore(source.syncStore!!), transport, account(), settings.folder).synchronize(
+                    if (create) settings.datasetId else null, settings.legacy())
+                val base = source.syncStore!!.syncFrame().baseline
+                if (base != null && base.datasetId == settings.datasetId && outcome.conflicts.isEmpty()) {
+                    val head = transport.head(account(), settings.folder)
+                    if (head != null && SharedScheduleHead.parse(head.bytes).revision == base.revision) {
+                        settings.published(base.revision, WebDavClient().requireStrongEtag(head.etag), base.generation)
                     }
                 }
+                outcome to base
             }
-            main.post { if (!closed) recovered.onSuccess { exportAndPublish() }.onFailure(::failure) }
+        }) { (outcome, baseline) ->
+            conflicts = outcome.conflicts
+            savedConflict = conflicts.isNotEmpty()
+            source.reload { result -> result.onSuccess {
+                val dirty = baseline != null && !ScheduleMerge.same(baseline.state, source.state)
+                complete(if (outcome.conflicts.isEmpty() && dirty) "有待上传修改" else outcome.message,
+                    baseline != null && outcome.conflicts.isEmpty() && !outcome.message.startsWith("有待上传"))
+                if (dirty && outcome.conflicts.isEmpty()) ScheduleSyncJobs.schedule(context)
+            }.onFailure(::failure) }
+            if (outcome.message.startsWith("有待上传")) ScheduleSyncJobs.schedule(context, 30_000)
         }
     }
-    private fun exportAndPublish() {
-        source.exportSnapshot(settings.datasetId, settings.publishedRevision, settings.publishedGeneration + 1) { result ->
-            if (closed) return@exportSnapshot
-            result.onSuccess { bytes ->
-                worker.execute {
-                    val published = runCatching {
-                        val snapshot = ScheduleSnapshotCodec.decode(bytes)
-                        settings.pending(snapshot, bytes)
-                        val etag = transport.publish(account(), settings.folder, bytes, settings.publishedRevision, settings.publishedEtag)
-                        // Save the durable receipt even when the screen closed during upload.
-                        settings.published(snapshot.revision, etag, snapshot.generation)
-                    }
-                    main.post { if (!closed) published.onSuccess {
-                        status = settings.lastResult; busy = false; notifyChanged()
-                    }.onFailure(::failure) }
-                }
-            }.onFailure(::failure)
-        }
+    fun loadConflicts(done: (List<ScheduleMerge.Conflict>) -> Unit) = run({
+        val frame = requireNotNull(source.syncStore).syncFrame()
+        frame.conflict?.let { remote ->
+            val ancestor = if (frame.pending?.revision == remote.revision) requireNotNull(frame.captured) else frame.baseline!!.state
+            ScheduleMerge.merge(ancestor, frame.local, remote.state).conflicts
+        }.orEmpty()
+    }) { conflicts = it; busy = false; status = settings.lastResult; notifyChanged(); done(it) }
+    fun resolve(choice: ScheduleMerge.Choice) = run({
+        synchronized(SharedScheduleRunLock) { VisibleScheduleSyncStore(requireNotNull(source.syncStore)).resolveConflict(choice) }
+    }) {
+        conflicts = emptyList(); savedConflict = false
+        source.reload { result -> result.onSuccess {
+            complete("冲突已处理 · 有待同步", false); ScheduleSyncJobs.schedule(context); sync()
+        }.onFailure(::failure) }
     }
-    fun close() { closed = true; changed = null; worker.shutdown() }
+    fun diagnose() = run({ transport.diagnose(account(), settings.folder) }) { complete(it, false) }
+    fun close() {
+        closed = true; changed = null; source.localCommitted = null; source.unsubscribe(readyListener)
+        SharedScheduleViews.remove(source)
+        main.removeCallbacks(automatic); worker.shutdown()
+    }
 }
+
+internal object SharedScheduleRunLock
+internal fun SharedScheduleSettings.legacy() = ScheduleSyncEngine.Legacy(datasetId, publishedRevision, publishedGeneration,
+    pendingRevision, pendingHash, pendingGeneration)

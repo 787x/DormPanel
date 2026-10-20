@@ -47,9 +47,7 @@ class TimetableActivity : AppCompatActivity() {
         replacement = savedInstanceState?.getString("replacement")
         activeTerm = savedInstanceState?.getString("term") ?: getPreferences(MODE_PRIVATE).getString("term", null)
         profiles = TermScheduleProfileStore(this)
-        source = ScheduleSource(ScheduleStores.create(this), profileResolver = profiles::get)
-        profiles.synchronizedProfiles = { if (source.readOnly) source.state.profiles else null }
-        profiles.synchronizedCustomKeys = { source.state.customProfileKeys }
+        source = ScheduleSource(ScheduleStores.create(this, profiles), profileResolver = profiles::get)
         profiles.editable = { source.ready && !source.readOnly && !source.applyingSnapshot && !isDestroyed }
         sharedSync = SharedScheduleController(this, source).also { it.changed = { render() } }
         editors = PhoneEditors(this, source) { !busy }
@@ -67,7 +65,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
     private fun checkOnResume() {
-        if (resumeCheckPending && source.ready && ::sharedSync.isInitialized && source.readOnly && !sharedSync.busy) {
+        if (resumeCheckPending && source.ready && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
             resumeCheckPending = false; sharedSync.sync()
         }
     }
@@ -88,9 +86,9 @@ class TimetableActivity : AppCompatActivity() {
     }
     private fun render() {
         root.removeAllViews()
-        if (source.readOnly && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
+        if (source.state.sync != null && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
         val profile = activeTerm?.let(profiles::get)
-        root.addView(scheduleLabel(if (source.readOnly) "课程表 · 只读跟随" else "课程表 · 离线", 24f))
+        root.addView(scheduleLabel(if (source.state.sync != null) "课程表 · 双向共享" else "课程表 · 离线", 24f))
         if (::sharedSync.isInitialized) {
             val stale = sharedSync.settings.lastSuccess.let { it > 0 && System.currentTimeMillis() - it > 86_400_000L }
             root.addView(scheduleLabel(sharedSync.status + if (stale) " · 数据过期，显示缓存" else "", 14f))
@@ -143,11 +141,8 @@ class TimetableActivity : AppCompatActivity() {
         }
     }
     private fun management() {
-        if (source.applyingSnapshot || sharedSync.busy) return
-        if (source.readOnly) {
-            sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false); return
-        }
-        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（只读订阅）")) { _, i ->
+        if (source.applyingSnapshot) return
+        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）")) { _, i ->
             when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) } }
         }.setNegativeButton("关闭", null).show()
     }
@@ -210,7 +205,9 @@ class TimetableActivity : AppCompatActivity() {
                     AlertDialog.Builder(this).setTitle(p.termKey).setMessage("第一周周一：${p.week1Monday}\n${p.timezone}\n\n${TermProfileForm.phasesToText(p)}")
                         .setPositiveButton("编辑") { _, _ -> editProfile(p.termKey) }
                         .setNeutralButton("删除 / 恢复预设") { _, _ ->
-                            profiles.remove(p.termKey); source.refreshProfiles(); render()
+                            runCatching { profiles.remove(p.termKey); source.refreshProfiles() }
+                                .onFailure { message(it.message ?: "无法删除学期，请先检查关联来源。") }
+                            render()
                         }.setNegativeButton("关闭", null).show()
                 }
             }.setNegativeButton("关闭", null).show()
