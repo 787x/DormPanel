@@ -13,8 +13,18 @@ import java.util.concurrent.Executors
 data class EventRow(@PrimaryKey val id: String, val title: String, val start: Long, val end: Long, val note: String)
 @Entity(tableName = "timetable")
 data class TimetableRow(@PrimaryKey val id: String, val title: String, val day: Int, val startMinute: Int, val endMinute: Int, val location: String)
+@Entity(tableName = "schedule_sync_checkpoint")
+data class ScheduleSyncCheckpoint(@PrimaryKey val id: Int = 1, val payload: ByteArray)
 @Dao
 interface ScheduleDao {
+    @Query("SELECT * FROM schedule_sync_checkpoint WHERE id = 1") fun checkpoint(): ScheduleSyncCheckpoint?
+    @Insert(onConflict = OnConflictStrategy.REPLACE) fun checkpoint(row: ScheduleSyncCheckpoint)
+    @Query("DELETE FROM events") fun clearEvents()
+    @Query("DELETE FROM timetable") fun clearEntries()
+    @Query("DELETE FROM class_overrides") fun clearOverrides()
+    @Query("DELETE FROM day_adjustments") fun clearDays()
+    @Query("DELETE FROM import_sources") fun clearSources()
+
     @Query("SELECT * FROM events ORDER BY start, title, id") fun events(): List<EventRow>
     @Query("SELECT * FROM timetable ORDER BY day, startMinute, title, id") fun entries(): List<TimetableRow>
     @Query("SELECT * FROM day_adjustments LIMIT 1001") fun dayAdjustments(): List<DayAdjustment>
@@ -51,10 +61,16 @@ interface ScheduleDao {
     @Query("DELETE FROM import_sources WHERE id = :id") fun deleteSource(id: String)
 }
 @Database(entities = [EventRow::class, TimetableRow::class, ImportSource::class, ImportedClassOccurrence::class,
-    DayAdjustment::class, ClassOverride::class], version = 3, exportSchema = false)
+    DayAdjustment::class, ClassOverride::class, ScheduleSyncCheckpoint::class], version = 4, exportSchema = false)
 abstract class ScheduleDatabase : RoomDatabase() {
     abstract fun dao(): ScheduleDao
     companion object {
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS schedule_sync_checkpoint (id INTEGER NOT NULL PRIMARY KEY, payload BLOB NOT NULL)")
+            }
+        }
+
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("""CREATE TABLE IF NOT EXISTS import_sources (id TEXT NOT NULL PRIMARY KEY, displayName TEXT NOT NULL,
@@ -88,48 +104,98 @@ object ScheduleStores {
     @Volatile var overrideFactory: ((Context) -> ScheduleStore)? = null
     fun create(context: Context): ScheduleStore = overrideFactory?.invoke(context) ?: RoomScheduleStore(
         Room.databaseBuilder(context.applicationContext, ScheduleDatabase::class.java, "schedule.db")
-            .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3).build())
+            .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3, ScheduleDatabase.MIGRATION_3_4).build(), profiles = TermScheduleProfileStore(context))
 }
 /** Admission/close share a lock. Accepted writes drain; neither close nor Activity teardown waits. */
 class RoomScheduleStore(private val database: ScheduleDatabase,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor(),
-    private val closeDatabase: Boolean = true) : ScheduleStore {
+    private val closeDatabase: Boolean = true, private val profiles: TermScheduleProfileStore? = null,
+    private val afterSnapshotRows: (() -> Unit)? = null) : ScheduleStore {
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var closed = false
     @Synchronized private fun <T> submit(callback: (Result<T>) -> Unit, operation: () -> T) {
         if (closed) return
         executor.execute { val result = runCatching(operation); handler.post { if (!closed) callback(result) } }
     }
-    override fun load(callback: (Result<ScheduleState>) -> Unit) = submit(callback) {
+    private fun <T> write(callback: (Result<T>) -> Unit, operation: () -> T) = submit(callback) {
+        database.runInTransaction<T> {
+            check(database.dao().checkpoint() == null) { "Read-only shared timetable" }
+            operation()
+        }
+    }
+    private fun readState(): ScheduleState =
         database.runInTransaction<ScheduleState> {
             check(database.dao().dayAdjustmentCount() <= 1000 && database.dao().classOverrideCount() <= 5000 &&
                 database.dao().classOverrideTextCharacters() <= 2_000_000L) { "Stored override limit exceeded" }
-            ScheduleState(database.dao().events().map { CalendarEvent(it.id, it.title, it.start, it.end, it.note) },
+            val state = ScheduleState(database.dao().events().map { CalendarEvent(it.id, it.title, it.start, it.end, it.note) },
                 database.dao().entries().map { TimetableEntry(it.id, it.title, it.day, it.startMinute, it.endMinute, it.location) },
                 sources = database.dao().sources(), imported = database.dao().imported().also {
                     check(it.size <= ImportLimits.STORED_OCCURRENCES) { "Stored occurrence limit exceeded" }
                 }, dayAdjustments = database.dao().dayAdjustments().also { check(it.size <= 1000) },
                 classOverrides = database.dao().classOverrides().also { check(it.size <= 5000) })
+            val saved = database.dao().checkpoint()?.let { ScheduleSnapshotCodec.decode(it.payload) }
+            if (saved == null) state else state.copy(profiles = saved.state.profiles, customProfileKeys = saved.state.customProfileKeys,
+                sync = SnapshotIdentity(saved.datasetId, saved.revision))
+        }
+    override fun load(callback: (Result<ScheduleState>) -> Unit) = submit(callback) { readState() }
+    override fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) = submit(callback) {
+        database.runInTransaction<ByteArray> {
+            val state = readState()
+            check(state.sync == null) { "Follower cannot publish" }
+            val catalog = requireNotNull(profiles) { "Term profile store required for complete snapshot export" }.snapshotCatalog()
+            ScheduleSnapshotCodec.encode(ScheduleSnapshot(datasetId, java.util.UUID.randomUUID().toString(), parent,
+                System.currentTimeMillis(), state.copy(profiles = catalog.first, customProfileKeys = catalog.second), generation))
         }
     }
-    override fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit) = submit(callback) {
+    override fun applySnapshot(bytes: ByteArray, callback: (Result<Unit>) -> Unit) = submit(callback) {
+        val stable = bytes.copyOf()
+        val snapshot = ScheduleSnapshotCodec.decode(stable)
+        database.runInTransaction {
+            val dao = database.dao()
+            val old = dao.checkpoint()?.let { ScheduleSnapshotCodec.decode(it.payload) }
+            if (old != null) {
+                check(old.datasetId == snapshot.datasetId) { "Another dataset is already bound" }
+                if (old.revision == snapshot.revision) {
+                    check(stable.contentEquals(dao.checkpoint()!!.payload)) { "Revision content changed" }
+                    return@runInTransaction
+                }
+                check(snapshot.generation > old.generation) { "Remote generation is stale or conflicts with the cached revision" }
+            } else {
+                check(profiles != null) { "Term profile store required for safe first binding" }
+                val current = readState()
+                check(current.events.isEmpty() && current.entries.isEmpty() && current.sources.isEmpty() && current.imported.isEmpty() &&
+                    current.dayAdjustments.isEmpty() && current.classOverrides.isEmpty() && profiles?.hasCustomProfiles() != true) {
+                    "PR31 cannot bind a non-empty local timetable or custom term configuration"
+                }
+            }
+            dao.clearOverrides(); dao.clearDays(); dao.clearSources(); dao.clearEvents(); dao.clearEntries()
+            val v = snapshot.state
+            v.events.forEach { dao.put(EventRow(it.id, it.title, it.start, it.end, it.note)) }
+            v.entries.forEach { dao.put(TimetableRow(it.id, it.title, it.day, it.startMinute, it.endMinute, it.location)) }
+            v.sources.forEach(dao::insertSource); dao.insertOccurrences(v.imported)
+            v.dayAdjustments.forEach(dao::put); v.classOverrides.forEach(dao::put)
+            afterSnapshotRows?.invoke()
+            dao.checkpoint(ScheduleSyncCheckpoint(payload = stable))
+        }
+    }
+    override fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit) = write(callback) {
         database.dao().put(EventRow(event.id, event.title, event.start, event.end, event.note))
     }
-    override fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit) = submit(callback) {
+    override fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit) = write(callback) {
         database.dao().put(TimetableRow(entry.id, entry.title, entry.day, entry.startMinute, entry.endMinute, entry.location))
     }
-    override fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit) = submit(callback) { database.dao().deleteEvent(id) }
-    override fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
+    override fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit) = write(callback) { database.dao().deleteEvent(id) }
+    override fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit) = write(callback) {
         database.runInTransaction { database.dao().deleteEntry(id); database.dao().deleteLocalOverrides(id) }
     }
-    override fun putDayAdjustment(item: DayAdjustment?, date: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
+    override fun putDayAdjustment(item: DayAdjustment?, date: String, callback: (Result<Unit>) -> Unit) = write(callback) {
         if (item == null) database.dao().deleteDayAdjustment(date) else database.dao().put(item)
     }
-    override fun putClassOverride(item: ClassOverride?, key: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
+    override fun putClassOverride(item: ClassOverride?, key: String, callback: (Result<Unit>) -> Unit) = write(callback) {
         if (item == null) database.dao().deleteClassOverride(key) else database.dao().put(item)
     }
     override fun commitImport(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,
-        callback: (Result<ImportCommit>) -> Unit) = submit(callback) {
+        callback: (Result<ImportCommit>) -> Unit) = write(callback) {
         database.runInTransaction<ImportCommit> {
             val dao = database.dao()
             val existing = dao.source(source.id)
@@ -148,7 +214,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
             }
         }
     }
-    override fun deleteImport(id: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
+    override fun deleteImport(id: String, callback: (Result<Unit>) -> Unit) = write(callback) {
         database.runInTransaction { database.dao().deleteSourceOverrides(id); database.dao().deleteSource(id) }
     }
     @Synchronized override fun close() {

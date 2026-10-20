@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicReference
 class ScheduleImportUi(private val context: Context, private val source: ScheduleSource,
     private val appearance: AppearanceController, private val webDav: WebDavSyncController,
     private val profileStore: TermScheduleProfileStore,
+    private val sharedSync: SharedScheduleController,
     private val launchPicker: () -> Unit) {
     private val worker = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
@@ -32,6 +33,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     private var receiver: TemporaryLanUploadServer? = null
     private var receiveDialog: AlertDialog? = null
     private var receiveTick: Runnable? = null
+    private var sharedDialog: android.app.AlertDialog? = null
     private val importer = TimetableImporter(profiles = profileStore)
     private val themeListener: (AppearanceState) -> Unit = { state -> dialogs.forEach { theme(it, state) } }
     init { appearance.addListener(themeListener) }
@@ -459,6 +461,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         val fields = context.scheduleColumn()
         val dialog = AlertDialog.Builder(context).setTitle("Imported timetables").setNegativeButton("Close", null)
             .setView(ScrollView(context).apply { addView(fields) }).create()
+        fields.addView(context.scheduleButton("Publish shared timetable (WebDAV)") { dialog.dismiss(); sharedDialog = SharedScheduleDialog.show(context, source, sharedSync, true) })
         fields.addView(context.scheduleButton("Add WebDAV timetable") { dialog.dismiss(); webDavSetup() })
         fields.addView(context.scheduleButton("Term schedule profiles") { dialog.dismiss(); termProfiles() })
         if (source.state.sources.isEmpty()) fields.addView(context.scheduleLabel("No imported timetables"))
@@ -578,5 +581,5 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         dialog.matchActivityBrightness()
         theme(dialog, appearance.state); return dialog
     }
-    fun close() { closed = true; stopReceiving(); dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow() }
+    fun close() { closed = true; sharedDialog?.dismiss(); stopReceiving(); dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow() }
 }

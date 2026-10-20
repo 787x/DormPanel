@@ -101,7 +101,7 @@ class ScheduleImportPersistenceTest {
                 db.version = 1
             }
             val db = Room.databaseBuilder(context, ScheduleDatabase::class.java, name)
-                .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3).build()
+                .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3, ScheduleDatabase.MIGRATION_3_4).build()
             try {
                 assertEquals(EventRow("event", "原有日历", 1000, 2000, "keep note"), db.dao().events().single())
                 assertEquals(TimetableRow("manual", "每周课程", 5, 480, 590, "B310"), db.dao().entries().single())
@@ -144,7 +144,7 @@ class ScheduleImportPersistenceTest {
                 db.version = 2
             }
             val db = Room.databaseBuilder(context, ScheduleDatabase::class.java, name)
-                .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3).build()
+                .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3, ScheduleDatabase.MIGRATION_3_4).build()
             try {
                 assertEquals("event", db.dao().events().single().id)
                 assertEquals("manual", db.dao().entries().single().id)
@@ -170,7 +170,7 @@ class ScheduleImportPersistenceTest {
     @Test fun importNoOpReplaceRollbackDeleteAndDiskRestartAreSourceScoped() {
         val name = "test-schedule-import-${UUID.randomUUID()}.db"
         fun database() = Room.databaseBuilder(context, ScheduleDatabase::class.java, name)
-            .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3).build()
+            .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3, ScheduleDatabase.MIGRATION_3_4).build()
         var executor = Executors.newSingleThreadExecutor()
         var store = RoomScheduleStore(database(), executor)
         fun commit(p: ImportPreview, target: String? = null) = await<ImportCommit> { importer.commit(p, store, "Semester", target, 1234, it) }.getOrThrow()

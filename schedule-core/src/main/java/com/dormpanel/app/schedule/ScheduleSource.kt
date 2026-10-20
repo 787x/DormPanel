@@ -29,12 +29,17 @@ data class ScheduleState(val events: List<CalendarEvent> = emptyList(), val entr
     val invalidRecords: Int = 0, val sources: List<ImportSource> = emptyList(),
     val imported: List<ImportedClassOccurrence> = emptyList(),
     val dayAdjustments: List<DayAdjustment> = emptyList(), val classOverrides: List<ClassOverride> = emptyList(),
-    val profiles: Map<String, TermScheduleProfile> = emptyMap()) {
+    val profiles: Map<String, TermScheduleProfile> = emptyMap(), val sync: SnapshotIdentity? = null,
+    val customProfileKeys: Set<String> = emptySet()) {
     val importedIndex by lazy { ImportedOccurrenceIndex(imported) }
     val daysByDate by lazy { dayAdjustments.associateBy { it.date } }
     val editsByKey by lazy { classOverrides.associateBy { it.key } }
 }
+data class SnapshotIdentity(val datasetId: String, val revision: String)
 interface ScheduleStore {
+    fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) { callback(Result.failure(UnsupportedOperationException())) }
+    fun applySnapshot(bytes: ByteArray, callback: (Result<Unit>) -> Unit) { callback(Result.failure(UnsupportedOperationException())) }
+
     fun load(callback: (Result<ScheduleState>) -> Unit)
     fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit)
     fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit)
@@ -56,6 +61,20 @@ interface ScheduleStore {
  * Invalid disk rows are withheld with a visible warning, and remain intact for future recovery. */
 class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock = DeviceScheduleClock,
     private val profileResolver: (String) -> TermScheduleProfile? = { BuiltInProfiles.builtIn(it) }) {
+    var applyingSnapshot = false; private set
+    val readOnly get() = state.sync != null
+    fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) = store.exportSnapshot(datasetId, parent, generation, callback)
+    fun applySnapshot(bytes: ByteArray, callback: (Result<Unit>) -> Unit) {
+        if (closed || !ready || applyingSnapshot) { callback(Result.failure(IllegalStateException("Timetable is busy"))); return }
+        applyingSnapshot = true; refresh()
+        store.applySnapshot(bytes) { result ->
+            store.load { loaded ->
+                loaded.onSuccess { state = ordered(it); ready = true }.onFailure { error = true; ready = false }
+                applyingSnapshot = false; refresh()
+                callback(if (loaded.isFailure) Result.failure(loaded.exceptionOrNull()!!) else result)
+            }
+        }
+    }
     var state = ScheduleState(); private set
     var ready = false; private set
     var error = false; private set
@@ -66,7 +85,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
             result.onSuccess { loaded ->
                 state = ordered(loaded.copy(events = loaded.events.filter { it.valid() }, entries = loaded.entries.filter { it.valid() },
                     dayAdjustments = loaded.dayAdjustments.filter { it.valid() }, classOverrides = loaded.classOverrides.filter { it.valid() },
-                    profiles = effectiveProfiles(loaded.sources),
+                    profiles = if (loaded.sync != null) loaded.profiles else effectiveProfiles(loaded.sources),
                     invalidRecords = loaded.invalidRecords + loaded.events.count { !it.valid() } + loaded.entries.count { !it.valid() } +
                         loaded.dayAdjustments.count { !it.valid() } + loaded.classOverrides.count { !it.valid() }))
                 ready = true
@@ -82,7 +101,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     }.toMap()
     /** Call after a profile-store mutation; imported base rows retain their original instants. */
     fun refreshProfiles() {
-        if (closed || !ready) return
+        if (closed || !ready || readOnly || applyingSnapshot) return
         val profiles = effectiveProfiles(state.sources)
         if (profiles != state.profiles) { state = state.copy(profiles = profiles); refresh() }
     }
@@ -92,29 +111,29 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     private val completion: (Result<Unit>) -> Unit = { if (!closed && it.isFailure) { error = true; refresh() } }
     fun saveEvent(title: String, start: Long, end: Long, note: String = "", id: String? = null): Boolean {
         val event = CalendarEvent(id ?: UUID.randomUUID().toString(), title.trim(), start, end, note.trim())
-        if (closed || !ready || !event.valid() || (id != null && state.events.none { it.id == id })) return false
+        if (closed || !ready || readOnly || applyingSnapshot || !event.valid() || (id != null && state.events.none { it.id == id })) return false
         state = ordered(state.copy(events = state.events.filterNot { it.id == event.id } + event))
         store.put(event, completion); refresh(); return true
     }
     fun saveEntry(title: String, day: Int, start: Int, end: Int, location: String = "", id: String? = null): Boolean {
         val entry = TimetableEntry(id ?: UUID.randomUUID().toString(), title.trim(), day, start, end, location.trim())
-        if (closed || !ready || !entry.valid() || (id != null && state.entries.none { it.id == id })) return false
+        if (closed || !ready || readOnly || applyingSnapshot || !entry.valid() || (id != null && state.entries.none { it.id == id })) return false
         state = ordered(state.copy(entries = state.entries.filterNot { it.id == entry.id } + entry))
         store.put(entry, completion); refresh(); return true
     }
     fun deleteEvent(id: String) {
-        if (closed || !ready || state.events.none { it.id == id }) return
+        if (closed || !ready || readOnly || applyingSnapshot || state.events.none { it.id == id }) return
         state = state.copy(events = state.events.filterNot { it.id == id }); store.deleteEvent(id, completion); refresh()
     }
     fun deleteEntry(id: String) {
-        if (closed || !ready || state.entries.none { it.id == id }) return
+        if (closed || !ready || readOnly || applyingSnapshot || state.entries.none { it.id == id }) return
         state = state.copy(entries = state.entries.filterNot { it.id == id },
             classOverrides = state.classOverrides.filterNot { it.sourceId == null && it.seriesId == id })
         store.deleteEntry(id, completion); refresh()
     }
     fun saveDayAdjustment(date: LocalDate, mode: String, weekday: Int? = null, label: String = ""): Boolean {
         val item = if (mode == "normal") null else DayAdjustment(date.toString(), mode, weekday, label.trim())
-        if (closed || !ready || item != null && !item.valid() ||
+        if (closed || !ready || readOnly || applyingSnapshot || item != null && !item.valid() ||
             item != null && state.dayAdjustments.none { it.date == item.date } && state.dayAdjustments.size >= 1000) return false
         state = state.copy(dayAdjustments = state.dayAdjustments.filterNot { it.date == date.toString() } + listOfNotNull(item))
         store.putDayAdjustment(item, date.toString(), completion); refresh(); return true
@@ -124,7 +143,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         val key = ClassOverride.key(sourceId, seriesId, anchor)
         val item = patch?.let { ClassOverride.of(sourceId, seriesId, anchor, it) }
         val existingCharacters = state.classOverrides.filterNot { it.key == key }.sumOf { it.textCharacters().toLong() }
-        if (closed || !ready || item != null && !item.valid() ||
+        if (closed || !ready || readOnly || applyingSnapshot || item != null && !item.valid() ||
             anchorDate != null && patch?.date != null &&
             runCatching { LocalDate.parse(patch.date).minusDays((LocalDate.parse(patch.date).dayOfWeek.value - 1).toLong()) }.getOrNull() !=
                 anchorDate.minusDays((anchorDate.dayOfWeek.value - 1).toLong()) ||
@@ -134,7 +153,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         store.putClassOverride(item, key, completion); refresh(); return true
     }
     fun import(preview: ImportPreview, name: String, targetId: String?, callback: (Result<ImportCommit>) -> Unit) {
-        if (closed || !ready) return
+        if (closed || !ready || readOnly || applyingSnapshot) return
         IcsScheduleImporter().commit(preview, store, name, targetId, clock.instant().toEpochMilli()) { result ->
             if (!closed) {
                 result.onSuccess { committed -> if (!committed.unchanged) {
@@ -149,7 +168,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         }
     }
     fun deleteImport(id: String, callback: (Result<Unit>) -> Unit) {
-        if (closed || !ready) return
+        if (closed || !ready || readOnly || applyingSnapshot) return
         store.deleteImport(id) { result -> if (!closed) {
             result.onSuccess {
                 val sources = state.sources.filterNot { it.id == id }

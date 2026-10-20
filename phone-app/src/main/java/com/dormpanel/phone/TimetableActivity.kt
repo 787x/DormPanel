@@ -17,6 +17,9 @@ import java.util.concurrent.Executors
 class TimetableActivity : AppCompatActivity() {
     private lateinit var profiles: TermScheduleProfileStore
     internal lateinit var source: ScheduleSource
+    internal lateinit var sharedSync: SharedScheduleController
+    private var sharedDialog: android.app.AlertDialog? = null
+    private var resumeCheckPending = true
     private lateinit var editors: PhoneEditors
     private lateinit var root: LinearLayout
     private var selected = LocalDate.now()
@@ -24,9 +27,9 @@ class TimetableActivity : AppCompatActivity() {
     private var replacement: String? = null
     internal var busy = false; private set
     private val worker = Executors.newSingleThreadExecutor()
-    private val listener: () -> Unit = { render() }
+    private val listener: () -> Unit = { render(); checkOnResume() }
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
+        if (uri != null && !source.readOnly && !source.applyingSnapshot) {
             val target = replacement
             background({
                 val name = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
@@ -45,6 +48,10 @@ class TimetableActivity : AppCompatActivity() {
         activeTerm = savedInstanceState?.getString("term") ?: getPreferences(MODE_PRIVATE).getString("term", null)
         profiles = TermScheduleProfileStore(this)
         source = ScheduleSource(ScheduleStores.create(this), profileResolver = profiles::get)
+        profiles.synchronizedProfiles = { if (source.readOnly) source.state.profiles else null }
+        profiles.synchronizedCustomKeys = { source.state.customProfileKeys }
+        profiles.editable = { source.ready && !source.readOnly && !source.applyingSnapshot && !isDestroyed }
+        sharedSync = SharedScheduleController(this, source).also { it.changed = { render() } }
         editors = PhoneEditors(this, source) { !busy }
         root = scheduleColumn().apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
         setContentView(root)
@@ -58,25 +65,36 @@ class TimetableActivity : AppCompatActivity() {
         source.subscribe(listener)
         render()
     }
-    override fun onResume() { super.onResume(); if (::root.isInitialized) render() }
+    override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
+    private fun checkOnResume() {
+        if (resumeCheckPending && source.ready && ::sharedSync.isInitialized && source.readOnly && !sharedSync.busy) {
+            resumeCheckPending = false; sharedSync.sync()
+        }
+    }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("date", selected.toString()); outState.putString("replacement", replacement)
         outState.putString("term", activeTerm); super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
+        sharedDialog?.dismiss(); sharedSync.close()
         source.unsubscribe(listener); editors.close(); source.close(); worker.shutdown()
         super.onDestroy()
     }
     private fun monday() = selected.minusDays((selected.dayOfWeek.value - 1).toLong())
     private fun row(parent: LinearLayout = root) = LinearLayout(this).also { parent.addView(it) }
     private fun action(row: LinearLayout, label: String, action: () -> Unit) {
-        row.addView(scheduleButton(label, action).apply { isEnabled = source.ready && !busy },
+        row.addView(scheduleButton(label, action).apply { isEnabled = source.ready && !busy && !source.applyingSnapshot },
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
     }
     private fun render() {
         root.removeAllViews()
+        if (source.readOnly && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
         val profile = activeTerm?.let(profiles::get)
-        root.addView(scheduleLabel("课程表 · 离线", 24f))
+        root.addView(scheduleLabel(if (source.readOnly) "课程表 · 只读跟随" else "课程表 · 离线", 24f))
+        if (::sharedSync.isInitialized) {
+            val stale = sharedSync.settings.lastSuccess.let { it > 0 && System.currentTimeMillis() - it > 86_400_000L }
+            root.addView(scheduleLabel(sharedSync.status + if (stale) " · 数据过期，显示缓存" else "", 14f))
+        }
         val week = profile?.let { ChronoUnit.WEEKS.between(it.week1Monday, monday()) + 1 }
         root.addView(scheduleLabel(if (week == null) "${monday()} · 未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f))
         row().also { bar ->
@@ -100,8 +118,8 @@ class TimetableActivity : AppCompatActivity() {
             }, LinearLayout.LayoutParams(0, dp(64), 1f))
         }
         row().also { bar ->
-            action(bar, "＋ 课程") { editors.entry() }
-            action(bar, "日期调整") { editors.dayAdjustment(selected) }
+            if (!source.readOnly) action(bar, "＋ 课程") { editors.entry() }
+            if (!source.readOnly) action(bar, "日期调整") { editors.dayAdjustment(selected) }
             action(bar, "管理") { management() }
         }
         val list = scheduleColumn()
@@ -112,7 +130,7 @@ class TimetableActivity : AppCompatActivity() {
         val adjustment = source.state.daysByDate[selected.toString()]
         list.addView(scheduleLabel("$selected${adjustment?.let { " · ${if (it.mode == "none") "无课" else "使用星期 ${it.weekday} 课表"}" }.orEmpty()}", 16f))
         val classes = ScheduleProjection.week(source.state, monday(), source.clock.zone()).filter { it.date == selected }
-        if (classes.isEmpty()) list.addView(scheduleLabel("今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV。", 18f))
+        if (classes.isEmpty()) list.addView(scheduleLabel(if (source.readOnly) "今天没有课程。当前显示已缓存的共享课表；请在 X08E 修改并发布。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV。", 18f))
         classes.forEach { item ->
             list.addView(scheduleButton(buildString {
                 append(item.entry.title).append("\n")
@@ -125,8 +143,12 @@ class TimetableActivity : AppCompatActivity() {
         }
     }
     private fun management() {
-        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV", "导入来源（替换 / 删除）", "学期、教学周与节次")) { _, i ->
-            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList() }
+        if (source.applyingSnapshot || sharedSync.busy) return
+        if (source.readOnly) {
+            sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false); return
+        }
+        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（只读订阅）")) { _, i ->
+            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) } }
         }.setNegativeButton("关闭", null).show()
     }
     private fun chooseFile(target: String?) { replacement = target; picker.launch(arrayOf("*/*")) }

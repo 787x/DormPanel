@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:theme="@style/PhoneTheme" android:icon="@drawable/ic_timetable" android:dataExtractionRules="@xml/data_extraction_rules" android:label="DormPanel 课程表" android:allowBackup="false" android:fullBackupContent="false" android:supportsRtl="true">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <application android:usesCleartextTraffic="true" android:theme="@style/PhoneTheme" android:icon="@drawable/ic_timetable" android:dataExtractionRules="@xml/data_extraction_rules" android:label="DormPanel 课程表" android:allowBackup="false" android:fullBackupContent="false" android:supportsRtl="true">
         <activity android:name=".TimetableActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

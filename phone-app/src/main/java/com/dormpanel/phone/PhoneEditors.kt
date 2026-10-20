@@ -55,12 +55,12 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         dialog.window?.setLayout(minOf(context.dp(900), context.resources.displayMetrics.widthPixels - context.dp(24)), ViewGroup.LayoutParams.WRAP_CONTENT)
         listOf(-1, -2, -3).forEach { dialog.getButton(it)?.minHeight = context.dp(48) }
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            if (enabled()) { val message = save(); if (message == null) dialog.dismiss() else error.text = message }
+            if (enabled() && !source.readOnly && !source.applyingSnapshot) { val message = save(); if (message == null) dialog.dismiss() else error.text = message }
         }
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { if (enabled()) { delete?.invoke(); dialog.dismiss() } }
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { if (enabled() && !source.readOnly && !source.applyingSnapshot) { delete?.invoke(); dialog.dismiss() } }
     }
     fun dayAdjustment(date: LocalDate) {
-        if (!enabled() || !source.ready) return
+        if (!enabled() || !source.ready || source.readOnly || source.applyingSnapshot) return
         val current = source.state.daysByDate[date.toString()]
         val choices = listOf("Normal", "No classes", "Use another weekday")
         val fields = context.scheduleColumn()
@@ -94,7 +94,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
     }
 
     fun classDetail(item: ClassOccurrence) {
-        if (!enabled() || !source.ready) return
+        if (!enabled() || !source.ready || source.applyingSnapshot) return
         val owner = source.state.sources.firstOrNull { it.id == item.sourceId }
         val info = buildString {
             append(scheduleDate(item.date)).append(" · ").append(item.date.dayOfWeek)
@@ -116,16 +116,17 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         val dialog = AlertDialog.Builder(context).setTitle(item.entry.title)
             .setView(ScrollView(context).apply { addView(content) })
             .setNegativeButton("Close", null).setPositiveButton("Edit", null).create()
-        if (weekly) content.addView(context.scheduleButton("Reset this week") {
+        if (weekly && !source.readOnly) content.addView(context.scheduleButton("Reset this week") {
             source.saveClassOverride(item.sourceId, item.seriesId, item.anchorDate, null); dialog.dismiss()
         })
-        if (series) content.addView(context.scheduleButton("Reset all-weeks edit") {
+        if (series && !source.readOnly) content.addView(context.scheduleButton("Reset all-weeks edit") {
             source.saveClassOverride(item.sourceId, item.seriesId, null, null); dialog.dismiss()
         })
-        if (item.imported == null) content.addView(context.scheduleButton("Delete recurring class") {
+        if (item.imported == null && !source.readOnly) content.addView(context.scheduleButton("Delete recurring class") {
             source.deleteEntry(item.seriesId); dialog.dismiss()
         })
         track(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = !source.readOnly
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { dialog.dismiss(); editClass(item) }
     }
 
@@ -137,7 +138,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
     }
 
     private fun classEditor(item: ClassOccurrence, allWeeks: Boolean) {
-        if (!enabled() || !source.ready) return
+        if (!enabled() || !source.ready || source.readOnly || source.applyingSnapshot) return
         val session = ClassEditSession(source.state, item, allWeeks, source.clock.zone())
         val date = session.date
         val draft = session.draft
@@ -250,7 +251,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         }
     }
     fun entry(existing: TimetableEntry? = null) {
-        if (!enabled() || !source.ready) return
+        if (!enabled() || !source.ready || source.readOnly || source.applyingSnapshot) return
         val title = input("Class title", existing?.title.orEmpty())
         val location = input("Location (optional)", existing?.location.orEmpty())
         val days = ScheduleProjection.weekDays(source.clock.locale())
