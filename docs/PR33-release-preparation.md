@@ -79,7 +79,7 @@ git diff --check
   package/code/name, SDK, debuggable, native failure, unsigned, wrong/multiple/
   absent signer, missing/empty APK/tool and sidecar tampering paths. These tests
   are parser/control-flow evidence, not cryptographic proof.
-- Native artifact tests use real SDK tools: missing APK, the other app APK,
+- Native artifact tests: **8 passed** using real SDK tools: missing APK, the other app APK,
   old approved-signed 0.1.1 APK, wrong hash/sidecar filename, repacked unsigned
   APK, and a valid APK signed by a generated disposable wrong identity must fail.
   An isolated fake repository with stale valid APKs and a successful no-op Gradle
@@ -92,11 +92,89 @@ One preliminary combined command used `testDebugUnitTest` together with
 task in that graph and rejected task selection. The commands above separate JVM
 and instrumentation builds and passed. No product/test assertions were changed.
 
-## Candidate and emulator inventory
+## Final local candidates
 
-The final committed-source candidate hashes and completed emulator results are
-recorded after the frozen-source build. Local logs are under ignored
-`artifacts/pr33/`; APKs/sidecars/ZIP remain under ignored `artifacts/release/`.
+The final build ran `tools/build-release.ps1` with locally supplied signing
+environment against clean source commit
+`1f505117429895e40a38109c1f0cf525da53729a`. Both APKs embed that revision in
+`META-INF/version-control-info.textproto`. Later commits only record verification
+evidence; application, signing and build-tool sources are identical. Rebuilding
+after another commit can change APK bytes due to embedded version-control data;
+the hashes below identify the selected files, not an earlier build.
+
+All files are in ignored `artifacts/release/0.1.2-rc.1/`:
+
+| File | Bytes | SHA-256 |
+| --- | --- | --- |
+| `DormPanel-X08E-0.1.2-rc.1.apk` | 16,035,756 | `b6a8e49834771ec5e5b9ffc5435c7def458b4c71432914c01a4ecf313687218a` |
+| `DormPanel-Phone-0.1.2-rc.1.apk` | 9,736,703 | `3165af3fa16e32b9633f4c47143e83f1dc7f4fb6d00e145ff1fe9e20fb11a80e` |
+| `DormPanel-HA-0.1.1.zip` | 11,756 | `c5bfa82cd60d153c76cdc6b2317b791b2bb228f6a114e828823bcae176171ef7` |
+
+Both APK sidecars were freshly generated from these final copied bytes and
+independently compared with Python `hashlib` and exact filenames, in addition
+to the PowerShell verifier. Android build-tools **37.0.0** `apksigner` verifies
+APK Signature Scheme v2 and exactly one approved certificate for both apps.
+`aapt2 dump badging` confirms the table above and non-debuggable release status.
+`verify-release.ps1` and native rejection tests were rerun against these selected
+files. No APK/sidecar/ZIP or signing material is in Git.
+
+HA ZIP CRC, all **10** archive entries' byte identity with repository sources,
+correct `custom_components/dormpanel/` paths and manifest **0.1.1** were checked
+independently with Python `zipfile`. The ZIP is byte-identical to the historical
+PR29 archive; its hash was still recalculated from this run's final ZIP.
+
+## Emulator evidence
+
+The API 28 emulator `emulator-5554` has physical size **1280×800**, density
+**160 dpi**. `emulator-5556` is the API 37 Pixel phone emulator, **1280×2856**,
+**480 dpi**. These are emulators, not physical X08E/phone evidence.
+
+Executed runners after installing the freshly built test APKs:
+
+```powershell
+adb -s emulator-5554 shell am instrument -w -r com.dormpanel.schedule.core.test/androidx.test.runner.AndroidJUnitRunner
+adb -s emulator-5556 shell am instrument -w -r com.dormpanel.schedule.core.test/androidx.test.runner.AndroidJUnitRunner
+adb -s emulator-5554 shell am instrument -w -r -e notClass com.dormpanel.app.DeviceControlAndroidTest#mediaUsesPhysicalMusicStreamAndRestoresIt com.dormpanel.app.testbed.test/androidx.test.runner.AndroidJUnitRunner
+adb -s emulator-5556 shell am instrument -w -r com.dormpanel.timetable.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+- Core **26/26 passed on each API**, including Room migration/persistence,
+  PR31 phone checkpoint and X08E publisher-state upgrade, interrupted initial
+  upload, uncertain receipts, historical recovery and multi-round two-store sync.
+- X08E isolated testbed **87/87 passed** (282.408 s), including timetable UI,
+  CSV/ICS import, WebDAV, HA relay, Dashboard, controls and productivity. The
+  exact physical-X08E-only media mute assertion is excluded, as in PR28's
+  applicable emulator run; it remains required on hardware. No product assertion
+  was changed. Opt-in live-light and granted WRITE_SETTINGS paths can return
+  without prerequisites; these entries do not prove live hardware behavior.
+- Phone debug runner **10/10 passed on API 37**. The **final signed release APK**
+  was then installed with `adb install -r`; the same **10/10 passed again**
+  (81.211 s), including binding, editing/import/source/profile management,
+  offline reopening and both conflict choices.
+- Against the final API 37 phone release APK, `PhoneBidirectionalRestartTest`
+  seed → `am force-stop com.dormpanel.timetable` → verify used one UUID:
+  **1/1 in each phase passed**, covering baseline, offline modifications,
+  deletion, catalog, pending receipt/capture and remaining dirty state after
+  receipt recovery. This is real emulator process interruption, not physical
+  device evidence.
+- Final signed X08E RC installed over the emulator's approved-signed,
+  debuggable 0.1.1-labelled development installation (code 3); `am start -W`
+  succeeded and installed metadata shows code **4**, RC name and no DEBUGGABLE
+  flag. The 1280×800 dashboard screenshot was inspected. This is an emulator
+  smoke test, **not** an upgrade from the canonical signed 0.1.1 on real X08E.
+- API 37 release phone empty/offline screen screenshot was inspected: controls,
+  dates and status are legible on a black background. No real account was used.
+
+Cross-process runner arguments were `-e class
+com.dormpanel.phone.PhoneBidirectionalRestartTest -e pr32Run <UUID> -e
+pr32Phase seed|verify`. Full suite counts require `OK (N tests)` and no failure
+statuses in logs; ADB command exit status alone is insufficient.
+
+Local logs/screenshots and `final-candidates.json` are retained under ignored
+`artifacts/pr33/`, including `release-final.log`, `verify-final.log`,
+`native-negative-final.log`, `release-guards.log`, `android-checks.log`,
+`ha-tests.log`, `frontend-check.log`, `core-api28.log`, `core-api37.log`,
+`x08e-api28.log`, `phone-api37.log`, `phone-release-api37.log` and restart logs.
 
 ## Physical acceptance still required
 
