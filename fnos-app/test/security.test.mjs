@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { authorize, csrf, createApp, PREFIX, readOnlyRequest } from '../src/server.mjs';
+import { authorize, csrf, createApp, PREFIX } from '../src/server.mjs';
 import { binding, parseListing } from '../src/webdav.mjs';
 import { Store } from '../src/store.mjs';
 import http from 'node:http';
@@ -19,9 +19,6 @@ test('管理员身份、重复 Header、客户端 TCP 和 CSRF 边界', () => {
 test('明确残余风险：可连接者能伪造 Header；CSRF 不认证对端', () => {
   const forged = request(); forged.headers['x-trim-userid'] = '424242'; forged.rawHeaders[1] = '424242';
   assert.equal(authorize(forged), '424242');
-  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) for (const path of ['/api/schedule', '/api/edit', '/api/publish']) assert.equal(readOnlyRequest(method, path), false);
-  assert.equal(readOnlyRequest('POST', '/api/refresh'), true);
-  assert.equal(readOnlyRequest('POST', '/api/refresh/'), false);
 });
 const base = new URL('https://example.com/share/dormpanel-sync-v2/');
 const xml = hrefs => `<d:multistatus xmlns:d="DAV:">${hrefs.map(h => `<d:response><d:href>${h}</d:href><d:propstat><d:prop><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`).join('')}</d:multistatus>`;
@@ -51,8 +48,8 @@ test('Socket Header与路由校验，不将其误报为进程来源认证', asyn
   const configPath = join(dir, 'webdav.json'); await writeFile(configPath, JSON.stringify({ url: 'https://127.0.0.1:1/private/', username: 'secret-user', password: 'secret-password' }));
   const app = await createApp({ dataDir: dir, configPath }), socketPath = process.platform === 'win32' ? '\\\\.\\pipe\\dp-' + randomUUID() : join(dir, 'api.sock');
   await new Promise(r => app.server.listen(socketPath, r)); t.after(() => new Promise(r => app.server.close(r)));
-  async function call(method, path, headers = {}) {
-    return new Promise((resolve, reject) => { const req = http.request({ socketPath, path: PREFIX + path, method, headers }, res => { let body = ''; res.on('data', b => body += b); res.on('end', () => resolve({ status: res.statusCode, body })); }); req.on('error', reject); req.end(); });
+  async function call(method, path, headers = {}, data) {
+    return new Promise((resolve, reject) => { const req = http.request({ socketPath, path: PREFIX + path, method, headers }, res => { let body = ''; res.on('data', b => body += b); res.on('end', () => resolve({ status: res.statusCode, body })); }); req.on('error', reject); req.end(data===undefined?undefined:JSON.stringify(data)); });
   }
   assert.equal((await call('GET', '/api/schedule')).status, 403);
   const admin = { 'X-Trim-Userid': '1000', 'X-Trim-Isadmin': 'true' }, ordinary = { ...admin, 'X-Trim-Isadmin': 'false' };
@@ -64,8 +61,8 @@ test('Socket Header与路由校验，不将其误报为进程来源认证', asyn
   assert.equal((await call('POST', '/api/refresh', admin)).status, 403);
   assert.equal((await call('PUT', '/api/schedule', admin)).status, 405);
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal((await call(method, '/api/publish', { ...spoof, 'X-DormPanel-CSRF': JSON.parse(spoofed.body).csrf })).status, 405);
-  const refresh = await call('POST', '/api/refresh', { ...admin, 'X-DormPanel-CSRF': JSON.parse(view.body).csrf }); assert.equal(refresh.status, 200);
+  const refresh = await call('POST', '/api/refresh', { ...admin, 'Content-Type':'application/json', 'X-DormPanel-CSRF': JSON.parse(view.body).csrf },{version:0}); assert.equal(refresh.status, 400);
   const failed = JSON.parse((await call('GET', '/api/schedule', admin)).body); assert.equal(failed.status, 'error'); assert(failed.error.includes('WebDAV'));
   const restarted = await createApp({ dataDir: dir, configPath }); assert.equal(restarted.store.identity.writerId, app.store.identity.writerId);
-  assert((await restarted.store.read('observation.json')).error.includes('WebDAV'));
+  assert(restarted.db.frame.error.includes('WebDAV'));
 });

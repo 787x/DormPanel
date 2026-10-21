@@ -9,7 +9,7 @@ try {
   try { old = JSON.parse(await readFile(path, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   const url = process.env.wizard_webdav_url?.trim();
   if (url) {
-    const c = { url, username: process.env.wizard_webdav_username || old?.username || '', password: process.env.wizard_webdav_password || old?.password || '' };
+    const c = { ...old, url, username: process.env.wizard_webdav_username || old?.username || '', password: process.env.wizard_webdav_password || old?.password || '' };
     binding(c); ensure(c.username && c.password, '请填写 WebDAV 凭据');
     ensure(!old || binding(old).key === binding(c).key, '本版不允许更换已配置的绑定地址');
     await mkdir(dir, { recursive: true, mode: 0o700 }); await writeFile(path + '.tmp', JSON.stringify(c), { mode: 0o600 }); await rename(path + '.tmp', path); await chmod(path, 0o600);
