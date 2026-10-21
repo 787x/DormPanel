@@ -1,0 +1,5 @@
+com.dormpanel.phone.PhoneRealV1MigrationTest:.
+
+Time: 6.713
+
+OK (1 test)

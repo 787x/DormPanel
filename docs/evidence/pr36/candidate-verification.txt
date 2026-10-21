@@ -1,0 +1,5 @@
+Verified X08E: com.dormpanel.app / 5 / 0.1.2-rc.2; SDK 28/37; non-debuggable; signer 32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7
+19fbf59968765aeec630368df109d9f5f85a6d764f54403523ec4c90267b5071  DormPanel-X08E-0.1.2-rc.2.apk (16124488 bytes)
+Verified Phone: com.dormpanel.timetable / 3 / 0.1.2-rc.2; SDK 28/37; non-debuggable; signer 32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7
+a6a8ec6b84821c51757b8abf097ac2e2aff198a0554457e8af80274154a70f81  DormPanel-Phone-0.1.2-rc.2.apk (9825259 bytes)
+Both local RC candidates verified. Physical acceptance remains pending.

@@ -1,5 +1,5 @@
 param(
-    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\0.1.2-rc.1'),
+    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\0.1.2-rc.2'),
     [string]$BuildToolsDirectory,
     [string]$PreviousX08eApk
 )
@@ -75,4 +75,9 @@ if ($LASTEXITCODE -eq 0 -or ($buildLog -join "`n") -notmatch 'Missing or empty r
 if (Test-Path -LiteralPath (Join-Path $fakeRoot "artifacts\release\$releaseVersion")) { throw 'Failed build exposed final candidates.' }
 $count++
 Write-Host 'PASS rejects stale artifacts after successful no-op Gradle'
+# An already frozen directory is rejected before signing/building, including a custom path.
+$frozenLog = & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot 'build-release.ps1') -SkipTests -OutputDirectory $Directory 2>&1
+if ($LASTEXITCODE -eq 0 -or ($frozenLog -join "`n") -notmatch 'Candidate directory already exists') { throw 'Frozen candidate overwrite was not rejected.' }
+$count++
+Write-Host 'PASS rejects overwriting frozen candidate directory'
 Write-Host "$count native artifact rejection checks passed. Disposable fixtures remain ignored at $fixture"

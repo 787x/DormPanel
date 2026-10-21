@@ -1,0 +1,172 @@
+[
+  {
+    "role": "x08e",
+    "apkSha256": "19fbf59968765aeec630368df109d9f5f85a6d764f54403523ec4c90267b5071",
+    "databases": {
+      "dashboard.db": {
+        "version": 2,
+        "tables": {
+          "android_metadata": {
+            "count": 1,
+            "sha256": "81ac4b2bad563da332c84ab9c277adb9517a1f15324ecc39ccaa783248c689eb"
+          },
+          "dashboard_cards": {
+            "count": 9,
+            "sha256": "e3f636c9de671a34883f7006562df56a86637425f2c5a6d763819c2725a0c4f6"
+          },
+          "dashboard_quarantine": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "dashboard_state": {
+            "count": 1,
+            "sha256": "a0418052fdc048736bee89f706353046800c2e1443f4e7882817762e4a89178f"
+          },
+          "room_master_table": {
+            "count": 1,
+            "sha256": "65d7021b2d1c94880c9b45bcabf82234e65f4d2ec7d575560d090e974d4a80d4"
+          }
+        }
+      },
+      "productivity.db": {
+        "version": 1,
+        "tables": {
+          "android_metadata": {
+            "count": 1,
+            "sha256": "81ac4b2bad563da332c84ab9c277adb9517a1f15324ecc39ccaa783248c689eb"
+          },
+          "owners": {
+            "count": 2,
+            "sha256": "ac828ae3d17fcd0021ba4d05c5f507e865471c6e6bde00f895537424b3d3bd68"
+          },
+          "room_master_table": {
+            "count": 1,
+            "sha256": "060f83b6be95f2aab380c0a67c8e42c13f26d6b8ab87eff65bf44bbf798d8c3b"
+          },
+          "todos": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          }
+        }
+      },
+      "schedule.db": {
+        "version": 4,
+        "tables": {
+          "android_metadata": {
+            "count": 1,
+            "sha256": "81ac4b2bad563da332c84ab9c277adb9517a1f15324ecc39ccaa783248c689eb"
+          },
+          "class_overrides": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "day_adjustments": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "events": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "import_sources": {
+            "count": 1,
+            "sha256": "71d1b8b060c202f8c08cd45ac09595ef76d6e341422da16d2d788a4276fff549"
+          },
+          "imported_timetable_occurrences": {
+            "count": 131,
+            "sha256": "1e6f89484f331c91c6a340deaa135d0c365f3fc1133f46467ea5f843673200cf"
+          },
+          "room_master_table": {
+            "count": 1,
+            "sha256": "36d488e99a7f0151146bfd2978eaa9e4ef7c8093b943efc52a6dac479c2e802a"
+          },
+          "schedule_sync_checkpoint": {
+            "count": 6,
+            "sha256": "d76ed10ec63e3e7075251adcc4cf21ad11a7f5d1131556e7324c64641b9d8844"
+          },
+          "timetable": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          }
+        },
+        "checkpointIds": [
+          2,
+          20,
+          21,
+          22,
+          96,
+          102
+        ]
+      }
+    },
+    "preferences": {
+      "appearance.xml": "45d63f9b76d3bd2bd61d704d7f6dcb52f30533e1fbfb1ed703343f42a6436b4d",
+      "device_controls.xml": "5ea9d5f31fac10c154a7403c813c217f4b6e413fe0784ed833dc7c8d8d5318c1",
+      "ha_credentials.xml": "c1216dca56a307f438d44f3e67703bd269173c85a8513b1281036f22009851c6",
+      "ha_settings.xml": "0019aa4b54dcb1da0674ff52c7c4dd964743c6d2d38f334f8c024632c7577e3c",
+      "startup_policy.xml": "d8cf53fc50debf83770b9f0c7836a7093a6bbdd3f8885118b4e586167665fc58",
+      "term_schedule_profiles.xml": "b4d7949f8451a02112dcd1f9dc72435c212b03f97059752a3ce9ce647f5767c6",
+      "webdav_credentials.xml": "1e2030a7190697ce0310ed33fb7c4a496b6fe8b6771ce68c9908b00b6f942ada",
+      "webdav_settings.xml": "2c98ea246649d06634182667a76029c0c3e23b93840945ca64d9be13469bc3cc"
+    }
+  },
+  {
+    "role": "phone",
+    "apkSha256": "a6a8ec6b84821c51757b8abf097ac2e2aff198a0554457e8af80274154a70f81",
+    "databases": {
+      "schedule.db": {
+        "version": 4,
+        "tables": {
+          "android_metadata": {
+            "count": 1,
+            "sha256": "81ac4b2bad563da332c84ab9c277adb9517a1f15324ecc39ccaa783248c689eb"
+          },
+          "class_overrides": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "day_adjustments": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "events": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "import_sources": {
+            "count": 1,
+            "sha256": "71d1b8b060c202f8c08cd45ac09595ef76d6e341422da16d2d788a4276fff549"
+          },
+          "imported_timetable_occurrences": {
+            "count": 131,
+            "sha256": "1e6f89484f331c91c6a340deaa135d0c365f3fc1133f46467ea5f843673200cf"
+          },
+          "room_master_table": {
+            "count": 1,
+            "sha256": "36d488e99a7f0151146bfd2978eaa9e4ef7c8093b943efc52a6dac479c2e802a"
+          },
+          "schedule_sync_checkpoint": {
+            "count": 6,
+            "sha256": "9374fa3c009ae84bf6c27e4c075d25dd034f3f23b0b16b92b147fdd35db26a33"
+          },
+          "timetable": {
+            "count": 0,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          }
+        },
+        "checkpointIds": [
+          2,
+          20,
+          21,
+          22,
+          96,
+          102
+        ]
+      }
+    },
+    "preferences": {
+      "webdav_credentials.xml": "765b712f55e27d35532008f75b45dcad92c966e5d2f6f5330111d86428f0971c",
+      "webdav_settings.xml": "0f941131aa5a36ebc40333f3d9e0023a79af0b0750b8a98ccdcf98f3b8e67ade"
+    }
+  }
+]

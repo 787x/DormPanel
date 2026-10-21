@@ -1,0 +1,6 @@
+x08e
+          -27s978ms   START: #u0a96/3201 com.dormpanel.app/.schedule.ScheduleSyncJobService
+          -17s450ms  STOP-P: #u0a96/3201 com.dormpanel.app/.schedule.ScheduleSyncJobService app called jobFinished
+phone
+          -17s511ms   START: #u0a236/3201 com.dormpanel.timetable/com.dormpanel.app.schedule.ScheduleSyncJobService
+          -16s197ms    STOP: #u0a236/3201 com.dormpanel.timetable/com.dormpanel.app.schedule.ScheduleSyncJobService app called jobFinished

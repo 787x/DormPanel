@@ -1,0 +1,585 @@
+[
+  {
+    "device": "x08e",
+    "case": "success",
+    "result": "PASS",
+    "independentHistoryProof": "PROVEN",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "expectedStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "28533a5ecdd063027df4d538159121fe1f0eb5a48d1c86303969d14ae00c70a3",
+      "2": "45a68e6020b0cc3291232dc49e29969b00886d20152e41a99c97d6876a7cf685"
+    },
+    "checkpointAfter": {
+      "1": "43ea1701e75bf5414f5d115065e03e10a3bc04a495e992768cbf94252187db53",
+      "100": "7ea91700f3058b4335143664d2ab6e74466ce1254880905251d746f5d1bdfb79",
+      "101": "17f8af97ad4a7f7639a4c9171d5185cbafb85462877a4746c21bdb0a4f940ca0",
+      "102": "3ab45b1273ae9b3bb71e0fc1ef87b2b67bfec73257590edea06e8ce3f89e2430",
+      "111": "28533a5ecdd063027df4d538159121fe1f0eb5a48d1c86303969d14ae00c70a3",
+      "112": "45a68e6020b0cc3291232dc49e29969b00886d20152e41a99c97d6876a7cf685",
+      "2": "6b3b22f59eeb12151844106e3255a3230791967cabcb21c0b2b8b471bcc79cdd",
+      "20": "0ba87f77e9f30bff63b0fa2fd9d1b25bdb335d4d312760d34f1b1e37be86664b",
+      "21": "402a76da510752fb8744f41d2050b075380c38778d122ba0654da2297607f866",
+      "22": "aa3d0ac4ed3fef15c6c92f24108d670c00bdf54c7700d5412ebe6b009510a7cb",
+      "96": "6ea97d5b93da5fbbcee1a1f027a1b6fbd4ea49ef179009998ea0e14d7af6e788"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "1c604ab1fb5f8d296a584276e5c012a0225ac85e23b3c8d776aa7fcff5998c11",
+      "snapshot-43d5739e-d336-420d-8ca0-480630d25b0f.dps": "28533a5ecdd063027df4d538159121fe1f0eb5a48d1c86303969d14ae00c70a3",
+      "snapshot-55bbc51b-ffb4-4e51-a044-d1c848d192b0.dps": "43ea1701e75bf5414f5d115065e03e10a3bc04a495e992768cbf94252187db53"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "已检查观察到的版本 · 已发布；其他设备接收情况未知",
+    "remoteV2CommitHashes": {
+      "630ac671-d2b9-4479-a55b-cfc96926a5af": "402a76da510752fb8744f41d2050b075380c38778d122ba0654da2297607f866"
+    },
+    "remoteV2CanonicalStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870"
+  },
+  {
+    "device": "x08e",
+    "case": "join",
+    "result": "PASS",
+    "independentHistoryProof": "PROVEN",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "expectedStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "e233c5987241e524ffbda3787cb49f619acecbeaf573f69c6aac26766474034d",
+      "2": "0578221ba8053a067328a4e285b2592dc60b9cbcdcd19adec5868633edc335b5"
+    },
+    "checkpointAfter": {
+      "1": "c9802f7f8018b39f74063f2038530218591d12010ae401a107946ccaee3ba16d",
+      "100": "f73b610e896b0644089094fa3adccf540976f58619e35a59ea60108ded19e2d6",
+      "101": "17f8af97ad4a7f7639a4c9171d5185cbafb85462877a4746c21bdb0a4f940ca0",
+      "102": "0421faf42822eb8802bd57792704ec780ac6c63303a03ba092832fe80004e503",
+      "111": "e233c5987241e524ffbda3787cb49f619acecbeaf573f69c6aac26766474034d",
+      "112": "0578221ba8053a067328a4e285b2592dc60b9cbcdcd19adec5868633edc335b5",
+      "2": "0d71eb6e70fb9049c02f4cac40812ce74f2cc52398ea34ae0f772e566c78e91c",
+      "20": "2492e82440a1c71e6d52e87bdfdc968191a9e784cf237608c97926cfdb212db8",
+      "21": "68bf49ff1a2d0877ef9f8b3fc4eb70f70769c01b7ae88385520b8ba9dfc9feaa",
+      "22": "ddf4a2300c3147d9f9d5564e8765a98389a8033d7dcc82a2d61c734fa3c68aec",
+      "96": "eb1eec95af5a96b362596cdc3ea721a0de09e330334e99327b7417e4c93eacb0"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "a0492abe20efcc952560b10ed2195d873e103bdbfc09698d37e6eaf3a52b564b",
+      "snapshot-0c4e577e-8957-41fb-88f4-e47c751e46de.dps": "c9802f7f8018b39f74063f2038530218591d12010ae401a107946ccaee3ba16d",
+      "snapshot-43a53ae3-5e62-4f0b-9d03-b4c34239eb45.dps": "e233c5987241e524ffbda3787cb49f619acecbeaf573f69c6aac26766474034d"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "已检查观察到的版本 · 已发布；其他设备接收情况未知",
+    "remoteV2CommitHashes": {
+      "ebccba79-440f-418a-ade4-94eedc69d480": "7fdca7af9402a7f29cc157f050f87eb35b054c23c550d6d54002ebb6ade6989f",
+      "cc21743a-1e15-4570-a7bb-c60bcdbc2e20": "68bf49ff1a2d0877ef9f8b3fc4eb70f70769c01b7ae88385520b8ba9dfc9feaa"
+    },
+    "remoteV2CanonicalStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870"
+  },
+  {
+    "device": "x08e",
+    "case": "committed",
+    "result": "PASS",
+    "independentHistoryProof": "PROVEN",
+    "beforeStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c",
+    "afterStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c",
+    "expectedStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "735e858925505a91a080c4d0371be96c43a18c3ce9a099e8bef60fb05293e2db",
+      "2": "e7b5512a83e4cd5013ca65d281e1e207ee8386f40de968c95940fb35af06d7eb",
+      "4": "1c66e33158b28dd7fa86e91674e32fe0ee7deb50951327dfa3ca01a44ae8c18c",
+      "5": "1c66e33158b28dd7fa86e91674e32fe0ee7deb50951327dfa3ca01a44ae8c18c"
+    },
+    "checkpointAfter": {
+      "1": "1c66e33158b28dd7fa86e91674e32fe0ee7deb50951327dfa3ca01a44ae8c18c",
+      "100": "9cc8173deb24127745c132b25675b7e316c277cbb6ffbf30215ba5829ebf87d3",
+      "101": "8a7efaee6c21308fb5eddc0cff3c08cdf2ca2f7cb4c91a7a86f53f36d3e9b264",
+      "102": "08824a85249918dde846efc8cc6deda816ad1457cf3d4d10b1f5aa350e8400c0",
+      "111": "735e858925505a91a080c4d0371be96c43a18c3ce9a099e8bef60fb05293e2db",
+      "112": "e7b5512a83e4cd5013ca65d281e1e207ee8386f40de968c95940fb35af06d7eb",
+      "114": "1c66e33158b28dd7fa86e91674e32fe0ee7deb50951327dfa3ca01a44ae8c18c",
+      "115": "1c66e33158b28dd7fa86e91674e32fe0ee7deb50951327dfa3ca01a44ae8c18c",
+      "2": "4303a1ec9d04d1cb7d02b144fd8a3c30132a2202902275b0d275c48908e7e0b4",
+      "20": "515d0afc26972719e5fa0446bb7f37f30209ae0bb7cd483fcb4c6bcf5a5d2377",
+      "21": "51656f10f16d2d7979c8b19c98085cb1ca999cf43b55a5a59f3baf36efaa3323",
+      "22": "e50c356eeb39e28a7e08d1bb7e807ea1c59a32a79a92b186f85bb0f2428037d2",
+      "96": "fc6046b0ff434360689721bc46f69cfce82931dea9bb71b1d395e718835bc0a4"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "0234a58c67f831fc84e614683cd56bdfc24bb02968f1ee0f46ca354f92064c53",
+      "snapshot-171a2123-b898-42ed-86ef-36a2731f0743.dps": "1c66e33158b28dd7fa86e91674e32fe0ee7deb50951327dfa3ca01a44ae8c18c",
+      "snapshot-f4187bd2-8500-4fa1-b893-fe1a6bf5f644.dps": "735e858925505a91a080c4d0371be96c43a18c3ce9a099e8bef60fb05293e2db"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "已检查观察到的版本 · 已发布；其他设备接收情况未知",
+    "remoteV2CommitHashes": {
+      "34fb3ba0-8180-44db-962d-d41b157d976c": "51656f10f16d2d7979c8b19c98085cb1ca999cf43b55a5a59f3baf36efaa3323"
+    },
+    "remoteV2CanonicalStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c"
+  },
+  {
+    "device": "x08e",
+    "case": "uncommitted",
+    "result": "PASS",
+    "independentHistoryProof": "PROVEN",
+    "beforeStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c",
+    "afterStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c",
+    "expectedStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "dfc1df650d026644870eb5e84a6cb9d7cb25831550aaec31c18559669e8ea756",
+      "2": "7f459a573fd6d0283a093b111b96ab75e79428ed69566a737b4fdcb6ad1522a8",
+      "4": "5f58f446706ace61ff250e7d2708d59af52f30c46a45ed387581b121ecf5e011",
+      "5": "5f58f446706ace61ff250e7d2708d59af52f30c46a45ed387581b121ecf5e011"
+    },
+    "checkpointAfter": {
+      "1": "dfc1df650d026644870eb5e84a6cb9d7cb25831550aaec31c18559669e8ea756",
+      "100": "5084cb2ec9946bc0cfe788fe03f5db11adf8a4168bb98a8554cf4c2c0e6a77a3",
+      "101": "8a7efaee6c21308fb5eddc0cff3c08cdf2ca2f7cb4c91a7a86f53f36d3e9b264",
+      "102": "c4bf82f4b66cc6fd4cca6d0ab407546ac90cc295dcbd733cfde27b07492b722b",
+      "111": "dfc1df650d026644870eb5e84a6cb9d7cb25831550aaec31c18559669e8ea756",
+      "112": "7f459a573fd6d0283a093b111b96ab75e79428ed69566a737b4fdcb6ad1522a8",
+      "114": "5f58f446706ace61ff250e7d2708d59af52f30c46a45ed387581b121ecf5e011",
+      "115": "5f58f446706ace61ff250e7d2708d59af52f30c46a45ed387581b121ecf5e011",
+      "2": "f85b3bc4cbaa8dfc79f5dfa88ea7db88cd225ae7fe9dcd03d579589e048a6af8",
+      "20": "92ed4a253211bf69cd32078f0f10d28b5ae7cf33a3e19ceca847362d75d27a03",
+      "21": "f09632b87e05fa28b5aec4cc0b431dc46d87c801277fe4e044c8e3135b3201d8",
+      "22": "d7a4aab9536c2a1b9ec308addb723dd4f896b23a2d5beec9cc8de8854b9e1e13",
+      "96": "1ea4f5fd76a296817fcadf00b37272342c4270a6aaad9282292e64063f2a9f75"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "3a1bdb3a6e3a28da5e2a5d31ef090336a2241e137e3542ba2661184605c00737",
+      "snapshot-2dfcda3d-6244-48fa-835c-765fe2921216.dps": "5f58f446706ace61ff250e7d2708d59af52f30c46a45ed387581b121ecf5e011",
+      "snapshot-c947e197-360e-46ae-8dc0-f18534d2e3ae.dps": "dfc1df650d026644870eb5e84a6cb9d7cb25831550aaec31c18559669e8ea756"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "已检查观察到的版本 · 已发布；其他设备接收情况未知",
+    "remoteV2CommitHashes": {
+      "620318f2-ecc1-4aca-847e-0baf72ef3da6": "f09632b87e05fa28b5aec4cc0b431dc46d87c801277fe4e044c8e3135b3201d8"
+    },
+    "remoteV2CanonicalStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c"
+  },
+  {
+    "device": "x08e",
+    "case": "missing",
+    "result": "PASS",
+    "independentHistoryProof": "MISSING_ANCESTOR",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "expectedStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "3cb934c7938d2adc7d6012241152841fffa079159703c5cd21b9dc6dfdf79e4f",
+      "2": "cd936e946ae721503114b5fb31d39d01a9480d15ed2a7ffa361d392b58628363"
+    },
+    "checkpointAfter": {
+      "1": "3cb934c7938d2adc7d6012241152841fffa079159703c5cd21b9dc6dfdf79e4f",
+      "2": "cd936e946ae721503114b5fb31d39d01a9480d15ed2a7ffa361d392b58628363",
+      "20": "f745f80c10c3e5706cf2783b4db063a2c258ec57cf825b2b4a596ec734e41ff9"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "363ee61c730d0faf3603dadeace408b15eddc2058877d0e37c2b990fb364acb3",
+      "snapshot-00ca77dd-72f7-4a0a-b521-668e7fd26dbd.dps": "3cb934c7938d2adc7d6012241152841fffa079159703c5cd21b9dc6dfdf79e4f",
+      "snapshot-d3b71fdd-56fa-41e9-8ad7-33e99726355e.dps": "5edfa03b7489ac1711159ebdfd2f3cc8c7dd1a10c504ab53f45ace68ee86320b"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "共同基线历史快照缺失；保留本地数据，请恢复共享目录中的历史快照",
+    "remoteV2Absent": true
+  },
+  {
+    "device": "x08e",
+    "case": "corrupt",
+    "result": "PASS",
+    "independentHistoryProof": "CORRUPT_ANCESTOR",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "expectedStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "990674a42a4c40e85322e1531b3312b9c7536d9588d60ae575aa29ea53811316",
+      "2": "118f65c0b73f40e816569ebff5f831e7b72b8a1db56fb2d0906ee63628faffcf"
+    },
+    "checkpointAfter": {
+      "1": "990674a42a4c40e85322e1531b3312b9c7536d9588d60ae575aa29ea53811316",
+      "2": "118f65c0b73f40e816569ebff5f831e7b72b8a1db56fb2d0906ee63628faffcf",
+      "20": "743955c69046ad1ebf5e939f88cf7e13c37041cd5f1298367fd97df5d025bf7c"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "22b791e160f0cc1ea966d2167a13f74e7f72f4b857a5ca98b83d67d713073046",
+      "snapshot-cc6017d3-cea8-4360-b71f-221c84b26588.dps": "990674a42a4c40e85322e1531b3312b9c7536d9588d60ae575aa29ea53811316",
+      "snapshot-f99eae51-6b70-4ab0-9501-838dedd12486.dps": "1b61a6a13ec15c79b825ef3c27a413a8726fcc772efb0a399e77b26c33dac4f8",
+      "snapshot-ff3d1684-f86d-4faa-8260-7725a30d7b42.dps": "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "同步失败；本地数据已保留：Snapshot size limit",
+    "remoteV2Absent": true
+  },
+  {
+    "device": "x08e",
+    "case": "dataset",
+    "result": "PASS",
+    "independentHistoryProof": "DATASET_MISMATCH",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "expectedStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "b7cc8822cdba2a7a5820ec5f36808740da8cba55f0ac92668b7a4d9cf928344d",
+      "2": "6afd465fc4c394c4c442927adff2408aee63e0d26dae17b3d0dd95193ba24b97"
+    },
+    "checkpointAfter": {
+      "1": "b7cc8822cdba2a7a5820ec5f36808740da8cba55f0ac92668b7a4d9cf928344d",
+      "2": "6afd465fc4c394c4c442927adff2408aee63e0d26dae17b3d0dd95193ba24b97",
+      "20": "e7a77a59bc5f51d7c3e19f1e60d298c28571fb771de26deb34b8c765de1a3620"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "25b9fd2c8b866da9a3cd57f3d94befd5b1b162f1419d2f080b41316475d5de74",
+      "snapshot-03de8e03-f1e3-4601-86d9-c36b86b0ed8c.dps": "b7cc8822cdba2a7a5820ec5f36808740da8cba55f0ac92668b7a4d9cf928344d",
+      "snapshot-d284b7ec-d558-441b-a8d0-60010cdfea65.dps": "a96241f3fdd8695d46e59ff6b6d584c73b0c28099030406a0b5e8586f2d44288"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "同步失败；本地数据已保留：旧绑定 dataset 不一致；拒绝自动迁移",
+    "remoteV2Absent": true
+  },
+  {
+    "device": "x08e",
+    "case": "unprovable",
+    "result": "PASS",
+    "independentHistoryProof": "UNPROVABLE",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "expectedStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "7d491ca1a9beb29ef44e686bed5ef0ac293ee53372c36f8f488629c098066aa1",
+      "2": "cd3b45c714ae31ad4b13976dc132d8137ff727944f71763868b7e57412b8ea67"
+    },
+    "checkpointAfter": {
+      "1": "7d491ca1a9beb29ef44e686bed5ef0ac293ee53372c36f8f488629c098066aa1",
+      "2": "cd3b45c714ae31ad4b13976dc132d8137ff727944f71763868b7e57412b8ea67",
+      "20": "20dae4fe4ec1a54e903e7d0b86578436caed2f35674fd97058685c9833784c9b"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "9a170532a65c83f7a96a79ff3268481865c2bc5fa0606d3e76f8f1963543007f",
+      "snapshot-5e764406-0dfd-49d1-8b8b-fb5b03ca8340.dps": "492e0e2e4950522514ccffd803b834093464cbf5c0be1c8ea116830573b33c43",
+      "snapshot-ba88bad7-e571-4d6b-b105-405a25122726.dps": "183ff86e5cd1a162b133db71c3972c5f247b719f25e2808e1353f1c3dae1b127"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "同步失败；本地数据已保留：旧共同基线不在远端历史中",
+    "remoteV2Absent": true
+  },
+  {
+    "device": "x08e",
+    "case": "interrupted",
+    "result": "PASS",
+    "independentHistoryProof": "PROVEN",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "expectedStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "80461d95599535d0fca394d311fb54d1a32186db0782924970ec80391570923e",
+      "2": "eccb84f7bf3d2751aeecaaa08b8a004ba4bde7215df342516cfcb373cdc788aa"
+    },
+    "checkpointAfter": {
+      "1": "013faeacc51ef144c2e009460db4e88ab44dd42dcf92e529f2aac22b91a53a13",
+      "100": "0ef7674ea29c22d8a328be372d8cc5116cf6576aa9317d09b1c00e9771c45640",
+      "101": "17f8af97ad4a7f7639a4c9171d5185cbafb85462877a4746c21bdb0a4f940ca0",
+      "102": "2254b4304e36b9970b119553e5ef89bd12b4acb7d0f463ac49c05e38b524ed32",
+      "111": "80461d95599535d0fca394d311fb54d1a32186db0782924970ec80391570923e",
+      "112": "eccb84f7bf3d2751aeecaaa08b8a004ba4bde7215df342516cfcb373cdc788aa",
+      "2": "01889fdf986efbb977390f097eb112b5930fc29e4ce7f050f446c2b3e47935c9",
+      "20": "a1793e9814bf9192212916d5a33bbd96d2bf8f6a24eb8f6e249daabe4e75d42e",
+      "21": "a4f81e2220c30c5316bf3b426fc0fc6aaa47c5bcee866c3d417d6752f6807d55",
+      "22": "4e7aea6d9d20a49924bce24bedb741a5e4c7ae353a06bee4c3a6c87bfca1a3be",
+      "96": "db5a5c8a86e3857f77c918d34d1e8c577515baebdf177b1b5d841ecacc1cd26f"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "46190704902fe4ce1502962c27c6b09d086f27889ad89b6b1ba1e070689a1c7a",
+      "snapshot-450cf8d1-0eaa-4d9d-a89c-c67489e19a8b.dps": "80461d95599535d0fca394d311fb54d1a32186db0782924970ec80391570923e",
+      "snapshot-fd69e644-af92-4950-b4bf-0d1f7dc91abc.dps": "013faeacc51ef144c2e009460db4e88ab44dd42dcf92e529f2aac22b91a53a13"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "已检查观察到的版本 · 已发布；其他设备接收情况未知",
+    "remoteV2CommitHashes": {
+      "344597f8-ccd3-4e08-a978-44ea0b882d7d": "a4f81e2220c30c5316bf3b426fc0fc6aaa47c5bcee866c3d417d6752f6807d55"
+    },
+    "remoteV2CanonicalStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870"
+  },
+  {
+    "device": "phone",
+    "case": "success",
+    "result": "PASS",
+    "independentHistoryProof": "PROVEN",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "expectedStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "0016579d3a9175ac9f18e6d98a6124306668fd1eea0fa6b88c3f077bd0afbc72",
+      "2": "1b7870ae968f65f86ebde35afa6c68dc55a41d9c54a1f7aa1b6192bee971140f"
+    },
+    "checkpointAfter": {
+      "1": "3137e77d105f10f242215a3969024c892ca06f11a97ae428e0dc07ae3818300f",
+      "100": "1ca9eaf21998c621b9d1a76bf35dbec47184b8aa2a14521654f99a3ce87d8876",
+      "101": "17f8af97ad4a7f7639a4c9171d5185cbafb85462877a4746c21bdb0a4f940ca0",
+      "102": "ded1368e114c546fb1cdb4193f1eb5bad8d3b1a35b371c278b7fd268a74b7aa4",
+      "111": "0016579d3a9175ac9f18e6d98a6124306668fd1eea0fa6b88c3f077bd0afbc72",
+      "112": "1b7870ae968f65f86ebde35afa6c68dc55a41d9c54a1f7aa1b6192bee971140f",
+      "2": "cf1cbae99d613f935175cf1c2165786a872d487ef25a2b3f1e9a45d665289eed",
+      "20": "5f613c11c6eb67a52d11b146c824e9e699907fe2333553e51d8ed82bafcb94a4",
+      "21": "eb5259c9b0ed2941ded9ad81e341dc913177a0c6896fc0fde004149e86208d0d",
+      "22": "41fbec8b8062bd3b88850beb8e30f1fe4c98d22aae0d5afe6e8555c6ea97b0d9",
+      "96": "49ea5fc87101d5c4c657964d107c333b9a3efeca138010d5ad2806db8afeefc2"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "f25b4f191527c976e03344454c0fcf024b867b5eb566a340f4cee78ccd27755d",
+      "snapshot-49e245b5-277e-402f-ac80-fa8f14a17612.dps": "0016579d3a9175ac9f18e6d98a6124306668fd1eea0fa6b88c3f077bd0afbc72",
+      "snapshot-c5bcf8bc-5fbb-4e88-9c47-d1572e091087.dps": "3137e77d105f10f242215a3969024c892ca06f11a97ae428e0dc07ae3818300f"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "已检查观察到的版本 · 已发布；其他设备接收情况未知",
+    "remoteV2CommitHashes": {
+      "77500bad-015c-41e4-b1c5-1a35d9186643": "eb5259c9b0ed2941ded9ad81e341dc913177a0c6896fc0fde004149e86208d0d"
+    },
+    "remoteV2CanonicalStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870"
+  },
+  {
+    "device": "phone",
+    "case": "committed",
+    "result": "PASS",
+    "independentHistoryProof": "PROVEN",
+    "beforeStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c",
+    "afterStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c",
+    "expectedStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "d12ae1233a03cf9ce968182f88b7d5106e019ac27e92e62b3f5eaea12f786c5d",
+      "2": "bf7cdad148e5a5c8e52adaadf856e8c6a801098985bf47ddb28d32a2690897e5",
+      "4": "d497651e81659a3f866ffbb734cc56240fe647693f9e904e10e8f2dc5f474d47",
+      "5": "d497651e81659a3f866ffbb734cc56240fe647693f9e904e10e8f2dc5f474d47"
+    },
+    "checkpointAfter": {
+      "1": "d497651e81659a3f866ffbb734cc56240fe647693f9e904e10e8f2dc5f474d47",
+      "100": "0cf723e8b468bb860306ba13093b9b18c386f48beedf14437c7ff9c992092cea",
+      "101": "8a7efaee6c21308fb5eddc0cff3c08cdf2ca2f7cb4c91a7a86f53f36d3e9b264",
+      "102": "481af91e046ba8be71e69389247b066cbdeb8e35b0068048988e3ae53f78cd2f",
+      "111": "d12ae1233a03cf9ce968182f88b7d5106e019ac27e92e62b3f5eaea12f786c5d",
+      "112": "bf7cdad148e5a5c8e52adaadf856e8c6a801098985bf47ddb28d32a2690897e5",
+      "114": "d497651e81659a3f866ffbb734cc56240fe647693f9e904e10e8f2dc5f474d47",
+      "115": "d497651e81659a3f866ffbb734cc56240fe647693f9e904e10e8f2dc5f474d47",
+      "2": "e638a4e8c5f71cdb68965ff4fbb033f0a6c2e2eb76a2033276b78df9230cd158",
+      "20": "bd224a6722ceb2c7704ac189566a42efaa026d41f502f202584ba3fafe7a22f4",
+      "21": "e7cefe43427b6b542c6a67d44b50a3d5c946b997b48378380a9a44fc6d0811e0",
+      "22": "1402895852ef8a8043f802882a8ae59c9bed6f2f798794a28d4ae78c30b57a79",
+      "96": "eb2461440d7f1d4b98df8093bbf1698b67597fa5c1162a80f75b7426a6a76c5b"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "3dfafbbbb5e065d6bca17799f78c3ed1a4e8229d3da617c24e901ff9aa9b233c",
+      "snapshot-44ae11af-df32-44ec-9eb5-a28d0277e65f.dps": "d12ae1233a03cf9ce968182f88b7d5106e019ac27e92e62b3f5eaea12f786c5d",
+      "snapshot-9ae1883a-00b3-426a-926e-c4ceddbb9269.dps": "d497651e81659a3f866ffbb734cc56240fe647693f9e904e10e8f2dc5f474d47"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "已检查观察到的版本 · 已发布；其他设备接收情况未知",
+    "remoteV2CommitHashes": {
+      "2a91badf-12f8-461b-b474-9eb42df361b2": "e7cefe43427b6b542c6a67d44b50a3d5c946b997b48378380a9a44fc6d0811e0"
+    },
+    "remoteV2CanonicalStateSha256": "e56629c0cbe5c2cea8d023c51429b418c18dfe124294f30db30a1ae3ddb6dd5c"
+  },
+  {
+    "device": "phone",
+    "case": "dataset",
+    "result": "PASS",
+    "independentHistoryProof": "DATASET_MISMATCH",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "expectedStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "d185d3beea56746397a2f9f900ff9dfbbb5c44e6eea74100be80c8db8c9cf376",
+      "2": "4defe9a4a0f4b725f1143230e60afa6e4065977d62f4fb802ce54c300b99f5de"
+    },
+    "checkpointAfter": {
+      "1": "d185d3beea56746397a2f9f900ff9dfbbb5c44e6eea74100be80c8db8c9cf376",
+      "2": "4defe9a4a0f4b725f1143230e60afa6e4065977d62f4fb802ce54c300b99f5de",
+      "20": "38e6a922e69c6771e0279cd375bef7c8c26fcc5a93e13f60d9d9e736e30b38af"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "d39288ca89b127b11115866660dd6c4c586a98f8edff6f0fe2104f1225b502da",
+      "snapshot-10941e0c-82a2-4849-be4e-f9ec40c02a69.dps": "6b9041523b830b2c3ccc07a2cb9c5f5c11cc57293026f392c3553f898789768f",
+      "snapshot-ae6669cd-6e8f-4553-b4d1-1f12d686d192.dps": "d185d3beea56746397a2f9f900ff9dfbbb5c44e6eea74100be80c8db8c9cf376"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "同步失败；本地数据已保留：旧绑定 dataset 不一致；拒绝自动迁移",
+    "remoteV2Absent": true
+  },
+  {
+    "device": "phone",
+    "case": "interrupted",
+    "result": "PASS",
+    "independentHistoryProof": "PROVEN",
+    "beforeStateSha256": "3d2cac4229304777b92080b628764feab4db0b8018013a203f793ed53b0c19fc",
+    "afterStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "expectedStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870",
+    "counts": {
+      "entries": 1,
+      "events": 1,
+      "sources": 1,
+      "imported": 1,
+      "edits": 3,
+      "days": 1,
+      "profiles": 2,
+      "customProfiles": 1
+    },
+    "oldCheckpoint": {
+      "1": "db9b806d1283d8bd493cda181007f42614b09283b74dea5e57b1cd62da36d9d6",
+      "2": "69e5bd8d4741abc748526c59f6d260828a62a8f74e8baf763b409c0b17a429f4"
+    },
+    "checkpointAfter": {
+      "1": "f06904427a4c4596586332ff946e1124c766f28e92f8675d56b54258ca9c69db",
+      "100": "afe52fa6081432baacec1dff436552bc0b0e331df2f95787c1643873f80f89e7",
+      "101": "17f8af97ad4a7f7639a4c9171d5185cbafb85462877a4746c21bdb0a4f940ca0",
+      "102": "826e0b26c7b9bb2a2a7660c0ed638e3fde93dcb0a2eead23f9b16c17f6c11572",
+      "111": "db9b806d1283d8bd493cda181007f42614b09283b74dea5e57b1cd62da36d9d6",
+      "112": "69e5bd8d4741abc748526c59f6d260828a62a8f74e8baf763b409c0b17a429f4",
+      "2": "7199d652ed99757c186985f297275ca1776eabed015e8ccf3b28addd8f56c367",
+      "20": "ae5cd2ef830eae0aedc027a99bea9cdb5a7ec1758caa07cc233a60e0e3d46f4e",
+      "21": "695565bc5a2162630bbd8583d3871fa2b1d0bc8f4eb4db2d783788acafc0f2ec",
+      "22": "f057660451519b6e768350c1ecd725cf2a522e4e37589836b5aaf7602a0904e5",
+      "96": "4d911a2dff087ee2c637858cb3e3e74ead8b8cef2e6adcdbbcf99318e0315858"
+    },
+    "v1RemoteSha256": {
+      "dormpanel-head-v1": "cfe54e6dc3c5364c02ab6466d661917df4bbe7b1b0c33b0e57abae6c364bf493",
+      "snapshot-5ce9624a-6ccc-4e66-a696-39c240646179.dps": "db9b806d1283d8bd493cda181007f42614b09283b74dea5e57b1cd62da36d9d6",
+      "snapshot-948b0c8c-7714-4704-a986-9cbc3ee7541c.dps": "f06904427a4c4596586332ff946e1124c766f28e92f8675d56b54258ca9c69db"
+    },
+    "v1HistoryUnchanged": true,
+    "credentialsDecryptUnchanged": true,
+    "status": "已检查观察到的版本 · 已发布；其他设备接收情况未知",
+    "remoteV2CommitHashes": {
+      "85b4b1eb-738a-46d7-848b-de60f28115ff": "695565bc5a2162630bbd8583d3871fa2b1d0bc8f4eb4db2d783788acafc0f2ec"
+    },
+    "remoteV2CanonicalStateSha256": "58ea624ebeb0dba78130f3416c7b409e26cac20347df96eb2ea89c0f1302b870"
+  }
+]
