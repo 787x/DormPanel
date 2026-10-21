@@ -1,0 +1,69 @@
+2026-10-21T10:12:26+0800
+DATABASE schedule
+4
+ok
+DATABASE productivity
+1
+ok
+DATABASE dashboard
+2
+ok
+sources|1
+series|13
+occurrences|131
+events|0
+local_entries|0
+day_adjustments|0
+class_overrides|0
+owners|1
+nonempty_memos|0
+todos|0
+timer|300000|300000|READY
+CONTENT schedule.events
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  -
+CONTENT schedule.timetable
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  -
+CONTENT schedule.import_sources
+85aae24341a25fb1ad1a9955e3284ab5798ff35035a36ce022003d0f188be199  -
+CONTENT schedule.imported_timetable_occurrences
+a96ae5a09a777783bb11925a3f3d2ed78eba8c2d1859a301b280c57b0f131ffc  -
+CONTENT schedule.day_adjustments
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  -
+CONTENT schedule.class_overrides
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  -
+CONTENT productivity.owners
+1bec622a3183049277abc2aefe59220edf21c058cf6205bdaa374fbde3f45325  -
+CONTENT productivity.todos
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  -
+CONTENT dashboard.dashboard_cards
+639f30360a1e3035a49d6f0002f0571ba3f53569e66c5b046cfdfe620185b0d5  -
+CONTENT dashboard.dashboard_state
+771a382a4e243e9d121afb1592d53f7bb83a55b641d4b1f8614e1afa80a0c94c  -
+PREFERENCE appearance
+45d63f9b76d3bd2bd61d704d7f6dcb52f30533e1fbfb1ed703343f42a6436b4d  /data/data/com.dormpanel.app/shared_prefs/appearance.xml
+PREFERENCE device_controls
+5ea9d5f31fac10c154a7403c813c217f4b6e413fe0784ed833dc7c8d8d5318c1  /data/data/com.dormpanel.app/shared_prefs/device_controls.xml
+PREFERENCE ha_credentials
+c1216dca56a307f438d44f3e67703bd269173c85a8513b1281036f22009851c6  /data/data/com.dormpanel.app/shared_prefs/ha_credentials.xml
+PREFERENCE ha_relay_identity
+da5846722676d5d9823aaf3f87552c59238e47960ed4f01a1d8b948031ee9cab  /data/data/com.dormpanel.app/shared_prefs/ha_relay_identity.xml
+PREFERENCE ha_settings
+0019aa4b54dcb1da0674ff52c7c4dd964743c6d2d38f334f8c024632c7577e3c  /data/data/com.dormpanel.app/shared_prefs/ha_settings.xml
+PREFERENCE light_control_memory
+fa6c94c7fe91144edb6f6bb0d39de6b981a9bbb4e1bd4f717d0a383d0ab4b813  /data/data/com.dormpanel.app/shared_prefs/light_control_memory.xml
+PREFERENCE startup_policy
+d8cf53fc50debf83770b9f0c7836a7093a6bbdd3f8885118b4e586167665fc58  /data/data/com.dormpanel.app/shared_prefs/startup_policy.xml
+PREFERENCE term_schedule_profiles
+b4d7949f8451a02112dcd1f9dc72435c212b03f97059752a3ce9ce647f5767c6  /data/data/com.dormpanel.app/shared_prefs/term_schedule_profiles.xml
+PREFERENCE webdav_credentials
+1e2030a7190697ce0310ed33fb7c4a496b6fe8b6771ce68c9908b00b6f942ada  /data/data/com.dormpanel.app/shared_prefs/webdav_credentials.xml
+PREFERENCE webdav_settings
+2c98ea246649d06634182667a76029c0c3e23b93840945ca64d9be13469bc3cc  /data/data/com.dormpanel.app/shared_prefs/webdav_settings.xml
+SYSTEM
+18
+1
+2147483647
+[v] will control stream=3 (STREAM_MUSIC)
+[v] will get volume
+[v] Connecting to AudioService
+[v] volume is 9 in range [1..20]

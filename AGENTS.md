@@ -8,6 +8,7 @@
 - Normal dashboard and device controls must remain deterministic and must not depend on an LLM.
 - Avoid unnecessary heavy dependencies, frameworks, background work, and device-specific Root/ADB behavior.
 - Preserve Android 9 compatibility and verify changes against the 1280x800 landscape form factor.
+- 文档、pr body等使用中文
 # DormPanel 项目
 
 DormPanel 是面向 Xiaomi Redmi 小爱触屏音箱 Pro 8（X08E）的轻量 Android 常驻桌面与智能家居控制应用。

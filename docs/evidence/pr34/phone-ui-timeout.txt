@@ -1,0 +1,49 @@
+INSTRUMENTATION_STATUS: class=com.dormpanel.phone.PhoneTimetableTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+com.dormpanel.phone.PhoneTimetableTest:
+INSTRUMENTATION_STATUS: test=importedScopesDayAdjustmentReplacementAndDelete
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.dormpanel.phone.PhoneTimetableTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stack=org.junit.runners.model.TestTimedOutException: test timed out after 90000 milliseconds
+	at java.lang.Object.wait(Native Method)
+	at java.lang.Object.wait(Object.java:442)
+	at java.lang.Object.wait(Object.java:568)
+	at android.app.Instrumentation.startActivitySync(Instrumentation.java:557)
+	at androidx.test.core.app.InstrumentationActivityInvoker.startActivity(InstrumentationActivityInvoker.java:422)
+	at androidx.test.core.app.InstrumentationActivityInvoker.startActivity(InstrumentationActivityInvoker.java:428)
+	at androidx.test.core.app.ActivityScenario.launchInternal(ActivityScenario.java:367)
+	at androidx.test.core.app.ActivityScenario.launch(ActivityScenario.java:203)
+	at com.dormpanel.phone.PhoneTimetableTest.open(PhoneTimetableTest.kt:45)
+	at com.dormpanel.phone.PhoneTimetableTest.importedScopesDayAdjustmentReplacementAndDelete(PhoneTimetableTest.kt:132)
+
+INSTRUMENTATION_STATUS: stream=
+Error in importedScopesDayAdjustmentReplacementAndDelete(com.dormpanel.phone.PhoneTimetableTest):
+org.junit.runners.model.TestTimedOutException: test timed out after 90000 milliseconds
+	at java.lang.Object.wait(Native Method)
+	at java.lang.Object.wait(Object.java:442)
+	at java.lang.Object.wait(Object.java:568)
+	at android.app.Instrumentation.startActivitySync(Instrumentation.java:557)
+	at androidx.test.core.app.InstrumentationActivityInvoker.startActivity(InstrumentationActivityInvoker.java:422)
+	at androidx.test.core.app.InstrumentationActivityInvoker.startActivity(InstrumentationActivityInvoker.java:428)
+	at androidx.test.core.app.ActivityScenario.launchInternal(ActivityScenario.java:367)
+	at androidx.test.core.app.ActivityScenario.launch(ActivityScenario.java:203)
+	at com.dormpanel.phone.PhoneTimetableTest.open(PhoneTimetableTest.kt:45)
+	at com.dormpanel.phone.PhoneTimetableTest.importedScopesDayAdjustmentReplacementAndDelete(PhoneTimetableTest.kt:132)
+
+INSTRUMENTATION_STATUS: test=importedScopesDayAdjustmentReplacementAndDelete
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.dormpanel.phone.PhoneTimetableTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=icsPickerAndInvalidFileLeaveExistingDataIntact
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_RESULT: shortMsg=Process crashed.
+INSTRUMENTATION_CODE: 0
