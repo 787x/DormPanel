@@ -50,3 +50,7 @@ signing.properties
 
 # Local PR36 backups, credentials and raw physical evidence
 /artifacts/pr36/
+/artifacts/pr37/
+/fnos-app/node_modules/
+/fnos-app/build/
+/fnos-app/*.fpk
