@@ -1,347 +1,187 @@
-# PR34 — 0.1.2-rc.1 physical acceptance
+# PR34 — 0.1.2-rc.1 实机验收记录
 
-## Decision
+## 最终结论
 
-**RC NOT ACCEPTED — release blocked.** The real WebDAV endpoint accepted and
-performed writes that must have returned HTTP 412. Independent device checks
-below do not override this failed safety gate. No tag or GitHub Release is
-authorized by this record; PR34 must remain unmerged during acceptance.
+**RC NOT ACCEPTED（未通过 RC 验收），发布阻塞。** 真实 WebDAV 对本应返回 HTTP 412 的条件写入仍执行了覆盖，未满足安全同步前提。其他设备检查通过不能抵消这一失败。四小时常驻观察已按用户要求提前结束，实际仅约 1 小时 5 分钟，不能标记为四小时通过。PR34 保持草稿、未合并；本记录不授权创建 tag 或发布 GitHub Release。
 
-This is an acceptance record, not a product fix. Testing started on
-**2026-10-21, Asia/Shanghai**, from merged PR33/main
-`a531fa525c265aea6c6234c5061e53de15126501`. GitHub independently reported PR33
-merged at 2026-10-20 23:28:11 +08:00; no merge was performed here.
+本 PR 仅记录验收事实，不修复或开发产品功能。测试于 **2026-10-21（上海时间，UTC+08:00）**开始，基于已合并 PR33 的 main 提交 `a531fa525c265aea6c6234c5061e53de15126501`。GitHub 独立查询确认 PR33 已于 2026-10-20 23:28:11 合并，本轮未执行合并操作。
 
-## Frozen candidate identity — PASS (native host tools / physical installation)
+## 冻结候选身份：通过
 
-`tools/verify-release.ps1` was rerun before installation using Android build-tools
-37.0.0. Native apksigner verification, exactly one approved signer, aapt2 package,
-version, min/target SDK, non-debuggable checks, and exact final-byte/filename
-sidecars passed. Expected frozen hashes were also checked before each install.
+安装前使用 Android build-tools **37.0.0** 重新运行 `tools/verify-release.ps1`。真实 `apksigner`、`aapt2` 检查确认：签名有效且仅有一个批准签名身份，包名、版本、最低/目标 SDK 正确，APK 不可调试，`.sha256` 中的哈希和文件名与最终 APK 完全一致。每次安装前也单独比较了冻结哈希。
 
-| Candidate | Bytes | SHA-256 | Package / code | SDK |
+| 候选文件 | 字节数 | SHA-256 | 包名 / versionCode | 最低 / 目标 SDK |
 | --- | ---: | --- | --- | --- |
-| X08E | 16,035,756 | `ba7135315d251e0f2425e1eeeb8e11748410e18c74c9c0cb29c506fe99a0a20f` | `com.dormpanel.app` / 4 | 28 / 37 |
-| Phone | 9,736,703 | `16a6f581fd87d9f7a88ca58b031309554a27f5dc00487dc32482d87a45ade79c` | `com.dormpanel.timetable` / 2 | 28 / 37 |
+| `DormPanel-X08E-0.1.2-rc.1.apk` | 16,035,756 | `ba7135315d251e0f2425e1eeeb8e11748410e18c74c9c0cb29c506fe99a0a20f` | `com.dormpanel.app` / 4 | 28 / 37 |
+| `DormPanel-Phone-0.1.2-rc.1.apk` | 9,736,703 | `16a6f581fd87d9f7a88ca58b031309554a27f5dc00487dc32482d87a45ade79c` | `com.dormpanel.timetable` / 2 | 28 / 37 |
 
-Both names are `0.1.2-rc.1`; certificate SHA-256 is
-`32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7`.
-Both embedded `META-INF/version-control-info.textproto` entries independently
-read **`e3423d212004e22b2be2bac4ab8fcc8a9e6b7d92`**. This is deliberately different
-from the acceptance branch HEAD. Installed base APKs were pulled from **both real
-devices** and their full hashes matched the respective frozen candidates.
-No release candidate was rebuilt or replaced; isolated test APKs are separate
-evidence and never substitute for a candidate installation.
+两份 APK 的 versionName 均为 `0.1.2-rc.1`，批准证书 SHA-256 均为：
 
-## Real environment and baseline
+```text
+32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7
+```
 
-| Device | Observed conditions |
+分别读取两份 APK 的 `META-INF/version-control-info.textproto`，内嵌运行时源码提交均为 **`e3423d212004e22b2be2bac4ab8fcc8a9e6b7d92`**，不要求它与验收分支 HEAD 相同。已从**两台真实设备**回读实际安装的 base APK，完整文件哈希分别与上述冻结值一致。
+
+本轮没有重建或替换候选；后续复核仍使用同一批文件。隔离测试 APK 是独立证据，不能代替正式候选安装。已完成检查后再次运行候选校验，两份文件仍通过。
+
+## 真实环境与升级基线
+
+| 对象 | 实际条件 |
 | --- | --- |
-| X08E | `mico_x08e`, Android 9 / API 28, physical 1280×800 landscape, authorized USB ADB |
-| Phone | Xiaomi `MIX_2S_Emerald_Edition`, `polaris`, Android 13 / API 33, physical 1080×2160, 440 dpi, portrait, authorized USB ADB |
-| WebDAV | User-supplied HTTPS endpoint/account; default TLS certificate verification; independent `.NET HttpClient` requests from the development machine |
+| X08E | `mico_x08e`，Android 9 / API 28，物理 1280×800 横屏，已授权 USB ADB |
+| 手机 | 小米 `MIX_2S_Emerald_Edition`，`polaris`，Android 13 / API 33，物理 1080×2160，440 dpi，竖屏，已授权 USB ADB |
+| WebDAV | 用户提供的真实 HTTPS 服务和账号，使用默认 TLS 证书验证；开发机通过独立 `.NET HttpClient` 发出探测请求 |
 
-No emulator result is treated as physical evidence. Secrets, full private
-courses, UI dumps, screenshots and APKs remain outside Git. Device-side existing
-`su 0`/sqlite3 was used **read-only** for aggregate and digest inspection on X08E;
-no database or preference file was written through root. This diagnostic access
-is not an application requirement. The phone's unrelated apps/data were untouched.
+模拟器结果不计为实机证据。密码、完整私人课表、UI 层级、截图和 APK 均不提交 Git。X08E 使用设备原有的 `su 0` / sqlite3 **只读**获取数量和内容摘要，没有通过 root 写入数据库或偏好文件；此诊断方式不是应用运行依赖。手机的无关应用和数据未作修改。
 
-### X08E actual in-place upgrade
+### X08E 实际原位升级
 
-The pulled pre-upgrade APK was `com.dormpanel.app`, code **3**, name **0.1.1**,
-non-debuggable and approved-signed. Its SHA-256 was
-`5f3a14ea040f659ad573dc761dc585f4de5a7b3617c673b1e1c295ef071d3cda`.
-It differs from PR29's canonical candidate
-`14e36f9b73051803513fef196b776802e91eae6407d7e3cea8fd71ed6700fd52`;
-this run must not be described as upgrading byte-identical canonical 0.1.1.
-First install was 2026-09-24 22:33:21; previous update was
-2026-10-17 17:18:55 (device local time). After update, first-install time remained
-unchanged and last-update time became **2026-10-21 08:42:47**.
+升级前回读的实际 APK 为 `com.dormpanel.app`，versionCode **3**，versionName **0.1.1**，不可调试，使用批准签名。实际 SHA-256 为：
 
-The baseline read was taken at **08:42:27 +08:00**. Only normal
-`adb -s <X08E> install -r <frozen-X08E-APK>` was used. No uninstall, clear-data,
-downgrade, database replacement or backup restoration occurred. MainActivity's
-normal launch returned `Status: ok`. The actual schema changed **v3 → v4**;
-SQLite `quick_check` returned `ok` for schedule, productivity and Dashboard.
+```text
+5f3a14ea040f659ad573dc761dc585f4de5a7b3617c673b1e1c295ef071d3cda
+```
 
-| Actually existing baseline | Immediate post-upgrade result |
+它与 PR29 的标准候选 `14e36f9b73051803513fef196b776802e91eae6407d7e3cea8fd71ed6700fd52` 不同，因此本次不能描述为“从字节完全一致的标准 0.1.1 发行 APK 升级”。原 firstInstallTime 为 2026-09-24 22:33:21，原 lastUpdateTime 为 2026-10-17 17:18:55。升级后首次安装时间不变，最后更新时间变为 **2026-10-21 08:42:47**。
+
+基线读取时间为 **08:42:27**。仅使用正常覆盖安装：
+
+```text
+adb -s <X08E序列号> install -r <冻结X08E候选APK>
+```
+
+没有卸载日常应用、清除数据、降级、替换数据库或恢复备份。MainActivity 正常启动，返回 `Status: ok`。真实课表数据库从 **v3 → v4**；课表、效率工具和 Dashboard 的 SQLite `quick_check` 均返回 `ok`。
+
+| 升级前真实存在的数据 | 升级后即时结果 |
 | --- | --- |
-| 1 imported source, 13 distinct source/series pairs, 131 occurrences | Counts retained; ordered complete-row SHA-256 digests of sources and occurrences unchanged |
-| Local entries 0, events 0, date adjustments 0, class overrides 0 | Empty counts/digests retained; no nonempty migration claim |
-| Productivity: 1 owner, 0 Todos, 0 nonempty Memos; Timer 300000/300000 ms, READY | Complete owner/Todo content digests unchanged; no nonempty Todo/Memo migration claim |
-| Dashboard cards and revision | Ordered complete-row digests unchanged |
-| Appearance/device controls/startup/term profiles | Preference-file digests unchanged |
-| HA credentials/settings, relay identity, WebDAV credentials/settings | Encrypted credential and preference-file digests unchanged; digests alone do not prove successful decryption or remote authentication |
+| 1 个导入来源、13 个不同来源/系列组合、131 个课程实例 | 数量保留；按固定顺序读取完整来源/实例行后计算的 SHA-256 摘要不变 |
+| 本地课程 0、事件 0、日期调整 0、课程编辑 0 | 空表数量及摘要保留，不声称非空数据迁移通过 |
+| 效率工具 1 个 owner，Todo 0，非空 Memo 0；Timer 为 300000/300000 ms、READY | owner/Todo 完整内容摘要不变；不声称非空 Todo/Memo 迁移成功 |
+| Dashboard 卡片及布局 revision | 完整行摘要不变 |
+| 外观、设备控制、自启、学期配置 | 偏好文件摘要不变 |
+| HA 凭据/设置、relay 身份、WebDAV 凭据/设置 | 加密凭据及偏好文件摘要不变；仅凭摘要不等于已证明解密和远端认证成功 |
 
-The pre-upgrade Dashboard and representative imported class detail were observed:
-the 2026-10-21 Wednesday afternoon class retained its 14:00–15:40 timing, period
-label and source information. Private content is not reproduced here. Existing
-live temperature/humidity values and light Off / brightness 1% were visible before
-upgrade; they are not by themselves proof of post-upgrade live control.
-System baseline was automatic brightness (mode 1), timeout 2147483647 ms and
-media 9/20. Automatic brightness values may vary without an application write.
+升级前观察了 Dashboard 和代表性导入课程详情：2026-10-21 周三下午课程的 14:00–15:40 时间、节次标签和来源信息可见，此处不复述私人课程内容。升级前也能看到温湿度值和灯光 Off / 亮度 1%，这些本身不能证明升级后的真实控制正常。系统基线为自动亮度（模式 1）、屏幕超时 2147483647 ms、媒体音量 9/20；自动亮度数值可随环境变化。
 
-After the complete isolated physical suite, the daily source/occurrence,
-Dashboard, productivity and preference digests were compared again. They remained
-unchanged apart from the expected automatic screen-brightness value. Daily
-force-stop → normal reopen also succeeded. On a normal reboot requested at
-**08:58:12**, native Xiaomi/third-party launcher startup occurred first; at
-**08:59:43.275** `DormPanelBoot` recorded `Boot launch requested`, followed by the
-daily MainActivity in foreground. No explicit app launch was used to create that
-boot result. Startup policy remained ON. Reboot readback retained all original
-schedule/productivity/Dashboard content digests and encrypted credentials; light
-memory changed with live device state, so it is not claimed byte-identical after
-live controls. Automatic brightness also varied; mode, timeout and volume remained.
+完整隔离实机测试后，再次比较日常来源/实例、Dashboard、效率工具和偏好摘要，数据摘要保持一致，自动屏幕亮度数值变化。正式应用实际 force-stop 后正常重开成功。
 
-The post-reboot Control Center showed **HA CONNECTED**, saved WebDAV Configured,
-override 45%, Follow system/Keep awake and boot ON. Its original saved WebDAV
-account's **Test Connection → Connection successful** worked without re-entering
-or saving credentials, establishing app-side decryption/authentication. This
-read-only account check is separate from the failed conditional-write preflight.
-The Dashboard showed live sensor values. A real HA light was observed at
-**On / 1% / 2700 K** immediately before this operation; native card control changed
-it Off, then restored **On / 1% / 2700 K** with state readback. Earlier pre-upgrade
-Off / 3216 K is not substituted for the actual pre-operation state. No independent
-HA-server trace or emitted-light measurement was collected in this run. Relay
-identity bytes survived; a complete relay submission was not repeated.
+**08:58:12** 发起正常重启，系统先进入小米/第三方桌面启动流程；**08:59:43.275** 的 `DormPanelBoot` 日志出现 `Boot launch requested`，随后日常 MainActivity 位于前台。没有通过手动启动应用来制造自启结果。自启设置仍为 ON。重启回读保留原有课表、效率工具、Dashboard 摘要和加密凭据；灯控记忆随真实设备状态变化，不声称实控后该文件字节完全不变。亮度模式、超时和音量保留。
 
-HOME reached `com.xiaomi.micolauncher/.Launcher`. Once the formal candidate was
-back on Dashboard after the full suite, the human explicitly reported **all three
-requested checks passed**: audible XiaoAI reply, native Mesh control with prior
-device state restored, and temporary native alarm firing followed by cancellation/
-deletion. These are **HUMAN physical observations**, not automated assertions.
+重启后控制中心显示 **HA CONNECTED**、WebDAV 已配置、应用亮度覆盖 45%、跟随系统、保持唤醒和开机启动开启。原有 WebDAV 账号在不重新输入或保存凭据的情况下，通过应用内 **Test Connection → Connection successful**，证明保存凭据可解密并完成认证；这项只读连接检查与条件写入安全检查是两项不同证据。
 
-### Phone actual installation and local data
+Dashboard 显示实时传感器值。HA 灯控操作前实际状态为 **On / 1% / 2700 K**，通过原生卡片关灯，再恢复 **On / 1% / 2700 K**，并回读状态。不能用更早的 Off / 3216 K 代替实际操作前状态。本轮未单独保留 HA 服务端追踪或测量实际发光。relay 身份字节保留，但没有重跑完整 relay 提交流程。
 
-No `com.dormpanel.timetable` installation was present initially. The frozen signed
-Phone APK installed successfully and its declared `TimetableActivity` launched
-normally. An initial attempt to launch nonexistent `PhoneActivity` returned
-`Error type 3`; using the manifest's real activity succeeded without any APK change.
+HOME 能返回 `com.xiaomi.micolauncher/.Launcher`。完整测试后恢复正式候选 Dashboard，用户现场明确回复以下三项**全部通过**：听到小爱正常语音回复；通过小米原生 Mesh 控制设备并恢复原状态；临时原生闹钟实际响铃后取消/删除。这属于**人工实机观察**，不计为自动化断言。
 
-Native portrait UI showed week/day navigation, add-course, date-adjustment and
-management controls. A disposable **PR34-Math** local course was added through
-the normal UI, visible as 09:00–10:00, then survived actual
-`am force-stop com.dormpanel.timetable` followed by normal activity launch.
-This establishes local course persistence on this phone; it does not establish
-pending-cloud receipt, account, reboot or OEM scheduler behavior.
+### 手机实际安装与本地数据
 
-Subsequent **normal native UI** checks on the signed candidate:
+初始未安装 `com.dormpanel.timetable`。冻结签名 Phone APK 安装成功，清单声明的 `TimetableActivity` 正常启动。首次误用不存在的 `PhoneActivity` 启动时返回 `Error type 3`，改用真实 Activity 后成功，没有修改 APK。
 
-- The actual Android system document picker opened Downloads and read repository
-  fixtures `wakeup.ics` and sanitized `hubei_2026-2027-1.csv`, copied under PR34
-  names. Preview showed **7 series/175 occurrences** for ICS and **13/131** for CSV,
-  with Asia/Shanghai and the two CSV schedule phases. Both confirmed imports
-  appeared in source management. This did not use an intercepted picker Intent.
-- Term management displayed the built-in 2026-2027-1 profile and phase timings;
-  selecting it displayed teaching week 8. Custom term mutation was not exercised.
-- Edited **This week** for PR34-Math to PR34-Math-W8; week 8 showed the local edit,
-  next week 9 retained PR34-Math. Reset this week restored inheritance.
-- No classes date adjustment hid that day's classes; **RESET DAY TO NORMAL**
-  restored them. The restored state was explicitly checked rather than inferred
-  from tapping Save.
-- System night mode was temporarily enabled. After a normal app restart, a
-  screenshot was visually inspected: black background with legible controls.
-  System night mode was restored to its observed original `no` state.
-- The phone underwent a normal reboot; its locally added course, selected term,
-  and both imported schedules were present afterward. Reopening required no
-  application reinstall or data restoration. Wi-Fi was returned to its initial
-  enabled state after a system-panel interaction; phone UI taps during that panel
-  are not attributed to app behavior.
-- Deleted the disposable recurring class and, through normal confirmed source
-  deletion, both disposable imported sources. A final force-stop/reopen showed
-  no courses. No pre-existing phone timetable existed; no unrelated data was
-  deleted. The two transferred fixture files were removed separately.
+竖屏原生 UI 显示周/日导航、新增课程、日期调整和管理入口。通过正常 UI 新增测试课程 **PR34-Math**，显示为 09:00–10:00；实际执行 `am force-stop com.dormpanel.timetable` 后重开，课程仍在。此项证明手机本地课程持久化，不能据此推断云端回执、账号或 OEM 后台调度行为。
 
-The approved-signed existing test APK was additionally installed alongside the
-unchanged candidate. `PhoneBidirectionalRestartTest` ran **seed 1/1**, real
-`am force-stop`, then **verify 1/1**, with one recorded UUID. This is physical
-process/persistence evidence against **isolated synthetic Room state**, including
-offline edits, deletion, catalog and a simulated uncertain receipt. It is not a
-real WebDAV commit/receipt recovery or OEM JobScheduler test.
+随后在正式签名候选上通过正常 UI 完成以下检查：
 
-Phone encrypted real-account configuration/persistence and credential-error
-handling remain **UNVERIFIED**. No unsafe-server shared binding was configured.
+- 打开真实 Android 系统文件选择器，从 Downloads 读取仓库测试文件 `wakeup.ics` 和已脱敏的 `hubei_2026-2027-1.csv`（使用 PR34 文件名副本）。ICS 预览为 **7 系列 / 175 实例**，CSV 为 **13 / 131**，显示 Asia/Shanghai 和 CSV 的两个节次阶段。确认导入后，两份来源均在来源管理可见。未使用拦截文件选择 Intent 的方式代替系统选择器。
+- 学期管理展示内置 2026-2027-1 配置和分阶段节次；选中后显示第 8 教学周。未实际修改自定义学期。
+- 对 PR34-Math 使用“仅本周”编辑，改为 PR34-Math-W8；第 8 周显示修改，第 9 周仍为 PR34-Math。“重置本周”后恢复继承内容。
+- 将当天调整为无课，课程隐藏；通过 `RESET DAY TO NORMAL` 恢复。恢复后的 UI 已实际检查，不以点击 Save 推断保存成功。
+- 临时开启系统夜间模式，正常重开应用后检查截图，背景为黑色，控件可读；系统夜间模式最终恢复为原来的 `no`。
+- 手机正常重启后，本地测试课程、所选学期和两份导入课表仍在，不需要重新安装或恢复数据。一次系统面板交互后，Wi-Fi 已恢复到初始开启状态；系统面板上的点击不归因于应用行为。
+- 通过正常 UI 删除测试周期课程，并确认删除两份测试导入来源。最终 force-stop 后重开显示无课程。手机原本没有该应用的课表，没有删除无关数据；传入的两份测试文件也已移除。
 
-## Real WebDAV safety gate — FAIL
+还为未改变的候选安装了使用批准签名的现有测试 APK。使用同一已记录 UUID 执行 `PhoneBidirectionalRestartTest`：**seed 阶段 1/1** → 实际 `am force-stop` → **verify 阶段 1/1**。这证明**隔离合成 Room 数据**的跨进程持久化，覆盖离线修改、删除、学期 catalog 和模拟的不确定回执；不等于真实 WebDAV 提交/回执恢复或 OEM JobScheduler 验收。
 
-Only a newly created, recognizable subdirectory below the user-authorized
-course folder was written:
-`pr34-rc1-20261021-084449-eac13df2/`. It contains only the disposable
-`pr34-conditional-probe.txt`, with synthetic PR34 text. No daily ICS/CSV file,
-production shared head or historical snapshot was modified or deleted.
+手机真实账号的加密配置、凭据持久化及认证错误处理仍为**未验证**。未绑定不满足安全条件的真实共享目录。
 
-The server failure is independently observable without uploading any courses:
+## 真实 WebDAV 安全门槛：失败
 
-| Time (+08:00) / request | Actual result | Required result / interpretation |
+只写入用户授权课表文件夹下新建的独立子目录 `pr34-rc1-20261021-084449-eac13df2/`。其中仅有合成 PR34 文本的测试文件 `pr34-conditional-probe.txt`。没有修改或删除日常 ICS/CSV、生产共享 head 或历史快照。
+
+| 时间（UTC+08:00）/ 请求 | 实际结果 | 应有行为及结论 |
 | --- | --- | --- |
-| 08:44:48–49, parent `PROPFIND Depth: 0`, child MKCOL | 207, then 201 | Isolated collection available |
-| PUT new probe, `If-None-Match: *` | 201 | Conditional creation succeeds |
-| GET v1 | 200; strong ETag `"18e064ceade23c422a"`; SHA-256 `b11132239eafccf2c9e732ff541bdf871a973ccc39967221ee58177f9725e119` | Strong-looking ETag alone is insufficient |
-| PUT **same** probe, `If-None-Match: *`, different text | **201**, new ETag `"18e064ceb822c23118"` | **FAIL: must reject with 412** |
-| 08:46:30–31 GET after rejection failure | SHA-256 `3f417401fcc56337a173cf3f1616a356ac335381d99204297cad46d7e546892a` | Equals exact second synthetic body; overwrite independently confirmed |
-| PUT same disposable probe, `If-Match: "pr34-intentionally-stale"` | **201**; next GET bytes changed to SHA-256 `9e9783cee63d3b60cd820a12acbebcb9f08a2d59f52bd3d011cd60b54cb4495d` | **FAIL: stale write must reject with 412** |
-| PUT with currently returned ETag | 201; GET changed ETag `"18e064e67297c1eb26"` and content hash | Matching update works, but does not repair failed rejection semantics |
+| 08:44:48–49，父目录 `PROPFIND Depth: 0`，子目录 MKCOL | 207，然后 201 | 独立目录可访问并创建 |
+| 对新文件 PUT，携带 `If-None-Match: *` | 201 | 条件创建成功 |
+| GET v1 | 200；强 ETag `"18e064ceade23c422a"`；SHA-256 `b11132239eafccf2c9e732ff541bdf871a973ccc39967221ee58177f9725e119` | 仅返回强形式 ETag 还不足以保证安全 |
+| 对**同一已存在文件** PUT 不同内容，携带 `If-None-Match: *` | **201**，新 ETag `"18e064ceb822c23118"` | **失败：应返回 412 拒绝覆盖** |
+| 08:46:30–31，再次 GET | SHA-256 `3f417401fcc56337a173cf3f1616a356ac335381d99204297cad46d7e546892a` | 与第二次合成请求正文完全匹配，确认发生实际覆盖 |
+| 同一测试文件 PUT，携带 `If-Match: "pr34-intentionally-stale"` | **201**；回读内容变为 SHA-256 `9e9783cee63d3b60cd820a12acbebcb9f08a2d59f52bd3d011cd60b54cb4495d` | **失败：陈旧条件应返回 412** |
+| 使用当前返回 ETag 执行 PUT | 201；回读 ETag 变为 `"18e064e67297c1eb26"`，内容哈希改变 | 正确条件下可更新，但不能抵消两项拒绝语义失败 |
 
-The initial probe stopped at the first unsafe response. Subsequent diagnosis
-was restricted to that same synthetic file, confirming actual bytes, stale-match
-behavior and correct-match updates. **No unconditional PUT fallback was used.**
-The diagnostic exit code 0 means diagnosis completed, **not** acceptance passed.
-Logs explicitly report `RC_SYNC_GATE FAIL`.
+初次探测遇到第一个不安全响应即停止。后续诊断只针对同一合成测试文件，确认实际字节、陈旧条件和正确条件的行为。**没有回退为无条件 PUT。** 诊断命令退出码 0 只表示诊断执行完成，不表示验收通过；日志明确写有 `RC_SYNC_GATE FAIL`。
 
-Reproduction: in a new disposable collection, conditionally create a synthetic
-file; GET its bytes/ETag; PUT different bytes at the same name with
-`If-None-Match: *`; GET again. Repeat with an intentionally incorrect `If-Match`.
-This endpoint returned 201 and changed bytes in both rejection cases. Impact:
-concurrent writers can overwrite data or immutable snapshots if these conditions
-are ignored. The observed endpoint behavior does not establish which origin or
-reverse-proxy component is responsible, nor demonstrate an APK algorithm defect.
+复现步骤：在新建测试目录条件创建合成文件；GET 获取内容和 ETag；对相同文件名携带 `If-None-Match: *` 写入不同内容，再 GET；随后携带故意错误的 `If-Match` 重复写入。本次两项本应拒绝的请求均返回 201 并改变实际内容。
 
-**Required remediation:** configure/fix the WebDAV origin/proxy to enforce both
-conditional headers, or select a server that does. Repeat this preflight before
-any two-device snapshot binding. If an application defect is subsequently found,
-fix it separately, generate a new candidate and repeat affected acceptance with
-the new hashes. Do not weaken the client or reuse these results for new APK bytes.
+影响范围：条件被忽略时，并发写入可能覆盖他人的数据或本应不可变的快照。现有证据不能定位是 WebDAV 源站还是反向代理负责，也没有证明 APK 同步算法存在缺陷。
 
-## Execution ledger and remaining gates
+建议修复：配置或修复源站/反向代理以正确执行两个条件头，或更换满足条件写入要求的服务器；通过新的安全探测后，再做双设备快照绑定。若后续发现应用缺陷，应单独修复、生成新候选，并按新哈希重跑受影响的验收。不能削弱客户端保护，也不能将本次结果套用到新 APK 字节。
 
-The independent observation was ended early at the user's request. Unfinished
-rows are not passes. The WebDAV failure still prevents `RC ACCEPTED`.
+## 验收项目与剩余限制
 
-| Gate | Current result / evidence class |
+独立长期观察已按用户要求提前结束。未完成项目不计通过，真实 WebDAV 失败仍阻止 `RC ACCEPTED`。
+
+| 验收门槛 | 实际结果与证据类别 |
 | --- | --- |
-| Frozen candidates and installed bytes | PASS — native tools and physical APK readback |
-| Existing X08E upgrade/data retention | PASS for actual existing data, v3→v4, force-stop and normal reboot; canonical 0.1.1 bytes/nonempty Todo/Memo were not the baseline |
-| X08E full hardware regression | **88/88 PASS**, unfiltered isolated physical testbed; signed daily live/UI checks separately recorded; original real ICS/CSV source resync and full relay transaction not repeated |
-| Phone basic functions | Normal UI install/add/week edit/reset/delete/system picker/ICS/CSV/source/term inspection/dark/force-stop/reboot observed; custom term edit, broader scrolling and encrypted real credentials not fully verified; UI instrumentation timeout unresolved |
-| Real WebDAV conditional writes | **FAIL** — both rejection guards ignored, actual overwrite verified |
-| Real two-device binding/edit/offline merge/conflict choices/delete/reset/profile | **BLOCKED** by unsafe real server; no application head/snapshot published or downloaded |
-| Remote snapshot/head readback hashes | **NOT RUN** after failed preflight; arbitrary probe readback is not a snapshot test |
-| Restart/network failure/foreground/background JobScheduler | Actual local force-stop/reboot and isolated two-process phone receipt persistence observed; real sync, foreground remote check and actual scheduler execution **UNVERIFIED** |
-| ≥4-hour physical X08E run | **NOT COMPLETED — ended at user request**, actual window 09:06:44–10:11:59 +08:00 (about 1 h 5 min 16 s); no four-hour pass |
-| Human XiaoAI/Mesh/native alarm | **PASS (human report)** after candidate restoration; not repeated at the early-stop endpoint |
+| 冻结候选及实际安装字节 | **通过**：真实工具校验及实机 APK 回读 |
+| X08E 原位升级与已有数据保留 | 实际已有数据、v3→v4、force-stop 和正常重启**通过**；基线不是标准 0.1.1 的相同字节，Todo/Memo 原本为空 |
+| X08E 完整硬件回归 | 隔离实机测试床**88/88 通过**，未过滤断言；正式日常候选的 UI/实控证据另列；原真实 ICS/CSV 来源重新同步、完整 relay 事务未重跑 |
+| 手机基本功能 | 正常 UI 的安装、新增、本周编辑/重置/删除、系统文件选择、ICS/CSV、来源、学期查看、日期调整、深色、force-stop 和重启有实测；自定义学期编辑、更多滚动场景及真实加密账号未完整验证，UI 自动化启动超时未解决 |
+| 真实 WebDAV 条件写入 | **失败**：两项拒绝保护均被忽略，实际覆盖已回读确认 |
+| 真实双设备绑定、双向编辑、离线合并、冲突选择、删除/重置/配置传播 | **阻塞**：真实服务器安全条件不满足，没有发布或下载应用 head/快照 |
+| 远端快照/head 回读与哈希 | 安全预检失败后**未执行**；普通测试文件回读不能代替快照验证 |
+| 重启、网络失败、前台恢复、JobScheduler | 本地实际 force-stop/重启及手机隔离回执跨进程持久化已有观察；真实同步、前台远端检查及实际后台任务执行**未验证** |
+| X08E 不少于四小时运行 | **未完成，按用户要求提前结束**：09:06:44–10:11:59，约 1 小时 5 分钟 16 秒 |
+| 人工小爱/Mesh/原生闹钟检查 | 正式候选恢复后获**人工确认通过**；提前结束时未再次实测 |
 
-Real-server “commit succeeded but receipt lost” is **UNVERIFIED**. Existing
-MockWebServer/emulator receipt evidence remains attributed to
-[PR33](PR33-release-preparation.md), not reclassified as real-service execution.
-Android force-stop is not expected to execute background jobs. No permanent
-foreground service or frequent polling is proposed to compensate for scheduling.
+真实服务器“远端提交成功但本地回执丢失”路径仍为**未验证**。[PR33](PR33-release-preparation.md) 的 MockWebServer/模拟器证据保持原归属，不改写成真实服务端执行。Android force-stop 期间不预期自动执行后台任务，也不建议为补偿调度而增加永久前台服务或高频轮询。
 
-### Test-run provenance and interrupted attempts
+### 自动化来源、失败与中止记录
 
-`tools/test-x08e.ps1` requires exactly one attached device; this host has two.
-A local untracked copy selected the known X08E for hardware validation and
-restoration and supplied a Gradle device-serial property. Gradle nevertheless
-started the testbed on both physical devices. That accidentally overlapped with
-the phone candidate runner. Both testbed runs and the phone run were explicitly
-force-stopped; the interrupted 30-test Gradle summary and process-crash results
-are **not passes**, nor are their interrupted cases attributed to a product defect.
-The daily X08E package remained installed and script restoration checks ran.
+`tools/test-x08e.ps1` 要求只连接一台设备，本机当时连接了两台。首次使用未跟踪的本地副本为硬件身份检查和恢复逻辑选定 X08E，并传入 Gradle 设备序列号属性；但 Gradle 仍在两台实机启动测试床，意外与手机正式候选 runner 重叠。两端测试床及手机 runner 均被明确停止。该轮中止后的 30 项 Gradle 汇总和进程崩溃结果**不计通过**，也不据此归因产品缺陷。日常 X08E 应用仍在，脚本恢复检查已执行。
 
-A direct-runner retry initially failed because Gradle's cleanup had removed the
-testbed instrumentation. Existing isolated testbed APK and test APK were then
-installed explicitly on X08E, and an **unfiltered**, explicitly serial-selected
-native `am instrument` run was started with the original hardware/state checks
-and restoration logic. No media, hardware or product assertion was excluded.
-Phone's isolated rerun also stalled before progressing through its conflict UI;
-it was interrupted. A local-function group with a 90-second per-test bound
-reported `TestTimedOutException` in `Instrumentation.startActivitySync`, called
-by `ActivityScenario.launch` in `PhoneTimetableTest.open`, before exercising its
-first case's feature assertions. It too was stopped. These remain unsuccessful
-automation attempts with unresolved cause; a normal shell activity launch works.
-No timeout increase, test-assertion change or app change was made to claim a pass.
+随后直接调用 runner，首次因 Gradle 清理已移除测试床 instrumentation 而失败。重新在 X08E 安装现有隔离测试床 APK 和测试 APK 后，按明确序列号运行**不带过滤条件**的原生 `am instrument`，保留原硬件/状态检查和恢复逻辑，未排除音量、硬件或产品断言。
 
-The final direct **X08E** full run returned **OK (88 tests), 401.216 seconds**, no
-failure statuses, and wrapper exit 0. Hardware identity, testbed target manifest,
-daily package retention, media/mute, brightness mode and timeout restoration
-checks passed. Actual physical media assertion was included. The optional live
-HA light and granted-WRITE_SETTINGS cases can return without their prerequisites;
-their passing entries alone are not proof of those live paths. This is physical
-testbed evidence, not 88 tests instrumenting the non-debuggable daily candidate.
+手机单独重跑仍在进入冲突 UI 前停滞，已中止。再运行每项上限 90 秒的本地功能组，第一项在 `PhoneTimetableTest.open` 调用 `ActivityScenario.launch` 后，于 `Instrumentation.startActivitySync` 内发生 `TestTimedOutException`，尚未执行该项功能断言；该组也被停止。上述自动化尝试仍是失败/未完成，原因未解决，不能计通过。正常 shell 启动 Activity 可成功。本轮没有增大超时、修改断言或修改应用来声称通过。
 
-## Normal-app observation — stopped early, four-hour gate not met
+最终 X08E 原生完整运行返回 **`OK (88 tests)`，401.216 秒**，无失败状态，外围恢复脚本退出码 0。硬件身份、测试床 targetPackage、日常包保留、音量/静音、亮度模式和屏幕超时恢复检查通过；物理媒体音量断言确实包含在内。可选真实 HA 灯和已授予 WRITE_SETTINGS 的用例在条件不足时可能直接返回，因此不能仅凭其 JUnit 通过条目声称对应实控路径已验收。这是**真实硬件上的隔离测试床证据**，不是在不可调试正式候选中执行了 88 项 instrumentation。
 
-A corrected host collector started at **2026-10-21 09:06:44 +08:00**, with nine
-planned discrete observations at 30-minute intervals. At the user's explicit
-request to end the test, its exact host process/command identity was verified
-and the collector was stopped at **10:11:53.926**. One final read-only sample
-ran **10:11:54.111–10:11:59.796**. Actual observation span from the first sample
-start to final sample completion is **3915.619 seconds (1 h 5 min 15.619 s)**,
-not four hours. The future 10:36–13:06 checkpoints were not collected and are not
-reconstructed. This is an early termination, not a four-hour stability pass.
+## 常驻观察：提前结束，未满足四小时门槛
 
-Samples checked daily PID/boot ID/proc start ticks, bounded native top (second of
-two snapshots), dumpsys PSS, threads, crash buffer, foreground, brightness mode/
-timeout/media state and native process presence. The collector performed no
-server polling or UI operations between samples. This is discrete observation, not
-continuous monitoring or continuous crash/network capture.
+修正后的宿主采集器于 **2026-10-21 09:06:44** 开始，计划每 30 分钟采样，共 9 次。用户明确要求结束测试后，核对宿主进程及完整命令身份，并于 **10:11:53.926** 停止采集器；另取一次 **10:11:54.111–10:11:59.796** 的最终只读样本。
 
-| Actual sample (+08:00) | PID | CPU (second native top) | PSS KiB | Threads | Observation |
+从首个样本开始到最终样本完成，实际跨度为 **3915.619 秒（1 小时 5 分 15.619 秒）**。未采集原计划 10:36–13:06 的后续检查点，不补造这些数据；本次是提前终止，不能标记为四小时稳定性通过。
+
+采样检查日常 PID、boot ID、进程启动 ticks，有界原生 top 的第二个快照、dumpsys PSS、线程数、崩溃缓冲区、前台应用、亮度模式/超时/音量和原生进程存在情况。采集器在采样之间不进行服务器轮询或 UI 操作。这是**离散采样**，不能描述成连续监控或连续崩溃/网络抓取。
+
+| 实际采样时间（UTC+08:00） | PID | CPU（第二个 top 快照） | PSS（KiB） | 线程数 | 观察 |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 09:06:44–09:06:49 | 2674 | 0.0% | 64973 | 31 | Dashboard foreground; mode 1; media 9/20; Xiaomi/Mesh/Bluetooth processes present; no daily mention in crash buffer |
-| 09:36:44–09:36:49 | 2674 | 0.0% | 65840 | 30 | Same boot/process start identity, foreground and sampled settings/services |
-| 10:06:44–10:06:49 | 2674 | 0.0% | 65388 | 30 | Same boot/process start identity, foreground and sampled settings/services |
-| 10:11:54–10:11:59, final after stop request | 2674 | 0.0% | 65218 | 30 | Same boot/process start identity, foreground and sampled settings/services |
+| 09:06:44–09:06:49 | 2674 | 0.0% | 64973 | 31 | Dashboard 前台，亮度模式 1，媒体 9/20，小米/Mesh/蓝牙进程存在，崩溃缓冲区未出现日常包标记 |
+| 09:36:44–09:36:49 | 2674 | 0.0% | 65840 | 30 | 启动身份、前台、所采设置与服务保持 |
+| 10:06:44–10:06:49 | 2674 | 0.0% | 65388 | 30 | 启动身份、前台、所采设置与服务保持 |
+| 10:11:54–10:11:59，停止请求后的最终样本 | 2674 | 0.0% | 65218 | 30 | 启动身份、前台、所采设置与服务保持 |
 
-All four samples had the same boot ID and process start ticks **7647**, with
-PID2674. Recorded PSS ranged **64973–65840 KiB**, threads **30–31**, and each
-second native-top snapshot showed **0.0%** daily-app CPU. Dashboard remained
-foreground at the sample points. The sampled crash buffer did not mention the
-daily package; this is not proof that every possible transient crash/ANR or HA
-reconnection was continuously monitored. Xiaomi launcher/Mesh/Bluetooth processes
-were present, which alone does not establish successful voice/device control at
-the endpoint. Those human checks were not repeated after the stop request.
+四个样本 boot ID 相同，进程启动 ticks 均为 **7647**，PID 均为 2674。PSS 为 **64973–65840 KiB**，线程 **30–31**，每次原生 top 第二个快照均显示日常应用 CPU **0.0%**。各采样点 Dashboard 在前台，崩溃缓冲区未出现日常包标记；这不能证明已连续排除所有瞬时崩溃、ANR 或 HA 重连。小米桌面、Mesh 和蓝牙进程存在，也不能单独证明终点时语音/设备控制实际成功；停止后没有再次请求人工执行这些检查。
 
-Final read-only SQLite/ordered-row and preference-digest checks matched the
-post-reboot baseline, including the original **1 source / 13 series / 131
-occurrences**, Dashboard/productivity, encrypted credentials, relay identity and
-settings. Only automatic screen brightness varied (13 → 18); brightness mode 1,
-timeout 2147483647 ms and media 9/20 remained. No app or device restart, test-data
-write, candidate rebuild or household device operation was performed to end the
-observation. Sanitized sample evidence and final digest reads are committed as
-[soak samples](evidence/pr34/soak-stopped-samples.json) and
-[final data read](evidence/pr34/x08e-data-at-user-stop.txt).
+最终只读 SQLite 完整行摘要和偏好摘要与重启后的基线一致，包括原有 **1 来源 / 13 系列 / 131 实例**、Dashboard、效率工具、加密凭据、relay 身份及设置。只有自动亮度数值从 13 变为 18；亮度模式 1、屏幕超时 2147483647 ms 和媒体 9/20 保持。为结束观察没有重启应用/设备、写测试数据、重建候选或操作家庭设备。脱敏结果见[采样记录](evidence/pr34/soak-stopped-samples.json)及[最终数据摘要](evidence/pr34/x08e-data-at-user-stop.txt)。
 
-An earlier **09:05:03** host-helper attempt failed with PowerShell call-depth
-overflow before obtaining a device sample. The helper function was corrected
-to call `adb.exe` rather than recursively calling its own case-insensitive name.
-That failed attempt is retained, outside the declared soak window. A successful
-09:06:01 diagnostic sample (PSS 66123 KiB, 32 threads) also precedes the scheduled
-window and is not an invented scheduled checkpoint.
+更早的 **09:05:03** 宿主辅助脚本因 PowerShell 调用深度溢出而失败，尚未取到实机样本。原因是函数名大小写不敏感，调用 `adb` 时递归调用了自身；改为明确调用 `adb.exe` 后修复。该失败保留在已声明观察窗口之外。**09:06:01** 的成功诊断样本（PSS 66123 KiB、32 线程）也早于计划窗口，不冒充计划检查点。
 
-The app heartbeat **PR34 四小时实机验收收尾** (id `pr34`) was set to **PAUSED** in
-response to the user's stop request, and the host collector process was verified
-absent afterward. No automatic resumption is scheduled. The earlier plan to
-observe until 13:06:44 was cancelled; it is not an executed observation window.
-WebDAV request frequency and continuous HA reconnect history are not measured
-by process/service samples and remain unverified without suitable evidence.
+自动跟进 **PR34 四小时实机验收收尾**（id `pr34`）已按用户结束指令设为 **PAUSED（暂停）**，并确认宿主采集进程不存在。没有安排自动恢复；原计划观察至 13:06:44 已取消，不是实际执行窗口。进程/服务采样未测量 WebDAV 请求频率或连续 HA 重连历史，缺乏证据的部分仍为未验证。
 
-Raw local evidence is retained under ignored `artifacts/pr34/`, including
-`verify-before.log`, `baseline-before.txt`, `baseline-after.txt`, installed APKs,
-package metadata, `webdav-probe.log`, `webdav-diagnostic-final.log`, interrupted
-runner logs and subsequent runner logs. Public evidence must exclude secrets and
-private UI/course dumps. Historical stable 0.1.1 release records remain unchanged.
+## 可审计证据与发布限制
 
-Committed, sanitized machine output is in [evidence/pr34](evidence/pr34/):
-[candidate verification](evidence/pr34/candidate-verification.txt),
-[installed identities](evidence/pr34/installed-identities.txt),
-[before](evidence/pr34/x08e-data-before.txt)/[after](evidence/pr34/x08e-data-after.txt)
-aggregate/digest reads,
-[full physical testbed runner](evidence/pr34/x08e-testbed-instrumentation.txt),
-[WebDAV preflight](evidence/pr34/webdav-preflight.txt) and
-[follow-up diagnosis](evidence/pr34/webdav-diagnostic.txt),
-[phone timeout excerpt](evidence/pr34/phone-ui-timeout.txt) (first failure only,
-not a completed five-test run), and phone isolated restart
-[seed](evidence/pr34/phone-isolated-restart-seed.txt)/
-[verify](evidence/pr34/phone-isolated-restart-verify.txt).
-Paths and digests of encrypted preference files are included; plaintext credentials
-and private row contents are not. The temporary host credential container used for
-the server probe was deleted after diagnosis. The synthetic remote probe remains
-in its identifiable test directory as evidence; it is not an application snapshot.
+本地原始证据保留在忽略目录 `artifacts/pr34/`，包括 `verify-before.log`、`baseline-before.txt`、`baseline-after.txt`、实际安装 APK、包元数据、`webdav-probe.log`、`webdav-diagnostic-final.log` 及失败/中止和后续 runner 日志。私人 UI/课程内容及凭据不提交。稳定版 0.1.1 历史记录保持不变。
 
-Publication gate remains closed: the unmet four-hour observation, failed real WebDAV,
-unexecuted real dual-device merge/conflicts/delete and missing real scheduler/
-account checks prevent acceptance. Creation of this documentary PR conveys no
-permission to merge, tag, upload assets or publish a Release. The existing frozen
-APK pair passed verification again after the completed checks; no stable 0.1.1
-historical record or HA version was changed.
+已提交的脱敏机器输出位于 [evidence/pr34](evidence/pr34/)：
+
+- [候选校验](evidence/pr34/candidate-verification.txt)与[安装身份](evidence/pr34/installed-identities.txt)。
+- [升级前](evidence/pr34/x08e-data-before.txt) / [升级后](evidence/pr34/x08e-data-after.txt)的数量与摘要。
+- [完整 X08E 实机测试床 runner 输出](evidence/pr34/x08e-testbed-instrumentation.txt)。
+- [真实 WebDAV 预检](evidence/pr34/webdav-preflight.txt)与[后续诊断](evidence/pr34/webdav-diagnostic.txt)。
+- [手机 UI 超时摘录](evidence/pr34/phone-ui-timeout.txt)：仅首个失败，不代表五项完整运行。
+- 手机隔离跨进程测试的 [seed](evidence/pr34/phone-isolated-restart-seed.txt) / [verify](evidence/pr34/phone-isolated-restart-verify.txt) 输出。
+- [提前结束的实际采样](evidence/pr34/soak-stopped-samples.json)与[终点数据摘要](evidence/pr34/x08e-data-at-user-stop.txt)。
+
+原始工具输出、异常栈、协议字段及 JSON 键保持原文，避免翻译改变证据。正文和结论使用中文。证据含加密偏好文件的路径和摘要，不含明文凭据或私人行内容。服务器诊断使用的临时宿主凭据容器已删除；合成远端测试文件保留在可识别目录中作为证据，不是应用快照。
+
+**发布门槛仍未满足**：四小时观察不足、真实 WebDAV 失败、真实双设备合并/冲突/删除未执行，以及真实后台调度/账号等未验证项目，均不计通过。创建或更新本 PR 不授权合并、创建 tag、上传发布资产或发布 Release。冻结 APK 字节保持不变，稳定版 0.1.1 历史记录及 HA 版本未修改。
