@@ -205,8 +205,8 @@ the new hashes. Do not weaken the client or reuse these results for new APK byte
 
 ## Execution ledger and remaining gates
 
-Acceptance is still in progress for the independent long observation. No pending
-row is a pass. The WebDAV failure already prevents `RC ACCEPTED`.
+The independent observation was ended early at the user's request. Unfinished
+rows are not passes. The WebDAV failure still prevents `RC ACCEPTED`.
 
 | Gate | Current result / evidence class |
 | --- | --- |
@@ -218,8 +218,8 @@ row is a pass. The WebDAV failure already prevents `RC ACCEPTED`.
 | Real two-device binding/edit/offline merge/conflict choices/delete/reset/profile | **BLOCKED** by unsafe real server; no application head/snapshot published or downloaded |
 | Remote snapshot/head readback hashes | **NOT RUN** after failed preflight; arbitrary probe readback is not a snapshot test |
 | Restart/network failure/foreground/background JobScheduler | Actual local force-stop/reboot and isolated two-process phone receipt persistence observed; real sync, foreground remote check and actual scheduler execution **UNVERIFIED** |
-| ≥4-hour physical X08E run | **IN PROGRESS**, from 09:06:44 +08:00; completion not yet claimed |
-| Human XiaoAI/Mesh/native alarm | **PASS (human report)** after candidate restoration; final long-run endpoint observation still needed |
+| ≥4-hour physical X08E run | **NOT COMPLETED — ended at user request**, actual window 09:06:44–10:11:59 +08:00 (about 1 h 5 min 16 s); no four-hour pass |
+| Human XiaoAI/Mesh/native alarm | **PASS (human report)** after candidate restoration; not repeated at the early-stop endpoint |
 
 Real-server “commit succeeded but receipt lost” is **UNVERIFIED**. Existing
 MockWebServer/emulator receipt evidence remains attributed to
@@ -259,19 +259,48 @@ HA light and granted-WRITE_SETTINGS cases can return without their prerequisites
 their passing entries alone are not proof of those live paths. This is physical
 testbed evidence, not 88 tests instrumenting the non-debuggable daily candidate.
 
-## Four-hour normal-app observation — pending
+## Normal-app observation — stopped early, four-hour gate not met
 
 A corrected host collector started at **2026-10-21 09:06:44 +08:00**, with nine
-planned discrete observations at 30-minute intervals, ending no earlier than
-13:06:44. It checks the existing daily PID/boot ID/proc start ticks, bounded native
-top (second of two snapshots), dumpsys PSS, thread count, crash buffer, foreground,
-brightness mode/timeout/media state and native process presence. It does not
-poll the app/server or operate the device between samples. It must not be
-described as continuous monitoring or continuous crash/network capture.
+planned discrete observations at 30-minute intervals. At the user's explicit
+request to end the test, its exact host process/command identity was verified
+and the collector was stopped at **10:11:53.926**. One final read-only sample
+ran **10:11:54.111–10:11:59.796**. Actual observation span from the first sample
+start to final sample completion is **3915.619 seconds (1 h 5 min 15.619 s)**,
+not four hours. The future 10:36–13:06 checkpoints were not collected and are not
+reconstructed. This is an early termination, not a four-hour stability pass.
+
+Samples checked daily PID/boot ID/proc start ticks, bounded native top (second of
+two snapshots), dumpsys PSS, threads, crash buffer, foreground, brightness mode/
+timeout/media state and native process presence. The collector performed no
+server polling or UI operations between samples. This is discrete observation, not
+continuous monitoring or continuous crash/network capture.
 
 | Actual sample (+08:00) | PID | CPU (second native top) | PSS KiB | Threads | Observation |
 | --- | ---: | ---: | ---: | ---: | --- |
 | 09:06:44–09:06:49 | 2674 | 0.0% | 64973 | 31 | Dashboard foreground; mode 1; media 9/20; Xiaomi/Mesh/Bluetooth processes present; no daily mention in crash buffer |
+| 09:36:44–09:36:49 | 2674 | 0.0% | 65840 | 30 | Same boot/process start identity, foreground and sampled settings/services |
+| 10:06:44–10:06:49 | 2674 | 0.0% | 65388 | 30 | Same boot/process start identity, foreground and sampled settings/services |
+| 10:11:54–10:11:59, final after stop request | 2674 | 0.0% | 65218 | 30 | Same boot/process start identity, foreground and sampled settings/services |
+
+All four samples had the same boot ID and process start ticks **7647**, with
+PID2674. Recorded PSS ranged **64973–65840 KiB**, threads **30–31**, and each
+second native-top snapshot showed **0.0%** daily-app CPU. Dashboard remained
+foreground at the sample points. The sampled crash buffer did not mention the
+daily package; this is not proof that every possible transient crash/ANR or HA
+reconnection was continuously monitored. Xiaomi launcher/Mesh/Bluetooth processes
+were present, which alone does not establish successful voice/device control at
+the endpoint. Those human checks were not repeated after the stop request.
+
+Final read-only SQLite/ordered-row and preference-digest checks matched the
+post-reboot baseline, including the original **1 source / 13 series / 131
+occurrences**, Dashboard/productivity, encrypted credentials, relay identity and
+settings. Only automatic screen brightness varied (13 → 18); brightness mode 1,
+timeout 2147483647 ms and media 9/20 remained. No app or device restart, test-data
+write, candidate rebuild or household device operation was performed to end the
+observation. Sanitized sample evidence and final digest reads are committed as
+[soak samples](evidence/pr34/soak-stopped-samples.json) and
+[final data read](evidence/pr34/x08e-data-at-user-stop.txt).
 
 An earlier **09:05:03** host-helper attempt failed with PowerShell call-depth
 overflow before obtaining a device sample. The helper function was corrected
@@ -280,11 +309,10 @@ That failed attempt is retained, outside the declared soak window. A successful
 09:06:01 diagnostic sample (PSS 66123 KiB, 32 threads) also precedes the scheduled
 window and is not an invented scheduled checkpoint.
 
-An app heartbeat named **PR34 四小时实机验收收尾** (id `pr34`) will check the bounded
-collector every 30 minutes, remain quiet while non-actionable, and append actual
-final observations/documentary updates to this same unmerged PR before pausing
-itself. Host sleep, missing ADB or stopped collection must be reported as gaps.
-This arrangement is **not evidence that four hours have already passed**.
+The app heartbeat **PR34 四小时实机验收收尾** (id `pr34`) was set to **PAUSED** in
+response to the user's stop request, and the host collector process was verified
+absent afterward. No automatic resumption is scheduled. The earlier plan to
+observe until 13:06:44 was cancelled; it is not an executed observation window.
 WebDAV request frequency and continuous HA reconnect history are not measured
 by process/service samples and remain unverified without suitable evidence.
 
@@ -311,7 +339,7 @@ and private row contents are not. The temporary host credential container used f
 the server probe was deleted after diagnosis. The synthetic remote probe remains
 in its identifiable test directory as evidence; it is not an application snapshot.
 
-Publication gate remains closed: unfinished observation, failed real WebDAV,
+Publication gate remains closed: the unmet four-hour observation, failed real WebDAV,
 unexecuted real dual-device merge/conflicts/delete and missing real scheduler/
 account checks prevent acceptance. Creation of this documentary PR conveys no
 permission to merge, tag, upload assets or publish a Release. The existing frozen
