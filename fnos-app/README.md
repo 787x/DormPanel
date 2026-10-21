@@ -1,4 +1,4 @@
-# DormPanel Schedule Manager 0.1.0
+# DormPanel Schedule Manager 0.1.2（FPK 独立版本）
 
 独立的 fnOS Native FPK 只读课程表管理应用。Android 0.1.2、Sync v2 协议、数据库、签名和 APK 发布资产均不变。
 
@@ -36,8 +36,9 @@ URL 必须是明确的 HTTPS 共享目录，以 `/` 结束；应用只访问它�
 ## 运行和权限
 
 - 桌面管理员入口 `/app/dormpanel-schedule-manager/`；只监听 `${TRIM_APPDEST}/app.sock`，没有 TCP 监听、本地鉴权后门或开发身份回退。
-- [官方统一网关](https://developer.fnnas.com/docs/core-concepts/gateway-registration) 校验 fnOS 登录态并提供 `X-Trim-Userid`、`X-Trim-Isadmin`。每次请求都检查管理员身份，拒绝重复身份 Header 和 TCP 传输。网关必须覆盖客户端身份 Header。
-- Socket 为应用用户所有、`www-data` 组、0660；包用户仅加入网关所需 `www-data` 附加组。其他本地用户不能伪造请求连接；系统网关进程及其 Unix 用户属于信任边界。不要改为全员可写 Socket 或另开 TCP 代理。
+- [官方统一网关](https://developer.fnnas.com/docs/core-concepts/gateway-registration) 校验 fnOS 登录态并提供 `X-Trim-Userid`、`X-Trim-Isadmin`。每次请求检查这些管理员身份声明、重复身份 Header 和传输类型；`remoteAddress == null`、Header 和 CSRF 本身都不能认证 Socket 对端。
+- **安全审计修正**：实测连接者是 root 的 `trim_http_cgi`，不是 www-data nginx worker。应用用户所有的 target 为0700、Socket 为0600，撤销 shared-user/group ACL，不再申请 www-data 附加组；不依赖该组授权。原0660方案曾允许独立 www-data 进程伪造管理员，已经收紧。root 和应用用户本身仍有完整控制权，不能声称已隔离它们。其他fnOS版本若无法连接，应重新审计，不能放宽权限。
+- 详细证据、五种威胁的独立验证与 PR38 写入门槛见 [网关安全审计](../docs/pr37-gateway-security-audit.md)。PR37可在上述系统信任边界下作为只读基础合并；PR38不能仅凭现有 authorize()/CSRF 直接开放写入。
 - API 只提供 GET 视图和带 CSRF token 的 POST 手动刷新。其他写方法拒绝；没有课程保存、PUT、DELETE、MKCOL 或发布实现。
 - `webdav.json` 在 `${TRIM_PKGETC}`，0600；身份、检查点、缓存和错误在 `${TRIM_PKGVAR}`，目录0700、文件0600。后端响应和日志不返回凭据，也不返回来源 locator。
 - 凭据更新只允许原绑定地址。重启保留 writerId；真正卸载由 fnOS 删除其管理的数据目录，重新安装生成新的独立身份。不要把身份目录复制到另一个活动编辑端。
@@ -57,6 +58,6 @@ URL 必须是明确的 HTTPS 共享目录，以 `/` 结束；应用只访问它�
 
 ## PR38 边界
 
-完整编辑、关联冲突决策、第三 Writer 本地事务、待发布意图/回执、不可变远端发布与回读、多端并发收敛、配置换绑流程均未实现。本版没有任何声称已保存的编辑操作。
+完整编辑、关联冲突决策、第三 Writer 本地事务、待发布意图/回执、不可变远端发布与回读、多端并发收敛、配置换绑流程均未实现。本版没有任何声称已保存的编辑操作。写入前必须完成审计文档中的真实用户授权、同源/CSRF/请求绑定和私有入口权限回归，不能直接解除只读门禁。
 
 实测范围见 [验证记录](../docs/pr37-fnos-verification.md)。

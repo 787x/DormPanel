@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { readFile, chmod, unlink } from 'node:fs/promises';
+import { readFile, writeFile, chmod, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -11,12 +11,15 @@ import { projectWeek, monday } from './projection.mjs';
 
 export const PREFIX = '/app/dormpanel-schedule-manager';
 export function authorize(req) {
-  // Unix Socket 是唯一监听面；TCP 开发服务器不能复用此鉴权。
-  ensure(req.socket.remoteAddress == null, '拒绝非网关传输');
+  // 只检查传输类型及网关 Header 声明，不认证连接进程。
+  // null remoteAddress 不能证明网关来源；0700/0600 仅限包用户和root访问。
+  // 详见 docs/pr37-gateway-security-audit.md；PR38 写入安全门槛尚未满足。
+  ensure(req.socket.remoteAddress == null, '拒绝 TCP 传输');
   for (const key of ['x-trim-userid', 'x-trim-isadmin']) ensure(req.rawHeaders.filter((v, i) => i % 2 === 0 && v.toLowerCase() === key).length === 1, '身份 Header 缺失或重复');
   ensure(/^\d+$/.test(req.headers['x-trim-userid']) && req.headers['x-trim-isadmin'] === 'true', '仅允许 NAS 管理员');
   return req.headers['x-trim-userid'];
 }
+export const readOnlyRequest = (method, path) => method === 'GET' || method === 'POST' && path === '/api/refresh';
 export function csrf(req, token) {
   ensure(req.headers['sec-fetch-site'] !== 'cross-site', '拒绝跨站请求');
   const supplied = req.headers['x-dormpanel-csrf'];
@@ -44,9 +47,11 @@ export async function createApp({ dataDir, configPath, webDir = join(dirname(fil
   const server = http.createServer(async (req, res) => {
     const send = (status, value, type = 'application/json; charset=utf-8') => { res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'", 'Referrer-Policy': 'no-referrer' }); res.end(type.startsWith('application/json') ? json(value) : value); };
     try {
-      try { authorize(req); } catch { send(403, { error: '仅允许通过 fnOS 统一网关登录的管理员访问' }); return; }
+      try { authorize(req); } catch { send(403, { error: '需要管理员身份声明及允许的 Socket 访问路径' }); return; }
       ensure(req.url.startsWith(PREFIX + '/') || req.url === PREFIX, '非法路由');
       const u = new URL(req.url, 'http://unix'); const path = u.pathname.slice(PREFIX.length);
+      // 在业务路由之前固定只读边界。CSRF 不能弥补 Socket 对端认证缺口。
+      if (!readOnlyRequest(req.method, path)) { send(405, { error: '本版本禁止课程编辑与远端发布' }); return; }
       if (req.method === 'POST' && path === '/api/refresh') {
         try { csrf(req, token); } catch { send(403, { error: 'CSRF 校验失败' }); return; }
         await refresh(); send(200, { ok: error === null }); return;
@@ -75,7 +80,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   ensure(socket && process.env.TRIM_PKGVAR && process.env.TRIM_PKGETC, '需要 fnOS 运行环境');
   const app = await createApp({ dataDir: process.env.TRIM_PKGVAR, configPath: join(process.env.TRIM_PKGETC, 'webdav.json') });
   await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(socket, resolve); });
-  // 网关以系统服务连接；所在 target 目录的写权限仅属于包用户。
+  // 私有创建并向生命周期脚本确认就绪，始终不开放共享 UID/GID。
   await chmod(socket, 0o600);
-  process.on('SIGTERM', () => { app.server.close(async () => { await unlink(socket).catch(() => {}); process.exit(0); }); setTimeout(() => process.exit(1), 5000).unref(); });
+  const ready = join(process.env.TRIM_PKGVAR, 'socket.ready');
+  await writeFile(ready, String(process.pid), { mode: 0o600 });
+  process.on('SIGTERM', () => { app.server.close(async () => { await unlink(socket).catch(() => {}); await unlink(ready).catch(() => {}); process.exit(0); }); setTimeout(() => process.exit(1), 5000).unref(); });
 }

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DormPanel Schedule Manager</title><link rel="stylesheet" href="/app/dormpanel-schedule-manager/style.css"></head>
-<body><header><div><small>DORMPANEL / fnOS · 0.1.0</small><h1>课程表管理</h1></div><div><button id="refresh">检查远端版本</button><button disabled title="PR38 提供编辑与发布">编辑 · 即将支持</button></div></header>
+<body><header><div><small>DORMPANEL / fnOS · 0.1.2</small><h1>课程表管理</h1></div><div><button id="refresh">检查远端版本</button><button disabled title="PR38 提供编辑与发布">编辑 · 即将支持</button></div></header>
 <section id="status" role="status">正在读取本地状态…</section><nav><button id="prev">← 上周</button><button id="today">本周</button><button id="next">下周 →</button><input id="date" type="date" aria-label="选择日期"><select id="zone" aria-label="显示时区"><option>Asia/Shanghai</option><option>UTC</option><option>America/New_York</option></select><strong id="range"></strong></nav>
 <nav><select id="term" aria-label="导航学期"></select><label>第 <input id="teachingWeek" type="number" min="1" max="1000" value="1" aria-label="教学周"> 周</label><button id="jump" disabled>前往教学周</button></nav>
 <main><section id="week" aria-label="周课表"></section><aside><h2>数据与历史</h2><div id="details"></div><h2>学期配置</h2><div id="profiles"></div><h2>课程来源</h2><div id="sources"></div><h2>日历事件</h2><div id="events"></div></aside></main><footer>只读预览 · 仅检查观察到的版本 · 无自动轮询或远端写入</footer><script type="module" src="/app/dormpanel-schedule-manager/app.js"></script></body></html>
