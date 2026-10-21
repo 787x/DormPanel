@@ -1,0 +1,86 @@
+[
+  {
+    "index": 0,
+    "role": "x08e",
+    "time": "2026-10-21T16:16:12.998846+08:00",
+    "pid": "2867",
+    "boot": "66f35082-4b60-4d22-80da-b448854022cc",
+    "threads": "31",
+    "pssKiB": "50508",
+    "topProcess": [
+      " 2867 u0_a96       10 -10 928M 123M 101M S  0.0   6.2   0:14.53 com.dormpanel.app",
+      " 2867 u0_a96       10 -10 928M 123M 101M S  0.0   6.2   0:14.53 com.dormpanel.app"
+    ],
+    "crashMentionsPackage": false
+  },
+  {
+    "index": 0,
+    "role": "phone",
+    "time": "2026-10-21T16:16:16.536319+08:00",
+    "pid": "2688",
+    "boot": "51567bda-a254-40de-9e61-215a5a55f87c",
+    "threads": "29",
+    "pssKiB": "106502",
+    "topProcess": [
+      " 2688 u0_a236      10 -10 6.5G 190M 112M S  0.0   3.3   0:01.65 com.dormpanel.timetable",
+      " 2688 u0_a236      10 -10 6.5G 190M 112M S  0.0   3.3   0:01.65 com.dormpanel.timetable"
+    ],
+    "crashMentionsPackage": false
+  },
+  {
+    "index": 1,
+    "role": "x08e",
+    "time": "2026-10-21T16:18:49.390259+08:00",
+    "pid": "2867",
+    "boot": "66f35082-4b60-4d22-80da-b448854022cc",
+    "threads": "30",
+    "pssKiB": "49550",
+    "topProcess": [
+      " 2867 u0_a96       10 -10 927M 124M 102M S  0.0   6.2   0:15.37 com.dormpanel.app",
+      " 2867 u0_a96       10 -10 927M 124M 102M S  0.0   6.2   0:15.37 com.dormpanel.app"
+    ],
+    "crashMentionsPackage": false
+  },
+  {
+    "index": 1,
+    "role": "phone",
+    "time": "2026-10-21T16:18:52.905329+08:00",
+    "pid": "2688",
+    "boot": "51567bda-a254-40de-9e61-215a5a55f87c",
+    "threads": "29",
+    "pssKiB": "79965",
+    "topProcess": [
+      " 2688 u0_a236      10 -10 6.5G 164M 112M S  0.0   2.8   0:01.74 com.dormpanel.timetable",
+      " 2688 u0_a236      10 -10 6.5G 164M 112M S  0.0   2.8   0:01.74 com.dormpanel.timetable"
+    ],
+    "crashMentionsPackage": false
+  },
+  {
+    "index": 2,
+    "role": "x08e",
+    "time": "2026-10-21T16:21:25.759582+08:00",
+    "pid": "2867",
+    "boot": "66f35082-4b60-4d22-80da-b448854022cc",
+    "threads": "30",
+    "pssKiB": "49458",
+    "topProcess": [
+      " 2867 u0_a96       10 -10 927M 123M 102M S  0.0   6.2   0:15.77 com.dormpanel.app",
+      " 2867 u0_a96       10 -10 927M 123M 102M S  0.0   6.2   0:15.77 com.dormpanel.app"
+    ],
+    "crashMentionsPackage": false
+  },
+  {
+    "index": 2,
+    "role": "phone",
+    "time": "2026-10-21T16:21:29.304481+08:00",
+    "pid": "2688",
+    "boot": "51567bda-a254-40de-9e61-215a5a55f87c",
+    "threads": "27",
+    "pssKiB": "79279",
+    "topProcess": [
+      " 2688 u0_a236      10 -10 6.5G 164M 112M S  0.0   2.8   0:01.81 com.dormpanel.timetable",
+      " 2688 u0_a236      10 -10 6.5G 164M 112M S  0.0   2.8   0:01.81 com.dormpanel.timetable"
+    ],
+    "crashMentionsPackage": false
+  }
+]

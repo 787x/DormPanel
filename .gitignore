@@ -47,3 +47,6 @@ signing.properties
 
 # 本地 PR35 验证日志和截图
 /artifacts/pr35*
+
+# Local PR36 backups, credentials and raw physical evidence
+/artifacts/pr36/

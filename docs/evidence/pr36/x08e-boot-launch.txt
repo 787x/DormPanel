@@ -1,0 +1,3 @@
+--------- beginning of main
+--------- beginning of system
+10-21 16:15:32.329  2848  2848 I DormPanelBoot: Boot launch requested

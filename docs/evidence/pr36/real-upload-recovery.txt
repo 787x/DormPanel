@@ -1,0 +1,7 @@
+body/prepare PASS
+body/recover PASS
+body/peer PASS
+ack/prepare PASS
+ack/recover PASS
+ack/peer PASS
+REAL NETWORK PROCESS INTERRUPTION AND RECOVERY PASSED; isolated test package, not daily-data acceptance

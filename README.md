@@ -26,10 +26,10 @@ upgrade, with live HA CSV/WebDAV, phone entry, Xiaomi coexistence/boot, and a
 observation limits, and [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes
 since 0.1.0. PR29 recorded acceptance evidence only; it did not publish a release.
 
-0.1.2-rc.1 is being prepared for X08E and the independent Android phone timetable
-app. See [RC notes](docs/RELEASE-0.1.2-rc.1.md) and
-[PR33 checks](docs/PR33-release-preparation.md). This is not a published release
-or a claim of physical RC acceptance; the 0.1.1 evidence above remains historical.
+当前 Android 候选为 **0.1.2-rc.2**（X08E code 5 / Phone code 3），HA 集成继续为 0.1.1。
+正式 APK 身份、实机升级、真实 FN Connect 中断恢复与剩余发布门槛见
+[PR36 验收记录](docs/PR36-rc2-physical-acceptance.md)。此记录不代表已发布；
+0.1.1 与 RC1 的历史证据及产物保留，未自动创建 tag 或 GitHub Release。
 
 ## Install / update
 

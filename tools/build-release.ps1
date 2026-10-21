@@ -4,11 +4,17 @@ param(
     [string]$StorePassword = $env:DORMPANEL_RELEASE_STORE_PASSWORD,
     [string]$KeyPassword = $env:DORMPANEL_RELEASE_KEY_PASSWORD,
     [string]$BuildToolsDirectory,
+    [string]$OutputDirectory,
     [switch]$SkipTests
 )
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'release-validation.ps1')
+
+# A frozen candidate is immutable. Rebuilds must name a new directory.
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repositoryRoot "artifacts\release\$releaseVersion" }
+$outDir = [IO.Path]::GetFullPath($OutputDirectory)
+if (Test-Path -LiteralPath $outDir) { throw "Candidate directory already exists; use a new -OutputDirectory: $outDir" }
 
 function Invoke-Gradle([string[]]$Tasks) {
     & (Join-Path $repositoryRoot 'gradlew.bat') @Tasks
@@ -45,7 +51,6 @@ try {
         if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Recurse -Force }
     }
     Invoke-Gradle @(':app:assembleRelease', ':phone-app:assembleRelease')
-    $outDir = Join-Path $repositoryRoot "artifacts\release\$releaseVersion"
     $staging = Join-Path $repositoryRoot ("artifacts\release\.staging-" + [guid]::NewGuid().ToString('n'))
     New-Item -ItemType Directory -Path $staging | Out-Null
     foreach ($app in $releaseApps) {
@@ -79,9 +84,11 @@ try {
             [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $entry) | Out-Null
         }
     } finally { $zip.Dispose() }
-    # All staging gates pass before copying candidates into the final directory.
-    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-    Get-ChildItem -LiteralPath $staging -File | Copy-Item -Destination $outDir -Force
+    # All staging gates pass before exposing the final directory.
+    # Move the verified directory as a unit; no overwrite of a previous candidate.
+    if (Test-Path -LiteralPath $outDir) { throw "Candidate directory appeared during build: $outDir" }
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $outDir))
+    [IO.Directory]::Move($staging, $outDir)
     Assert-ReleaseDirectory $outDir $tools
     Write-Host "HA archive (actual integration version $haVersion): $outDir\DormPanel-HA-$haVersion.zip"
     Write-Host "Local RC candidates: $outDir. No tag or Release created; physical acceptance pending."
