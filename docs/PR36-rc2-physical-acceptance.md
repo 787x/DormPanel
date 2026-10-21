@@ -2,6 +2,8 @@
 
 **结论：RC NOT ACCEPTED，不能进入正式 GitHub Pre-release 发布。** 已冻结正式双端候选并补充真实升级、FN Connect 中断恢复、双端冲突、正常重启及人工共存证据；真实已有 v1 绑定（含未发布编辑）的正式包切换仍为 **UNVERIFIED**。不降低发布门槛，不创建 tag、Release、资产，不自动合并本 PR。PR34 的实际结论保持原样。
 
+本轮补充：**13 个真实设备隔离 v1 迁移场景及独立在线审计已通过**，详见文末“v1 迁移补充验收”。正式候选真实既有日用 v1 绑定升级的证据等级未改变。
+
 ## 基线与冻结身份
 
 2026-10-21（上海时间），`git fetch origin main` 后本地/远端均为 PR35 合并提交 `58b5545289b5b4d8e9830a31c9c664b1cf8d4b8f`。本 PR 的应用修改仅为版本；协议、数据库版本、applicationId、SDK、批准签名及 HA 功能未变。HA 独立保持 **0.1.1**。
@@ -108,3 +110,51 @@
 复现真实网络恢复：构建安装 `:schedule-core:assembleDebugAndroidTest` 到两台明确设备，将 JSON `{sender, peer, parent, user, password}` 通过 **UTF-8 stdin** 传给 `python tools/test-real-upload-recovery.py`。`parent` 必须为 HTTPS 测试父目录，密码从机器本地安全容器读取，不放命令行/文档/Git；每次输出独立私有证据目录。只 force-stop `com.dormpanel.schedule.core.test`。测试未命中目标边界时直接失败，不能称为中断通过。
 
 最终结论仍为 **RC NOT ACCEPTED / Pre-release 发布 BLOCKED**：真实既有 v1 绑定的成功切换与安全拒绝、非空待发布编辑保留，以及上面明确列出的未验证项尚未补齐。其余通过项保留其候选身份、证据类型和实际范围。
+
+## v1 迁移补充验收（2026-10-21，保留 C01）
+
+**范围与身份。** 本次只新增 Android 测试、宿主工具和证据，没有修改生产源码、资源、版本或构建配置，没有重建/替换 C01，也没有新建 PR。真实 API28 X08E 与 API33 MIX 2S 上使用 `com.dormpanel.timetable.testbed` / `.testbed.test`；每例独立 `pr36-migration-<UUID>-<case>.db`、偏好、Keystore alias 和真实 FN Connect 同名 HTTPS 子目录。测试拒绝其他 targetPackage、非 HTTPS、非白名单场景或不匹配的目录名，未降级、清空、覆盖或直接写入任何日用数据库。
+
+**v1 fixture 的真实性及限制。** 非空 fixture 包含本地课程、事件、来源、导入实例、3 条系列/指定周编辑、日期调整、2 个学期配置和自定义学期标记；使用实际 DPSS/1 编码、head、父版本与 generation、Room checkpoint 1/2/4/5、已保存的加密账号及真实服务器 GET 返回的 ETag 构造绑定。全新测试目录内真实 PUT/GET 回读 root/head，再构造远端推进或故障历史。这里用普通 PUT **布置受控 v1 历史**，没有调用或绕过旧正式发布器的安全检查；不代表 FN Connect 已支持 v1 条件写入，更不代表旧正式客户端曾安全发布过这些历史。
+
+所有迁移均由实际管理页“WebDAV 共享课表（双向同步）→ 将已有 v1 绑定切换到 v2 → 旧客户端已停止，切换”触发，没有以直接调用 `v2Migrate()` 代替客户端路径。手机沿用 PR35 已授权的 `pr35RootUi=true` 隔离 Activity 启动辅助；root 仅用于启动 `.testbed` Activity，应用仍为普通 UID，不写日用存储、不改变 OEM 权限。X08E 的隔离 Activity 正常启动，不使用该辅助。
+
+| 场景 | X08E | 手机 | 实际核对 |
+| --- | --- | --- | --- |
+| 成功迁移，新建 v2 根 | PASS | PASS | 证明共同基线、合并独立本地/远端修改，完整课程/来源/编辑/学期字段与预期一致 |
+| 接入同 dataset 已有 v2 | PASS | 未重复 | 走已有 v2 分支，旧 checkpoint 身份与未发布本地课程保留 |
+| v1 候选已在 head 历史中 | PASS | PASS | 确认待确认候选并清除活动 outbox，精确恢复 capture 后的新增编辑并发布到 v2 |
+| v1 候选文件存在但未进入 head | PASS | 未重复 | 证明完整历史后释放未激活候选；保留本地与上传中新编辑，不覆盖或删除孤立 v1 文件 |
+| 缺失祖先 | PASS | 未重复 | 管理页安全拒绝；独立审计证明 MISSING_ANCESTOR，重新打开后旧状态保留 |
+| 损坏祖先 | PASS | 未重复 | 安全拒绝；独立审计证明 CORRUPT_ANCESTOR，损坏 fixture 字节未被改写 |
+| dataset 不一致 | PASS | PASS | 安全拒绝，旧 checkpoint、课程及账号仍可用 |
+| 基线不在远端祖先链中 | PASS | 未重复 | 安全拒绝；独立审计证明 UNPROVABLE，没有按相似课程猜测身份 |
+| 已保存恢复副本、课程事务中断 | PASS | PASS | 命中实际 Room 事务边界后 force-stop 隔离进程；新进程恢复原数据及旧 checkpoint，再通过管理页继续迁移成功 |
+
+合计 **13 个场景、31 个完成阶段通过**；另有 2 个预期被杀的中断阶段，不把其 `Process crashed` 当作测试完成。[阶段汇总](evidence/pr36/migration/runner-summary.txt)、[实际 UI/网络阶段](evidence/pr36/migration/network-ui-witness.txt)、[X08E 中断](evidence/pr36/migration/x08e-interrupted-interruption.txt)、[手机中断](evidence/pr36/migration/phone-interrupted-interruption.txt)及同目录分阶段 runner 输出可追溯。宿主观察到事务标记后才终止进程；设备与宿主时钟独立，不用跨时钟时间差计算中断延迟。
+
+“上传中新编辑”在真实 v1 snapshot PUT 首批 **256 字节 flush 后**、剩余正文完成前，通过正常 Store API 持久化事件修改，随后才完成 PUT 并分别布置 head 已接收/未激活两种状态；不是单纯事后改 fixture 的预期字段。迁移后课程 ID、来源/系列/实例 ID、稀疏编辑、日期调整和完整学期参数均逐字段核对，包含源导入时间等元数据，不用只比较数量替代。成功后活动 checkpoint 4/23 不再存在，原 1..7 在 111..117 精确备份，100 保留原始完整本地快照；被拒绝的场景中原活动 1..7 字节不变。管理页保存账号会正常重新加密密码，因此以“解密仍为原账号且实际远端请求成功”验证凭据保留，不要求 AES-GCM 密文字节相同。
+
+**独立核对。** `tools/audit-v1-migration.py` 使用独立 Python 解析 v1/v2 封装和所有课程字段，验证 payload/checkpoint SHA-256、父链、generation、dataset、原始恢复副本及预期状态；仅规范化记录排列顺序，不忽略任何字段。在线审计重新从 FN Connect GET 全部旧 head/快照及有效 v2 提交，13 项均通过：旧 v1 文件集合与字节不变，拒绝场景 v2 目录返回 404，成功场景 v2 DAG 单一前沿且其完整状态等于预期。详见[独立审计](evidence/pr36/migration/independent-audit.json)。
+
+**日用数据与清理。** 开始/结束均只读导出两个日用包做摘要核对，未停止、写入或替换日用数据库；全部数据库表（含同步 checkpoint）摘要相同，已安装 APK 与冻结 C01 哈希保持一致。其他偏好相同；两端 `shared_schedule_v1.xml` 仅 `last_success` 更新时间变化，folder/dataset/账号配置不变，不声称全部偏好字节未变。见[日用保护核对](evidence/pr36/migration/daily-sentinel.json)。13 个主场景及 2 个前期失败 fixture 的隔离数据库、偏好内容和对应 Keystore alias 已通过受限 cleanup 阶段清理；合成导出与 UUID 远端目录保留作证据，不执行远端历史删除。两端正式日用 Activity 已正常恢复。
+
+**相关回归与失败归属。** 测试包构建成功，既有两项 Room/v1 迁移实机回归 **2/2**、相关 Append-only JVM **15/15**、Phone 隔离构建 Lint 成功；Python 语法与 `git diff --check` 通过。没有重复 RC2 签名/整套 HA/共存/长期观察。前期两个 smoke 的迁移结果核对失败分别源于 fixture/Room 记录顺序及错误要求加密密文不变，均保留为失败记录；修正测试断言后，完整字段独立审计通过。没有修改应用以制造通过，未发现需要 C02 的生产修复。公开 runner 文本仅归一化换行和行尾空白，原始日志保留在本机忽略目录 `artifacts/pr36/migration/`。
+
+复现方式（仓库根目录，机器本地安全容器供应凭据，勿将密码写入命令记录或 Git）：
+
+```powershell
+./gradlew.bat :phone-app:assembleX08eTest :phone-app:assembleX08eTestAndroidTest '-Pdormpanel.testBuildType=x08eTest'
+adb -s <serial> install -r phone-app/build/outputs/apk/x08eTest/phone-app-x08eTest.apk
+adb -s <serial> install -r phone-app/build/outputs/apk/androidTest/x08eTest/phone-app-x08eTest-androidTest.apk
+# cases: success, join, committed, uncommitted, missing, corrupt, dataset, unprovable, interrupted
+# 将 {parent,user,password,devices:[{role,serial,cases,rootUi}]} 作为 UTF-8 stdin 输入：
+python tools/test-real-v1-migration.py
+# 本地审计；--online 时另从 UTF-8 stdin 读取 {parent,user,password}：
+python tools/audit-v1-migration.py <本机运行目录> --online
+# 同一 runner 的输入增加 cleanupDirectory，并保留 devices 的 role/serial，可清理对应隔离状态。
+```
+
+**发布决定保持：RC NOT ACCEPTED / Pre-release BLOCKED。** 以上补齐的是“真实设备 + 真实 FN Connect + 人工构造非空 v1 状态 + 实际客户端管理页”的隔离证据，不是正式 C01 从真实既有日用 v1 绑定原位升级的证据。已知两台日用设备原基线没有 v1 绑定，现已运行 C01/v2；不能通过降级或改写它们的日用数据库补造升级历史，故该正式候选升级项目仍为 **UNVERIFIED**。
+
+产品决定待明确：仅知道这两台没有历史 v1 绑定，不足以证明产品无需支持该升级路径。若确认真实 v1 绑定确实不属于需要支持的升级路径，应明确决定是否取消它作为发布阻塞；本次没有作出或代替该决定，也未降低门槛、宣布 RC ACCEPTED、合并 PR、创建 tag/Release 或上传资产。

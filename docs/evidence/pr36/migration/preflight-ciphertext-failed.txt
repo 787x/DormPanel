@@ -1,0 +1,18 @@
+com.dormpanel.phone.PhoneRealV1MigrationTest:
+Error in realV1ThroughManagement(com.dormpanel.phone.PhoneRealV1MigrationTest):
+org.junit.ComparisonFailure: expected:<[4c304a80b853c09e457564c496019f3a5e309b5d6f01543ee5a43e449e4eaf3c]> but was:<[c00592fd71764323d8fd8049dc044f25da9bebc607840c1079e7487971db41b3]>
+	at org.junit.Assert.assertEquals(Assert.java:117)
+	at org.junit.Assert.assertEquals(Assert.java:146)
+	at com.dormpanel.phone.PhoneRealV1MigrationTest.realV1ThroughManagement(PhoneRealV1MigrationTest.kt:207)
+
+
+Time: 26.261
+There was 1 failure:
+1) realV1ThroughManagement(com.dormpanel.phone.PhoneRealV1MigrationTest)
+org.junit.ComparisonFailure: expected:<[4c304a80b853c09e457564c496019f3a5e309b5d6f01543ee5a43e449e4eaf3c]> but was:<[c00592fd71764323d8fd8049dc044f25da9bebc607840c1079e7487971db41b3]>
+	at org.junit.Assert.assertEquals(Assert.java:117)
+	at org.junit.Assert.assertEquals(Assert.java:146)
+	at com.dormpanel.phone.PhoneRealV1MigrationTest.realV1ThroughManagement(PhoneRealV1MigrationTest.kt:207)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1

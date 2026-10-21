@@ -1,0 +1,33 @@
+Private evidence: artifacts\pr36\migration\run-a02f1e8e-c035-49ea-a786-755f43394cb0
+x08e/success/seed PASS
+x08e/success/migrate PASS
+x08e/join/seed PASS
+x08e/join/migrate PASS
+x08e/committed/seed PASS
+x08e/committed/migrate PASS
+x08e/uncommitted/seed PASS
+x08e/uncommitted/migrate PASS
+x08e/missing/seed PASS
+x08e/missing/migrate PASS
+x08e/missing/verify-rejected PASS
+x08e/corrupt/seed PASS
+x08e/corrupt/migrate PASS
+x08e/corrupt/verify-rejected PASS
+x08e/dataset/seed PASS
+x08e/dataset/migrate PASS
+x08e/dataset/verify-rejected PASS
+x08e/unprovable/seed PASS
+x08e/unprovable/migrate PASS
+x08e/unprovable/verify-rejected PASS
+x08e/interrupted/seed PASS
+x08e/interrupted/recover PASS
+phone/success/seed PASS
+phone/success/migrate PASS
+phone/committed/seed PASS
+phone/committed/migrate PASS
+phone/dataset/seed PASS
+phone/dataset/migrate PASS
+phone/dataset/verify-rejected PASS
+phone/interrupted/seed PASS
+phone/interrupted/recover PASS
+REAL ISOLATED V1 MANAGEMENT MIGRATION CHECKS PASSED; does not prove C01 daily v1 upgrade
