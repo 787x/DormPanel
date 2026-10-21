@@ -8,7 +8,7 @@
 
 Sync v2 普通 PUT 使用独立随机路径，不使用 head 或条件写。GET 预检与逐字节回读；已有尝试结果未知时不重复 PUT；旧路径保留预期哈希。三方合并保持 Android 记录及关联单位语义，多分支逐对检测、稳定展示；确认 token 绑定完整输入并在决定前重新检查远端。
 
-- Node 最终 79 项：Windows 75 PASS，4 项 Linux 权限测试明确跳过；真实 fnOS 官方 Node22 最终全部 79 PASS、0 跳过。
+- Node 最终 80 项：Windows 76 PASS，4 项 Linux 权限测试明确跳过；真实 fnOS 官方 Node22 最终全部 80 PASS、0 跳过。
 - 原有五组合法 DPC2 向量逐字节重编码、坏校验及完整领域校验通过；Python 六组既有向量通过。
 - 18 组独立 base/local/remote 输入及两种预期决策结果，由 Android JVM 未修改的 ScheduleMerge 校验冲突关联键及结果一致。涵盖独立/相同修改、删除/编辑、来源/覆盖、导入时间、学期 provenance、日期/指定周重置、null 与空文本。
 - JVM 独立比较既有 WakeUp ICS 和湖北大学 CSV：Node 生成的身份、绝对时间、sourceId 前缀与指纹一致。
@@ -52,7 +52,9 @@ writerId 一直为 `815bc368-1ba9-4848-91ff-db4f02953e2a`。新增课程与日�
 
 中间诊断源码替换用于功能定位，**不计作 FPK 升级**。最终 0.2.1 标准包的正常升级须另记结果。没有用卸载/清数据/`install-local` 冒充升级。PR37 已记录更早 0.1.0 → 0.1.2 的正常升级；本轮未直接再测 0.1.0 → 最终包。
 
-官方 fnpack 标准包 `artifacts/pr38/dormpanel-schedule-manager-0.2.1.fpk`（本地产物，不上传 Release），SHA-256：`fae9f46e39cd18f5618bece60a1f9f2affbb529f62525002151e65205e03a919`。本地归档含原始测试日志与隔离诊断参数，后者含凭据，已忽略提交。包与参数不可一并上传。
+官方 fnpack 标准包 `artifacts/pr38/dormpanel-schedule-manager-0.2.1.fpk`（本地产物，不上传 Release），SHA-256：`21f911d831d81a7998b7a75ee60f82d422aee311d4333fe2c5c38b1a07f32702`。本地归档含原始测试日志与隔离诊断参数，后者含凭据，已忽略提交。包与参数不可一并上传。
+
+升级曾被配置回调拒绝并回滚到 0.2.0，三份持久化哈希不变。已增加专用 `--upgrade` 模式，不消费陈旧安装向导环境；回归验证更新后的绑定、凭据和证书逐字节保留。标准包已重新构建，正常升级结果仍待下方补充。
 
 ## 未验证范围与剩余风险
 

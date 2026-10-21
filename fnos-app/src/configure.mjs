@@ -7,7 +7,10 @@ try {
   const dir = process.env.TRIM_PKGETC; ensure(dir, '缺少配置目录');
   const path = join(dir, 'webdav.json'); let old = null;
   try { old = JSON.parse(await readFile(path, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  const url = process.env.wizard_webdav_url?.trim();
+  // fnOS 升级会重放安装时的 wizard 环境；不能覆盖管理员在应用内更新的绑定/凭据。
+  const upgrading = process.argv.includes('--upgrade');
+  if (upgrading && old) { binding(old); ensure(old.username && old.password, '已有凭据无效'); }
+  const url = upgrading ? null : process.env.wizard_webdav_url?.trim();
   if (url) {
     const c = { ...old, url, username: process.env.wizard_webdav_username || old?.username || '', password: process.env.wizard_webdav_password || old?.password || '' };
     binding(c); ensure(c.username && c.password, '请填写 WebDAV 凭据');
