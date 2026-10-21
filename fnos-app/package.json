@@ -1,6 +1,6 @@
 {
   "name": "dormpanel-schedule-manager",
-  "version": "0.1.2",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@js-temporal/polyfill": "0.5.1",
-    "fast-xml-parser": "5.11.2"
+    "fast-xml-parser": "5.11.2",
+    "ical.js": "2.2.1"
   }
 }

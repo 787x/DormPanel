@@ -1,10 +1,40 @@
-# DormPanel Schedule Manager 0.1.2（FPK 独立版本）
+# DormPanel Schedule Manager 0.2.1
 
-独立的 fnOS Native FPK 只读课程表管理应用。Android 0.1.2、Sync v2 协议、数据库、签名和 APK 发布资产均不变。
+fnOS Native 可编辑课表与 Sync v2 Writer。Android 0.1.2、DPC2 / DPSS/1 协议、Room 数据库和正式 APK 不变。
 
-## 构建与安装
+## 使用
 
-需要开发机 Node.js 22+、npm 和官方 [fnpack 1.2.3](https://developer.fnnas.com/docs/cli/fnpack)。
+管理员通过 fnOS 桌面进入。课程卡片支持全部周次/指定周编辑与重置；null 继承、空文本清空，身份保持 sourceId、seriesId、originalStart、anchorDate。管理页支持课程/事件增删、日期停课/补课、来源替换/删除、学期/阶段/节次，以及 ICS / 湖北大学 CSV 后端预览与确认导入。CSV 需要对应学期配置；替换保留旧来源身份与覆盖，不自动下载 locator。
+
+本地保存独立于网络。按需“检查并同步”最多三轮，无自动轮询。状态区分本地保存、待发布、候选待回读、本机已验证发布、观察时间、历史异常与冲突。已发布不代表其他设备已接收。冲突页展示关联单位、全部分支及稳定远端方案；决策只处理冲突关联单位，独立修改继续保留；暂不处理不改课程。
+
+## 管理员配置
+
+页面内查看绑定状态、更新凭据、测试连接。HTTPS 共享目录以 `/` 结束，仅访问其直属 `dormpanel-sync-v2/`。可明确创建空数据集或接收已有数据集，不静默恢复非空本地数据。
+
+切换不同数据集须确认原绑定地址；有本地修改、候选、冲突或异常时拒绝切换，允许时先归档。另有“同一数据集地址迁移”：完整验证已知字节哈希、数据集与祖先闭包后，保留全部本地状态与 writerId。配置与数据库切换间崩溃时按绑定不一致停止。
+
+LAN 自签名 HTTPS 可显式提供从 SSH 等独立可信渠道取得的服务器公钥证书 PEM。仅该连接添加信任并精确匹配服务器证书，TLS 链和有效期校验仍开启；没有 `rejectUnauthorized=false`，不改系统 CA。不要上传私钥；证书变更须重新核验。页面可恢复系统 CA。
+
+凭据只在私有 `etc/webdav.json`；密码留空保留。不向前端响应、课程快照或日志返回认证信息。
+
+## 持久化与同步
+
+首次升级从重新校验的 PR37 图缓存和检查点建立独立 `workspace.json`。旧缓存不充当可写数据库。单一原子文档包括课程、基线、前沿、精确 capture、候选字节、attempt、回执、异常清单和完整冲突输入。唯一临时文件、文件 fsync、rename、Linux 目录 fsync；失败不更新进程内已确认状态。本地队列串行事务，网络在事务外；网络同步/配置互斥，上传期间仍可本地保存。不能用两个进程同时写同一 workspace。
+
+随机 UUID 普通 PUT 不覆盖历史，不使用共享 head/条件 PUT。预检 GET 后、实际写前持久化 attempt，完整解码且逐字节回读才能确认。未知结果不对同路径重复 PUT；换身份仍保留旧路径预期哈希。回执按 capture 重放后续编辑。保留协议图、字节、时间、请求和冲突预算，异常持续回查，不做远端 GC。
+
+合并与 Android ScheduleMerge / ScheduleV2Plan 对齐：来源及原始实例不可分割，导入时间不判胜负，处理删除/覆盖、学期/来源、日期组合/指定周编辑关联。多分支逐对检测再稳定折叠；多重不等价基线停止，等价 tips 不产生无限纯合并。
+
+## 权限边界
+
+包用户运行，仅 Unix Socket；target 0700、Socket 0600，撤销 shared-user/group ACL，失败即停止，不放宽权限。真实网关为 root trim_http_cgi。root 和包用户已有完整代码/数据权限，属于残余信任边界，不能宣称隔离其 Header 伪造。[PR37 审计](../docs/pr37-gateway-security-audit.md)说明该边界。
+
+每个写路由检查管理员、私有传输、用户及完整 Origin 绑定的 CSRF、请求版本、JSON 和 2 MiB 上限。fnOS Host 可能丢端口，页面完整 Origin token 保留精确端口校验。冲突确认绑定完整输入 token，决策前重查远端。拒绝重定向越界、路径穿越、XML 实体、回环/链路本地/元数据目标；LAN 仅为管理员明确配置的 NAS 地址。浏览器不直连 WebDAV；导入文本用 textContent，CSP 禁止内联/外部脚本。
+
+## 构建
+
+需要 Node 22+、npm、官方 fnpack：
 
 ```sh
 cd fnos-app
@@ -15,49 +45,6 @@ npm run build
 fnpack build --directory build/dormpanel-schedule-manager
 ```
 
-输出为当前目录的 `dormpanel-schedule-manager.fpk`。安装使用 fnOS 应用中心手动安装，或管理员运行：
+使用应用中心正常手动升级。目标 fnOS 的 install-fpk CLI 对已有实例只报告已安装；install-local 会卸载并清数据，禁止当升级工具。保留 PR37 向导字段；没有向导输入的正常升级保留原配置和独立证书信任。
 
-```sh
-appcenter-cli install-fpk dormpanel-schedule-manager.fpk --volume 1 --env config.env
-```
-
-`config.env` 是只在安装时使用的私密文件，权限应为 0600，完成后删除。字段如下，示例不含可用凭据：
-
-```ini
-wizard_webdav_url=https://nas.example/shared/test-schedule/
-wizard_webdav_username=example
-wizard_webdav_password=example
-```
-
-URL 必须是明确的 HTTPS 共享目录，以 `/` 结束；应用只访问它下面的 `dormpanel-sync-v2/`。留空可先安装，显示未绑定。安装向导和 `wizard/config` 声明相同字段；目标系统若尚未显示配置向导，可在安装时通过 `--env` 传入。已有实例升级使用网页手动安装；本机CLI对已安装实例不执行升级。不能用 `install-local` 更新已有实例：该开发工具会卸载重装并删除本地数据。
-
-包内仅有 JavaScript 和网页，无原生二进制，因此 `platform=all`；运行时通过 `install_dep_apps=nodejs_v22` 使用 fnOS 对应架构的官方包，不使用 NAS 开发环境。实测架构为 x86_64，ARM 运行尚未实测。网关要求 `os_min_version=1.1.3100`，本次实机为 1.2.0800。
-
-## 运行和权限
-
-- 桌面管理员入口 `/app/dormpanel-schedule-manager/`；只监听 `${TRIM_APPDEST}/app.sock`，没有 TCP 监听、本地鉴权后门或开发身份回退。
-- [官方统一网关](https://developer.fnnas.com/docs/core-concepts/gateway-registration) 校验 fnOS 登录态并提供 `X-Trim-Userid`、`X-Trim-Isadmin`。每次请求检查这些管理员身份声明、重复身份 Header 和传输类型；`remoteAddress == null`、Header 和 CSRF 本身都不能认证 Socket 对端。
-- **安全审计修正**：实测连接者是 root 的 `trim_http_cgi`，不是 www-data nginx worker。应用用户所有的 target 为0700、Socket 为0600，撤销 shared-user/group ACL，不再申请 www-data 附加组；不依赖该组授权。原0660方案曾允许独立 www-data 进程伪造管理员，已经收紧。root 和应用用户本身仍有完整控制权，不能声称已隔离它们。其他fnOS版本若无法连接，应重新审计，不能放宽权限。
-- 详细证据、五种威胁的独立验证与 PR38 写入门槛见 [网关安全审计](../docs/pr37-gateway-security-audit.md)。PR37可在上述系统信任边界下作为只读基础合并；PR38不能仅凭现有 authorize()/CSRF 直接开放写入。
-- API 只提供 GET 视图和带 CSRF token 的 POST 手动刷新。其他写方法拒绝；没有课程保存、PUT、DELETE、MKCOL 或发布实现。
-- `webdav.json` 在 `${TRIM_PKGETC}`，0600；身份、检查点、缓存和错误在 `${TRIM_PKGVAR}`，目录0700、文件0600。后端响应和日志不返回凭据，也不返回来源 locator。
-- 凭据更新只允许原绑定地址。重启保留 writerId；真正卸载由 fnOS 删除其管理的数据目录，重新安装生成新的独立身份。不要把身份目录复制到另一个活动编辑端。
-- 生命周期只控制本应用 PID，并核对进程完整脚本参数，避免误杀复用 PID。升级前停止旧进程，升级后保留持久化目录；不改 WebDAV、FN Connect 或其他应用服务。
-
-## 协议与显示边界
-
-`src/protocol.mjs` 实现 DPC2 / DPSS/1 的完整字段、双层 SHA、严格 UTF-8、UTF-16 排序、int64 BigInt、规范重编码、来源摘要、领域范围和引用关系验证，使用与 Kotlin 相同固定向量。Python 向量工具仅用于独立格式交叉检查。
-
-`src/graph.mjs` 读取完整祖先闭包、拒绝环/多根/不同数据集/身份异常/不支持语义，计算 tips 和最大共同祖先。已验证哈希以及已观察的不可验证路径本地持久化，后续目录未列出时仍回查。单轮最多256提交、32MiB输入、64tips和64暂不可验证路径，遵循请求、字节、超时和分支工作预算。未知完整封装不能作为暂时坏文件忽略。
-
-本版对于不同内容的多个 tips 采取保守阻断，显示分支数，不执行三方合并，也不选择任何 Writer。相同内容的多个 tips 可以展示同一内容。PR38 需要实现关联冲突单位、完整分支差异和用户决策。
-
-`src/projection.mjs` 按 Android 的 **基础课程 → 全周编辑 → 目标日期调课 → 指定周编辑** 投影；保留 originalStart/anchorDate、稀疏继承、空字符串清空、无效覆盖回退、目标日停课和学期阶段联动。使用 Temporal 的兼容时区消歧规则对应 Java `atZone`，并检查相邻学术周的跨日实例。来源 catalog 直接来自远端，不以本机内置配置替换。
-
-页面提供周/日期/教学周导航、显示时区、课程时间/教室/教师/备注、学期阶段、来源、数据集与历史状态。没有永久轮询；空闲只等待 HTTP。刷新失败保留上次验证缓存并标示为旧缓存，不能视为当前同步成功。页面检查时间是本地观察时间，不使用协议固定 createdAt 作为发布时间。
-
-## PR38 边界
-
-完整编辑、关联冲突决策、第三 Writer 本地事务、待发布意图/回执、不可变远端发布与回读、多端并发收敛、配置换绑流程均未实现。本版没有任何声称已保存的编辑操作。写入前必须完成审计文档中的真实用户授权、同源/CSRF/请求绑定和私有入口权限回归，不能直接解除只读门禁。
-
-实测范围见 [验证记录](../docs/pr37-fnos-verification.md)。
+`node scripts/merge-vectors.mjs` 生成 18 组独立输入/预期结果和两组导入向量，由 JVM FnosWriterParityTest 校验。RealFnosSyncTest 仅显式启用的 pr38-e2e-UUID 隔离目录与 Room 命名空间，不操作正式课表。实测、诊断网络路径及未验证项见 [PR38 验证记录](../docs/pr38-fnos-verification.md)。

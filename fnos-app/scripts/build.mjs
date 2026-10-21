@@ -10,9 +10,9 @@ if (!process.env.npm_execpath) throw Error('请使用 npm run build');
 const installed = spawnSync(process.execPath, [process.env.npm_execpath, 'ci', '--omit=dev', '--ignore-scripts', '--prefix', new URL('app/server/', build).pathname.replace(/^\/(\w:)/, '$1')], { stdio: 'inherit' });
 if (installed.status !== 0) throw Error('依赖安装失败');
 await writeFile(new URL('manifest', build), `appname=dormpanel-schedule-manager
-version=0.1.2
+version=0.2.1
 display_name=DormPanel Schedule Manager
-desc=只读 Sync v2 课程表管理与历史验证
+desc=离线课程编辑、Sync v2 不可变发布与冲突管理
 platform=all
 source=thirdparty
 maintainer=787x
@@ -32,10 +32,10 @@ await writeFile(new URL('app/server/control.sh', build), main); await chmod(new 
 await cp(new URL('socket-access.sh', import.meta.url), new URL('app/server/socket-access.sh', build));
 await chmod(new URL('app/server/socket-access.sh', build), 0o755);
 for (const hook of ['install_init', 'install_callback', 'upgrade_init', 'upgrade_callback', 'uninstall_init', 'uninstall_callback', 'config_init', 'config_callback']) {
-  const content = hook === 'upgrade_init' || hook === 'uninstall_init' ? '#!/bin/sh\n"$TRIM_APPDEST/server/control.sh" stop\nexit $?\n' : ['install_callback', 'upgrade_callback', 'config_callback'].includes(hook) ? '#!/bin/sh\numask 077\nmkdir -p "$TRIM_PKGETC" "$TRIM_PKGVAR"\nchmod 700 "$TRIM_PKGETC" "$TRIM_PKGVAR"\n/var/apps/nodejs_v22/target/bin/node "$TRIM_APPDEST/server/src/configure.mjs"\nexit $?\n' : '#!/bin/sh\nexit 0\n';
+  const content = hook === 'upgrade_init' || hook === 'uninstall_init' ? '#!/bin/sh\n"$TRIM_APPDEST/server/control.sh" stop\nexit $?\n' : ['install_callback', 'upgrade_callback', 'config_callback'].includes(hook) ? '#!/bin/sh\numask 077\nmkdir -p "$TRIM_PKGETC" "$TRIM_PKGVAR"\nchmod 700 "$TRIM_PKGETC" "$TRIM_PKGVAR"\n/var/apps/nodejs_v22/target/bin/node "$TRIM_APPDEST/server/src/configure.mjs"'+(hook === 'upgrade_callback' ? ' --upgrade' : hook === 'config_callback' ? ' --configure' : '')+'\nexit $?\n' : '#!/bin/sh\nexit 0\n';
   await writeFile(new URL('cmd/' + hook, build), content); await chmod(new URL('cmd/' + hook, build), 0o755);
 }
-const wizard = [{ stepTitle: '只读 WebDAV 绑定', items: [
+const wizard = [{ stepTitle: 'WebDAV 绑定', items: [
   { type: 'tips', helpText: '留空可先安装；仅访问指定目录的 dormpanel-sync-v2/。首次完整验证后绑定 dataset；已有绑定仅能更新同一地址的凭据，不能静默切换数据集。' },
   { type: 'text', field: 'wizard_webdav_url', label: 'HTTPS 共享目录 URL（以 / 结束）', initValue: '' },
   { type: 'text', field: 'wizard_webdav_username', label: 'WebDAV 用户名', initValue: '' },

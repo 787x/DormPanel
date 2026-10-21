@@ -1,0 +1,121 @@
+{
+  "cases": [
+    {
+      "name": "class-event",
+      "conflicts": []
+    },
+    {
+      "name": "class-otherClass",
+      "conflicts": [
+        [
+          "class:local"
+        ]
+      ]
+    },
+    {
+      "name": "class-class",
+      "conflicts": []
+    },
+    {
+      "name": "reset-sparse",
+      "conflicts": []
+    },
+    {
+      "name": "inherit-sparse",
+      "conflicts": [
+        [
+          "edit:I:6:source:6:series:2026-10-19"
+        ]
+      ]
+    },
+    {
+      "name": "deleteSource-sourceEdit",
+      "conflicts": []
+    },
+    {
+      "name": "deleteClass-localOverride",
+      "conflicts": [
+        [
+          "class:local",
+          "edit:L:5:local:all"
+        ]
+      ]
+    },
+    {
+      "name": "deleteClass-class",
+      "conflicts": [
+        [
+          "class:local",
+          "edit:L:5:local:all"
+        ]
+      ]
+    },
+    {
+      "name": "sourceReplace-sourceEdit",
+      "conflicts": []
+    },
+    {
+      "name": "sourceReplace-sourceReplace",
+      "conflicts": []
+    },
+    {
+      "name": "importTime-sourceReplace",
+      "conflicts": []
+    },
+    {
+      "name": "term-sourceEdit",
+      "conflicts": []
+    },
+    {
+      "name": "provenance-term",
+      "conflicts": [
+        [
+          "edit:I:6:source:6:series:2026-10-19",
+          "edit:I:6:source:6:series:all",
+          "source:source",
+          "term:custom"
+        ]
+      ]
+    },
+    {
+      "name": "day-reset",
+      "conflicts": []
+    },
+    {
+      "name": "day-sparse",
+      "conflicts": [
+        [
+          "date:2026-10-19",
+          "edit:I:6:source:6:series:2026-10-19"
+        ]
+      ]
+    },
+    {
+      "name": "day-destination",
+      "conflicts": [
+        [
+          "date:2026-10-19",
+          "edit:I:6:source:6:series:2026-10-19"
+        ]
+      ]
+    },
+    {
+      "name": "label-sparse",
+      "conflicts": []
+    },
+    {
+      "name": "unchanged-reset",
+      "conflicts": []
+    }
+  ],
+  "imports": [
+    {
+      "name": "import-ics",
+      "filename": "wakeup.ics"
+    },
+    {
+      "name": "import-csv",
+      "filename": "hubei_2026-2027-1.csv"
+    }
+  ]
+}

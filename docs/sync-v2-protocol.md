@@ -1,6 +1,6 @@
 # DormPanel Append-only Schedule Sync v2 协议
 
-本规范定义跨平台文件与合并语义。Android、未来 fnOS FPK、Go/Node.js/Python 编辑端地位相同；不存在设备优先级。协议不含 Kotlin/Room/Java 序列化对象。FPK 未实现。`tools/sync_v2_vectors.py` 是仅使用 Python 标准库的独立二进制编码/框架校验参考；完整领域校验以本文为准，不能只验证外层哈希就采纳课程。
+本规范定义跨平台文件与合并语义。Android、fnOS FPK、Go/Node.js/Python 编辑端地位相同；不存在设备优先级。协议不含 Kotlin/Room/Java 序列化对象。PR38 增加 fnOS Writer，实现及验收范围见 `docs/pr38-fnos-verification.md`，不改变本规范字段与语义。`tools/sync_v2_vectors.py` 是仅使用 Python 标准库的独立二进制编码/框架校验参考；完整领域校验以本文为准，不能只验证外层哈希就采纳课程。
 
 ## 存储与身份
 
