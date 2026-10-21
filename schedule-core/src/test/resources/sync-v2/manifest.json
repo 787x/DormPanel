@@ -1,0 +1,31 @@
+{
+  "empty": {
+    "sha256": "2d2c5d385299ca20a70b536c9e09b3389ea52a88365e6ba67b0621e7a279ab5c",
+    "bytes": 329,
+    "valid": true
+  },
+  "complex-root": {
+    "sha256": "b28a3854d81a041bab2bdb14d5368b3ca290b951ba89296b1cb22ef0ba7ded79",
+    "bytes": 941,
+    "valid": true
+  },
+  "left": {
+    "sha256": "f9ebc38a77276fd2bacd02ffc5a7ce604c9182d29ca47e09a5e94737dd4eb293",
+    "bytes": 977,
+    "valid": true
+  },
+  "right": {
+    "sha256": "e3ab36aa86ba8337be12ff977dce8cdab514abb6086e23ebb94579ddb3973c0f",
+    "bytes": 972,
+    "valid": true
+  },
+  "multi-parent": {
+    "sha256": "6a4e68e4089edd5dc4273aff0766b846143090b8baf3630138846355b906379b",
+    "bytes": 1008,
+    "valid": true
+  },
+  "bad-checksum": {
+    "valid": false,
+    "reason": "SHA-256 不匹配"
+  }
+}

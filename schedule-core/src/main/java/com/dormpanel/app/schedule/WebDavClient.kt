@@ -32,6 +32,7 @@ class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(f
     .followSslRedirects(false).connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()) {
     private val http = http.newBuilder().followRedirects(false).followSslRedirects(false)
         .callTimeout(if (http.callTimeoutMillis > 0) http.callTimeoutMillis.toLong() else 60_000L, TimeUnit.MILLISECONDS).build()
+    private val immutableHttp = this.http.newBuilder().retryOnConnectionFailure(false).build()
     companion object {
         const val MAX_XML = 512 * 1024
         private val OK_STATUS = Regex("\\s200(?:\\s|$)")
@@ -60,8 +61,11 @@ class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(f
                     if (match != null) header("If-Match", match)
                     if (lastModified != null && etag == null) header("If-Modified-Since", lastModified) }
                 .method(method, if (payload != null) payload.toRequestBody("application/octet-stream".toMediaType()) else if (method == "PROPFIND") PROPERTIES.toRequestBody("application/xml; charset=utf-8".toMediaType()) else null).build()
-            val response = try { http.newCall(request).execute() } catch (_: IOException) { throw WebDavException("Network unavailable or timed out.") }
+            val response = try { (if (method == "PUT" && match == null && !create) immutableHttp else http).newCall(request).execute() } catch (_: IOException) { throw WebDavException("Network unavailable or timed out.") }
             if (response.code in listOf(301, 302, 307, 308)) {
+                if (method == "PUT" && match == null && !create) {
+                    response.close(); throw WebDavException("Immutable upload redirected; verify the original path before retry.")
+                }
                 val location = response.header("Location")
                 response.close()
                 val next = location?.let(current::resolve) ?: throw WebDavException("Invalid WebDAV redirect.")
@@ -88,7 +92,7 @@ class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(f
             else -> "WebDAV request failed (HTTP ${response.code})."
         })
     }
-    fun list(account: WebDavAccount, folder: String = account.baseUrl, depth: Int = 1): List<WebDavItem> {
+    fun list(account: WebDavAccount, folder: String = account.baseUrl, depth: Int = 1, strict: Boolean = false): List<WebDavItem> {
         require(depth in 0..1)
         execute(account, url(folder), "PROPFIND", depth).use { response ->
             status(response, 207)
@@ -101,7 +105,7 @@ class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(f
                 output.toByteArray()
             } } catch (error: WebDavException) { throw error }
             catch (_: IOException) { throw WebDavException("Network unavailable or timed out.") }
-            return parseListing(bytes, response.request.url)
+            return parseListing(bytes, response.request.url, strict)
         }
     }
     fun download(account: WebDavAccount, remote: String, etag: String? = null,
@@ -146,7 +150,8 @@ class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(f
                     }
                 }
                 return Resource(output.toByteArray(), response.header("ETag"))
-            } catch (_: IOException) { throw WebDavException("Network unavailable or incomplete download.") }
+            } catch (error: WebDavException) { throw error }
+            catch (_: IOException) { throw WebDavException("Network unavailable or incomplete download.") }
         }
     }
     fun conditionalPut(account: WebDavAccount, remote: String, bytes: ByteArray, expected: String?): Int {
@@ -164,7 +169,17 @@ class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(f
     fun filename(url: HttpUrl): String = url.encodedPathSegments.lastOrNull()?.let {
         runCatching { URLDecoder.decode(it.replace("+", "%2B"), "UTF-8") }.getOrDefault(it)
     }?.ifBlank { "timetable.ics" } ?: "timetable.ics"
-    fun parseListing(xml: ByteArray, requestUrl: HttpUrl): List<WebDavItem> {
+    fun ordinaryPut(account: WebDavAccount, remote: String, bytes: ByteArray) {
+        execute(account, url(remote), "PUT", payload = bytes).use { response ->
+            if (response.code !in listOf(200, 201, 204)) status(response, 201)
+        }
+    }
+    fun makeCollection(account: WebDavAccount, remote: String) {
+        execute(account, url(remote), "MKCOL").use { response ->
+            if (response.code !in listOf(201, 405)) status(response, 201)
+        }
+    }
+    fun parseListing(xml: ByteArray, requestUrl: HttpUrl, strict: Boolean = false): List<WebDavItem> {
         try {
             if (xml.size > MAX_XML) throw WebDavException("WebDAV folder listing is too large.")
             // Android's API 28 XML provider lacks some JAXP security feature flags. Reject DTDs
@@ -193,20 +208,22 @@ class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(f
             }
             val root = parser.parse(xml.inputStream()).documentElement
             if (root.localName != "multistatus" || root.namespaceURI != "DAV:") throw WebDavException("Invalid WebDAV listing.")
-            return children(root, "response").mapNotNull { entry ->
-                val href = text(entry, "href") ?: return@mapNotNull null
+            val rows = children(root, "response").mapNotNull { entry ->
+                val href = text(entry, "href") ?: if (strict) throw WebDavException("Missing listing href") else return@mapNotNull null
                 val target = requestUrl.resolve(href) ?: throw WebDavException("Invalid WebDAV resource address.")
                 if (!sameOrigin(requestUrl, target) || target.username.isNotEmpty() || target.password.isNotEmpty())
                     throw WebDavException("WebDAV listing contains another server.")
                 val props = children(entry, "propstat").firstOrNull { text(it, "status")?.let(OK_STATUS::containsMatchIn) == true }
-                    ?.let { children(it, "prop").firstOrNull() } ?: return@mapNotNull null
+                    ?.let { children(it, "prop").firstOrNull() } ?: if (strict) throw WebDavException("Unreadable listing resource") else return@mapNotNull null
                 val modified = text(props, "getlastmodified")
                 WebDavItem(target.toString(), text(props, "displayname")?.ifBlank { null } ?: filename(target),
                     children(props, "resourcetype").any { children(it, "collection").isNotEmpty() },
                     text(props, "getetag"), modified,
                     modified?.let { runCatching { ZonedDateTime.parse(it, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() }.getOrNull() },
                     text(props, "getcontentlength")?.toLongOrNull(), text(props, "getcontenttype"))
-            }.distinctBy { it.url }
+            }
+            if (strict && rows.map { it.url }.distinct().size != rows.size) throw WebDavException("Duplicate listing resource")
+            return rows.distinctBy { it.url }
         } catch (error: WebDavException) { throw error }
         catch (_: Exception) { throw WebDavException("Invalid WebDAV listing.") }
     }

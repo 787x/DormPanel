@@ -29,7 +29,13 @@ android {
             }
         }
     }
+    testBuildType = providers.gradleProperty("dormpanel.testBuildType").getOrElse("debug")
     buildTypes {
+        create("x08eTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".testbed"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isDebuggable = false
             isMinifyEnabled = false

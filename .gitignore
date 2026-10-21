@@ -44,3 +44,6 @@ signing.properties
 
 # Local RC verification logs, screenshots and candidate fixtures
 /artifacts/pr33/
+
+# 本地 PR35 验证日志和截图
+/artifacts/pr35*

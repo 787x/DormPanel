@@ -35,7 +35,7 @@ data class ScheduleState(val events: List<CalendarEvent> = emptyList(), val entr
     val daysByDate by lazy { dayAdjustments.associateBy { it.date } }
     val editsByKey by lazy { classOverrides.associateBy { it.key } }
 }
-data class SnapshotIdentity(val datasetId: String, val revision: String)
+data class SnapshotIdentity(val datasetId: String, val revision: String, val pending: Boolean = false)
 interface ScheduleStore {
     fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) { callback(Result.failure(UnsupportedOperationException())) }
     fun applySnapshot(bytes: ByteArray, callback: (Result<Unit>) -> Unit) { callback(Result.failure(UnsupportedOperationException())) }
@@ -66,6 +66,9 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     val readOnly = false
     val syncStore get() = store as? RoomScheduleStore
     var localCommitted: (() -> Unit)? = null
+    internal fun markLocalPending() {
+        state.sync?.let { state = state.copy(sync = it.copy(pending = true)) }
+    }
     internal fun pauseForSync() { applyingSnapshot = true; refresh() }
     fun reload(callback: (Result<Unit>) -> Unit = {}) {
         if (closed) { callback(Result.failure(IllegalStateException("Schedule source closed"))); return }

@@ -37,6 +37,7 @@ class PhoneSharedScheduleTest {
         override fun dispatch(request: RecordedRequest): MockResponse {
             if (offline) return MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)
             if (request.getHeader("Authorization") != "Basic dXNlcjpzZWNyZXQ=") return MockResponse().setResponseCode(401)
+            v2Listing(files, request)?.let { return it }
             val key = request.path!!; val old = files[key]; val etag = old?.let { "\"${digest(it)}\"" }
             if (request.method == "GET") return if (old == null) MockResponse().setResponseCode(404)
                 else MockResponse().setBody(okio.Buffer().write(old)).addHeader("ETag", etag!!)
@@ -86,13 +87,13 @@ class PhoneSharedScheduleTest {
                 ScheduleStores.overrideFactory = { c -> RoomScheduleStore(
                     Room.databaseBuilder(c, ScheduleDatabase::class.java, phoneName).build(),
                     Executors.newSingleThreadExecutor().also { executors += it }, profiles = TermScheduleProfileStore(c)) }
-                ActivityScenario.launch(TimetableActivity::class.java).use { scenario ->
+                launchPhoneTestActivity().use { scenario ->
                     waitFor(scenario) { it.source.ready && it.hasWindowFocus() && !it.sharedSync.busy && !controller!!.busy }
                     scenario.onActivity { dialog = SharedScheduleDialog.show(it, writer!!, controller!!, true) }
                     waitFor(scenario) { dialog?.window?.decorView?.hasWindowFocus() == true }
                     onView(withText("首次创建共享课表")).perform(scrollTo(), click())
                     waitFor(scenario) { !controller!!.busy }
-                    assertNotNull(publisherSettings.publishedRevision)
+                    assertNotNull(writerStore.v2Frame().baseline?.commitId)
                     onView(withText("关闭")).perform(click())
                     waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
                     instrumentation.waitForIdleSync()
@@ -127,11 +128,14 @@ class PhoneSharedScheduleTest {
                     }
                     val secrets = context.getSharedPreferences("${followerNamespace}_credentials", 0).getString("payload", null)!!
                     assertFalse(secrets.contains("secret")); assertEquals("secret", WebDavSettings(context).account()!!.password)
-                    val firstId = publisherSettings.publishedRevision
+                    val firstId = writerStore.v2Frame().baseline?.commitId
                     // Recreate a publisher that died after remote commit but before saving its receipt.
-                    val remoteReceipt = SharedScheduleTransport().inspect(account, publisherSettings.folder)
-                    publisherSettings.pending(remoteReceipt.snapshot, remoteReceipt.bytes)
-                    context.getSharedPreferences(writerNamespace, 0).edit().remove("published_revision").remove("published_etag").remove("published_generation").commit()
+                    val remoteReceipt = V2TestTransport().inspect(account, publisherSettings.folder)
+                    val capture = writerStore.v2Frame()
+                    val candidate = ScheduleCommit(capture.baseline!!.datasetId, UUID.randomUUID().toString(), capture.writerId, capture.frontier, capture.local)
+                    val candidateBytes = ScheduleCommitCodec.encode(candidate)
+                    writerStore.v2Stage(candidateBytes)
+                    WebDavCommitStore(account, server.url("/share/dormpanel-sync-v2/").toString()).publish(candidateBytes)
                     instrumentation.runOnMainSync {
                         controller!!.close()
                         controller = SharedScheduleController(context, writer!!, publisherAccount, publisherSettings)
@@ -148,8 +152,8 @@ class PhoneSharedScheduleTest {
                     writerProfiles.put(writerProfiles.get("custom-term")!!.copy(timezone = "Asia/Tokyo"))
                     instrumentation.runOnMainSync { controller!!.publish() }
                     waitFor(scenario) { !controller!!.busy }
-                    assertNotEquals(firstId, publisherSettings.publishedRevision)
-                    assertEquals(2L, publisherSettings.publishedGeneration)
+                    assertNotEquals(firstId, writerStore.v2Frame().baseline?.commitId)
+                    assertNull(writerStore.v2Frame().pending)
                     onView(withText("管理")).perform(click())
                     onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
                     onView(withText("立即同步")).perform(scrollTo(), click())
@@ -157,7 +161,7 @@ class PhoneSharedScheduleTest {
                     scenario.onActivity { assertEquals("Asia/Tokyo", it.source.state.profiles["custom-term"]!!.timezone) }
                     onView(withText("关闭")).perform(click())
                     // Bad remote bytes must leave the successful revision intact.
-                    dav.files["/share/snapshot-${publisherSettings.publishedRevision}.dps"] = byteArrayOf(1, 2)
+                    dav.files["/share/dormpanel-sync-v2/commit-${writerStore.v2Frame().baseline?.commitId}.dpc"] = byteArrayOf(1, 2)
                     onView(withText("管理")).perform(click())
                     onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
                     onView(withText("立即同步")).perform(scrollTo(), click())
@@ -166,7 +170,7 @@ class PhoneSharedScheduleTest {
                     onView(withText("关闭")).perform(click())
                     dav.offline = true
                 }
-                ActivityScenario.launch(TimetableActivity::class.java).use { scenario ->
+                launchPhoneTestActivity().use { scenario ->
                     waitFor(scenario) { it.source.ready && it.source.state.sync != null }
                     waitFor(scenario) { !it.sharedSync.busy }
                     scenario.onActivity {

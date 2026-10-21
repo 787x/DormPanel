@@ -38,8 +38,11 @@ class WebDavCsvProfileChangeSyncTest {
     }
 
     @Test fun profileChangeForcesReimportWhenRemoteEtagUnchanged() {
+        val namespace = "pr35-csv-profile-${java.util.UUID.randomUUID()}"
+        val previous = TermScheduleProfileStore.overrideNamespace
+        TermScheduleProfileStore.overrideNamespace = namespace
         val csv = instrumentation.context.assets.open("hubei_2026-2027-1.csv").use { it.readBytes() }
-        MockWebServer().use { server -> ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+        try { MockWebServer().use { server -> ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             ready(scenario)
             val remote = server.url("/dav/timetable.csv").toString()
             val account = WebDavAccount(server.url("/dav/").toString(), "user", "secret")
@@ -136,6 +139,9 @@ class WebDavCsvProfileChangeSyncTest {
             assertTrue("Sync must re-import when profile changed (got $syncChanged, requests=$requestCount)",
                 syncChanged)
 
-        } }
+        } } } finally {
+            TermScheduleProfileStore.overrideNamespace = previous
+            instrumentation.targetContext.getSharedPreferences(namespace, Context.MODE_PRIVATE).edit().clear().commit()
+        }
     }
 }

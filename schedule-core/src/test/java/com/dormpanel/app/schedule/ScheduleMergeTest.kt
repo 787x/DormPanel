@@ -107,5 +107,18 @@ class ScheduleMergeTest {
         val builtInOverride = base.copy(customProfileKeys = base.customProfileKeys + BuiltInProfiles.term2026.termKey)
         assertFalse(ScheduleMerge.same(base, builtInOverride))
         assertTrue(merge(builtInOverride, changed).conflicts.isEmpty())
+    }    @Test fun dateCompositionAndAffectedThisWeekEditRequireOneDecision() {
+        val changed = base.copy(dayAdjustments = base.dayAdjustments + DayAdjustment("2026-10-12", "none"))
+        val edited = base.copy(classOverrides = base.classOverrides.map { if (it.anchorDate == "2026-10-12") it.copy(note = "concurrent") else it })
+        assertEquals(1, merge(changed, edited).conflicts.size)
+        val reset = base.copy(classOverrides = base.classOverrides.filterNot { it.anchorDate == "2026-10-12" })
+        assertEquals(1, merge(changed, reset).conflicts.size)
+        val own = ScheduleMerge.merge(base, changed, edited, ScheduleMerge.Choice.LOCAL).state
+        assertTrue(own.dayAdjustments.any { it.date == "2026-10-12" }); assertTrue(own.classOverrides.none { it.note == "concurrent" }); valid(own)
+        val other = ScheduleMerge.merge(base, changed, edited, ScheduleMerge.Choice.REMOTE).state
+        assertTrue(other.dayAdjustments.none { it.date == "2026-10-12" }); assertTrue(other.classOverrides.any { it.note == "concurrent" }); valid(other)
+        val unrelated = base.copy(dayAdjustments = base.dayAdjustments.map { it.copy(mode = "none", weekday = null) })
+        assertTrue(merge(unrelated, edited).conflicts.isEmpty())
     }
+
 }

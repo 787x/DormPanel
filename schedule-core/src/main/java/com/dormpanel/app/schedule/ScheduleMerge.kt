@@ -9,7 +9,7 @@ object ScheduleMerge {
         override fun hashCode() = 31 * source.copy(importedAt = 0).hashCode() + occurrences.hashCode()
     }
     private data class Profile(val value: TermScheduleProfile, val custom: Boolean)
-    data class Conflict(val key: String, val description: String)
+    data class Conflict(val key: String, val description: String, val keys: Set<String> = setOf(key))
     data class Result(val state: ScheduleState, val conflicts: List<Conflict>)
     enum class Choice { LOCAL, REMOTE }
 
@@ -20,11 +20,15 @@ object ScheduleMerge {
         s.sources.forEach { put("source:${it.id}", Source(it, imported[it.id].orEmpty().sortedBy { row -> row.id })) }
         s.classOverrides.forEach { put("edit:${it.key}", it) }
         s.dayAdjustments.forEach { put("date:${it.date}", it) }
-        s.profiles.forEach { (key, p) -> put("term:$key", Profile(p, key in s.customProfileKeys)) }
+        s.profiles.forEach { (key, p) ->
+            val normalized = p.copy(phases = p.phases.sortedBy { it.effectiveFrom }.map { phase -> phase.copy(periods = phase.periods.sortedBy { it.periodNumber }) })
+            put("term:$key", Profile(normalized, key in s.customProfileKeys))
+        }
     }
     fun same(a: ScheduleState, b: ScheduleState) = records(a) == records(b)
 
-    fun merge(base: ScheduleState, local: ScheduleState, remote: ScheduleState, choice: Choice? = null): Result {
+    fun merge(base: ScheduleState, local: ScheduleState, remote: ScheduleState, choice: Choice? = null,
+        forceConflicts: Set<String> = emptySet(), maxConflicts: Int = Int.MAX_VALUE): Result {
         val b = records(base); val l = records(local); val r = records(remote)
         val keys = (b.keys + l.keys + r.keys).sorted()
         val parents = keys.associateWith { it }.toMutableMap()
@@ -48,16 +52,29 @@ object ScheduleMerge {
                 }
             }
         }
+        // Date composition changes can invalidate a this-week edit's anchor or destination.
+        // Weekly series edits remain independent; their identities survive day composition.
+        val editsByDate = states.flatMap { it.classOverrides }.flatMap { edit ->
+            listOfNotNull(edit.anchorDate, edit.date).distinct().map { it to edit.key }
+        }.groupBy({ it.first }, { it.second })
+        states.flatMap { it.dayAdjustments }.map { it.date }.distinct().forEach { date ->
+            fun composition(map: Map<String, Any>) = (map["date:$date"] as? DayAdjustment)?.copy(label = "")
+            if (composition(l) != composition(b) || composition(r) != composition(b)) {
+                editsByDate[date].orEmpty().distinct().forEach { join("date:$date", "edit:$it") }
+            }
+        }
         val conflicts = mutableListOf<Conflict>()
         val merged = mutableMapOf<String, Any>()
         keys.groupBy(::root).values.forEach { group ->
             fun take(map: Map<String, Any>) = group.associateWith { map[it] }
             val bv = take(b); val lv = take(l); val rv = take(r)
+            val forced = group.any { it in forceConflicts }
             val selected = when {
-                lv == rv -> rv // adopt confirmed metadata for semantically identical content
-                lv == bv -> rv
-                rv == bv -> lv
+                !forced && lv == rv -> rv // adopt confirmed metadata for semantically identical content
+                !forced && lv == bv -> rv
+                !forced && rv == bv -> lv
                 else -> {
+                    check(conflicts.size < maxConflicts) { "冲突条目超过本轮处理上限；本地修改和远端版本已保留" }
                     val descriptions = group.map { key ->
                         val value = l[key] ?: r[key] ?: b[key]
                         when (value) {
@@ -75,7 +92,7 @@ object ScheduleMerge {
                         }
                     }.distinct().joinToString("、")
                     fun time(minute: Int?) = minute?.let { "%02d:%02d".format(java.util.Locale.ROOT, it / 60, it % 60) } ?: "继承"
-                    fun summary(map: Map<String, Any>) = group.filter { l[it] != r[it] }.joinToString("；") { key ->
+                    fun summary(map: Map<String, Any>) = group.filter { forced || l[it] != r[it] }.joinToString("；") { key ->
                         when (val value = map[key]) {
                             null -> "已删除 / 已重置"
                             is TimetableEntry -> "${value.title} 星期${value.day} ${time(value.startMinute)}–${time(value.endMinute)} ${value.location}"
@@ -88,8 +105,8 @@ object ScheduleMerge {
                             is Source -> "${value.source.displayName} ${value.source.occurrenceCount}节 ${value.source.sha256.take(8)}"
                             else -> value.toString()
                         }.take(1000)
-                    }
-                    conflicts += Conflict(group.sorted().first(), descriptions + "\n本地：" + summary(l) + "\n远端：" + summary(r))
+                    }.take(2000)
+                    conflicts += Conflict(group.sorted().first(), descriptions.take(1000) + "\n本地：" + summary(l) + "\n远端：" + summary(r), group.toSet())
                     if (choice == Choice.REMOTE) rv else lv
                 }
             }
@@ -113,6 +130,7 @@ data class ScheduleSyncFrame(val baseline: ScheduleSnapshot?, val local: Schedul
 /** Blocking API used only by the sync worker; every method serializes with local Room writes. */
 interface ScheduleSyncStore {
     fun syncFrame(): ScheduleSyncFrame
+    fun archiveMigrationRecovery(identity: ScheduleSnapshot) {}
     fun establishBaseline(bytes: ByteArray)
     fun stagePublication(bytes: ByteArray, captured: ScheduleState)
     fun integrateRemote(bytes: ByteArray): List<ScheduleMerge.Conflict>
