@@ -27,8 +27,10 @@ observation limits, and [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes
 since 0.1.0. PR29 recorded acceptance evidence only; it did not publish a release.
 
 当前 Android 候选为 **0.1.2-rc.2**（X08E code 5 / Phone code 3），HA 集成继续为 0.1.1。
-正式 APK 身份、实机升级、真实 FN Connect 中断恢复与剩余发布门槛见
-[PR36 验收记录](docs/PR36-rc2-physical-acceptance.md)。此记录不代表已发布；
+按已确认的 0.1.2 产品范围，C01 已获 **RC ACCEPTED / READY FOR PRE-RELEASE**。
+支持现有本地数据原位升级及 Sync v2 新建、绑定和双向同步，已有 v1 共享绑定不提供兼容性保证。
+正式 APK 身份、实测依据及非阻塞限制见 [PR36 验收记录](docs/PR36-rc2-physical-acceptance.md)
+和 [RC2 发布说明](docs/RELEASE-0.1.2-rc.2.md)。验收接受不代表已发布；
 0.1.1 与 RC1 的历史证据及产物保留，未自动创建 tag 或 GitHub Release。
 
 ## Install / update
