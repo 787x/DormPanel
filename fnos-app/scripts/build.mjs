@@ -32,7 +32,7 @@ await writeFile(new URL('app/server/control.sh', build), main); await chmod(new 
 await cp(new URL('socket-access.sh', import.meta.url), new URL('app/server/socket-access.sh', build));
 await chmod(new URL('app/server/socket-access.sh', build), 0o755);
 for (const hook of ['install_init', 'install_callback', 'upgrade_init', 'upgrade_callback', 'uninstall_init', 'uninstall_callback', 'config_init', 'config_callback']) {
-  const content = hook === 'upgrade_init' || hook === 'uninstall_init' ? '#!/bin/sh\n"$TRIM_APPDEST/server/control.sh" stop\nexit $?\n' : ['install_callback', 'upgrade_callback', 'config_callback'].includes(hook) ? '#!/bin/sh\numask 077\nmkdir -p "$TRIM_PKGETC" "$TRIM_PKGVAR"\nchmod 700 "$TRIM_PKGETC" "$TRIM_PKGVAR"\n/var/apps/nodejs_v22/target/bin/node "$TRIM_APPDEST/server/src/configure.mjs"'+(hook === 'upgrade_callback' ? ' --upgrade' : '')+'\nexit $?\n' : '#!/bin/sh\nexit 0\n';
+  const content = hook === 'upgrade_init' || hook === 'uninstall_init' ? '#!/bin/sh\n"$TRIM_APPDEST/server/control.sh" stop\nexit $?\n' : ['install_callback', 'upgrade_callback', 'config_callback'].includes(hook) ? '#!/bin/sh\numask 077\nmkdir -p "$TRIM_PKGETC" "$TRIM_PKGVAR"\nchmod 700 "$TRIM_PKGETC" "$TRIM_PKGVAR"\n/var/apps/nodejs_v22/target/bin/node "$TRIM_APPDEST/server/src/configure.mjs"'+(hook === 'upgrade_callback' ? ' --upgrade' : hook === 'config_callback' ? ' --configure' : '')+'\nexit $?\n' : '#!/bin/sh\nexit 0\n';
   await writeFile(new URL('cmd/' + hook, build), content); await chmod(new URL('cmd/' + hook, build), 0o755);
 }
 const wizard = [{ stepTitle: 'WebDAV 绑定', items: [

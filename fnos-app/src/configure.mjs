@@ -8,7 +8,9 @@ try {
   const path = join(dir, 'webdav.json'); let old = null;
   try { old = JSON.parse(await readFile(path, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   // fnOS 升级会重放安装时的 wizard 环境；不能覆盖管理员在应用内更新的绑定/凭据。
-  const upgrading = process.argv.includes('--upgrade');
+  // 系统可能先调用已安装版本的无参数 callback。已有配置默认只校验、保留；
+  // 仅新的显式 config_callback --configure 允许消费向导更新。
+  const upgrading = process.argv.includes('--upgrade') || (!!old && !process.argv.includes('--configure'));
   if (upgrading && old) { binding(old); ensure(old.username && old.password, '已有凭据无效'); }
   const url = upgrading ? null : process.env.wizard_webdav_url?.trim();
   if (url) {
