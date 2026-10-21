@@ -1,0 +1,27 @@
+{
+  "release": "0.1.2",
+  "buildSourceCommit": "4678048c9adbdf10996d612f532430d7dad45a02",
+  "certificateSha256": "32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7",
+  "apps": [
+    {
+      "app": "X08E",
+      "versionCode": 6,
+      "versionName": "0.1.2",
+      "sha256": "bb18847a5bf7dd3b4004099744d5e8b55a4cafd018e57058b7739b080450821f",
+      "bytes": 16124480,
+      "minSdk": 28,
+      "targetSdk": 37,
+      "debuggable": false
+    },
+    {
+      "app": "Phone",
+      "versionCode": 4,
+      "versionName": "0.1.2",
+      "sha256": "a6a5840debf2b77dbe16f118528bdc73051102fff25949aa419c3bb600940958",
+      "bytes": 9825255,
+      "minSdk": 28,
+      "targetSdk": 37,
+      "debuggable": false
+    }
+  ]
+}

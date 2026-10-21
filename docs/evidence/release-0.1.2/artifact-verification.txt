@@ -1,0 +1,5 @@
+Verified X08E: com.dormpanel.app / 6 / 0.1.2; SDK 28/37; non-debuggable; signer 32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7
+bb18847a5bf7dd3b4004099744d5e8b55a4cafd018e57058b7739b080450821f  DormPanel-X08E-0.1.2.apk (16124480 bytes)
+Verified Phone: com.dormpanel.timetable / 4 / 0.1.2; SDK 28/37; non-debuggable; signer 32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7
+a6a5840debf2b77dbe16f118528bdc73051102fff25949aa419c3bb600940958  DormPanel-Phone-0.1.2.apk (9825255 bytes)
+Both signed release artifacts verified. Device acceptance is recorded separately.

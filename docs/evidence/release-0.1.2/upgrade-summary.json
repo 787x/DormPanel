@@ -1,0 +1,232 @@
+[
+  {
+    "device": "x08e",
+    "beforeApkSha256": "19fbf59968765aeec630368df109d9f5f85a6d764f54403523ec4c90267b5071",
+    "afterApkSha256": "bb18847a5bf7dd3b4004099744d5e8b55a4cafd018e57058b7739b080450821f",
+    "databaseTablesUnchanged": true,
+    "changedPreferences": [
+      "shared_schedule_v1.xml"
+    ],
+    "firstInstallTimePreserved": true,
+    "scheduleBefore": {
+      "version": 4,
+      "tables": {
+        "android_metadata": {
+          "count": 1,
+          "sha256": "81ac4b2bad563da332c84ab9c277adb9517a1f15324ecc39ccaa783248c689eb"
+        },
+        "class_overrides": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "day_adjustments": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "events": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "import_sources": {
+          "count": 1,
+          "sha256": "71d1b8b060c202f8c08cd45ac09595ef76d6e341422da16d2d788a4276fff549"
+        },
+        "imported_timetable_occurrences": {
+          "count": 131,
+          "sha256": "1e6f89484f331c91c6a340deaa135d0c365f3fc1133f46467ea5f843673200cf"
+        },
+        "room_master_table": {
+          "count": 1,
+          "sha256": "36d488e99a7f0151146bfd2978eaa9e4ef7c8093b943efc52a6dac479c2e802a"
+        },
+        "schedule_sync_checkpoint": {
+          "count": 6,
+          "sha256": "d76ed10ec63e3e7075251adcc4cf21ad11a7f5d1131556e7324c64641b9d8844"
+        },
+        "timetable": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      },
+      "checkpointIds": [
+        2,
+        20,
+        21,
+        22,
+        96,
+        102
+      ]
+    },
+    "scheduleAfter": {
+      "version": 4,
+      "tables": {
+        "android_metadata": {
+          "count": 1,
+          "sha256": "81ac4b2bad563da332c84ab9c277adb9517a1f15324ecc39ccaa783248c689eb"
+        },
+        "class_overrides": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "day_adjustments": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "events": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "import_sources": {
+          "count": 1,
+          "sha256": "71d1b8b060c202f8c08cd45ac09595ef76d6e341422da16d2d788a4276fff549"
+        },
+        "imported_timetable_occurrences": {
+          "count": 131,
+          "sha256": "1e6f89484f331c91c6a340deaa135d0c365f3fc1133f46467ea5f843673200cf"
+        },
+        "room_master_table": {
+          "count": 1,
+          "sha256": "36d488e99a7f0151146bfd2978eaa9e4ef7c8093b943efc52a6dac479c2e802a"
+        },
+        "schedule_sync_checkpoint": {
+          "count": 6,
+          "sha256": "d76ed10ec63e3e7075251adcc4cf21ad11a7f5d1131556e7324c64641b9d8844"
+        },
+        "timetable": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      },
+      "checkpointIds": [
+        2,
+        20,
+        21,
+        22,
+        96,
+        102
+      ]
+    },
+    "changedSharedPreferenceKeys": [
+      "last_success"
+    ],
+    "bindingFieldsUnchanged": true,
+    "syncStatusBefore": "已检查观察到的版本 · 已发布；其他设备接收情况未知",
+    "syncStatusAfter": "已检查观察到的版本 · 已发布；其他设备接收情况未知"
+  },
+  {
+    "device": "phone",
+    "beforeApkSha256": "a6a8ec6b84821c51757b8abf097ac2e2aff198a0554457e8af80274154a70f81",
+    "afterApkSha256": "a6a5840debf2b77dbe16f118528bdc73051102fff25949aa419c3bb600940958",
+    "databaseTablesUnchanged": true,
+    "changedPreferences": [
+      "shared_schedule_v1.xml"
+    ],
+    "firstInstallTimePreserved": true,
+    "scheduleBefore": {
+      "version": 4,
+      "tables": {
+        "android_metadata": {
+          "count": 1,
+          "sha256": "81ac4b2bad563da332c84ab9c277adb9517a1f15324ecc39ccaa783248c689eb"
+        },
+        "class_overrides": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "day_adjustments": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "events": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "import_sources": {
+          "count": 1,
+          "sha256": "71d1b8b060c202f8c08cd45ac09595ef76d6e341422da16d2d788a4276fff549"
+        },
+        "imported_timetable_occurrences": {
+          "count": 131,
+          "sha256": "1e6f89484f331c91c6a340deaa135d0c365f3fc1133f46467ea5f843673200cf"
+        },
+        "room_master_table": {
+          "count": 1,
+          "sha256": "36d488e99a7f0151146bfd2978eaa9e4ef7c8093b943efc52a6dac479c2e802a"
+        },
+        "schedule_sync_checkpoint": {
+          "count": 6,
+          "sha256": "9374fa3c009ae84bf6c27e4c075d25dd034f3f23b0b16b92b147fdd35db26a33"
+        },
+        "timetable": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      },
+      "checkpointIds": [
+        2,
+        20,
+        21,
+        22,
+        96,
+        102
+      ]
+    },
+    "scheduleAfter": {
+      "version": 4,
+      "tables": {
+        "android_metadata": {
+          "count": 1,
+          "sha256": "81ac4b2bad563da332c84ab9c277adb9517a1f15324ecc39ccaa783248c689eb"
+        },
+        "class_overrides": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "day_adjustments": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "events": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "import_sources": {
+          "count": 1,
+          "sha256": "71d1b8b060c202f8c08cd45ac09595ef76d6e341422da16d2d788a4276fff549"
+        },
+        "imported_timetable_occurrences": {
+          "count": 131,
+          "sha256": "1e6f89484f331c91c6a340deaa135d0c365f3fc1133f46467ea5f843673200cf"
+        },
+        "room_master_table": {
+          "count": 1,
+          "sha256": "36d488e99a7f0151146bfd2978eaa9e4ef7c8093b943efc52a6dac479c2e802a"
+        },
+        "schedule_sync_checkpoint": {
+          "count": 6,
+          "sha256": "9374fa3c009ae84bf6c27e4c075d25dd034f3f23b0b16b92b147fdd35db26a33"
+        },
+        "timetable": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      },
+      "checkpointIds": [
+        2,
+        20,
+        21,
+        22,
+        96,
+        102
+      ]
+    },
+    "changedSharedPreferenceKeys": [
+      "last_result",
+      "last_success",
+      "retry_attempts"
+    ],
+    "bindingFieldsUnchanged": true,
+    "syncStatusBefore": "离线 / 等待重试；本地修改已保留",
+    "syncStatusAfter": "已检查观察到的版本 · 已发布；其他设备接收情况未知"
+  }
+]

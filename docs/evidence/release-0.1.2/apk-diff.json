@@ -1,0 +1,18 @@
+[
+  {
+    "app": "X08E",
+    "changedEntries": [
+      "AndroidManifest.xml",
+      "META-INF/version-control-info.textproto"
+    ],
+    "allDexUnchanged": true
+  },
+  {
+    "app": "Phone",
+    "changedEntries": [
+      "AndroidManifest.xml",
+      "META-INF/version-control-info.textproto"
+    ],
+    "allDexUnchanged": true
+  }
+]
