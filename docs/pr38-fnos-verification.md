@@ -50,11 +50,19 @@ target 0700、Socket 0600、无有效 shared-user/group ACL。真实 www-data UI
 
 writerId 一直为 `815bc368-1ba9-4848-91ff-db4f02953e2a`。新增课程与日期说明后停止/启动，整个 workspace.json 哈希相同，未发布编辑保留。
 
-中间诊断源码替换用于功能定位，**不计作 FPK 升级**。最终 0.2.1 标准包的正常升级须另记结果。没有用卸载/清数据/`install-local` 冒充升级。PR37 已记录更早 0.1.0 → 0.1.2 的正常升级；本轮未直接再测 0.1.0 → 最终包。
+中间诊断源码替换用于功能定位，**不计作 FPK 升级**。最终 0.2.1 标准包的正常升级结果见下方补充。没有用卸载/清数据/`install-local` 冒充升级。PR37 已记录更早 0.1.0 → 0.1.2 的正常升级；本轮未直接再测 0.1.0 → 最终包。
 
 官方 fnpack 标准包 `artifacts/pr38/dormpanel-schedule-manager-0.2.1.fpk`（本地产物，不上传 Release），SHA-256：`898faec634851d6b40dfaf746982f0eef6c0996a1b44834ffd051e439c2b0c1d`。本地归档含原始测试日志与隔离诊断参数，后者含凭据，已忽略提交。包与参数不可一并上传。
 
-升级曾被配置回调拒绝并回滚到 0.2.0，三份持久化哈希不变。已增加专用 `--upgrade` 模式，并兼容已安装的无参数 callback：已有配置默认仅校验保留，只有显式 `--configure` 才消费向导更新；回归验证更新后的绑定、凭据和证书逐字节保留。标准包已重新构建，正常升级结果仍待下方补充。
+升级曾被配置回调拒绝并回滚到 0.2.0，三份持久化哈希不变。已增加专用 `--upgrade` 模式，并兼容已安装的无参数 callback：已有配置默认仅校验保留，只有显式 `--configure` 才消费向导更新；回归验证更新后的绑定、凭据和证书逐字节保留。标准包重新构建后正常网页升级成功。
+
+## 最终标准包升级补充
+
+用户确认 fnOS 责任条款后，应用中心真实升级到 **0.2.1**，服务 running；页面显示 0.2.1，并正常按需检查 LAN WebDAV，仍为已发布的 `51a4b190-0ea9-4d42-820a-2f4aae785773`，无候选或待处理冲突。
+
+升级前后 workspace、identity、WebDAV 配置逐字节哈希一致：workspace `fac182e1f0ff2cbc2216ce2b894d26a8384c268aa6e2ee6ab413b05eab33049c`，identity 仍为上表值，迁移后的 LAN 配置为 `91e14f8478487c26065bbcdfe156eaccc3ae639b1b53c045521d2a1bc3b3ecd8`。随后通过正常 appcenter-cli stop/start 重启；重启前后这三份文件哈希仍逐项一致。
+
+最终包升级和重启后，target 0700、Socket 0600、无 shared-user/group ACL。www-data、user、nobody+GID712 的所有直连/伪造/写方法测试仍为 EACCES。新版本页面从持久化状态恢复课程并成功同步；正式 Android APK 未更新。临时 TLS 转发与 ADB reverse 已清理。
 
 ## 未验证范围与剩余风险
 
