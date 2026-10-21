@@ -1,0 +1,86 @@
+import { Temporal } from '@js-temporal/polyfill';
+import { date, overrideKey, termKey } from './protocol.mjs';
+
+export const addDays = (d, days) => date(d).add({ days }).toString();
+export const monday = d => addDays(d, 1 - date(d).dayOfWeek);
+const local = (ms, z) => Temporal.Instant.fromEpochMilliseconds(Number(ms)).toZonedDateTimeISO(z);
+const instant = (d, minute, z) => date(d).toPlainDateTime({ hour: Math.floor(minute / 60), minute: minute % 60 }).toZonedDateTime(z).epochMilliseconds;
+const dayDiff = (a, b) => date(a).until(date(b)).days;
+const periods = label => { const a = (label ?? '').match(/\d+/g)?.map(Number) ?? []; return a.length > 0 && a.length <= 30 && a[0] >= 1 && a[0] <= 30 && a.at(-1) >= 1 && a.at(-1) <= 30 ? [a[0], a.at(-1)] : null; };
+
+export function projectWeek(state, first, zone = 'Asia/Shanghai') {
+  const sources = new Map(state.sources.map(s => [s.id, s]));
+  const profiles = new Map(state.profiles.map(p => [p.termKey, p]));
+  const edits = new Map(state.classOverrides.map(e => [e.key, e]));
+  const days = new Map(state.dayAdjustments.map(d => [d.date, d]));
+  const profile = v => profiles.get(termKey(sources.get(v.sourceId) ?? { termKey: null, filename: '' }));
+  function linkedTimes(p, d, a, b) {
+    const phase = [...p.phases].filter(ph => ph.effectiveFrom <= d).sort((a, b) => a.effectiveFrom < b.effectiveFrom ? -1 : 1).at(-1);
+    const start = phase?.periods.find(t => t.periodNumber === a)?.start, end = phase?.periods.find(t => t.periodNumber === b)?.end;
+    if (!start || !end) return null;
+    const from = date(d).toPlainDateTime(start).toZonedDateTime(p.timezone).epochMilliseconds;
+    const to = date(d).toPlainDateTime(end).toZonedDateTime(p.timezone).epochMilliseconds;
+    return to > from ? [from, to] : null;
+  }
+  function patch(v, e) {
+    const target = e.date ?? (e.weekday == null ? v.academicDate : addDays(monday(v.academicDate), e.weekday - 1));
+    if (e.date != null && monday(target) !== monday(v.anchorDate)) return null;
+    const original = periods(v.periodLabel), a = e.periodStart ?? original?.[0], b = e.periodEnd ?? original?.[1];
+    const linked = e.timingMode === 'linked' || e.timingMode == null && v.linked, p = profile(v);
+    if (e.timingMode === 'linked' && (!p || a == null || b == null)) return null;
+    let bounds = null;
+    if (linked && p && a != null && b != null) { bounds = linkedTimes(p, target, a, b); if (!bounds) return null; }
+    const from = bounds ? local(bounds[0], zone).hour * 60 + local(bounds[0], zone).minute : e.startMinute ?? v.startMinute;
+    const to = bounds ? local(bounds[1], zone).hour * 60 + local(bounds[1], zone).minute : e.endMinute ?? v.endMinute;
+    const overnight = local(v.end, zone).toPlainDate().toString() > v.date && ['startMinute', 'endMinute', 'periodStart', 'periodEnd', 'timingMode'].every(k => e[k] == null);
+    if (!bounds && to <= from && !overnight) return null;
+    const display = addDays(v.date, dayDiff(v.academicDate, target));
+    const start = bounds?.[0] ?? instant(display, from, zone), end = bounds?.[1] ?? instant(addDays(display, overnight ? 1 : 0), to, zone);
+    if ((e.periodStart != null || e.periodEnd != null) && (a == null || b == null)) return null;
+    return { ...v, title: e.title ?? v.title, location: e.location ?? v.location, teacher: e.teacher ?? v.teacher, note: e.note ?? v.note,
+      startMinute: from, endMinute: to, academicDate: target, date: local(start, zone).toPlainDate().toString(), start, end, linked,
+      periodLabel: e.periodStart != null || e.periodEnd != null ? `[${Array.from({ length: Math.max(0, b - a + 1) }, (_, i) => String(a + i).padStart(2, '0')).join('-')}节]` : v.periodLabel,
+      allWeeksEdited: v.allWeeksEdited || e.anchorDate === null, thisWeekEdited: v.thisWeekEdited || e.anchorDate !== null };
+  }
+  function move(v, target) {
+    if (target === v.academicDate) return { ...v, anchorDate: target };
+    const display = addDays(v.date, dayDiff(v.academicDate, target));
+    const overnight = local(v.end, zone).toPlainDate().toString() > v.date;
+    return { ...v, date: display, academicDate: target, anchorDate: target, start: instant(display, v.startMinute, zone), end: instant(addDays(display, overnight ? 1 : 0), v.endMinute, zone) };
+  }
+  function academicWeek(first) {
+    const mon = monday(first), base = [];
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(mon, i);
+      for (const r of state.entries.filter(r => r.day === i + 1)) base.push({ ...r, seriesId: r.id, sourceId: null, date: d, academicDate: d, anchorDate: d, start: instant(d, r.startMinute, zone), end: instant(d, r.endMinute, zone), teacher: '', note: '' });
+    }
+    const min = instant(addDays(mon, -2), 0, zone), max = instant(addDays(mon, 9), 0, zone);
+    for (const r of state.imported) {
+      if (Number(r.start) >= max || Number(r.end) <= min) continue;
+      const start = local(r.start, zone), end = local(r.end, zone), display = start.toPlainDate().toString();
+      const academic = termKey(sources.get(r.sourceId)) != null ? local(r.start, r.timezone).toPlainDate().toString() : display;
+      if (academic < mon || academic >= addDays(mon, 7)) continue;
+      base.push({ ...r, start: Number(r.start), end: Number(r.end), date: display, academicDate: academic, anchorDate: academic, startMinute: start.hour * 60 + start.minute, endMinute: end.hour * 60 + end.minute, teacher: '', note: '' });
+    }
+    const templates = base.map(v => { v = { ...v, linked: !!profile(v) && periods(v.periodLabel) !== null }; const e = edits.get(overrideKey(v.sourceId, v.seriesId, null)); return e ? patch(v, e) ?? v : v; });
+    const composed = [];
+    for (let i = 0; i < 7; i++) {
+      const target = addDays(mon, i), d = days.get(target);
+      if (d?.mode === 'none') continue;
+      if (d?.mode !== 'weekday') { composed.push(...templates.filter(v => v.academicDate === target)); continue; }
+      const source = addDays(mon, d.weekday - 1);
+      for (const v of templates.filter(v => v.academicDate === source)) {
+        let copied = { ...move(v, target), copiedFrom: source }; const range = periods(copied.periodLabel);
+        if (copied.linked && range && profile(copied)) {
+          copied = patch(copied, { periodStart: range[0], periodEnd: range[1], timingMode: 'linked', anchorDate: null });
+          if (!copied) continue;
+          copied.allWeeksEdited = v.allWeeksEdited; copied.thisWeekEdited = v.thisWeekEdited;
+        }
+        composed.push(copied);
+      }
+    }
+    return composed.map(v => { const e = edits.get(overrideKey(v.sourceId, v.seriesId, v.anchorDate)); return e ? patch(v, e) ?? v : v; }).filter(v => days.get(v.date)?.mode !== 'none');
+  }
+  const start = instant(first, 0, zone), end = instant(addDays(first, 7), 0, zone);
+  return [-7, 0, 7].flatMap(n => academicWeek(addDays(first, n))).filter(v => v.start < end && v.end > start).sort((a, b) => a.start - b.start || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0) || (a.id < b.id ? -1 : 1));
+}

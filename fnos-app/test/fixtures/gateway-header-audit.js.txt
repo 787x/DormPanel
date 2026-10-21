@@ -1,0 +1,4 @@
+const variants={plain:{},admin:{'X-Trim-Userid':'424242','X-Trim-Isadmin':'true'},ordinary:{'X-Trim-Userid':'not-a-user-id','X-Trim-Isadmin':'false'},ambiguous:{'X-Trim-Userid':'1000, 424242','X-Trim-Isadmin':'true, false'}};
+for(const [kind,headers] of Object.entries(variants))document.getElementById(kind).onclick=async()=>{
+try{const response=await fetch('/app/dormpanel-schedule-manager/api/schedule?date=2026-10-12',{headers,credentials:'same-origin',cache:'no-store'});const text=await response.text();let state;try{state=JSON.parse(text)}catch{};document.getElementById('result').textContent=JSON.stringify({kind,http:response.status,scheduleData:typeof state?.writerId==='string',courses:state?.courses?.length,csrf:!!state?.csrf,state:state?.status,error:state?.error??(state?null:text.slice(0,80))});}catch(e){document.getElementById('result').textContent=JSON.stringify({kind,error:e.message});}
+};
