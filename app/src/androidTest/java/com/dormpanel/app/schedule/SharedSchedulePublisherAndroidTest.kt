@@ -36,7 +36,8 @@ class SharedSchedulePublisherAndroidTest {
             val files = ConcurrentHashMap<String, ByteArray>()
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
-                    val key = request.path!!; val old = files[key]; val etag = old?.let { "\"${digest(it)}\"" }
+                    v2Listing(files, request)?.let { return it }
+            val key = request.path!!; val old = files[key]; val etag = old?.let { "\"${digest(it)}\"" }
                     if (request.getHeader("Authorization") != "Basic dXNlcjpzZWNyZXQ=") return MockResponse().setResponseCode(401)
                     if (request.method == "GET") return if (old == null) MockResponse().setResponseCode(404)
                         else MockResponse().setBody(okio.Buffer().write(old)).addHeader("ETag", etag!!)
@@ -61,9 +62,11 @@ class SharedSchedulePublisherAndroidTest {
                         ui!!.sources()
                     }
                     onView(withText("Publish shared timetable (WebDAV)")).perform(scrollTo(), click())
-                    onView(withText("首次创建共享课表")).perform(scrollTo(), click())
                     waitFor(scenario) { !it.sharedSchedule.busy }
-                    val first = SharedScheduleTransport().inspect(account, server.url("/shared/").toString())
+                    onView(withText("首次创建共享课表")).perform(scrollTo(), click())
+                    waitFor(scenario) { !it.sharedSchedule.busy && files.isNotEmpty() }
+                    scenario.onActivity { assertTrue("${ViewModelProvider(it)[DashboardViewModel::class.java].sharedSchedule.status}; files=${files.keys}", files.isNotEmpty()) }
+                    val first = V2TestTransport().inspect(account, server.url("/shared/").toString())
                     assertEquals("X08E class", first.snapshot.state.entries.single().title)
                     scenario.onActivity { activity ->
                         val vm = ViewModelProvider(activity)[DashboardViewModel::class.java]
@@ -73,7 +76,7 @@ class SharedSchedulePublisherAndroidTest {
                     }
                     onView(withText("立即同步")).perform(scrollTo(), click())
                     waitFor(scenario) { !it.sharedSchedule.busy }
-                    val second = SharedScheduleTransport().inspect(account, server.url("/shared/").toString())
+                    val second = V2TestTransport().inspect(account, server.url("/shared/").toString())
                     assertEquals(2L, second.snapshot.generation); assertEquals(first.head.revision, second.snapshot.parentRevision)
                     assertEquals(2, second.snapshot.state.entries.size)
                     instrumentation.waitForIdleSync()

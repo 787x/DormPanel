@@ -19,6 +19,7 @@ data class ScheduleSyncCheckpoint(@PrimaryKey val id: Int = 1, val payload: Byte
 interface ScheduleDao {
     @Query("SELECT * FROM schedule_sync_checkpoint WHERE id = 1") fun checkpoint(): ScheduleSyncCheckpoint?
     @Query("SELECT * FROM schedule_sync_checkpoint WHERE id = :id") fun syncRecord(id: Int): ScheduleSyncCheckpoint?
+    @Query("SELECT EXISTS(SELECT 1 FROM schedule_sync_checkpoint WHERE id = :id)") fun hasSyncRecord(id: Int): Boolean
     @Query("DELETE FROM schedule_sync_checkpoint WHERE id = :id") fun deleteSyncRecord(id: Int)
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun checkpoint(row: ScheduleSyncCheckpoint)
     @Query("DELETE FROM events") fun clearEvents()
@@ -112,7 +113,7 @@ object ScheduleStores {
 class RoomScheduleStore(private val database: ScheduleDatabase,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor(),
     private val closeDatabase: Boolean = true, private var profiles: TermScheduleProfileStore? = null,
-    private val afterSnapshotRows: (() -> Unit)? = null, private val onCommitted: (() -> Unit)? = null) : ScheduleStore, ScheduleSyncStore {
+    private val afterSnapshotRows: (() -> Unit)? = null, private val onCommitted: (() -> Unit)? = null) : ScheduleStore, ScheduleSyncStore, ScheduleV2Store {
     init { profiles?.sharedStore = this }
     fun attachProfileStore(store: TermScheduleProfileStore) { profiles = store; store.sharedStore = this }
     private val handler = Handler(Looper.getMainLooper())
@@ -136,10 +137,14 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
                     check(it.size <= ImportLimits.STORED_OCCURRENCES) { "Stored occurrence limit exceeded" }
                 }, dayAdjustments = database.dao().dayAdjustments().also { check(it.size <= 1000) },
                 classOverrides = database.dao().classOverrides().also { check(it.size <= 5000) })
-            val saved = database.dao().checkpoint()?.let { ScheduleSnapshotCodec.decode(it.payload) }
+            val v2 = v2Commit(21) ?: v2Commit(23)
+            val saved = v2?.snapshot() ?: database.dao().checkpoint()?.let { ScheduleSnapshotCodec.decode(it.payload) }
             val catalog = database.dao().syncRecord(2)?.let { ScheduleSnapshotCodec.decode(it.payload).state } ?: saved?.state
-            if (saved == null) state else state.copy(profiles = catalog!!.profiles, customProfileKeys = catalog.customProfileKeys,
-                sync = SnapshotIdentity(saved.datasetId, saved.revision))
+            if (saved == null) state else {
+                val current = state.copy(profiles = catalog!!.profiles, customProfileKeys = catalog.customProfileKeys)
+                val pending = v2 != null && (database.dao().hasSyncRecord(23) || !ScheduleMerge.same(saved.state, current))
+                current.copy(sync = SnapshotIdentity(saved.datasetId, saved.revision, pending))
+            }
         }
     override fun load(callback: (Result<ScheduleState>) -> Unit) = submit(callback) { readState() }
     override fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) = submit(callback) {
@@ -190,7 +195,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     private fun decoded(id: Int) = database.dao().syncRecord(id)?.let { ScheduleSnapshotCodec.decode(it.payload) }
     private fun fullState(): ScheduleState {
         val state = readState().copy(sync = null)
-        return if (database.dao().checkpoint() != null) state else {
+        return if (database.dao().checkpoint() != null || (v2Commit(21) != null || v2Commit(23) != null)) state else {
             val catalog = requireNotNull(profiles).preferenceCatalog()
             state.copy(profiles = catalog.first, customProfileKeys = catalog.second)
         }
@@ -204,13 +209,13 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         ScheduleSyncFrame(decoded(1), fullState(), decoded(4), decoded(3), decoded(5)?.state)
     }
     internal fun sharedCatalog(): Pair<Map<String, TermScheduleProfile>, Set<String>>? = blocking {
-        val catalog = decoded(2) ?: decoded(1)?.also {
+        val catalog = decoded(2) ?: ((v2Commit(21) ?: v2Commit(23))?.snapshot() ?: decoded(1))?.also {
             database.dao().checkpoint(ScheduleSyncCheckpoint(2, catalogBytes(it, it.state)))
         }
         catalog?.state?.let { it.profiles to it.customProfileKeys }
     }
     internal fun changeProfile(profile: TermScheduleProfile?, key: String): Boolean = blocking {
-        val base = decoded(1)
+        val base = (v2Commit(21) ?: v2Commit(23))?.snapshot() ?: decoded(1)
         if (base == null) {
             // Serialize preference edits with the first Room baseline/catalog establishment.
             requireNotNull(profiles).changePreference(profile, key)
@@ -314,6 +319,145 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         database.dao().deleteSyncRecord(3)
         if (pending?.revision == remote.revision) { database.dao().deleteSyncRecord(4); database.dao().deleteSyncRecord(5) }
     }
+    // v2 records have independent meanings; never rewrite v1 checkpoint IDs 1,3..7.
+    // 20 writer,21 verified virtual baseline,22 frontier,23 pending,24 capture,
+    // 25/26 conflict bases,27 conflict frontier,30..93 conflict branches,29 PUT attempted,
+    // 96 verified ID/hash witness,97 own abandoned paths (explicit quarantine).
+    private fun v2Commit(id: Int) = database.dao().syncRecord(id)?.payload?.let(ScheduleCommitCodec::decode)
+    private fun v2Put(id: Int, bytes: ByteArray) = database.dao().checkpoint(ScheduleSyncCheckpoint(id, bytes))
+    private fun v2Ids(id: Int) = database.dao().syncRecord(id)?.payload?.toString(Charsets.US_ASCII)?.split('\n')?.filter { it.isNotEmpty() }.orEmpty().also { ids ->
+        require(ids.size <= 64 && ids.distinct().size == ids.size); ids.forEach(ScheduleCommitCodec::uuid)
+    }
+    private fun v2Frontier(id: Int, ids: List<String>) = v2Put(id, ids.sorted().joinToString("\n").toByteArray(Charsets.US_ASCII))
+    private fun v2Writer(): String {
+        database.dao().syncRecord(20)?.let { return it.payload.toString(Charsets.US_ASCII).also(ScheduleCommitCodec::uuid) }
+        return java.util.UUID.randomUUID().toString().also { v2Put(20, it.toByteArray(Charsets.US_ASCII)) }
+    }
+    private fun v2Plan(): ScheduleV2Plan? = v2Commit(25)?.let { base ->
+        val ids = v2Ids(27)
+        ScheduleV2Plan(base, requireNotNull(v2Commit(26)), ids.indices.map { requireNotNull(v2Commit(30 + it)).also { c -> check(c.commitId == ids[it]) } })
+    }
+    override fun v2Frame(): ScheduleV2Frame = blocking {
+        ScheduleV2Frame(fullState(), v2Commit(21), v2Ids(22), v2Writer(), database.dao().syncRecord(23)?.payload, database.dao().syncRecord(29) != null, v2Plan(), v2Hashes(97), v2Problems())
+    }
+    override fun archiveMigrationRecovery(identity: ScheduleSnapshot) = blocking {
+        if (database.dao().syncRecord(100) != null) return@blocking
+        val bytes = ScheduleSnapshotCodec.encode(identity.copy(state = fullState()))
+        val ids = (1..7).filter { database.dao().syncRecord(it) != null }
+        ids.forEach { id -> v2Put(110 + id, requireNotNull(database.dao().syncRecord(id)).payload.copyOf()) }
+        v2Put(101, ids.joinToString(",").toByteArray(Charsets.US_ASCII))
+        v2Put(100, bytes)
+    }
+    override fun v2CheckTarget(identity: String) = blocking {
+        require(identity.matches(Regex("[0-9a-f]{64}")))
+        val old = database.dao().syncRecord(102)?.payload?.toString(Charsets.US_ASCII)
+        if (v2Commit(21) != null || v2Commit(23) != null) check(old == null || old == identity) {
+            "服务器、目录或账号身份已改变；保留待确认提交，请恢复原配置"
+        }
+        if (old != identity) v2Put(102, identity.toByteArray(Charsets.US_ASCII))
+    }
+    private fun v2Remember(id: String, bytes: ByteArray) {
+        val known = v2Hashes(96); val hash = digest(bytes)
+        check(known[id] == null || known[id] == hash) { "已确认提交内容改变" }
+        val updated = known + (id to hash)
+        check(updated.size <= 256) { "已确认历史数量超限；保留本地修改和回执" }
+        v2Put(96, updated.toSortedMap().map { "${it.key} ${it.value}" }.joinToString("\n").toByteArray(Charsets.US_ASCII))
+    }
+    private fun v2Problems(): Set<String> = database.dao().syncRecord(103)?.payload?.toString(Charsets.US_ASCII)?.split('\n')
+        ?.filter { it.isNotEmpty() }?.toSet().orEmpty().also { ids -> require(ids.size <= 256); ids.forEach(ScheduleCommitCodec::uuid) }
+    override fun v2Unverifiable(ids: Set<String>) = blocking {
+        require(ids.size <= 256) { "未验证路径数量超限；保留本地修改" }; ids.forEach(ScheduleCommitCodec::uuid)
+        if (v2Problems() != ids) v2Put(103, ids.sorted().joinToString("\n").toByteArray(Charsets.US_ASCII))
+    }
+    override fun v2Migrate(baseline: ScheduleSnapshot) = blocking {
+        check(v2Commit(21) == null && v2Commit(23) == null && decoded(1) == baseline && decoded(3) == null && decoded(4) == null)
+        val c = ScheduleCommit(baseline.datasetId, baseline.revision, v2Writer(), emptyList(), baseline.state)
+        v2Put(21, ScheduleCommitCodec.encode(c)); v2Frontier(22, emptyList())
+    }
+    override fun v2Start(root: ScheduleCommit, binding: Boolean) = blocking {
+        check(v2Commit(21) == null && v2Commit(23) == null) { "v2 already bound" }
+        val current = fullState()
+        if (binding) {
+            check(decoded(1) == null && decoded(4) == null && current.events.isEmpty() && current.entries.isEmpty() && current.sources.isEmpty() &&
+                current.dayAdjustments.isEmpty() && current.classOverrides.isEmpty() && current.customProfileKeys.isEmpty()) { "已有本地数据或旧绑定；拒绝静默覆盖" }
+            replaceState(root.state, root.snapshot())
+            val bytes = ScheduleCommitCodec.encode(root)
+            v2Put(21, bytes); v2Frontier(22, listOf(root.commitId)); v2Remember(root.commitId, bytes)
+        } else {
+            check(decoded(3) == null && decoded(4) == null) { "旧协议冲突或待确认发布尚未恢复；禁止切换" }
+            decoded(1)?.let { check(it.datasetId == root.datasetId) { "旧绑定 dataset 不一致" } }
+            check(ScheduleMerge.same(current, root.state))
+            v2Put(23, ScheduleCommitCodec.encode(root)); v2Put(24, ScheduleCommitCodec.encode(root.copy(state = current)))
+            v2Put(2, catalogBytes(root.snapshot(), current))
+        }
+    }
+    override fun v2Stage(bytes: ByteArray) = blocking {
+        val c = ScheduleCommitCodec.decode(bytes)
+        check(v2Commit(23) == null && v2Commit(21)?.datasetId == c.datasetId && c.parents == v2Ids(22))
+        v2Put(23, bytes.copyOf()); v2Put(24, bytes.copyOf())
+    }
+    override fun v2Attempt() = blocking { v2Put(29, byteArrayOf(1)) }
+    private fun v2Hashes(id: Int) = database.dao().syncRecord(id)?.payload?.toString(Charsets.US_ASCII)?.lines()?.filter { it.isNotEmpty() }?.associate {
+        val parts = it.split(' '); check(parts.size == 2); ScheduleCommitCodec.uuid(parts[0]); check(parts[1].matches(Regex("[0-9a-f]{64}"))); parts[0] to parts[1]
+    }.orEmpty()
+    override fun v2Observe(commits: Map<String, String>) = blocking {
+        val saved = v2Hashes(96)
+        check(saved.all { (id, hash) -> commits[id] == hash }) { "已验证历史缺失或内容改变；未完成同步" }
+        check(commits.size <= 256)
+        if (saved == commits) return@blocking
+        v2Put(96, commits.toSortedMap().map { "${it.key} ${it.value}" }.joinToString("\n").toByteArray(Charsets.US_ASCII))
+    }
+    override fun v2RenewPending() = blocking {
+        val old = requireNotNull(v2Commit(23)); val capture = requireNotNull(v2Commit(24))
+        val abandoned = v2Hashes(97) + (old.commitId to digest(database.dao().syncRecord(23)!!.payload))
+        check(abandoned.size <= 64) { "中断路径数量超限；保留待确认修改" }
+        v2Put(97, abandoned.toSortedMap().map { "${it.key} ${it.value}" }.joinToString("\n").toByteArray(Charsets.US_ASCII))
+        val id = java.util.UUID.randomUUID().toString()
+        database.dao().deleteSyncRecord(29)
+        v2Put(23, ScheduleCommitCodec.encode(old.copy(commitId = id)))
+        v2Put(24, ScheduleCommitCodec.encode(capture.copy(commitId = id)))
+    }
+    override fun v2Receipt(bytes: ByteArray) = blocking {
+        check(database.dao().syncRecord(23)!!.payload.contentEquals(bytes)) { "Pending receipt changed" }
+        val c = ScheduleCommitCodec.decode(bytes)
+        val replay = ScheduleMerge.merge(requireNotNull(v2Commit(24)).state, fullState(), c.state)
+        check(replay.conflicts.isEmpty()) { "上传回执后的本地编辑重放失败；保留 capture" }
+        replaceState(replay.state, c.snapshot())
+        v2Put(21, bytes.copyOf()); v2Frontier(22, listOf(c.commitId)); v2Remember(c.commitId, bytes)
+        database.dao().deleteSyncRecord(23); database.dao().deleteSyncRecord(24); database.dao().deleteSyncRecord(29)
+    }
+    override fun v2Apply(plan: ScheduleV2Plan): List<ScheduleMerge.Conflict> = blocking {
+        check(plan.branches.isNotEmpty() && plan.branches.size <= 64)
+        val result = plan.merge(fullState())
+        if (result.conflicts.isNotEmpty()) {
+            v2Put(25, ScheduleCommitCodec.encode(plan.base)); v2Put(26, ScheduleCommitCodec.encode(plan.localBase))
+            v2Frontier(27, plan.branches.map { it.commitId })
+            plan.branches.sortedBy { it.commitId }.forEachIndexed { i, c -> v2Put(30 + i, ScheduleCommitCodec.encode(c)) }
+        } else {
+            if (v2Commit(25) != null) {
+                listOf(25, 26, 27).forEach { database.dao().deleteSyncRecord(it) }
+                (30..93).forEach { database.dao().deleteSyncRecord(it) }
+            }
+            val baseline = plan.branches.first().copy(state = plan.remoteState())
+            val previous = v2Commit(21)
+            if (previous != null && ScheduleMerge.same(previous.state, baseline.state) &&
+                v2Ids(22) == plan.branches.map { it.commitId }.sorted() && ScheduleMerge.same(fullState(), result.state)) return@blocking emptyList()
+            replaceState(result.state, baseline.snapshot())
+            v2Put(21, ScheduleCommitCodec.encode(baseline)); v2Frontier(22, plan.branches.map { it.commitId })
+        }
+        result.conflicts
+    }
+    override fun v2Resolve(choice: ScheduleMerge.Choice, expectedToken: String?) = blocking {
+        val plan = requireNotNull(v2Plan())
+        check(expectedToken == null || expectedToken == plan.token()) { "冲突版本已经变化；请重新查看后再选择" }
+        val result = plan.merge(fullState(), choice)
+        val c = ScheduleCommit(plan.base.datasetId, java.util.UUID.randomUUID().toString(), v2Writer(), plan.branches.map { it.commitId }.sorted(), result.state)
+        replaceState(result.state, c.snapshot())
+        // Decision + exact upload capture are one transaction, including process death recovery.
+        v2Put(23, ScheduleCommitCodec.encode(c)); v2Put(24, ScheduleCommitCodec.encode(c))
+        listOf(25, 26, 27).forEach { database.dao().deleteSyncRecord(it) }
+        (30..93).forEach { database.dao().deleteSyncRecord(it) }
+    }
     override fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit) = write(callback) {
         database.dao().put(EventRow(event.id, event.title, event.start, event.end, event.note))
     }
@@ -336,7 +480,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         callback: (Result<ImportCommit>) -> Unit) = write(callback) {
         database.runInTransaction<ImportCommit> {
             val dao = database.dao()
-            if (dao.checkpoint() != null) check(source.resolvedTermKey()?.let { it in fullState().profiles } != false) { "Missing term profile" }
+            if (dao.checkpoint() != null || v2Commit(21) != null || v2Commit(23) != null) check(source.resolvedTermKey()?.let { it in fullState().profiles } != false) { "Missing term profile" }
             val existing = dao.source(source.id)
             check(if (replace) existing != null else existing == null) { "Import source changed; reopen the preview" }
             if (existing?.sha256 == source.sha256) ImportCommit(existing, emptyList(), true)

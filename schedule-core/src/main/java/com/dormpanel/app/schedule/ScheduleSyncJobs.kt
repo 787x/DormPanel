@@ -35,15 +35,24 @@ class ScheduleSyncJobService : JobService() {
                 val settings = SharedScheduleSettings(this)
                 if (settings.folder.isNotBlank() && store is ScheduleSyncStore) {
                     val result = synchronized(SharedScheduleRunLock) {
-                        val frame = store.syncFrame()
-                        if (frame.conflict != null) null else if (frame.baseline != null || frame.pending != null || settings.publishedRevision != null || settings.pendingRevision != null) {
-                            ScheduleSyncEngine(VisibleScheduleSyncStore(store), SharedScheduleTransport(),
-                                requireNotNull(WebDavSettings(this).account()), settings.folder).synchronize(legacy = settings.legacy())
-                        } else null
+                        val local = store as ScheduleV2Store
+                        val frame = local.v2Frame()
+                        if (frame.baseline == null && frame.pending == null) null else {
+                            val account = requireNotNull(WebDavSettings(this).account())
+                            val folder = WebDavClient().url(SharedScheduleTransport().folder(account, settings.folder)).newBuilder()
+                                .addPathSegment("dormpanel-sync-v2").addPathSegment("").build().toString()
+                            val visible = object : ScheduleV2Store by local {
+                                override fun v2Apply(plan: ScheduleV2Plan) = SharedScheduleViews.changing { local.v2Apply(plan) }
+                                override fun v2Receipt(bytes: ByteArray) = SharedScheduleViews.changing { local.v2Receipt(bytes) }
+                            }
+                            AppendOnlyScheduleSync(visible, WebDavCommitStore(account, folder)).synchronize()
+                        }
                     }
                     result?.let {
-                        retry = it.message.startsWith("有待上传")
-                        settings.result(it.message, it.conflicts.isEmpty() && !retry)
+                        val needsRetry = it.message.startsWith("有待上传") || it.message.contains("暂不可验证")
+                        retry = needsRetry && settings.retryAllowed()
+                        settings.result(it.message + if (needsRetry && !retry) " · 自动重试已暂停" else "",
+                            it.conflicts.isEmpty() && it.message.startsWith("已检查观察到的版本"))
                     }
                 }
             } catch (_: Exception) {

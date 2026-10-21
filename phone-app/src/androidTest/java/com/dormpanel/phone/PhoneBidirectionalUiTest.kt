@@ -14,6 +14,9 @@ import java.util.UUID
 import java.util.concurrent.*
 
 class PhoneBidirectionalUiTest {
+    private fun stage(message: String) {
+        InstrumentationRegistry.getInstrumentation().sendStatus(0, android.os.Bundle().apply { putString("stream", "PR35 UI: $message\n") })
+    }
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private fun waitFor(s: ActivityScenario<TimetableActivity>, predicate: (TimetableActivity) -> Boolean) {
         val deadline = System.currentTimeMillis() + 25000
@@ -38,6 +41,7 @@ class PhoneBidirectionalUiTest {
                 server.dispatcher = object : Dispatcher() {
                     override fun dispatch(request: RecordedRequest): MockResponse = synchronized(files) {
                         if (offline.get()) return@synchronized MockResponse().setResponseCode(503)
+                        v2Listing(files, request)?.let { return@synchronized it }
                         val key = request.path!!; val old = files[key]; val etag = old?.let { "\"${digest(it)}\"" }
                         if (request.method == "GET") return@synchronized if (old == null) MockResponse().setResponseCode(404)
                             else MockResponse().setBody(okio.Buffer().write(old)).addHeader("ETag", etag!!)
@@ -49,13 +53,14 @@ class PhoneBidirectionalUiTest {
                 }
                 try {
                     val account = WebDavAccount(server.url("/shared/").toString(), "user", "secret")
-                    WebDavSettings(context).saveAccount(account); SharedScheduleSettings(context).folder = account.baseUrl
-                    val transport = SharedScheduleTransport(); val first = SnapshotFixture.snapshot()
-                    transport.publish(account, account.baseUrl, ScheduleSnapshotCodec.encode(first), null, null)
+                    stage("save encrypted account"); WebDavSettings(context).saveAccount(account); stage("account saved"); SharedScheduleSettings(context).folder = account.baseUrl
+                    val transport = V2TestTransport(); val first = SnapshotFixture.snapshot()
+                    stage("seed mock commit"); transport.publish(account, account.baseUrl, ScheduleSnapshotCodec.encode(first), null, null); stage("commit seeded")
                     val bound = transport.inspect(account, account.baseUrl)
-                    ActivityScenario.launch(TimetableActivity::class.java).use { scenario ->
+                    stage("launch activity"); launchPhoneTestActivity().use { scenario ->
+                        stage("activity launched")
                         waitFor(scenario) { it.source.ready && !it.sharedSync.busy }
-                        scenario.onActivity { it.sharedSync.bind(bound) }
+                        stage("bind v2"); scenario.onActivity { it.sharedSync.bind(bound) }
                         waitFor(scenario) { it.source.state.sync != null && !it.sharedSync.busy }
                         // No manual sync: repeated committed edits must trigger automatic publication.
                         for (room in listOf("A200", "A201")) {
@@ -65,19 +70,24 @@ class PhoneBidirectionalUiTest {
                                 val entry = it.source.state.entries.single()
                                 assertTrue(it.source.saveEntry(entry.title, entry.day, entry.startMinute, entry.endMinute, room, entry.id))
                             }
-                            waitFor(scenario) { !it.sharedSync.busy && it.source.state.sync?.revision != revision && it.sharedSync.status == "已同步" }
+                            waitFor(scenario) { !it.sharedSync.busy && it.source.state.sync?.revision != revision && it.sharedSync.status.startsWith("已检查观察到的版本") }
                             assertEquals(room, transport.inspect(account, account.baseUrl).snapshot.state.entries.single().location)
                         }
                         val latest = transport.inspect(account, account.baseUrl)
                         val remote = latest.snapshot.copy(revision = UUID.randomUUID().toString(), parentRevision = latest.head.revision, generation = latest.snapshot.generation + 1,
                             state = latest.snapshot.state.copy(entries = latest.snapshot.state.entries.map { it.copy(location = "B201") }, events = emptyList()))
+                        // Save the offline side before making the remote branch visible.
+                        waitFor(scenario) { activity ->
+                            if (activity.sharedSync.busy || activity.source.applyingSnapshot) false else {
+                                activity.source.localCommitted = null
+                                val entry = activity.source.state.entries.single()
+                                assertTrue(activity.source.saveEntry(entry.title, entry.day, entry.startMinute, entry.endMinute, "A301", entry.id))
+                                true
+                            }
+                        }
                         transport.publish(account, account.baseUrl, ScheduleSnapshotCodec.encode(remote), latest.head.revision, latest.etag)
-                        scenario.onActivity {
-                            // Manual sync makes the simulated offline conflict deterministic.
-                            it.source.localCommitted = null
-                            val entry = it.source.state.entries.single()
-                            assertTrue(it.source.saveEntry(entry.title, entry.day, entry.startMinute, entry.endMinute, "A301", entry.id))
-                            it.sharedSync.sync()
+                        waitFor(scenario) { activity ->
+                            if (activity.sharedSync.busy || activity.source.applyingSnapshot) false else { activity.sharedSync.sync(); true }
                         }
                         waitFor(scenario) { !it.sharedSync.busy && it.sharedSync.conflicts.isNotEmpty() }
                         if (keepLocal) {
@@ -96,7 +106,7 @@ class PhoneBidirectionalUiTest {
                             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
                         }; bitmap.recycle()
                         onView(withText(if (keepLocal) "保留本地" else "采用远端")).perform(click())
-                        waitFor(scenario) { !it.sharedSync.busy && it.sharedSync.conflicts.isEmpty() && it.sharedSync.status == "已同步" }
+                        waitFor(scenario) { !it.sharedSync.busy && it.sharedSync.conflicts.isEmpty() && it.sharedSync.status.startsWith("已检查观察到的版本") }
                         scenario.onActivity {
                             assertFalse(it.source.readOnly)
                             assertEquals(if (keepLocal) "A301" else "B201", it.source.state.entries.single().location)

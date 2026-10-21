@@ -42,10 +42,10 @@ class PhoneTimetableTest {
         assertTrue("Timed out waiting for phone state", ready)
         instrumentation.waitForIdleSync()
     }
-    private fun open() = ActivityScenario.launch(TimetableActivity::class.java).also { waitFor(it) { a -> a.source.ready } }
+    private fun open() = launchPhoneTestActivity().also { waitFor(it) { a -> a.source.ready } }
     private fun pick(filename: String) {
         Intents.intending(hasAction(Intent.ACTION_OPEN_DOCUMENT)).respondWith(ActivityResult(Activity.RESULT_OK,
-            Intent().setData(Uri.parse("content://com.dormpanel.timetable.test.fixtures/$filename"))))
+            Intent().setData(Uri.parse("content://${instrumentation.context.packageName}.fixtures/$filename"))))
         onView(withText("管理")).perform(click())
         onView(withText("导入 ICS / 湖北大学 CSV")).perform(click())
     }

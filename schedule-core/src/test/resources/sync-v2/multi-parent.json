@@ -1,0 +1,107 @@
+{
+  "datasetId": "11111111-1111-4111-8111-111111111111",
+  "commitId": "00000000-0000-4000-8000-000000000004",
+  "writerId": "22222222-2222-4222-8222-222222222222",
+  "parents": [
+    "00000000-0000-4000-8000-000000000002",
+    "00000000-0000-4000-8000-000000000003"
+  ],
+  "state": {
+    "events": [
+      {
+        "id": "event",
+        "title": "日历",
+        "start": 1791763200000,
+        "end": 1791765900000,
+        "note": "phone"
+      }
+    ],
+    "entries": [
+      {
+        "id": "local",
+        "title": "课程",
+        "day": 2,
+        "startMinute": 600,
+        "endMinute": 645,
+        "location": "A301"
+      }
+    ],
+    "sources": [
+      {
+        "id": "source",
+        "displayName": "合成课程",
+        "filename": "classes.csv",
+        "kind": "webdav",
+        "locator": null,
+        "calendarName": "",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "importedAt": 123,
+        "timezones": "Asia/Shanghai",
+        "occurrenceCount": 1,
+        "firstStart": 1791763200000,
+        "lastEnd": 1791765900000,
+        "termKey": "custom"
+      }
+    ],
+    "imported": [
+      {
+        "id": "instance",
+        "sourceId": "source",
+        "seriesId": "series",
+        "uid": null,
+        "originalStart": 1791763200000,
+        "title": "导入课",
+        "start": 1791763200000,
+        "end": 1791765900000,
+        "timezone": "Asia/Shanghai",
+        "location": "",
+        "description": "教师",
+        "periodLabel": "[01-01节]"
+      }
+    ],
+    "dayAdjustments": [
+      {
+        "date": "2026-10-14",
+        "mode": "weekday",
+        "weekday": 1,
+        "label": "调课"
+      }
+    ],
+    "classOverrides": [
+      {
+        "key": "I:6:source:6:series:all",
+        "sourceId": "source",
+        "seriesId": "series",
+        "anchorDate": null,
+        "title": null,
+        "location": "",
+        "teacher": "教师",
+        "periodStart": 1,
+        "periodEnd": 1,
+        "timingMode": "linked"
+      }
+    ],
+    "profiles": [
+      {
+        "termKey": "custom",
+        "timezone": "Asia/Shanghai",
+        "week1Monday": "2026-09-07",
+        "phases": [
+          {
+            "effectiveFrom": "2026-09-07",
+            "periods": [
+              {
+                "periodNumber": 1,
+                "start": "08:05",
+                "end": "08:50"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "customProfileKeys": [
+      "custom"
+    ]
+  }
+}
