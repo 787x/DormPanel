@@ -1,15 +1,13 @@
 import http from "node:http";
 import { readFile, writeFile, chmod, unlink } from "node:fs/promises";
-import { dirname, join, basename } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, timingSafeEqual, randomUUID } from "node:crypto";
+import { randomBytes, timingSafeEqual, randomUUID, createHash } from "node:crypto";
 import { Store, json } from "./store.mjs";
-import { WebDav, binding } from "./webdav.mjs";
+import { Catalog } from "./catalog.mjs";
 import { date, ensure, zone } from "./protocol.mjs";
 import { projectWeek, monday } from "./projection.mjs";
-import { Workspace } from "./workspace.mjs";
-import { emptyState, mergePlan } from "./merge.mjs";
-import { SyncEngine, verifyEndpointMove } from "./sync.mjs";
+import { mergePlan } from "./merge.mjs";
 import { previewImport, commitImport } from "./import.mjs";
 
 export const PREFIX = "/app/dormpanel-schedule-manager";
@@ -86,16 +84,11 @@ export async function createApp({
   dataDir,
   configPath,
   webDir = join(dirname(fileURLToPath(import.meta.url)), "../web"),
-  remoteFactory = (c) => new WebDav(c),
+  remoteFactory,
+  authorizedRoots = [],
 }) {
-  const store = await new Store(dataDir).init(),
-    db = await Workspace.open(
-      store,
-      (await store.read("workspace.json")) ? null : await store.restore(),
-    ),
-    configStore = new Store(dirname(configPath));
-  let busy = false,
-    configuring = false;
+  const store = await new Store(dataDir).init();
+  const catalog = await Catalog.open({ store, configPath, remoteFactory, authorizedRoots });
   const tokens = new Map(),
     previews = new Map();
   const userToken = (user, origin = null) => {
@@ -106,38 +99,7 @@ export async function createApp({
     }
     return tokens.get(key);
   };
-  async function config() {
-    try {
-      const c = JSON.parse(await readFile(configPath, "utf8"));
-      binding(c);
-      ensure(typeof c.username === "string" && typeof c.password === "string");
-      return c;
-    } catch (e) {
-      if (e.code === "ENOENT") return null;
-      throw Error("后端绑定配置无效");
-    }
-  }
-  async function network(action) {
-    ensure(!busy, "正在执行网络操作");
-    busy = true;
-    try {
-      const c = await config();
-      ensure(c, "请先配置 WebDAV");
-      const engine = new SyncEngine(db, remoteFactory(c));
-      await action(engine);
-      await db.tx((f) => {
-        f.error = null;
-      });
-    } catch (e) {
-      await db.tx((f) => {
-        f.error = e.message;
-      });
-      throw e;
-    } finally {
-      busy = false;
-    }
-  }
-  const refresh = (options) => network((engine) => engine.synchronize(options));
+  const refresh = options => catalog.network(catalog.manifest.activeId, engine => engine.synchronize(options));
   const server = http.createServer(async (req, res) => {
     const send = (status, value, type = "application/json; charset=utf-8") => {
       res.writeHead(status, {
@@ -172,8 +134,8 @@ export async function createApp({
           "/api/resolve",
           "/api/import/preview",
           "/api/import/confirm",
-          "/api/config",
-          "/api/config/test",
+          "/api/manage",
+          "/api/connections/test",
         ];
         if (!routes.includes(path)) {
           send(405, { error: "不支持的写入路由" });
@@ -190,6 +152,8 @@ export async function createApp({
           return;
         }
         const input = await body(req);
+        const workspaceId = input.workspaceId;
+        const db = catalog.db(workspaceId);
         if (
           !Number.isSafeInteger(input.version) ||
           input.version !== db.frame.revision
@@ -197,17 +161,20 @@ export async function createApp({
           send(409, { error: "请求版本过期，请重新读取" });
           return;
         }
-        ensure(!configuring, "正在保存配置");
+        ensure(!catalog.configuring && !catalog.manifest.transition, "正在保存配置或等待恢复");
+        const network = action => catalog.network(workspaceId, action);
         if (path === "/api/edit") await db.edit(input.operation, input.version);
         else if (path === "/api/refresh" || path === "/api/sync")
-          await refresh({
+          await network(engine => engine.synchronize({
             bind: input.bind === true,
             create: input.create === true,
-          });
-        else if (path === "/api/resolve")
+          }));
+        else if (path === "/api/resolve") {
+          ensure(input.token === `${workspaceId}:${db.conflictToken()}` && db.conflictToken(), '冲突 token 已失效或工作区不匹配');
           await network((engine) =>
-            engine.resolve(input.choice, input.token, input.version),
+            engine.resolve(input.choice, db.conflictToken(), input.version),
           );
+        }
         else if (path === "/api/import/preview") {
           const bytes = Buffer.from(input.base64 ?? "", "base64"),
             preview = previewImport(bytes, input.filename, db.frame.local),
@@ -218,6 +185,7 @@ export async function createApp({
           previews.set(id, {
             preview,
             user,
+            workspaceId,
             version: db.frame.revision,
             expires: Date.now() + 15 * 60000,
           });
@@ -237,6 +205,7 @@ export async function createApp({
           ensure(
             p &&
               p.user === user &&
+              p.workspaceId === workspaceId &&
               p.version === input.version &&
               p.expires > Date.now(),
             "导入预览已失效",
@@ -252,89 +221,11 @@ export async function createApp({
             input.version,
           );
           previews.delete(input.id);
-        } else if (path === "/api/config/test") {
-          ensure(!busy, "正在同步");
-          const old = await config(),
-            c = {
-              url: input.url ?? old?.url,
-              username: input.username ?? old?.username,
-              password: input.password || old?.password,
-              certificatePem: input.certificatePem ?? old?.certificatePem,
-            };
-          binding(c);
-          ensure(c.username && c.password, "缺少凭据");
-          const remote = remoteFactory(c);
-          const ids = await remote.list();
-          send(200, { ok: true, observed: ids.length });
-          return;
-        } else if (path === "/api/config") {
-          ensure(!busy, "正在同步");
-          configuring = true;
-          busy = true;
-          try {
-            const old = await config(),
-              c = {
-                url: input.url,
-                username: input.username,
-                password: input.password || old?.password,
-                certificatePem: input.certificatePem ?? old?.certificatePem,
-              };
-            binding(c);
-            ensure(c.username && c.password, "缺少凭据");
-            const activeKey =
-              db.frame.bindingKey ?? (old ? binding(old).key : null);
-            const changed = !!activeKey && activeKey !== binding(c).key;
-            ensure(
-              !changed || input.confirm === activeKey,
-              "切换目录必须确认旧绑定地址",
-            );
-            const relocate = changed && input.relocate === true;
-            ensure(
-              !changed ||
-                relocate ||
-                (!db.dirty() &&
-                  !db.frame.pending &&
-                  !db.frame.conflict &&
-                  !db.frame.checkpoint.deferred?.length),
-              "存在本地修改、待确认发布、冲突或异常，拒绝切换；请先处理",
-            );
-            // 配置写入和状态切换期间禁止其他网络/配置操作。崩溃于两者之间会因 key 不符安全停止。
-            // 排空此前已排队事务，在改凭据前复核版本，后续写路由受 configuring 阻挡。
-            await db.tx(() => {}, input.version);
-            // 同一数据集迁移须完整读取新端点，证明旧身份、已知哈希与前沿闭包；不合并、不清空本地。
-            const moved = relocate
-              ? await verifyEndpointMove(db, remoteFactory(c))
-              : null;
-            if (changed)
-              await store.save("archive-" + randomUUID() + ".json", db.frame);
-            await configStore.save(basename(configPath), c);
-            await db.tx((f) => {
-              if (changed && !relocate) {
-                f.local = emptyState();
-                f.baseline = null;
-                f.datasetId = null;
-                f.frontier = [];
-                f.pending = null;
-                f.conflict = null;
-                f.graph = null;
-                f.checkpoint = {};
-                f.abandoned = {};
-                f.receipt = null;
-              }
-              if (moved)
-                f.checkpoint = {
-                  ...f.checkpoint,
-                  hashes: moved.hashes,
-                  deferred: moved.deferred,
-                  bindingKey: binding(c).key,
-                };
-              f.bindingKey = binding(c).key;
-              f.error = null;
-            });
-          } finally {
-            busy = false;
-            configuring = false;
-          }
+        } else if (path === "/api/connections/test") {
+          send(200, await catalog.test(input)); return;
+        } else if (path === "/api/manage") {
+          const result = await catalog.manage(input);
+          send(200, { ok: true, ...result, catalogVersion: catalog.manifest.revision }); return;
         }
         send(200, { ok: true, version: db.frame.revision });
         return;
@@ -343,20 +234,23 @@ export async function createApp({
         send(405, { error: "仅支持明确的 GET/POST 路由" });
         return;
       }
-      if (path === "/api/config") {
-        const c = await config();
-        send(200, {
-          bound: !!c,
-          url: c?.url ?? null,
-          hasCredentials: !!c?.username && !!c?.password,
-          hasTrustedCertificate: !!c?.certificatePem,
-          bindingKey: db.frame.bindingKey,
-          version: db.frame.revision,
-        });
-        return;
+      // schedule 无 ID 仅用于初次引导；其余数据读取必须明确指定工作区。
+      if (path.startsWith('/api/') && !['/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
+        send(404, { error: '不存在' }); return;
+      }
+      const workspaceId = u.searchParams.get("workspaceId") ??
+        (path === "/api/schedule" ? catalog.manifest.activeId : null);
+      const db = path.startsWith('/api/') ? catalog.db(workspaceId) : null;
+      const row = db ? catalog.row(workspaceId) : null;
+      const c = row?.connectionId ? catalog.connection(row.connectionId) : null;
+      const busy = catalog.busy.has(workspaceId);
+      if (path === "/api/manage") { send(200, await catalog.summary()); return; }
+      if (path === "/api/directories") {
+        send(200, { directories: await catalog.grants.browse(u.searchParams.get('rootId'), u.searchParams.get('relative') ?? '') }); return;
       }
       if (path === "/api/state") {
         send(200, {
+          workspaceId,
           version: db.frame.revision,
           local: publicValue(db.frame.local),
         });
@@ -368,8 +262,9 @@ export async function createApp({
         send(
           200,
           publicValue({
+            workspaceId,
             version: f.revision,
-            token: db.conflictToken(),
+            token: db.conflictToken() ? `${workspaceId}:${db.conflictToken()}` : null,
             conflicts: result?.conflicts ?? [],
             details: result?.details ?? [],
             branches: f.conflict?.branches ?? [],
@@ -392,8 +287,7 @@ export async function createApp({
             "页面来源不匹配",
           );
         }
-        const c = await config(),
-          z = zone(u.searchParams.get("zone") ?? "Asia/Shanghai"),
+        const z = zone(u.searchParams.get("zone") ?? "Asia/Shanghai"),
           first = monday(
             date(
               u.searchParams.get("date") ??
@@ -404,12 +298,15 @@ export async function createApp({
           state = f.local;
         const viewError =
           f.error ??
-          (c && f.bindingKey && f.bindingKey !== binding(c).key
+          (c && f.bindingKey && f.bindingKey !== catalog.remote(c).key
             ? "配置与本地绑定不一致；请显式验证同一数据集地址迁移或恢复原配置"
             : null);
         send(
           200,
           publicValue({
+            workspaceId,
+            workspaceName: row.name,
+            catalogVersion: catalog.manifest.revision,
             writerId: store.identity.writerId,
             csrf: userToken(user, pageOrigin),
             version: f.revision,
@@ -461,7 +358,7 @@ export async function createApp({
   });
   server.requestTimeout = 65000;
   server.headersTimeout = 10000;
-  return { server, refresh, store, db };
+  return { server, refresh, store, catalog, get db() { return catalog.db(catalog.manifest.activeId); } };
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   process.umask(0o077);
@@ -473,6 +370,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const app = await createApp({
     dataDir: process.env.TRIM_PKGVAR,
     configPath: join(process.env.TRIM_PKGETC, "webdav.json"),
+    authorizedRoots: [
+      ...(process.env.TRIM_DATA_SHARE_PATHS ?? '').split(':').filter(Boolean).map(path => ({ id: 'resource-' + createHash('sha256').update(path).digest('hex'), name: 'fnOS 应用共享目录', path, systemResource: true })),
+      ...(process.env.TRIM_DATA_ACCESSIBLE_PATHS ?? '').split(':').filter(Boolean).map(path => ({ id: 'authorized-' + createHash('sha256').update(path).digest('hex'), name: 'fnOS 用户授权目录：' + path, path })),
+    ],
   });
   await new Promise((resolve, reject) => {
     app.server.once("error", reject);

@@ -56,3 +56,5 @@ signing.properties
 /fnos-app/*.fpk
 
 /artifacts/pr38/
+
+/artifacts/pr39/

@@ -65,7 +65,7 @@ async function fixture(t) {
     call(
       "POST",
       path,
-      { version: app.db.frame.revision, ...data },
+      { workspaceId: app.catalog.manifest.activeId, catalogVersion: app.catalog.manifest.revision, version: app.db.frame.revision, ...data },
       {
         "Content-Type": "application/json",
         "X-DormPanel-CSRF": view.csrf,
@@ -85,8 +85,8 @@ test("每条修改路由均检查管理员、CSRF、同源、请求版本；拒�
     "/api/resolve",
     "/api/import/preview",
     "/api/import/confirm",
-    "/api/config",
-    "/api/config/test",
+    "/api/manage",
+    "/api/connections/test",
   ]) {
     assert.equal(
       (await f.post(path, {}, { "X-Trim-Isadmin": "false" })).status,
@@ -170,106 +170,26 @@ test("每条修改路由均检查管理员、CSRF、同源、请求版本；拒�
   );
   assert.equal(f.app.db.frame.local.entries.length, 1);
 });
-test("配置凭据安全查看、测试不保存、未发布本地修改阻止换库", async (t) => {
-  const f = await fixture(t);
-  const secret = "private-password-38";
-  assert.equal(
-    (
-      await f.post("/api/config", {
-        url: "https://example.com/folder/",
-        username: "w",
-        password: secret,
-      })
-    ).status,
-    200,
-  );
-  const before = await readFile(f.configPath, "utf8");
-  assert.equal(
-    (
-      await f.post("/api/config/test", {
-        url: "https://other.test/preview/",
-        username: "w",
-        password: "test",
-      })
-    ).status,
-    200,
-  );
-  assert.equal(await readFile(f.configPath, "utf8"), before);
-  for (const path of [
-    "/api/config",
-    "/api/state",
-    "/api/schedule",
-    "/api/conflicts",
-  ])
-    assert(!(await f.call("GET", path)).text.includes(secret));
-  assert.equal(
-    (
-      await f.post("/api/edit", {
-        operation: {
-          kind: "entry",
-          action: "upsert",
-          value: {
-            title: "离线",
-            day: 1,
-            startMinute: 480,
-            endMinute: 530,
-            location: "",
-          },
-        },
-      })
-    ).status,
-    200,
-  );
-  assert.equal(
-    (
-      await f.post("/api/config", {
-        url: "https://other.test/folder/",
-        username: "w",
-        password: "new",
-        confirm: f.app.db.frame.bindingKey,
-      })
-    ).status,
-    400,
-  );
-  assert.equal(await readFile(f.configPath, "utf8"), before);
-  assert.equal(f.app.db.frame.local.entries[0].title, "离线");
-  assert.equal(
-    (
-      await f.post("/api/config", {
-        url: "https://example.com/folder/",
-        username: "w",
-        password: "rotated",
-      })
-    ).status,
-    200,
-  );
-  assert.equal(
-    JSON.parse(await readFile(f.configPath, "utf8")).password,
-    "rotated",
-  );
-  // 模拟配置已 rename、数据库切换尚未提交的崩溃窗口，不能靠重发同 URL 绕过保护。
-  await writeFile(
-    f.configPath,
-    JSON.stringify({
-      url: "https://other.test/folder/",
-      username: "w",
-      password: "other",
-    }),
-  );
-  assert.equal((await f.call("GET", "/api/schedule")).data.status, "error");
-  assert.equal(
-    (
-      await f.post("/api/config", {
-        url: "https://other.test/folder/",
-        username: "w",
-        password: "other",
-        confirm: f.app.db.frame.bindingKey,
-      })
-    ).status,
-    400,
-  );
-  assert.equal(f.app.db.frame.local.entries[0].title, "离线");
+test("多连接配置凭据不返回浏览器，测试不改变当前工作区，拒绝覆盖绑定", async t => {
+  const f = await fixture(t), secret = 'private-password-39';
+  const result = await f.post('/api/manage', { action: 'connection.save', type: 'webdav', name: '连接 A', url: 'https://example.com/folder/', username: 'w', password: secret });
+  assert.equal(result.status, 200, result.text);
+  const connectionId = result.data.connectionId;
+  const before = JSON.stringify(f.app.db.frame), manifest = JSON.stringify(f.app.catalog.manifest);
+  assert.equal((await f.post('/api/connections/test', { name: '预览', type: 'webdav', url: 'https://other.test/preview/', username: 'w', password: 'temporary' })).status, 200);
+  assert.equal(JSON.stringify(f.app.db.frame), before);
+  assert.equal(JSON.stringify(f.app.catalog.manifest), manifest);
+  for (const path of ['/api/manage', '/api/state', '/api/schedule', '/api/conflicts']) {
+    const result = await f.call('GET', path + '?workspaceId=' + f.view.workspaceId);
+    assert.equal(result.status, 200); assert(!result.text.includes(secret));
+  }
+  assert.equal((await f.post('/api/manage', { action: 'workspace.endpoint', targetId: f.view.workspaceId, targetVersion: f.app.db.frame.revision, connectionId })).status, 200);
+  await f.app.db.tx(frame => { frame.datasetId = randomUUID(); });
+  const rotated = await f.post('/api/manage', { action: 'connection.save', connectionId, password: 'rotated' });
+  assert.equal(rotated.status, 400, '不能绕过已绑定历史验证');
+  assert.equal(f.app.catalog.connection(connectionId).config.password, secret);
 });
+
 test("阻止回环、元数据地址、IPv4映射回环和多播 SSRF，保留可明确配置的 LAN NAS", () => {
   for (const [ip, family] of [
     ["127.0.0.1", 4],
@@ -282,6 +202,43 @@ test("阻止回环、元数据地址、IPv4映射回环和多播 SSRF，保留�
   ])
     assert.equal(safeAddress(ip, family), false, ip);
   assert.equal(safeAddress("192.168.3.153", 4), true);
+});
+
+test('所有管理写路由拒绝缺失/伪造工作区与过期管理版本；导入预览不能跨工作区使用', async t => {
+  const f = await fixture(t);
+  const c = await f.post('/api/manage', { action: 'connection.save', type: 'webdav', name: 'B 连接', url: 'https://b.test/', username: 'u', password: 'p' });
+  const w = await f.post('/api/manage', { action: 'workspace.add', connectionId: c.data.connectionId, name: 'B' });
+  const b = f.app.catalog.db(w.data.workspaceId), a = f.app.db;
+  for (const path of ['/api/edit', '/api/sync', '/api/resolve', '/api/import/preview', '/api/import/confirm', '/api/manage', '/api/connections/test']) {
+    assert.equal((await f.post(path, { workspaceId: undefined })).status, 400);
+    assert.equal((await f.post(path, { workspaceId: randomUUID() })).status, 400);
+  }
+  assert.equal((await f.post('/api/manage', { action: 'workspace.switch', targetId: b.id, catalogVersion: -1 })).status, 409);
+  const bytes = await readFile(new URL('../../schedule-core/src/test/resources/schedule/wakeup.ics', import.meta.url));
+  const preview = await f.post('/api/import/preview', { filename: 'wakeup.ics', base64: bytes.toString('base64') });
+  assert.equal(preview.status, 200, preview.text);
+  await f.post('/api/manage', { action: 'workspace.switch', targetId: w.data.workspaceId });
+  const before = JSON.stringify(b.frame);
+  const replay = await f.post('/api/import/confirm', { id: preview.data.id, displayName: '错误目标' });
+  assert.equal(replay.status, 409, replay.text); assert.equal(JSON.stringify(b.frame), before);
+  const confirmed = await f.post('/api/import/confirm', { workspaceId: f.view.workspaceId, version: a.frame.revision, id: preview.data.id, displayName: '正确目标' });
+  assert.equal(confirmed.status, 200, confirmed.text); assert(a.frame.local.sources.length > 0);
+  assert.equal(b.frame.local.sources.length, 0);
+  assert.equal((await f.call('GET', '/api/state')).status, 400);
+  const denied = await f.call('GET', '/api/directories?workspaceId=' + w.data.workspaceId + '&rootId=/etc&relative=');
+  assert.equal(denied.status, 400);
+});
+
+test('冲突 token 同时绑定工作区，即使两个恢复帧碰巧完全相同也不能重放', async t => {
+  const f = await fixture(t), a = f.app.db;
+  const c = await f.post('/api/manage', { action: 'connection.save', type: 'webdav', name: 'B', url: 'https://b.test/', username: 'u', password: 'p' });
+  const w = await f.post('/api/manage', { action: 'workspace.add', name: 'B', connectionId: c.data.connectionId });
+  const b = f.app.catalog.db(w.data.workspaceId), base = structuredClone(a.frame.local);
+  const plan = { base, localBase: base, branches: [] };
+  await a.tx(frame => { frame.conflict = plan; }); await b.tx(frame => { frame.conflict = plan; });
+  assert.equal(a.conflictToken(), b.conflictToken());
+  const response = await f.post('/api/resolve', { workspaceId: w.data.workspaceId, version: b.frame.revision, token: f.view.workspaceId + ':' + a.conflictToken(), choice: 'local' });
+  assert.equal(response.status, 409); assert(!f.app.catalog.busy.size); assert(b.frame.conflict);
 });
 test("显式信任的独立证书仍启用 TLS 校验，精确拒绝另一个证书", async () => {
   const pem = await readFile(

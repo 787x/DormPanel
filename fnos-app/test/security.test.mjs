@@ -61,7 +61,7 @@ test('Socket Header与路由校验，不将其误报为进程来源认证', asyn
   assert.equal((await call('POST', '/api/refresh', admin)).status, 403);
   assert.equal((await call('PUT', '/api/schedule', admin)).status, 405);
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal((await call(method, '/api/publish', { ...spoof, 'X-DormPanel-CSRF': JSON.parse(spoofed.body).csrf })).status, 405);
-  const refresh = await call('POST', '/api/refresh', { ...admin, 'Content-Type':'application/json', 'X-DormPanel-CSRF': JSON.parse(view.body).csrf },{version:0}); assert.equal(refresh.status, 400);
+  const refresh = await call('POST', '/api/refresh', { ...admin, 'Content-Type':'application/json', 'X-DormPanel-CSRF': JSON.parse(view.body).csrf },{version:0,workspaceId:JSON.parse(view.body).workspaceId}); assert.equal(refresh.status, 400);
   const failed = JSON.parse((await call('GET', '/api/schedule', admin)).body); assert.equal(failed.status, 'error'); assert(failed.error.includes('WebDAV'));
   const restarted = await createApp({ dataDir: dir, configPath }); assert.equal(restarted.store.identity.writerId, app.store.identity.writerId);
   assert(restarted.db.frame.error.includes('WebDAV'));

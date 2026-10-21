@@ -10,9 +10,9 @@ if (!process.env.npm_execpath) throw Error('请使用 npm run build');
 const installed = spawnSync(process.execPath, [process.env.npm_execpath, 'ci', '--omit=dev', '--ignore-scripts', '--prefix', new URL('app/server/', build).pathname.replace(/^\/(\w:)/, '$1')], { stdio: 'inherit' });
 if (installed.status !== 0) throw Error('依赖安装失败');
 await writeFile(new URL('manifest', build), `appname=dormpanel-schedule-manager
-version=0.2.1
+version=0.3.0
 display_name=DormPanel Schedule Manager
-desc=离线课程编辑、Sync v2 不可变发布与冲突管理
+desc=多工作区、本地与 WebDAV 数据源、Sync v2 课表编辑与发布
 platform=all
 source=thirdparty
 maintainer=787x
@@ -24,7 +24,7 @@ os_min_version=1.1.3100
 ctl_stop=true
 `);
 await writeFile(new URL('config/privilege', build), JSON.stringify({ defaults: { 'run-as': 'package' }, username: 'dormpanel-schedule-manager', groupname: 'dormpanel-schedule-manager' }));
-await writeFile(new URL('config/resource', build), '{}\n');
+await writeFile(new URL('config/resource', build), JSON.stringify({ 'data-share': { shares: [{ name: 'dormpanel-schedule-manager/schedules' }] } }));
 await writeFile(new URL('app/ui/config', build), JSON.stringify({ '.url': { 'dormpanel-schedule-manager.main': { title: 'DormPanel Schedule Manager', icon: 'images/icon_{0}.png', type: 'iframe', protocol: '', gatewayPrefix: '/app/dormpanel-schedule-manager', gatewaySocket: 'app.sock', url: '/app/dormpanel-schedule-manager/', allUsers: false, control: { accessPerm: 'readonly' } } } }));
 const main = await readFile(new URL('main.sh', import.meta.url));
 await writeFile(new URL('cmd/main', build), main); await chmod(new URL('cmd/main', build), 0o755);
@@ -41,7 +41,8 @@ const wizard = [{ stepTitle: 'WebDAV 绑定', items: [
   { type: 'text', field: 'wizard_webdav_username', label: 'WebDAV 用户名', initValue: '' },
   { type: 'password', field: 'wizard_webdav_password', label: 'WebDAV 密码（空白保留原值）', initValue: '' }
 ] }];
-for (const name of ['install', 'config']) await writeFile(new URL('wizard/' + name, build), JSON.stringify(wizard));
+await writeFile(new URL('wizard/install', build), JSON.stringify(wizard));
+await writeFile(new URL('wizard/config', build), JSON.stringify([{ stepTitle: '数据源管理', items: [{ type: 'tips', helpText: '请打开 DormPanel 页面中的数据源管理添加或修改连接；NAS 本地文件夹授权请使用应用设置的访问权限。系统配置回调不会覆盖已保存的工作区或凭据。' }] }]));
 // 仓库内自绘 PNG 图标，无外部图片、字体或构建时下载。
 for (const [source, targets] of [['icon64.png', ['ICON.PNG', 'app/ui/images/icon_64.png']], ['icon256.png', ['ICON_256.PNG', 'app/ui/images/icon_256.png']]]) for (const target of targets) await cp(new URL(source, import.meta.url), new URL(target, build));
 console.log('FPK 工程已生成：' + build.pathname);

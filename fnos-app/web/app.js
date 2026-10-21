@@ -21,21 +21,26 @@ function el(tag, text, cls) {
 function paragraphs(id, rows) {
   $(id).replaceChildren(...rows.map((s) => el("p", s)));
 }
+let workspaceId, catalogVersion, management, switching = false, loadEpoch = 0;
 let token,
   version,
   local,
   profiles = [];
 async function load() {
+  const epoch = ++loadEpoch;
   try {
     const r = await fetch(
-      `${base}/api/schedule?date=${encodeURIComponent($("date").value)}&zone=${encodeURIComponent($("zone").value)}&origin=${encodeURIComponent(location.origin)}`,
+      `${base}/api/schedule?${workspaceId ? "workspaceId=" + encodeURIComponent(workspaceId) + "&" : ""}date=${encodeURIComponent($("date").value)}&zone=${encodeURIComponent($("zone").value)}&origin=${encodeURIComponent(location.origin)}`,
     );
     const s = await r.json();
     if (!r.ok) throw Error(s.error);
+    if (epoch !== loadEpoch) return;
+    workspaceId = s.workspaceId;
+    catalogVersion = s.catalogVersion;
     token = s.csrf;
     version = s.version;
     const statuses = {
-      unbound: "未配置 WebDAV；可以离线编辑。请在管理中配置。",
+      unbound: "未关联连接；可以离线编辑。请在数据源管理中配置。",
       unchecked: "尚未检查远端。",
       empty: "指定目录未发现 v2 课程数据。",
       verified: "已检查本轮观察到的版本。",
@@ -173,10 +178,13 @@ async function load() {
       s.events.map((e) => `${e.title} · ${e.note}`),
     );
     const state = await get("/api/state");
+    if (epoch !== loadEpoch || state.workspaceId !== workspaceId) return;
     local = state.local;
     version = state.version;
     renderRecords();
+    await loadManagement(epoch);
   } catch (e) {
+    if (epoch !== loadEpoch) return;
     $("status").textContent = e.message;
     $("status").dataset.error = true;
   }
@@ -207,20 +215,23 @@ $("today").onclick = () => {
 $("refresh").onclick = () => runSync({});
 
 async function get(path) {
-  const r = await fetch(base + path);
+  const scope = workspaceId;
+  const r = await fetch(base + path + (path.includes("?") ? "&" : "?") + "workspaceId=" + encodeURIComponent(scope));
   const v = await r.json();
   if (!r.ok) throw Error(v.error);
   return v;
 }
 async function post(path, data = {}) {
+  const scope = data.workspaceId ?? workspaceId;
   const r = await fetch(base + path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-DormPanel-CSRF": token },
-    body: JSON.stringify({ version, ...data }),
+    body: JSON.stringify({ workspaceId: scope, version, catalogVersion, ...data }),
   });
   const v = await r.json();
   if (!r.ok) throw Error(v.error);
-  if (v.version !== undefined) version = v.version;
+  if (scope === workspaceId && v.version !== undefined) version = v.version;
+  if (v.catalogVersion !== undefined) catalogVersion = v.catalogVersion;
   return v;
 }
 async function runSync(options) {
@@ -250,6 +261,7 @@ function field(name, value = "", type = "text") {
   return input;
 }
 function dialog(title, build, save) {
+  const scope = workspaceId, formVersion = version;
   $("editorTitle").textContent = title;
   $("fields").replaceChildren();
   $("formError").textContent = "";
@@ -260,6 +272,7 @@ function dialog(title, build, save) {
     e.preventDefault();
     if (!save) return;
     try {
+      if (scope !== workspaceId || formVersion !== version) throw Error("表单版本或工作区已变化，请关闭后重新打开");
       await save(read());
       $("editor").close();
       await load();
@@ -270,6 +283,10 @@ function dialog(title, build, save) {
   $("editor").showModal();
 }
 $("cancel").onclick = () => $("editor").close();
+$("editor").addEventListener('close', () => {
+  $("fields").replaceChildren();
+  $("editorForm").onsubmit = null;
+});
 const edit = (operation) => post("/api/edit", { operation });
 const time = (minute) =>
   `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
@@ -561,6 +578,7 @@ function renderRecords() {
   }
 }
 async function importFile() {
+  const scope = workspaceId, importVersion = version;
   dialog(
     "导入预览",
     () => {
@@ -587,6 +605,7 @@ async function importFile() {
           let binary = "";
           for (const b of bytes) binary += String.fromCharCode(b);
           preview = await post("/api/import/preview", {
+            workspaceId: scope, version: importVersion,
             filename: f.name,
             base64: btoa(binary),
           });
@@ -612,6 +631,7 @@ async function importFile() {
         )
           throw Error("已取消");
         return {
+          workspaceId: scope, version: preview.version,
           id: preview.id,
           displayName: name.value,
           targetId: target.value || null,
@@ -621,75 +641,10 @@ async function importFile() {
     (input) => post("/api/import/confirm", input),
   );
 }
-async function configure() {
-  try {
-    const c = await get("/api/config");
-    version = c.version;
-    dialog(
-      "WebDAV 配置",
-      () => {
-        $("fields").append(
-          el(
-            "p",
-            `当前绑定：${c.url ?? "未配置"}；凭据：${c.hasCredentials ? "已保存" : "未设置"}。密码留空保留。`,
-          ),
-        );
-        const url = field("HTTPS 共享目录 URL（末尾 /）", c.url),
-          username = field("用户名（填写后端凭据）", ""),
-          password = field("密码", "", "password"),
-          confirmOld = field(
-            "切换目录时手动填写原绑定地址：" + (c.bindingKey ?? "无"),
-            "",
-          );
-        const cert = field(
-            "显式信任的服务器公钥证书 PEM（仅从独立可信渠道取得；空白保留已有证书）",
-            "",
-            "textarea",
-          ),
-          systemCa = field("移除独立证书信任，恢复系统 CA", false, "checkbox"),
-          relocate = field(
-            "同一数据集地址迁移（完整验证历史并保留离线修改）",
-            false,
-            "checkbox",
-          );
-        systemCa.checked = false;
-        relocate.checked = false;
-        $("fields").append(
-          el(
-            "p",
-            `当前独立证书信任：${c.hasTrustedCertificate ? "已设置" : "使用系统 CA"}。不会关闭 TLS 或证书有效期校验。`,
-          ),
-        );
-        const read = () => ({
-          url: url.value,
-          username: username.value,
-          password: password.value,
-          confirm: confirmOld.value,
-          certificatePem: systemCa.checked ? "" : cert.value || undefined,
-          relocate: relocate.checked,
-        });
-        $("fields").append(
-          button("测试连接（不保存）", async () => {
-            try {
-              const r = await post("/api/config/test", read());
-              $("formError").textContent =
-                `连接成功，观察到 ${r.observed} 个提交`;
-            } catch (e) {
-              $("formError").textContent = e.message;
-            }
-          }),
-        );
-        return read;
-      },
-      (input) => post("/api/config", input),
-    );
-  } catch (e) {
-    alert(e.message);
-  }
-}
 async function showConflicts() {
   try {
     const c = await get("/api/conflicts");
+    if (c.workspaceId !== workspaceId) return;
     version = c.version;
     dialog(
       "同步冲突",
@@ -757,7 +712,7 @@ async function showConflicts() {
             button(label, async () => {
               if (!confirm(label + "？将保存待发布提交。")) return;
               try {
-                await post("/api/resolve", { choice, token: c.token });
+                await post("/api/resolve", { choice, token: c.token, workspaceId: c.workspaceId, version: c.version });
                 $("editor").close();
                 await load();
               } catch (e) {
@@ -779,7 +734,7 @@ $("manage").onclick = () => ($("manager").hidden = !$("manager").hidden);
 $("newProfile").onclick = () => editProfile();
 $("adjustDate").onclick = () => adjustDate();
 $("importFile").onclick = importFile;
-$("config").onclick = configure;
+$("config").onclick = () => showSources(true);
 $("conflicts").onclick = showConflicts;
 $("bind").onclick = () => {
   if (confirm("确认接收此目录已有数据集？本地未发布数据会阻止绑定。"))
@@ -789,4 +744,119 @@ $("create").onclick = () => {
   if (confirm("确认在已配置的空目录创建独立数据集？不能用于覆盖已有历史。"))
     runSync({ create: true });
 };
+async function loadManagement(epoch = loadEpoch) {
+  const scope = workspaceId, m = await get('/api/manage');
+  if (epoch !== loadEpoch || scope !== workspaceId) return;
+  management = m; catalogVersion = m.revision;
+  $('workspaceSelect').replaceChildren(...m.workspaces.map(w => {
+    const option = el('option', w.name + (w.conflict ? ' · 冲突' : w.pending ? ' · 待确认' : w.dirty ? ' · 未发布' : ''));
+    option.value = w.id; return option;
+  }));
+  $('workspaceSelect').value = workspaceId;
+  $('workspaceRows').replaceChildren(...m.workspaces.map(w => {
+    const row = el('article', null, 'course');
+    row.append(el('strong', w.name), el('p', `数据集 ${w.datasetId ?? '未绑定'} · ${w.dirty ? '有本地修改' : '本地已保存'} · ${w.pending ? '待发布候选' : '无候选'} · ${w.conflict ? '存在冲突' : '无冲突'} · ${w.busy ? '正在同步' : '空闲'}${w.recovery ? ' · 有恢复信息' : ''}`), el('p', `最近检查：${w.checkedAt ? new Date(w.checkedAt).toLocaleString() : '尚未检查'}${w.error ? ' · 异常：' + w.error : ''}`));
+    row.append(button('切换', () => switchWorkspace(w.id)), button('修改名称', async () => {
+      const name = prompt('工作区名称', w.name); if (!name) return;
+      await manageAction({ action: 'workspace.rename', targetId: w.id, targetVersion: w.version, name });
+    }), button('选择访问端点', () => chooseEndpoint(w)), button('移除配置', async () => {
+      const name = prompt('只移除配置，保留课表文件。当前/唯一工作区和有修改、冲突、恢复信息的工作区不能移除。输入名称确认：' + w.name);
+      if (name !== w.name) return;
+      await manageAction({ action: 'workspace.remove', targetId: w.id, targetVersion: w.version, confirm: name });
+    })); return row;
+  }));
+  $('connectionRows').replaceChildren(...m.connections.map(c => {
+    const row = el('article', null, 'course');
+    row.append(el('strong', c.name + ' · ' + c.type), el('p', c.type === 'webdav' ? c.url : `${m.roots.find(r => r.id === c.rootId)?.name ?? '授权已撤销'} / ${c.relative || '根目录'}`),
+      button('编辑连接', () => connectionDialog(c.type, c)), button('测试权限与历史', async () => {
+        try { const result = await post('/api/connections/test', { connectionId: c.id, name: c.name }); alert(`${result.permission}；${result.observed} 个提交；异常 ${result.deferred}`); }
+        catch (e) { alert(e.message); }
+      }), button('新建工作区', async () => {
+        const name = prompt('新工作区名称', c.name); if (!name) return;
+        await manageAction({ action: 'workspace.add', connectionId: c.id, name });
+      }), button('移除连接', async () => {
+        if (confirm('移除连接配置？仍被工作区使用时会拒绝。')) await manageAction({ action: 'connection.remove', connectionId: c.id });
+      })); return row;
+  }));
+}
+async function manageAction(input) {
+  try { const result = await post('/api/manage', input); await load(); return result; }
+  catch (e) { alert(e.message); await load(); }
+}
+async function switchWorkspace(id) {
+  if (!id || id === workspaceId || switching) return;
+  switching = true; $('workspaceSelect').disabled = true;
+  for (const id of ['dashboard', 'dashboardActions', 'dataSources']) $(id).inert = true;
+  $('editor').close();
+  try {
+    await post('/api/manage', { action: 'workspace.switch', targetId: id });
+    ++loadEpoch; workspaceId = id; local = null;
+    $('editor').close(); await load();
+  } catch (e) { alert(e.message); await load(); }
+  finally {
+    switching = false; $('workspaceSelect').disabled = false;
+    for (const id of ['dashboard', 'dashboardActions', 'dataSources']) $(id).inert = false;
+  }
+}
+function chooseEndpoint(w) {
+  dialog('工作区访问端点', () => {
+    const select = el('select');
+    for (const c of management.connections) { const o = el('option', c.name); o.value = c.id; select.append(o); }
+    select.value = w.connectionId ?? '';
+    $('fields').append(el('p', '已有数据集必须完整验证身份、已知提交和历史闭包。不同数据集请创建独立工作区。'), select);
+    return () => ({ action: 'workspace.endpoint', targetId: w.id, targetVersion: w.version, connectionId: select.value });
+  }, input => post('/api/manage', input));
+}
+function connectionDialog(type, c = null) {
+  dialog(c ? '编辑连接' : '新增连接', () => {
+    const name = field('连接名称', c?.name ?? (type === 'local' ? '本地课程' : 'WebDAV 课程'));
+    let read;
+    if (type === 'webdav') {
+      const url = field('HTTPS 共享父目录（末尾 /）', c?.url ?? ''), username = field('用户名', c?.username ?? ''), password = field('密码（留空保留已保存密码）', '', 'password'), cert = field('独立信任的服务器公钥证书 PEM（留空保留）', '', 'textarea'), system = field('恢复系统 CA', '', 'checkbox');
+      $('fields').append(el('p', `独立证书信任：${c?.hasTrustedCertificate ? '已设置' : '未设置'}。修改地址、凭据或信任配置时，已绑定工作区须重新验证完整历史。`));
+      read = () => ({ type, name: name.value, connectionId: c?.id, url: url.value, username: username.value, password: password.value, certificatePem: system.checked ? '' : cert.value || undefined });
+    } else {
+      const root = el('select'), path = el('select');
+      for (const r of management.roots) { const o = el('option', r.name); o.value = r.id; root.append(o); }
+      root.value = c?.rootId ?? 'private';
+      let relative = c?.relative ?? '';
+      const current = el('p');
+      const browse = async () => {
+        current.textContent = '选定目录：' + (relative || '/');
+        try {
+          const result = await get('/api/directories?rootId=' + encodeURIComponent(root.value) + '&relative=' + encodeURIComponent(relative));
+          path.replaceChildren(el('option', '选择子目录…'));
+          path.firstChild.value = '';
+          for (const dir of result.directories) { const o = el('option', dir); o.value = dir; path.append(o); }
+        } catch (e) { current.textContent += ' · 权限不可用：' + e.message; path.replaceChildren(); }
+      };
+      root.onchange = () => { relative = ''; browse(); };
+      path.onchange = () => { if (path.value) { relative = relative ? relative + '/' + path.value : path.value; browse(); } };
+      $('fields').append(el('p', '仅展示 FPK 私有目录及 fnOS 官方资源授权目录。应用中心撤销权限后会安全停止访问。新增私有连接默认自动创建独立目录；共享目录请选择专用空目录或已有 Sync v2 数据集父目录。'), root, current, path, button('上一级', () => { relative = relative.split('/').slice(0, -1).join('/'); browse(); }));
+      browse();
+      read = () => ({ type, name: name.value, connectionId: c?.id, rootId: root.value, relative, createPrivate: !c && root.value === 'private' && !relative });
+    }
+    $('fields').append(button('测试（不保存）', async () => {
+      try {
+        const input = read();
+        if (input.createPrivate) throw Error('新私有目录请先保存连接，再测试权限；测试不会创建工作区');
+        const result = await post('/api/connections/test', input);
+        $('formError').textContent = `${result.permission}；${result.observed} 个提交；异常 ${result.deferred}`;
+      } catch (e) { $('formError').textContent = e.message; }
+    }));
+    return read;
+  }, input => post('/api/manage', { action: 'connection.save', ...input }));
+}
+$('workspaceSelect').onchange = () => switchWorkspace($('workspaceSelect').value);
+function showSources(open) {
+  $('dataSources').hidden = !open;
+  $('dashboard').hidden = open;
+  $('dashboardActions').hidden = open;
+  $('pageTitle').textContent = open ? '数据源管理' : '课程表管理';
+  $('sourcesPage').textContent = open ? '返回课表' : '数据源管理';
+}
+$('sourcesPage').onclick = () => showSources($('dataSources').hidden);
+$('addWebDav').onclick = () => connectionDialog('webdav');
+$('addLocal').onclick = () => connectionDialog('local');
+$('refreshSources').onclick = () => load();
 await load();
