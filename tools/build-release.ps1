@@ -25,7 +25,7 @@ function Invoke-Gradle([string[]]$Tasks) {
 if (-not $Keystore) { $Keystore = Join-Path $env:USERPROFILE '.dormpanel\dormpanel-release.jks' }
 if (-not $KeyAlias) { $KeyAlias = 'androiddebugkey' }
 if (-not (Test-Path -LiteralPath $Keystore -PathType Leaf) -or -not $StorePassword -or -not $KeyPassword) {
-    throw 'Official RC build requires a keystore and both DORMPANEL_RELEASE_STORE_PASSWORD / DORMPANEL_RELEASE_KEY_PASSWORD. No unsigned or debug fallback.'
+    throw 'Official release build requires a keystore and both DORMPANEL_RELEASE_STORE_PASSWORD / DORMPANEL_RELEASE_KEY_PASSWORD. No unsigned or debug fallback.'
 }
 $Keystore = (Resolve-Path -LiteralPath $Keystore).Path
 $tools = Get-AndroidReleaseTools $BuildToolsDirectory
@@ -91,7 +91,7 @@ try {
     [IO.Directory]::Move($staging, $outDir)
     Assert-ReleaseDirectory $outDir $tools
     Write-Host "HA archive (actual integration version $haVersion): $outDir\DormPanel-HA-$haVersion.zip"
-    Write-Host "Local RC candidates: $outDir. No tag or Release created; physical acceptance pending."
+    Write-Host "Local signed artifacts: $outDir. No tag or Release created; device acceptance is recorded separately."
 } finally {
     foreach ($name in $envNames) { [Environment]::SetEnvironmentVariable($name, $oldEnvironment[$name], 'Process') }
     Pop-Location

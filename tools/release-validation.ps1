@@ -1,9 +1,9 @@
 # Shared by build-release.ps1 and verify-release.ps1. No signing secrets needed.
-$releaseVersion = '0.1.2-rc.2'
+$releaseVersion = '0.1.2'
 $expectedSigner = '32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7'
 $releaseApps = @(
-    @{ Device = 'X08E'; Module = 'app'; Package = 'com.dormpanel.app'; Code = '5'; Min = '28'; Target = '37' },
-    @{ Device = 'Phone'; Module = 'phone-app'; Package = 'com.dormpanel.timetable'; Code = '3'; Min = '28'; Target = '37' }
+    @{ Device = 'X08E'; Module = 'app'; Package = 'com.dormpanel.app'; Code = '6'; Min = '28'; Target = '37' },
+    @{ Device = 'Phone'; Module = 'phone-app'; Package = 'com.dormpanel.timetable'; Code = '4'; Min = '28'; Target = '37' }
 )
 
 function Get-AndroidReleaseTools([string]$BuildToolsDirectory) {
