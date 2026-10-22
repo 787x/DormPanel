@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, open, unlink } from "node:fs/promises";
+import { mkdir, readFile, rename, open, unlink, realpath } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { decode, ensure, hash, uuid } from "./protocol.mjs";
@@ -58,12 +58,19 @@ export class Store {
     }
   }
   async init() {
+    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    this.dir = await realpath(this.dir);
     this.identity = await this.read("identity.json");
     if (!this.identity) {
       this.identity = { writerId: randomUUID() };
       await this.save("identity.json", this.identity);
     }
     uuid(this.identity.writerId);
+    if (!this.identity.installationId) {
+      this.identity.installationId = randomUUID();
+      await this.save("identity.json", this.identity);
+    }
+    uuid(this.identity.installationId);
     return this;
   }
   async restore() {

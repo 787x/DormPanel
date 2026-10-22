@@ -257,3 +257,13 @@ export class SyncEngine {
     });
   }
 }
+
+// 恢复先做完整只读验证；候选是否出现仍由原 publish 恢复语义决定。
+export async function verifyRestoredHistory(db, remote) {
+  const f = db.frame;
+  const graph = await loadGraph(remote, { ...f.checkpoint, datasetId: f.datasetId ?? f.checkpoint.datasetId,
+    hashes: { ...f.graph?.hashes, ...f.checkpoint.hashes }, deferred: [...new Set([...(f.checkpoint.deferred ?? []), ...Object.keys(f.abandoned)])] });
+  if (f.datasetId) { ensure(graph.datasetId === f.datasetId, '恢复后的数据集身份不匹配'); graphPlan(graph, f.baseline, f.frontier); }
+  for (const [id, expected] of Object.entries(f.abandoned)) if (graph.hashes[id]) ensure(graph.hashes[id] === expected, '恢复后的中断历史变化');
+  return graph;
+}

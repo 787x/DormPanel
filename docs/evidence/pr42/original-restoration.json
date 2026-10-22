@@ -1,0 +1,16 @@
+[
+  {
+    "isolatedEndArchiveReadVerified": true,
+    "isolatedEndFileCount": 31,
+    "originalFiveWorkspaceVarAndEtcMovedBack": true,
+    "originalPrivateFilesByteExact": 23
+  },
+  {
+    "finalInstalledVersion": "0.4.0",
+    "originalWorkspaceCount": 5,
+    "originalPrivateFilesStillByteExactAfterStart": 23,
+    "writerIdUnchangedFrom032": true,
+    "originalInstallationAnchorPreserved": true,
+    "noAndroidOrDailyNasAccess": true
+  }
+]

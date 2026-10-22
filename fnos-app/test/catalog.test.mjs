@@ -85,7 +85,7 @@ test('A/B 独立编辑，候选 capture、冲突、异常与 writer 身份跨切
   const beforeA = json(a.db.frame), beforeB = json(b.db.frame);
   for (const targetId of [a.id, b.id, a.id]) await f.manage({ action: 'workspace.switch', targetId });
   const restarted = await Catalog.open(f.options);
-  assert.equal(json(restarted.db(a.id).frame), beforeA); assert.equal(json(restarted.db(b.id).frame), beforeB);
+  assert.equal(json((await restarted.load(a.id)).frame), beforeA); assert.equal(json((await restarted.load(b.id)).frame), beforeB);
   for (const w of [a, b]) assert.equal(w.db.store.identity.writerId, f.store.identity.writerId);
   assert.notEqual(a.db.frame.datasetId, b.db.frame.datasetId);
   await assert.rejects(f.manage({ action: 'workspace.remove', targetId: b.id, targetVersion: b.db.frame.revision, confirm: 'b' }), /修改|冲突|恢复/);
@@ -140,15 +140,16 @@ test('连接更新日志中断后自动完成，迁移不能清空课程或恢�
   const restarted = await Catalog.open(f.options);
   assert(!restarted.manifest.transition);
   assert.equal(restarted.connection(a.c.id).config.url, key);
-  assert.equal(restarted.db(a.id).frame.bindingKey, key + 'dormpanel-sync-v2/');
-  assert.equal(restarted.db(a.id).frame.local.entries[0].title, '保留课程');
+  assert.equal((await restarted.load(a.id)).frame.bindingKey, key + 'dormpanel-sync-v2/');
+  assert.equal((await restarted.load(a.id)).frame.local.entries[0].title, '保留课程');
 });
 test('已注册工作区文件缺失时拒绝静默创建空文件；管理版本和目标版本防重放', async t => {
   const f = await setup(t), a = await f.add('a');
   await assert.rejects(f.catalog.manage({ catalogVersion: -1, action: 'workspace.switch', targetId: a.id }), /过期/);
   await assert.rejects(f.manage({ action: 'workspace.rename', targetId: a.id, targetVersion: -1, name: '过期' }), /过期/);
   await rm(join(a.db.store.dir, 'workspace.json'));
-  await assert.rejects(Catalog.open(f.options), /缺失/);
+  const reopened = await Catalog.open(f.options);
+  await assert.rejects(reopened.load(a.id), /缺失/);
   await assert.rejects(readFile(join(a.db.store.dir, 'workspace.json')), { code: 'ENOENT' });
 });
 

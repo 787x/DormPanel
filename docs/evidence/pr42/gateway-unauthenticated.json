@@ -1,0 +1,14 @@
+[
+  {
+    "path": "/api/manage",
+    "method": "GET",
+    "httpStatus": 200,
+    "forgedAdminHeadersRejectedWithoutSession": true
+  },
+  {
+    "path": "/api/backups/list",
+    "method": "POST",
+    "httpStatus": 200,
+    "forgedAdminHeadersRejectedWithoutSession": true
+  }
+]

@@ -757,13 +757,13 @@ async function loadManagement(epoch = loadEpoch) {
   management = m; catalogVersion = m.revision;
   const context = { workspaceId: scope, version: m.workspaces.find(w => w.id === scope).version, catalogVersion: m.revision };
   $('workspaceSelect').replaceChildren(...m.workspaces.map(w => {
-    const option = el('option', w.name + (w.conflict ? ' · 冲突' : w.pending ? ' · 待确认' : w.dirty ? ' · 未发布' : ''));
+    const option = el('option', w.name + (w.unknown ? ' · 待检查' : w.conflict ? ' · 冲突' : w.pending ? ' · 待确认' : w.dirty ? ' · 未发布' : ''));
     option.value = w.id; return option;
   }));
   $('workspaceSelect').value = workspaceId;
   $('workspaceRows').replaceChildren(...m.workspaces.map(w => {
     const row = el('article', null, 'course');
-    row.append(el('strong', w.name), el('p', `数据集 ${w.datasetId ?? '未绑定'} · ${w.dirty ? '有本地修改' : '本地已保存'} · ${w.pending ? '待发布候选' : '无候选'} · ${w.conflict ? '存在冲突' : '无冲突'} · ${w.busy ? '正在同步' : '空闲'}${w.recovery ? ' · 有恢复信息' : ''}`), el('p', `最近检查：${w.checkedAt ? new Date(w.checkedAt).toLocaleString() : '尚未检查'}${w.error ? ' · 异常：' + w.error : ''}`));
+    row.append(el('strong', w.name), el('p', w.unknown ? '状态待检查；切换后读取并验证，不能判断是否有待发布修改或冲突。' : `数据集 ${w.datasetId ?? '未绑定'} · ${w.dirty ? '有本地修改' : '本地已保存'} · ${w.pending ? '待发布候选' : '无候选'} · ${w.conflict ? '存在冲突' : '无冲突'} · ${w.busy ? '正在同步' : '空闲'}${w.recovery ? ' · 有恢复信息' : ''}`), el('p', `最近检查：${w.checkedAt ? new Date(w.checkedAt).toLocaleString() : '尚未检查'}${w.error ? ' · 异常：' + w.error : ''}`));
     row.append(button('切换', () => switchWorkspace(w.id)), button('修改名称', async () => {
       const name = await requestText('工作区名称', w.name); if (!name) return;
       await manageAction({ ...context, action: 'workspace.rename', targetId: w.id, targetVersion: w.version, name });
@@ -771,7 +771,9 @@ async function loadManagement(epoch = loadEpoch) {
       const name = await requestText('只移除配置，保留课表文件。当前/唯一工作区和有修改、冲突、恢复信息的工作区不能移除。输入名称确认：' + w.name);
       if (name !== w.name) return;
       await manageAction({ ...context, action: 'workspace.remove', targetId: w.id, targetVersion: w.version, confirm: name });
-    })); return row;
+    }));
+    if (w.unknown) for (const b of [...row.querySelectorAll('button')].slice(1)) b.disabled = true;
+    return row;
   }));
   $('connectionRows').replaceChildren(...m.connections.map(c => {
     const row = el('article', null, 'course');
@@ -857,6 +859,7 @@ function connectionDialog(type, c = null) {
 }
 $('workspaceSelect').onchange = () => switchWorkspace($('workspaceSelect').value);
 function showSources(open) {
+  $('backups').hidden = true;
   $('dataSources').hidden = !open;
   $('dashboard').hidden = open;
   $('dashboardActions').hidden = open;
@@ -867,4 +870,71 @@ $('sourcesPage').onclick = () => showSources($('dataSources').hidden);
 $('addWebDav').onclick = () => connectionDialog('webdav');
 $('addLocal').onclick = () => connectionDialog('local');
 $('refreshSources').onclick = () => load();
+let backupToken = null, backupDirectoryIdentity = null;
+const backupLocation = () => ({ rootId: $('backupRoot').value, relative: $('backupRelative').value, directoryIdentity: backupDirectoryIdentity });
+async function backupJob(action) {
+  const buttons = [...$('backups').querySelectorAll('button')];
+  buttons.forEach(b => b.disabled = true); $('backupStatus').textContent = '正在处理…';
+  try { await action(); }
+  catch (e) { $('backupStatus').textContent = e.message; }
+  finally { $('backupPassword').value = ''; buttons.forEach(b => b.disabled = false); $('backupRestore').disabled = !backupToken; }
+}
+function renderBackupPreview(p) {
+  const root = $('backupPreview'); root.replaceChildren();
+  root.append(el('h3', '已验证的备份内容'), el('p', `${new Date(p.createdAt).toLocaleString()} · FPK ${p.appVersion} · 格式 ${p.formatVersion} · ${p.workspaceCount} 个工作区 · ${p.fileCount} 个文件 · ${p.bytes} 字节`), el('p', p.coverage));
+  for (const d of p.dependencies) {
+    const row = el('article', null, 'course');
+    row.append(el('strong', d.workspaceName), el('p', `${d.courseCount} 门课程 · ${d.pending ? '有待确认候选' : '无候选'} · ${d.conflict ? '有未解决冲突' : '无冲突'}`), el('p', d.included ? '已包含：应用状态和私有本地提交' : d.type === 'unbound' ? '已包含：离线应用状态；未关联外部数据' : '需外部访问：' + (d.type === 'webdav' ? d.endpoint : d.endpoint.relative || '授权目录')));
+    const status = p.external?.find(x => x.workspaceId === d.workspaceId);
+    if (status) row.append(el('p', status.verified ? status.status : '外部数据暂不可验证：' + status.reason));
+    const details = el('details'); details.append(el('summary', '身份、已知历史与依赖详情'), el('pre', JSON.stringify(d, null, 2))); row.append(details); root.append(row);
+  }
+  if (p.externalStatus) root.append(el('p', p.externalStatus));
+}
+async function browseBackups() {
+  backupDirectoryIdentity = null; backupToken = null; $('backupPreview').textContent = '';
+  const dirs = await get('/api/directories?rootId=' + encodeURIComponent($('backupRoot').value) + '&relative=' + encodeURIComponent($('backupRelative').value));
+  $('backupChild').replaceChildren(el('option', '选择子目录…'));
+  $('backupChild').firstChild.value = '';
+  for (const name of dirs.directories) { const o = el('option', name); o.value = name; $('backupChild').append(o); }
+  const result = await post('/api/backups/list', backupLocation()); backupDirectoryIdentity = result.directoryIdentity;
+  $('backupRows').replaceChildren(...result.backups.map(b => {
+    const row = el('article', null, 'course');
+    row.append(el('strong', b.name), el('p', `${b.size} 字节 · 文件时间 ${new Date(b.modifiedAt).toLocaleString()} · ${b.status}`), button('验证并预览恢复', () => backupJob(async () => {
+      backupToken = null;
+      const preview = await post('/api/backups/verify', { ...backupLocation(), name: b.name, password: $('backupPassword').value });
+      backupToken = preview.token;
+      renderBackupPreview(preview);
+      $('backupStatus').textContent = '认证解密、文件 SHA-256 和应用状态验证通过。请检查覆盖范围与外部依赖。';
+    })));
+    return row;
+  }));
+  $('backupStatus').textContent = `${result.backups.length} 个加密备份；未输入口令的文件不标为已验证。` + (result.lastRestore?.ok ? ' 最近恢复完成：' + new Date(result.lastRestore.restoredAt).toLocaleString() : '');
+}
+$('backupsPage').onclick = () => backupJob(async () => {
+  $('backups').hidden = false; $('dataSources').hidden = true; $('dashboard').hidden = true; $('dashboardActions').hidden = true;
+  $('pageTitle').textContent = '备份与恢复';
+  const old = $('backupRoot').value;
+  $('backupRoot').replaceChildren(...management.roots.filter(r => r.id !== 'private').map(r => { const o = el('option', r.name); o.value = r.id; return o; }));
+  if ([...$('backupRoot').options].some(o => o.value === old)) $('backupRoot').value = old;
+  await browseBackups();
+});
+$('backupRoot').onchange = () => backupJob(async () => { $('backupRelative').value = ''; await browseBackups(); });
+$('backupChild').onchange = () => backupJob(async () => { if ($('backupChild').value) { $('backupRelative').value = [$('backupRelative').value, $('backupChild').value].filter(Boolean).join('/'); await browseBackups(); } });
+$('backupUp').onclick = () => backupJob(async () => { $('backupRelative').value = $('backupRelative').value.split('/').slice(0, -1).join('/'); await browseBackups(); });
+$('backupBrowse').onclick = () => backupJob(browseBackups);
+$('backupCreate').onclick = () => backupJob(async () => {
+  const result = await post('/api/backups/create', { ...backupLocation(), password: $('backupPassword').value });
+  await browseBackups(); renderBackupPreview(result); $('backupStatus').textContent = '备份已保存并从实际文件重新认证验证。请妥善保管口令。';
+});
+$('backupRestore').onclick = () => backupJob(async () => {
+  const token = backupToken;
+  const confirm = await requestText('将用已验证备份替换当前全部应用工作区和连接。恢复前状态会保留，外部历史不会改写。输入“恢复应用数据”确认：');
+  if (confirm !== '恢复应用数据') {
+    await post('/api/backups/cancel', { token }); backupToken = null;
+    $('backupStatus').textContent = '已取消恢复并撤销预览'; return;
+  }
+  const result = await post('/api/backups/restore', { token, confirm });
+  backupToken = null; workspaceId = undefined; await load(); $('backupStatus').textContent = result.result;
+});
 await load();

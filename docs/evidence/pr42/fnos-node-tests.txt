@@ -1,0 +1,766 @@
+TAP version 13
+# Subtest: 多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复
+ok 1 - 多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复
+  ---
+  duration_ms: 2402.651822
+  type: 'test'
+  ...
+# Subtest: 拒绝 password，有效数据完全不变
+ok 2 - 拒绝 password，有效数据完全不变
+  ---
+  duration_ms: 1172.453422
+  type: 'test'
+  ...
+# Subtest: 拒绝 truncated，有效数据完全不变
+ok 3 - 拒绝 truncated，有效数据完全不变
+  ---
+  duration_ms: 1204.077748
+  type: 'test'
+  ...
+# Subtest: 拒绝 ciphertext，有效数据完全不变
+ok 4 - 拒绝 ciphertext，有效数据完全不变
+  ---
+  duration_ms: 1250.531179
+  type: 'test'
+  ...
+# Subtest: 拒绝 identity，有效数据完全不变
+ok 5 - 拒绝 identity，有效数据完全不变
+  ---
+  duration_ms: 1372.791265
+  type: 'test'
+  ...
+# Subtest: 私有提交 UUID 已有不同字节时恢复在决策前拒绝，不覆盖不可变历史
+ok 6 - 私有提交 UUID 已有不同字节时恢复在决策前拒绝，不覆盖不可变历史
+  ---
+  duration_ms: 1520.781057
+  type: 'test'
+  ...
+# Subtest: 回执已保存而 observe 尚未完成的合法帧也能完整备份和恢复
+ok 7 - 回执已保存而 observe 尚未完成的合法帧也能完整备份和恢复
+  ---
+  duration_ms: 2141.427781
+  type: 'test'
+  ...
+# Subtest: 授权 NAS 历史仅记录为外部依赖，撤销授权后恢复本地视图但拒绝发布
+ok 8 - 授权 NAS 历史仅记录为外部依赖，撤销授权后恢复本地视图但拒绝发布
+  ---
+  duration_ms: 2033.346241
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-precommit 注入故障，重启确定选择完整旧状态或新状态
+ok 9 - 恢复在 restore-precommit 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 1604.538156
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-committed 注入故障，重启确定选择完整旧状态或新状态
+ok 10 - 恢复在 restore-committed 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 1965.096065
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-file 注入故障，重启确定选择完整旧状态或新状态
+ok 11 - 恢复在 restore-file 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 2025.45203
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-complete 注入故障，重启确定选择完整旧状态或新状态
+ok 12 - 恢复在 restore-complete 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 2173.295495
+  type: 'test'
+  ...
+# Subtest: 备份失败没有有效半成品；只使用授权目录，拒绝遍历/链接/私有目录
+ok 13 - 备份失败没有有效半成品；只使用授权目录，拒绝遍历/链接/私有目录
+  ---
+  duration_ms: 1045.05896
+  type: 'test'
+  ...
+# Subtest: 恢复确认绑定管理员和预览，预览后编辑/切换拒绝；并发操作相互隔离
+ok 14 - 恢复确认绑定管理员和预览，预览后编辑/切换拒绝；并发操作相互隔离
+  ---
+  duration_ms: 1782.016071
+  type: 'test'
+  ...
+# Subtest: 实际 Socket 备份 API：管理员、CSRF、版本、口令、敏感响应与确认恢复
+ok 15 - 实际 Socket 备份 API：管理员、CSRF、版本、口令、敏感响应与确认恢复
+  ---
+  duration_ms: 1662.592206
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 traversal
+ok 16 - 认证归档仍拒绝恶意 traversal
+  ---
+  duration_ms: 880.890333
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 duplicate
+ok 17 - 认证归档仍拒绝恶意 duplicate
+  ---
+  duration_ms: 885.104102
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 size
+ok 18 - 认证归档仍拒绝恶意 size
+  ---
+  duration_ms: 874.32741
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 count
+ok 19 - 认证归档仍拒绝恶意 count
+  ---
+  duration_ms: 870.838208
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 missing
+ok 20 - 认证归档仍拒绝恶意 missing
+  ---
+  duration_ms: 845.977158
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 checksum
+ok 21 - 认证归档仍拒绝恶意 checksum
+  ---
+  duration_ms: 864.420454
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 version
+ok 22 - 认证归档仍拒绝恶意 version
+  ---
+  duration_ms: 865.431101
+  type: 'test'
+  ...
+# Subtest: PR38 非空完整迁移，manifest before 落盘中断后幂等恢复
+ok 23 - PR38 非空完整迁移，manifest before 落盘中断后幂等恢复
+  ---
+  duration_ms: 459.687106
+  type: 'test'
+  ...
+# Subtest: PR38 非空完整迁移，manifest after 落盘中断后幂等恢复
+ok 24 - PR38 非空完整迁移，manifest after 落盘中断后幂等恢复
+  ---
+  duration_ms: 236.897821
+  type: 'test'
+  ...
+# Subtest: A/B 独立编辑，候选 capture、冲突、异常与 writer 身份跨切换及重启完整保留
+ok 25 - A/B 独立编辑，候选 capture、冲突、异常与 writer 身份跨切换及重启完整保留
+  ---
+  duration_ms: 572.547262
+  type: 'test'
+  ...
+# Subtest: 上传期间切换并编辑另一工作区，回执与 capture replay 始终留在 A
+ok 26 - 上传期间切换并编辑另一工作区，回执与 capture replay 始终留在 A
+  ---
+  duration_ms: 600.728777
+  type: 'test'
+  ...
+# Subtest: 同数据集两个地址拒绝重复绑定；端点迁移验证已知内容与闭包，保留本地修改
+ok 27 - 同数据集两个地址拒绝重复绑定；端点迁移验证已知内容与闭包，保留本地修改
+  ---
+  duration_ms: 260.69201
+  type: 'test'
+  ...
+# Subtest: 连接更新日志中断后自动完成，迁移不能清空课程或恢复状态
+ok 28 - 连接更新日志中断后自动完成，迁移不能清空课程或恢复状态
+  ---
+  duration_ms: 214.285989
+  type: 'test'
+  ...
+# Subtest: 已注册工作区文件缺失时拒绝静默创建空文件；管理版本和目标版本防重放
+ok 29 - 已注册工作区文件缺失时拒绝静默创建空文件；管理版本和目标版本防重放
+  ---
+  duration_ms: 67.567513
+  type: 'test'
+  ...
+# Subtest: 已观察但尚未确认绑定的数据集也不能通过改凭据或 URL 绕过验证
+ok 30 - 已观察但尚未确认绑定的数据集也不能通过改凭据或 URL 绕过验证
+  ---
+  duration_ms: 76.603232
+  type: 'test'
+  ...
+# Subtest: 空工作区重复绑定失败后可确认移除，干净已发布工作区移除配置仍保留全部文件
+ok 31 - 空工作区重复绑定失败后可确认移除，干净已发布工作区移除配置仍保留全部文件
+  ---
+  duration_ms: 260.189413
+  type: 'test'
+  ...
+# Subtest: 多父 DAG、共同祖先与 tips
+ok 32 - 多父 DAG、共同祖先与 tips
+  ---
+  duration_ms: 23.909811
+  type: 'test'
+  ...
+# Subtest: 不同内容的多 Writer 分支不选任意最终结果
+ok 33 - 不同内容的多 Writer 分支不选任意最终结果
+  ---
+  duration_ms: 7.843816
+  type: 'test'
+  ...
+# Subtest: 缺父、不同数据集、多根、已知内容改变/缺失
+ok 34 - 缺父、不同数据集、多根、已知内容改变/缺失
+  ---
+  duration_ms: 25.521086
+  type: 'test'
+  ...
+# Subtest: 暂不可验证孤立文件持久化回查、不显示全部完成
+ok 35 - 暂不可验证孤立文件持久化回查、不显示全部完成
+  ---
+  duration_ms: 4.165648
+  type: 'test'
+  ...
+# Subtest: 完整封装未知语义不能隔离后采用
+ok 36 - 完整封装未知语义不能隔离后采用
+  ---
+  duration_ms: 1.457687
+  type: 'test'
+  ...
+# Subtest: 有环、等价 tips、目录遗漏但父闭包可读取
+ok 37 - 有环、等价 tips、目录遗漏但父闭包可读取
+  ---
+  duration_ms: 7.822696
+  type: 'test'
+  ...
+# Subtest: 失败轮次中已验证身份哈希仍持久化
+ok 38 - 失败轮次中已验证身份哈希仍持久化
+  ---
+  duration_ms: 3.949635
+  type: 'test'
+  ...
+# Subtest: 深祖先链不误用64个隔离路径上限
+ok 39 - 深祖先链不误用64个隔离路径上限
+  ---
+  duration_ms: 9.31349
+  type: 'test'
+  ...
+# Subtest: 八工作区启动只读取活动帧；管理列表不解码非活动工作区
+ok 40 - 八工作区启动只读取活动帧；管理列表不解码非活动工作区
+  ---
+  duration_ms: 301.458313
+  type: 'test'
+  ...
+# Subtest: 缺失和过期摘要显示未知；切换修复摘要；损坏或缺失帧绝不重建
+ok 41 - 缺失和过期摘要显示未知；切换修复摘要；损坏或缺失帧绝不重建
+  ---
+  duration_ms: 265.78156
+  type: 'test'
+  ...
+# Subtest: 并发按需读取共享同一队列；释放缓存后拒绝旧引用写入，重载保留候选恢复扩展
+ok 42 - 并发按需读取共享同一队列；释放缓存后拒绝旧引用写入，重载保留候选恢复扩展
+  ---
+  duration_ms: 276.883679
+  type: 'test'
+  ...
+# Subtest: 本地路径选择拒绝路径越界、编码绕过和未授权根
+ok 43 - 本地路径选择拒绝路径越界、编码绕过和未授权根
+  ---
+  duration_ms: 1.679865
+  type: 'test'
+  ...
+# Subtest: 未验证的平台拒绝本地访问和写入
+ok 44 - 未验证的平台拒绝本地访问和写入 # SKIP
+  ---
+  duration_ms: 0.146255
+  type: 'test'
+  ...
+# Subtest: 真实 Linux 排他原子发布、DPC2 固定向量互操作与目录持久化
+ok 45 - 真实 Linux 排他原子发布、DPC2 固定向量互操作与目录持久化
+  ---
+  duration_ms: 96.038957
+  type: 'test'
+  ...
+# Subtest: 两个本地数据集独立 SyncEngine，重启恢复精确候选和发布状态
+ok 46 - 两个本地数据集独立 SyncEngine，重启恢复精确候选和发布状态
+  ---
+  duration_ms: 427.872991
+  type: 'test'
+  ...
+# Subtest: 符号链接文件/协议目录/授权子路径、目录替换和授权撤销安全失败
+ok 47 - 符号链接文件/协议目录/授权子路径、目录替换和授权撤销安全失败
+  ---
+  duration_ms: 33.151461
+  type: 'test'
+  ...
+# Subtest: 只读目录、失去执行/读取权限安全失败，不创建提交
+ok 48 - 只读目录、失去执行/读取权限安全失败，不创建提交
+  ---
+  duration_ms: 36.258718
+  type: 'test'
+  ...
+# Subtest: 官方授权深层目录可访问，无需获得其卷/用户祖先目录的列举权限
+ok 49 - 官方授权深层目录可访问，无需获得其卷/用户祖先目录的列举权限
+  ---
+  duration_ms: 37.116946
+  type: 'test'
+  ...
+# Subtest: 崩溃暂存残留不进入协议目录，损坏/混入文件和资源超限不重写历史
+ok 50 - 崩溃暂存残留不进入协议目录，损坏/混入文件和资源超限不重写历史
+  ---
+  duration_ms: 98.133102
+  type: 'test'
+  ...
+# Subtest: 256 个提交的协议上限仍能在单轮本地请求预算内完整验证，第 257 个条目拒绝
+ok 51 - 256 个提交的协议上限仍能在单轮本地请求预算内完整验证，第 257 个条目拒绝
+  ---
+  duration_ms: 1557.956874
+  type: 'test'
+  ...
+# Subtest: 全周 → 日期调课 → 指定周，保持原始 anchor
+ok 52 - 全周 → 日期调课 → 指定周，保持原始 anchor
+  ---
+  duration_ms: 26.612214
+  type: 'test'
+  ...
+# Subtest: 不复制来源日停课；无效覆盖回退；目标日停课过滤
+ok 53 - 不复制来源日停课；无效覆盖回退；目标日停课过滤
+  ---
+  duration_ms: 7.703873
+  type: 'test'
+  ...
+# Subtest: 学期阶段按调课目标日期与 profile 时区联动
+ok 54 - 学期阶段按调课目标日期与 profile 时区联动
+  ---
+  duration_ms: 6.775197
+  type: 'test'
+  ...
+# Subtest: DST 缺口与重叠采用 Java atZone 等价规则
+ok 55 - DST 缺口与重叠采用 Java atZone 等价规则
+  ---
+  duration_ms: 7.750694
+  type: 'test'
+  ...
+# Subtest: 跨日实例保留真实结束时间与相邻学术周
+ok 56 - 跨日实例保留真实结束时间与相邻学术周
+  ---
+  duration_ms: 4.757775
+  type: 'test'
+  ...
+# Subtest: 固定向量 empty 逐字节兼容
+ok 57 - 固定向量 empty 逐字节兼容
+  ---
+  duration_ms: 11.392517
+  type: 'test'
+  ...
+# Subtest: 固定向量 complex-root 逐字节兼容
+ok 58 - 固定向量 complex-root 逐字节兼容
+  ---
+  duration_ms: 10.946362
+  type: 'test'
+  ...
+# Subtest: 固定向量 left 逐字节兼容
+ok 59 - 固定向量 left 逐字节兼容
+  ---
+  duration_ms: 2.95228
+  type: 'test'
+  ...
+# Subtest: 固定向量 right 逐字节兼容
+ok 60 - 固定向量 right 逐字节兼容
+  ---
+  duration_ms: 4.781648
+  type: 'test'
+  ...
+# Subtest: 固定向量 multi-parent 逐字节兼容
+ok 61 - 固定向量 multi-parent 逐字节兼容
+  ---
+  duration_ms: 3.036611
+  type: 'test'
+  ...
+# Subtest: 拒绝坏校验、截断、未知协议、文件名不符和非规范父序
+ok 62 - 拒绝坏校验、截断、未知协议、文件名不符和非规范父序
+  ---
+  duration_ms: 1.547304
+  type: 'test'
+  ...
+# Subtest: 坏校验固定向量
+ok 63 - 坏校验固定向量
+  ---
+  duration_ms: 1.703908
+  type: 'test'
+  ...
+# Subtest: 有效双层 SHA 不能掩盖领域错误、UTF-8 错误、nullable tag 或尾随字段
+ok 64 - 有效双层 SHA 不能掩盖领域错误、UTF-8 错误、nullable tag 或尾随字段
+  ---
+  duration_ms: 2.392865
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 1
+ok 65 - 完整领域校验 1
+  ---
+  duration_ms: 2.88383
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 2
+ok 66 - 完整领域校验 2
+  ---
+  duration_ms: 4.487172
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 3
+ok 67 - 完整领域校验 3
+  ---
+  duration_ms: 2.515517
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 4
+ok 68 - 完整领域校验 4
+  ---
+  duration_ms: 3.327044
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 5
+ok 69 - 完整领域校验 5
+  ---
+  duration_ms: 1.665406
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 6
+ok 70 - 完整领域校验 6
+  ---
+  duration_ms: 3.195096
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 7
+ok 71 - 完整领域校验 7
+  ---
+  duration_ms: 1.961955
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 8
+ok 72 - 完整领域校验 8
+  ---
+  duration_ms: 3.902038
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 9
+ok 73 - 完整领域校验 9
+  ---
+  duration_ms: 2.744268
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 10
+ok 74 - 完整领域校验 10
+  ---
+  duration_ms: 2.163043
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 11
+ok 75 - 完整领域校验 11
+  ---
+  duration_ms: 5.267563
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 12
+ok 76 - 完整领域校验 12
+  ---
+  duration_ms: 2.385345
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 13
+ok 77 - 完整领域校验 13
+  ---
+  duration_ms: 2.453871
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 14
+ok 78 - 完整领域校验 14
+  ---
+  duration_ms: 2.153027
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 15
+ok 79 - 完整领域校验 15
+  ---
+  duration_ms: 2.569909
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 16
+ok 80 - 完整领域校验 16
+  ---
+  duration_ms: 1.982413
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 17
+ok 81 - 完整领域校验 17
+  ---
+  duration_ms: 3.209231
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 18
+ok 82 - 完整领域校验 18
+  ---
+  duration_ms: 5.263744
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 19
+ok 83 - 完整领域校验 19
+  ---
+  duration_ms: 2.294771
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 20
+ok 84 - 完整领域校验 20
+  ---
+  duration_ms: 1.765965
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 21
+ok 85 - 完整领域校验 21
+  ---
+  duration_ms: 2.085367
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 22
+ok 86 - 完整领域校验 22
+  ---
+  duration_ms: 2.305531
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 23
+ok 87 - 完整领域校验 23
+  ---
+  duration_ms: 1.839023
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 24
+ok 88 - 完整领域校验 24
+  ---
+  duration_ms: 1.274249
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 25
+ok 89 - 完整领域校验 25
+  ---
+  duration_ms: 2.647526
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 26
+ok 90 - 完整领域校验 26
+  ---
+  duration_ms: 1.781442
+  type: 'test'
+  ...
+# Subtest: 完整领域校验 27
+ok 91 - 完整领域校验 27
+  ---
+  duration_ms: 4.416299
+  type: 'test'
+  ...
+# Subtest: UTF-16 key、空字符串与稀疏覆盖、完整 int64 保真
+ok 92 - UTF-16 key、空字符串与稀疏覆盖、完整 int64 保真
+  ---
+  duration_ms: 2.423471
+  type: 'test'
+  ...
+# Subtest: 管理员身份、重复 Header、客户端 TCP 和 CSRF 边界
+ok 93 - 管理员身份、重复 Header、客户端 TCP 和 CSRF 边界
+  ---
+  duration_ms: 0.758879
+  type: 'test'
+  ...
+# Subtest: 明确残余风险：可连接者能伪造 Header；CSRF 不认证对端
+ok 94 - 明确残余风险：可连接者能伪造 Header；CSRF 不认证对端
+  ---
+  duration_ms: 0.151154
+  type: 'test'
+  ...
+# Subtest: 严格 WebDAV 目录、重复/跨源/子目录/状态/实体
+ok 95 - 严格 WebDAV 目录、重复/跨源/子目录/状态/实体
+  ---
+  duration_ms: 7.176994
+  type: 'test'
+  ...
+# Subtest: 身份与配置进程重建保留；HTTP 数据端点全部授权、写操作拒绝
+ok 96 - 身份与配置进程重建保留；HTTP 数据端点全部授权、写操作拒绝
+  ---
+  duration_ms: 118.246865
+  type: 'test'
+  ...
+# Subtest: Socket Header与路由校验，不将其误报为进程来源认证
+ok 97 - Socket Header与路由校验，不将其误报为进程来源认证
+  ---
+  duration_ms: 119.748565
+  type: 'test'
+  ...
+# Subtest: Linux实际权限：撤销遗留www-data ACL，target 0700及Socket 0600
+ok 98 - Linux实际权限：撤销遗留www-data ACL，target 0700及Socket 0600
+  ---
+  duration_ms: 41.279303
+  type: 'test'
+  ...
+# Subtest: 无法设置私有权限时失败，不回退共享组或全员权限
+ok 99 - 无法设置私有权限时失败，不回退共享组或全员权限
+  ---
+  duration_ms: 5.05889
+  type: 'test'
+  ...
+# Subtest: 缺少ACL工具时chmod仍屏蔽遗留named-user权限
+ok 100 - 缺少ACL工具时chmod仍屏蔽遗留named-user权限
+  ---
+  duration_ms: 41.150511
+  type: 'test'
+  ...
+# Subtest: 拒绝把符号链接当作待授权Socket
+ok 101 - 拒绝把符号链接当作待授权Socket
+  ---
+  duration_ms: 6.208164
+  type: 'test'
+  ...
+# Subtest: 重建缓存重新校验原始字节，保留 int64 与异常清单
+ok 102 - 重建缓存重新校验原始字节，保留 int64 与异常清单
+  ---
+  duration_ms: 81.971049
+  type: 'test'
+  ...
+# Subtest: 真实升级回调忽略陈旧安装向导，逐字节保留当前地址、凭据和证书
+ok 103 - 真实升级回调忽略陈旧安装向导，逐字节保留当前地址、凭据和证书
+  ---
+  duration_ms: 261.271948
+  type: 'test'
+  ...
+# Subtest: 多工作区启用后目录授权的 config_callback 正常完成，忽略旧向导且不改写凭据
+ok 104 - 多工作区启用后目录授权的 config_callback 正常完成，忽略旧向导且不改写凭据
+  ---
+  duration_ms: 90.425535
+  type: 'test'
+  ...
+# Subtest: 每条修改路由均检查管理员、CSRF、同源、请求版本；拒绝过期重放
+ok 105 - 每条修改路由均检查管理员、CSRF、同源、请求版本；拒绝过期重放
+  ---
+  duration_ms: 136.457938
+  type: 'test'
+  ...
+# Subtest: 多连接配置凭据不返回浏览器，测试不改变当前工作区，拒绝覆盖绑定
+ok 106 - 多连接配置凭据不返回浏览器，测试不改变当前工作区，拒绝覆盖绑定
+  ---
+  duration_ms: 98.66335
+  type: 'test'
+  ...
+# Subtest: 阻止回环、元数据地址、IPv4映射回环和多播 SSRF，保留可明确配置的 LAN NAS
+ok 107 - 阻止回环、元数据地址、IPv4映射回环和多播 SSRF，保留可明确配置的 LAN NAS
+  ---
+  duration_ms: 0.352031
+  type: 'test'
+  ...
+# Subtest: 所有管理写路由拒绝缺失/伪造工作区与过期管理版本；导入预览不能跨工作区使用
+ok 108 - 所有管理写路由拒绝缺失/伪造工作区与过期管理版本；导入预览不能跨工作区使用
+  ---
+  duration_ms: 195.038385
+  type: 'test'
+  ...
+# Subtest: 冲突 token 同时绑定工作区，即使两个恢复帧碰巧完全相同也不能重放
+ok 109 - 冲突 token 同时绑定工作区，即使两个恢复帧碰巧完全相同也不能重放
+  ---
+  duration_ms: 99.707237
+  type: 'test'
+  ...
+# Subtest: 显式信任的独立证书仍启用 TLS 校验，精确拒绝另一个证书
+ok 110 - 显式信任的独立证书仍启用 TLS 校验，精确拒绝另一个证书
+  ---
+  duration_ms: 3.366996
+  type: 'test'
+  ...
+# Subtest: 离线编辑重启保留；版本检查与部分文件不被采纳
+ok 111 - 离线编辑重启保留；版本检查与部分文件不被采纳
+  ---
+  duration_ms: 50.5519
+  type: 'test'
+  ...
+# Subtest: 三个 Writer 独立记录离线编辑收敛；等价 tips 不产生无限纯合并
+ok 112 - 三个 Writer 独立记录离线编辑收敛；等价 tips 不产生无限纯合并
+  ---
+  duration_ms: 1924.942944
+  type: 'test'
+  ...
+# Subtest: 真正并发分支逐对冲突，保留本地不采纳任意远端；决策 token 拒绝新分支
+ok 113 - 真正并发分支逐对冲突，保留本地不采纳任意远端；决策 token 拒绝新分支
+  ---
+  duration_ms: 1156.816736
+  type: 'test'
+  ...
+# Subtest: 上传中编辑继续保留；回执丢失后同路径只 GET 恢复
+ok 114 - 上传中编辑继续保留；回执丢失后同路径只 GET 恢复
+  ---
+  duration_ms: 263.341526
+  type: 'test'
+  ...
+# Subtest: 已尝试但404改用新 UUID；中断路径持久回查且恢复为不同有效内容停止
+ok 115 - 已尝试但404改用新 UUID；中断路径持久回查且恢复为不同有效内容停止
+  ---
+  duration_ms: 231.700242
+  type: 'test'
+  ...
+# Subtest: 缺失/篡改已确认历史和目录漏列不能成功；未知损坏孤立文件持续标记
+ok 116 - 缺失/篡改已确认历史和目录漏列不能成功；未知损坏孤立文件持续标记
+  ---
+  duration_ms: 302.827746
+  type: 'test'
+  ...
+# Subtest: 跨语言固定左右分支合并与 multi-parent 完全相同
+ok 117 - 跨语言固定左右分支合并与 multi-parent 完全相同
+  ---
+  duration_ms: 15.852083
+  type: 'test'
+  ...
+# Subtest: 来源删除、课程删除、学期、日期组合与重置遵守关联冲突
+ok 118 - 来源删除、课程删除、学期、日期组合与重置遵守关联冲突
+  ---
+  duration_ms: 6.903486
+  type: 'test'
+  ...
+# Subtest: 全周和指定周覆盖 null/清空/重置及课程/来源级删除
+ok 119 - 全周和指定周覆盖 null/清空/重置及课程/来源级删除
+  ---
+  duration_ms: 0.547708
+  type: 'test'
+  ...
+# Subtest: ICS 既有 WakeUp 文件和 CSV 预览、确认替换保留 sourceId 及旧覆盖
+ok 120 - ICS 既有 WakeUp 文件和 CSV 预览、确认替换保留 sourceId 及旧覆盖
+  ---
+  duration_ms: 88.322145
+  type: 'test'
+  ...
+# Subtest: 拒绝不支持 ICS、恶意文件名、超限、浮动与无界循环
+ok 121 - 拒绝不支持 ICS、恶意文件名、超限、浮动与无界循环
+  ---
+  duration_ms: 0.813176
+  type: 'test'
+  ...
+# Subtest: 远端成功但本地回执事务失败，重启精确回读恢复且后续编辑保留
+ok 122 - 远端成功但本地回执事务失败，重启精确回读恢复且后续编辑保留
+  ---
+  duration_ms: 319.016315
+  type: 'test'
+  ...
+# Subtest: 预检 GET 失败不产生 PUT 标记；进程重建仍保留同一候选
+ok 123 - 预检 GET 失败不产生 PUT 标记；进程重建仍保留同一候选
+  ---
+  duration_ms: 54.184585
+  type: 'test'
+  ...
+# Subtest: 未开始下载的观察路径也在首次检查点保存；漏列仍逐个回查
+ok 124 - 未开始下载的观察路径也在首次检查点保存；漏列仍逐个回查
+  ---
+  duration_ms: 2.213162
+  type: 'test'
+  ...
+# Subtest: 不能证明等价的多重共同基线安全停止
+ok 125 - 不能证明等价的多重共同基线安全停止
+  ---
+  duration_ms: 2.357013
+  type: 'test'
+  ...
+# Subtest: 同一数据集迁移端点必须证明全部历史，保留离线编辑和精确待发布输入
+ok 126 - 同一数据集迁移端点必须证明全部历史，保留离线编辑和精确待发布输入
+  ---
+  duration_ms: 178.758196
+  type: 'test'
+  ...
+1..126
+# tests 126
+# suites 0
+# pass 125
+# fail 0
+# cancelled 0
+# skipped 1
+# todo 0
+# duration_ms 31584.568339

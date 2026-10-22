@@ -1,6 +1,12 @@
-# DormPanel Schedule Manager 0.3.2
+# DormPanel Schedule Manager 0.4.0
 
-fnOS Native 可编辑课表与 Sync v2 Writer。Android 0.1.2、DPC2 / DPSS/1 协议、Room 数据库和正式 APK 不变。
+“备份与恢复”支持在 fnOS 官方授权目录保存带 scrypt / AES-256-GCM 认证加密的完整应用归档，回读验证后公开文件。同一 writerId + installationId 的恢复必须先验证和明确确认，保留旧状态、通过持久化恢复日志完成切换，外部身份/已知历史验证前不允许发布。WebDAV 和用户授权目录的远端历史不默认复制，不能将应用备份视作完整远端数据集备份。
+
+恢复预览十五分钟到期自动撤销并清理，取消确认也会撤销预览；失败保持私有权限并延后重试。清理与恢复互斥，保留日志输入和恢复前快照。启动父 shell 在删除任何运行文件前取得 flock，未获锁的 start 不得清理另一个实例的 PID/Socket/ready。当前候选与增量验证见 [最终加固记录](../docs/pr42-final-hardening.md)。
+
+启动只完整读取活动工作区。其余列表状态来自以原文件标识/时间/大小核对的可丢弃摘要；失效时显示待检查，切换时读取真实状态。0.3.2 原工作区文件和 writerId 保持，identity 仅新增一次 installationId。详细说明、资源预算、测试、实测数据和候选哈希见 [PR42](../docs/pr42-fpk-backup-recovery.md)。
+
+fnOS Native 可编辑课表与 Sync v2 Writer。本次不修改 Android、DPC2 / DPSS/1 协议、Room 数据库或正式 APK。
 
 ## 使用
 

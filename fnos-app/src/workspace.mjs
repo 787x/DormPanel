@@ -1,3 +1,5 @@
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { randomUUID } from "node:crypto";
 import {
   decode,
@@ -6,6 +8,7 @@ import {
   hash,
   overrideKey,
   schemas,
+  uuid,
 } from "./protocol.mjs";
 import { emptyState, same } from "./merge.mjs";
 import { json } from "./store.mjs";
@@ -17,6 +20,7 @@ export class Workspace {
     this.store = store;
     this.frame = frame;
     this.queue = Promise.resolve();
+    this.writing = 0;
   }
   static async open(store, graph) {
     let frame = await store.read("workspace.json");
@@ -45,6 +49,11 @@ export class Workspace {
     );
     canonical(frame.local);
     if (frame.baseline) canonical(frame.baseline);
+    if (frame.datasetId) {
+      uuid(frame.datasetId);
+      ensure(!frame.graph?.datasetId || frame.graph.datasetId === frame.datasetId, '工作区缓存数据集身份异常');
+      ensure(!frame.checkpoint.datasetId || frame.checkpoint.datasetId === frame.datasetId, '工作区检查点数据集身份异常');
+    }
     if (frame.pending) {
       const c = decode(Buffer.from(frame.pending.raw, "base64"));
       ensure(
@@ -54,12 +63,27 @@ export class Workspace {
       );
       canonical(frame.pending.capture);
     }
-    return new Workspace(store, frame);
+    const db = new Workspace(store, frame);
+    await db.saveSummary(true);
+    return db;
+  }
+  async saveSummary(ifStale = false) {
+    // 摘要始终是可丢弃缓存，失败时列表回退为未知。
+    try {
+      const stamp = await workspaceStamp(this.store), value = workspaceSummary(this);
+      if (ifStale) {
+        const cached = await this.store.read('summary.json').catch(() => null);
+        if (cached?.schema === 1 && cached.stamp === stamp && json(cached.value) === json(value)) return;
+      }
+      await this.store.save('summary.json', { schema: 1, stamp, value });
+    } catch { /* 已提交帧仍有效 */ }
   }
   snapshot() {
     return structuredClone(this.frame);
   }
   tx(change, expected) {
+    try { this.guard?.(); } catch (e) { return Promise.reject(e); }
+    this.writing++;
     const task = this.queue.then(async () => {
       const next = structuredClone(this.frame);
       ensure(
@@ -72,9 +96,10 @@ export class Workspace {
       next.revision++;
       await this.store.save("workspace.json", next);
       this.frame = next;
+      await this.saveSummary();
       return value;
     });
-    this.queue = task.catch(() => {});
+    this.queue = task.finally(() => { this.writing--; }).catch(() => {});
     return task;
   }
   edit(operation, expected) {
@@ -195,4 +220,14 @@ export function applyEdit(s, op) {
       if (action === "upsert") s.customProfileKeys.push(id);
     }
   }
+}
+
+export async function workspaceStamp(store) {
+  const s = await stat(join(store.dir, 'workspace.json'), { bigint: true });
+  return [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].join(':');
+}
+export function workspaceSummary(db) {
+  const f = db.frame;
+  return { unknown: false, version: f.revision, datasetId: f.datasetId, dirty: db.dirty(), pending: !!f.pending, conflict: !!f.conflict, error: f.error,
+    checkedAt: f.graph?.checkedAt ?? null, recovery: !!f.restoreGuard || !!f.checkpoint.deferred?.length || Object.keys(f.abandoned).length > 0 };
 }

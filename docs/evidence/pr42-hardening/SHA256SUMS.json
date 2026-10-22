@@ -1,0 +1,8 @@
+{
+  ".gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
+  "candidate.json": "ee7f31469498419312a4a01ea5a278cff3806f6e27ebf9d9b175b7e9b59fa7c0",
+  "fnos-node-tests.txt": "9faed48bc5828dae89ed89e3d3d9d043e9e7539c5d3af6dd75523d5d1bdace3d",
+  "linux-targeted-tests.txt": "27412323792446b07a2747454eafce28de48ee5120a510bc84d3f98a26210a46",
+  "old-archive-compatibility.json": "56766b0704b53b5fce07d8e8abcaf38cf447a31182e4df20582535b5556fbc89",
+  "windows-node-tests.txt": "20bde176556f03131b188274d84767907c8a804d165009549c3fca5dd90c7cdb"
+}
