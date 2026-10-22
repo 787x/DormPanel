@@ -48,7 +48,7 @@ async function load() {
       incomplete: "存在暂不可验证历史，尚未完成全部版本检查。",
       branches: "已观察多个并发分支。",
       conflict: "存在待处理冲突；请在管理中查看。",
-      error: "离线或历史验证失败：" + s.error,
+      error: "连接或同步检查失败；请在数据源管理查看详情。",
     };
     $("status").textContent =
       statuses[s.status] +
@@ -58,7 +58,10 @@ async function load() {
         : s.dirty
           ? " · 有待发布修改"
           : " · 无待发布本地修改") +
-      (s.published ? "\n本机提交已验证发布：" + s.published.commitId : "");
+      (s.published ? "\n本机发布已回读确认；其他设备接收情况未知" : "");
+    $('managerStatus').textContent = $('status').textContent;
+    $('welcome').dataset.unbound = String(s.status === 'unbound');
+    $('welcome').hidden = s.status !== 'unbound' || !$('manager').hidden;
     $("status").dataset.error = ["incomplete", "conflict", "error"].includes(
       s.status,
     );
@@ -143,8 +146,10 @@ async function load() {
     paragraphs("details", [
       `数据集：${s.datasetId ?? "未绑定"}`,
       `Writer：${s.writerId}`,
+      ...(s.published ? [`已发布提交：${s.published.commitId}`] : []),
       `历史：${s.historyCount} · 分支：${s.tips.length} · 异常：${s.deferred.length}`,
       `检查时间：${s.checkedAt ? new Intl.DateTimeFormat("zh-CN", { timeZone: s.zone, dateStyle: "short", timeStyle: "medium" }).format(new Date(s.checkedAt)) : "尚未检查"}`,
+      ...(s.error ? [`错误：${s.error}`] : []),
       ...s.tips.map((id) => `tip ${id}`),
     ]);
     paragraphs(
@@ -251,6 +256,7 @@ function button(label, action) {
   const b = el("button", label);
   b.type = "button";
   b.onclick = action;
+  if (/删除|移除/.test(label)) b.className = "danger";
   return b;
 }
 function field(name, value = "", type = "text") {
@@ -264,6 +270,7 @@ function field(name, value = "", type = "text") {
 }
 let editorEpoch = 0;
 function dialog(title, build, save) {
+  const opener = document.activeElement;
   const epoch = ++editorEpoch, submit = $("editorForm").querySelector("[type=submit]");
   let scope = workspaceId, formVersion = version, formCatalogVersion = catalogVersion;
   let read, ready = true, saving = false;
@@ -310,6 +317,9 @@ function dialog(title, build, save) {
       saving = false; update();
     }
   };
+  $('editor').addEventListener('close', () => {
+    (opener?.isConnected ? opener : $('sourcesPage')).focus();
+  }, { once: true });
   $("editor").showModal();
   // 先给出可见反馈，构建异常和异步加载失败都留在可取消、可重试的弹窗内。
   void initialize();
@@ -538,9 +548,15 @@ function adjustDate(row = {}) {
     "日期调整 / 停课与补课",
     () => {
       const d = field("目标日期", row.date ?? $("date").value, "date"),
-        mode = field("模式（none 停课 / weekday 补课）", row.mode ?? "none"),
+        mode = el('select'),
         day = field("补用星期（1–7）", row.weekday ?? 1, "number"),
         label = field("说明", row.label ?? "");
+      for (const [value, label] of [['none', '停课'], ['weekday', '补课（使用指定星期的课程）']]) {
+        const option = el('option', label); option.value = value; mode.append(option);
+      }
+      mode.value = row.mode ?? 'none';
+      const modeLabel = el('label', '调整方式'); modeLabel.append(mode); d.parentElement.after(modeLabel);
+      day.disabled = mode.value === 'none'; mode.onchange = () => { day.disabled = mode.value === 'none'; };
       if (row.date) d.disabled = true;
       return () => ({
         date: d.value,
@@ -593,14 +609,17 @@ function renderRecords() {
     ],
     ["date", local.dayAdjustments, "日期调整", "date", adjustDate],
   ]) {
-    root.append(el("h3", label));
+    const group = el("section", null, "record-group");
+    group.append(el("h3", label));
+    root.append(group);
+    if (!rows.length) group.append(el("p", "暂无" + label, "hint"));
     for (const row of rows) {
       const p = el(
         "p",
         row.title ??
           row.displayName ??
           row.termKey ??
-          `${row.date} ${row.mode} ${row.label}`,
+          `${row.date} ${row.mode === "none" ? "停课" : "补课"} ${row.label}`,
       );
       p.append(
         button("编辑", () => editor(row)),
@@ -608,7 +627,7 @@ function renderRecords() {
           remove(kind, row[key], row.title ?? row.displayName ?? row[key]),
         ),
       );
-      root.append(p);
+      group.append(p);
     }
   }
 }
@@ -779,7 +798,15 @@ async function showConflicts() {
 }
 $("newCourse").onclick = () => editEntry();
 $("newEvent").onclick = () => editEvent();
-$("manage").onclick = () => ($("manager").hidden = !$("manager").hidden);
+$('manage').onclick = () => {
+  $('manager').hidden = !$('manager').hidden;
+  $('welcome').hidden = $('welcome').dataset.unbound !== 'true' || !$('manager').hidden;
+  $('manage').setAttribute('aria-expanded', String(!$('manager').hidden));
+  if (!$('manager').hidden) $('manager').scrollIntoView({ block: 'start' });
+};
+$('managerCourse').onclick = () => editEntry();
+$('managerEvent').onclick = () => editEvent();
+$('welcomeSources').onclick = () => showSources(true);
 $("newProfile").onclick = () => editProfile();
 $("adjustDate").onclick = () => adjustDate();
 $("importFile").onclick = importFile;
@@ -819,32 +846,49 @@ async function loadManagement(epoch = loadEpoch) {
   }));
   $('workspaceSelect').value = workspaceId;
   $('workspaceRows').replaceChildren(...m.workspaces.map(w => {
-    const row = el('article', null, 'course');
-    row.append(el('strong', w.name), el('p', w.unknown ? '状态待检查；切换后读取并验证，不能判断是否有待发布修改或冲突。' : `数据集 ${w.datasetId ?? '未绑定'} · ${w.dirty ? '有本地修改' : '本地已保存'} · ${w.pending ? '待发布候选' : '无候选'} · ${w.conflict ? '存在冲突' : '无冲突'} · ${w.busy ? '正在同步' : '空闲'}${w.recovery ? ' · 有恢复信息' : ''}`), el('p', `最近检查：${w.checkedAt ? new Date(w.checkedAt).toLocaleString() : '尚未检查'}${w.error ? ' · 异常：' + w.error : ''}`));
-    row.append(button('切换', () => switchWorkspace(w.id)), button('修改名称', async () => {
-      const name = await requestText('工作区名称', w.name); if (!name) return;
+    const row = el('article', null, 'source-card'), c = m.connections.find(c => c.id === w.connectionId);
+    const type = !c ? '仅本地编辑 · 未连接存储' : c.type === 'webdav' ? 'WebDAV' : c.rootId === 'private' ? '应用私有目录' : 'NAS 本地目录';
+    row.append(el('h3', w.name), el('span', w.id === workspaceId ? '当前使用' : '已保存', 'badge'), el('p', type + (c ? ' · ' + c.name : '')));
+    const state = w.unknown ? '状态待检查；切换后读取' : [w.busy ? '正在同步检查' : '', w.dirty ? '有本地修改待发布' : '本地已保存', w.pending ? '发布结果待回读确认' : '', w.conflict ? '存在冲突，请处理' : '', w.recovery ? '有恢复信息，请检查详情' : '', w.error ? '连接或同步异常，请检查详情' : ''].filter(Boolean).join(' · ');
+    row.append(el('p', state, w.error || w.conflict ? 'warning' : ''), el('small', `最近检查：${w.checkedAt ? new Date(w.checkedAt).toLocaleString() : '尚未检查'}。其他设备接收情况未知。`));
+    const switchButton = button(w.id === workspaceId ? '正在使用' : '切换', () => switchWorkspace(w.id)); switchButton.disabled = w.id === workspaceId;
+    row.append(switchButton);
+    const more = el('details'); more.append(el('summary', '更多操作'));
+    more.append(button('修改名称', async () => {
+      const name = await requestText('课程表名称（工作区）', w.name); if (!name) return;
       await manageAction({ ...context, action: 'workspace.rename', targetId: w.id, targetVersion: w.version, name });
     }), button('选择访问端点', () => chooseEndpoint(w)), button('移除配置', async () => {
       const name = await requestText('只移除配置，保留课表文件。当前/唯一工作区和有修改、冲突、恢复信息的工作区不能移除。输入名称确认：' + w.name);
       if (name !== w.name) return;
       await manageAction({ ...context, action: 'workspace.remove', targetId: w.id, targetVersion: w.version, confirm: name });
     }));
-    if (w.unknown) for (const b of [...row.querySelectorAll('button')].slice(1)) b.disabled = true;
-    return row;
+    if (w.id === workspaceId) {
+      if (c) more.append(el('p', '此存储位置中有课表时接收已有数据集；空目录则可创建独立数据集。'), button('接收已有课表…', () => $('bind').click()), button('在空目录创建共享课表…', () => $('create').click()));
+      more.append(button('查看冲突', showConflicts));
+    }
+    if (w.unknown) for (const b of more.querySelectorAll('button')) b.disabled = true;
+    const diagnostics = el('details'); diagnostics.append(el('summary', '高级诊断'), el('pre', JSON.stringify(w, null, 2)));
+    row.append(more, diagnostics); return row;
   }));
   $('connectionRows').replaceChildren(...m.connections.map(c => {
-    const row = el('article', null, 'course');
-    row.append(el('strong', c.name + ' · ' + c.type), el('p', c.type === 'webdav' ? c.url : `${m.roots.find(r => r.id === c.rootId)?.name ?? '授权已撤销'} / ${c.relative || '根目录'}`),
-      button('编辑连接', () => connectionDialog(c.type, c)), button('测试权限与历史', async () => {
-        try { const result = await post('/api/connections/test', { ...context, connectionId: c.id, name: c.name }); await notifyUser(`${result.permission}；${result.observed} 个提交；异常 ${result.deferred}`); }
-        catch (e) { await notifyUser(e.message); }
-      }), button('新建工作区', async () => {
-        const name = await requestText('新工作区名称', c.name); if (!name) return;
-        await manageAction({ ...context, action: 'workspace.add', connectionId: c.id, name });
-      }), button('移除连接', async () => {
-        if (await confirmAction('移除连接配置？仍被工作区使用时会拒绝。')) await manageAction({ ...context, action: 'connection.remove', connectionId: c.id });
-      })); return row;
+    const row = el('article', null, 'source-card');
+    row.append(el('h3', c.name), el('span', c.type === 'webdav' ? 'WebDAV' : c.rootId === 'private' ? '应用私有目录' : 'NAS 本地目录', 'badge'), el('p', c.type === 'webdav' ? c.url : `${m.roots.find(r => r.id === c.rootId)?.name ?? '授权已撤销'} / ${c.relative || '根目录'}`));
+    const owners = m.workspaces.filter(w => w.connectionId === c.id);
+    row.append(el('p', owners.length ? '用于：' + owners.map(w => w.name).join('、') : '尚未关联课程表；可新建工作区后接收或创建共享课表。'));
+    row.append(button('新建工作区', async () => {
+      const name = await requestText('新课程表名称（独立工作区，不会迁移或合并已有课程）', c.name); if (!name) return;
+      await manageAction({ ...context, action: 'workspace.add', connectionId: c.id, name });
+    }));
+    const more = el('details'); more.append(el('summary', '连接操作'));
+    more.append(button('编辑连接', () => connectionDialog(c.type, c)), button('测试权限与历史', async () => {
+      try { const result = await post('/api/connections/test', { ...context, connectionId: c.id, name: c.name }); await notifyUser(`${result.permission}；${result.observed} 个提交；异常 ${result.deferred}`); }
+      catch (e) { await notifyUser(e.message); }
+    }), button('移除连接', async () => {
+      if (await confirmAction('移除连接配置？不会删除课表文件；仍被工作区使用时会拒绝。')) await manageAction({ ...context, action: 'connection.remove', connectionId: c.id });
+    })); row.append(more); return row;
   }));
+  if (!m.connections.length) $('connectionRows').append(el('p', '尚未添加存储位置。可以继续本地编辑，或添加下面任一种连接。'));
+
   return m;
 }
 async function manageAction(input) {
@@ -876,7 +920,7 @@ function chooseEndpoint(w) {
   }, input => post('/api/manage', input));
 }
 function connectionDialog(type, c = null) {
-  dialog(c ? '编辑连接' : '新增连接', async form => {
+  dialog(c ? '编辑连接' : (type === 'local' ? '添加本地目录连接' : '添加 WebDAV 连接'), async form => {
     const name = field('连接名称', c?.name ?? (type === 'local' ? '本地课程' : 'WebDAV 课程'));
     let read;
     if (type === 'webdav') {
@@ -884,41 +928,50 @@ function connectionDialog(type, c = null) {
       $('fields').append(el('p', `独立证书信任：${c?.hasTrustedCertificate ? '已设置' : '未设置'}。修改地址、凭据或信任配置时，已绑定工作区须重新验证完整历史。`));
       read = () => ({ type, name: name.value, connectionId: c?.id, url: url.value, username: username.value, password: password.value, certificatePem: system.checked ? '' : cert.value || undefined });
     } else {
-      const root = el('select'), path = el('select');
-      root.setAttribute('aria-label', '授权根目录'); path.setAttribute('aria-label', '选择子目录');
-      root.disabled = path.disabled = true;
-      let relative = c?.relative ?? '';
-      let browseEpoch = 0, directoryReady = false;
+      const root = el('select'); root.setAttribute('aria-label', '存储范围'); root.disabled = true;
+      let relative = c?.relative ?? '', browseEpoch = 0, directoryReady = false, selected = null;
       const current = el('p', '正在加载授权目录…'); current.setAttribute('role', 'status');
-      const up = button('上一级', () => { relative = relative.split('/').slice(0, -1).join('/'); void browse(); });
-      up.disabled = true;
+      const chosen = el('p', '尚未选择文件夹'), crumbs = el('nav'), list = el('div', null, 'folder-list');
+      chosen.id = 'selectedFolder'; crumbs.setAttribute('aria-label', '文件夹路径');
+      const up = button('上一级', () => { relative = relative.split('/').slice(0, -1).join('/'); void browse(); }); up.disabled = true;
       const retry = button('重试读取目录', () => { void browse(); }); retry.hidden = true;
+      const choose = button('选择此文件夹', () => {
+        if (!directoryReady) return;
+        selected = { rootId: root.value, relative };
+        chosen.textContent = '已选择：' + locationText() + (privateFolder() ? '（保存时自动创建专用文件夹）' : '');
+        form.setReady(true);
+      }); choose.disabled = true; choose.className = 'primary';
+      const privateFolder = () => !c && root.value === 'private' && !relative;
+      const locationText = () => (root.selectedOptions[0]?.textContent ?? '') + ' / ' + (relative || '根目录');
       form.setReady(false);
-      const browse = async () => {
+      const browse = async (restore = false) => {
         const request = ++browseEpoch, selectedRoot = root.value, selectedPath = relative;
         const active = () => form.current() && request === browseEpoch;
-        directoryReady = false; form.setReady(false);
-        path.replaceChildren(); path.disabled = up.disabled = true; retry.hidden = true;
-        current.textContent = '正在读取目录：' + (selectedPath || '/');
-        $('formError').textContent = '';
+        directoryReady = false; selected = null; form.setReady(false); choose.disabled = true;
+        chosen.textContent = '尚未选择文件夹'; list.replaceChildren(); retry.hidden = true;
+        up.disabled = !selectedPath;
+        crumbs.replaceChildren(button(root.selectedOptions[0]?.textContent ?? '根目录', () => { relative = ''; void browse(); }));
+        const parts = selectedPath.split('/').filter(Boolean);
+        parts.forEach((part, i) => crumbs.append(el('span', '/'), button(part, () => { relative = parts.slice(0, i + 1).join('/'); void browse(); })));
+        current.textContent = '正在读取目录：' + locationText(); $('formError').textContent = '';
         try {
           const result = await get('/api/directories?rootId=' + encodeURIComponent(selectedRoot) + '&relative=' + encodeURIComponent(selectedPath));
           if (!active()) return;
-          path.replaceChildren(el('option', '选择子目录…'));
-          path.firstChild.value = '';
-          for (const dir of result.directories) { const o = el('option', dir); o.value = dir; path.append(o); }
-          current.textContent = '选定目录：' + (selectedPath || '/');
-          directoryReady = true; form.setReady(true); path.disabled = false; up.disabled = !selectedPath;
+          for (const dir of result.directories) list.append(button('📁 ' + dir, () => { relative = selectedPath ? selectedPath + '/' + dir : dir; void browse(); }));
+          if (!result.directories.length) list.append(el('p', '此文件夹没有子目录，可以选择当前文件夹。'));
+          current.textContent = '当前路径：' + locationText();
+          directoryReady = true; choose.disabled = false;
+          choose.textContent = privateFolder() ? '使用私有目录（自动创建专用文件夹）' : '选择此文件夹';
+          if (restore) choose.click();
         } catch (e) {
           if (!active()) return;
           current.textContent = '目录加载失败：' + e.message;
-          $('formError').textContent = '请重试、选择其他授权目录或关闭。'; retry.hidden = false;
-          up.disabled = !selectedPath;
+          $('formError').textContent = '请重试、选择其他授权目录或关闭。权限不足时请检查 fnOS 应用设置。'; retry.hidden = false;
         }
       };
       root.onchange = () => { relative = ''; void browse(); };
-      path.onchange = () => { if (path.value) { relative = relative ? relative + '/' + path.value : path.value; void browse(); } };
-      $('fields').append(el('p', '仅展示 FPK 私有目录及 fnOS 官方资源授权目录。应用中心撤销权限后会安全停止访问。新增私有连接默认自动创建独立目录；共享目录请选择专用空目录或已有 Sync v2 数据集父目录。'), root, current, path, up, retry);
+      const rootLabel = el('label', '存储范围'); rootLabel.append(root);
+      $('fields').append(el('p', '私有目录仅供本应用使用；选择其根目录时，保存连接会自动创建专用文件夹。NAS 目录只显示 fnOS 已授权范围，请选择专用空文件夹或已有共享课表的父文件夹。'), rootLabel, crumbs, up, current, list, retry, choose, chosen);
       const m = await loadManagement();
       if (!form.current()) return;
       if (!m || !workspaceId || !token) throw Error('工作区尚未就绪，请重试');
@@ -927,13 +980,14 @@ function connectionDialog(type, c = null) {
       root.value = c?.rootId ?? 'private'; root.disabled = false;
       if (!root.value) throw Error('原目录未授权或授权已撤销，请关闭并重新配置');
       form.captureVersion();
-      void browse();
+      void browse(!!c);
       read = () => {
         if (!directoryReady) throw Error('请先成功读取所选目录');
-        return { type, name: name.value, connectionId: c?.id, rootId: root.value, relative, createPrivate: !c && root.value === 'private' && !relative };
+        if (!selected) throw Error('请点击“选择此文件夹”确认位置');
+        return { type, name: name.value, connectionId: c?.id, ...selected, createPrivate: privateFolder() };
       };
     }
-    $('fields').append(button('测试（不保存）', async () => {
+    $('fields').append(el('p', '保存连接不会创建课程数据集；之后可在存储位置中新建工作区。'), button('测试（不保存）', async () => {
       try {
         const input = read();
         if (input.createPrivate) throw Error('新私有目录请先保存连接，再测试权限；测试不会创建工作区');

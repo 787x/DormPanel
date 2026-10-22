@@ -44,6 +44,8 @@ async function fixture(t, { authorized = false, proxyHost = null } = {}) {
   return { page, app, errors, open, local, save };
 }
 
+async function choosePrivate(f) { await f.page.getByRole('button', { name: '使用私有目录（自动创建专用文件夹）', exact: true }).click(); }
+
 test('管理接口延迟时，本地按钮立即打开弹窗而非抛异常', async t => {
   const f = await fixture(t);
   let release;
@@ -60,13 +62,13 @@ test('管理接口延迟时，本地按钮立即打开弹窗而非抛异常', as
 
 test('仅私有目录时可选择；取消、重新打开不会写配置或工作区', async t => {
   const f = await fixture(t), before = structuredClone(f.app.catalog.manifest);
-  await f.local(); await expect(f.save).toBeEnabled();
-  await expect(f.page.getByLabel('授权根目录').locator('option')).toHaveText(['FPK 私有本地数据']);
-  await f.page.getByLabel('选择子目录', { exact: true }).selectOption('测试子目录');
-  await expect(f.page.locator('#fields')).toContainText('选定目录：测试子目录');
+  await f.local(); await choosePrivate(f); await expect(f.save).toBeEnabled();
+  await expect(f.page.getByLabel('存储范围').locator('option')).toHaveText(['FPK 私有本地数据']);
+  await f.page.getByRole('button', { name: '📁 测试子目录', exact: true }).click();
+  await expect(f.page.locator('#fields')).toContainText('当前路径：FPK 私有本地数据 / 测试子目录');
   await f.page.locator('#cancel').click(); await expect(f.page.locator('#editor')).not.toBeVisible();
-  await f.page.locator('#addLocal').click(); await expect(f.save).toBeEnabled();
-  await expect(f.page.locator('#fields [role=status]')).toHaveText('选定目录：/');
+  await f.page.locator('#addLocal').click(); await choosePrivate(f); await expect(f.save).toBeEnabled();
+  await expect(f.page.locator('#fields [role=status]')).toHaveText('当前路径：FPK 私有本地数据 / 根目录');
   await f.page.locator('#cancel').click();
   assert.deepEqual(f.app.catalog.manifest, before); assert.deepEqual(f.errors, []);
 });
@@ -78,7 +80,7 @@ test('管理接口失败有明确错误，重试后能加载所选目录', async
   await f.local(); await expect(f.page.locator('#formError')).toContainText('管理服务暂不可用');
   assert.equal(await f.save.isEnabled(), false);
   fail = false; await f.page.getByRole('button', { name: '重试加载配置' }).click();
-  await expect(f.save).toBeEnabled(); assert.deepEqual(f.errors, []);
+  await choosePrivate(f); await expect(f.save).toBeEnabled(); assert.deepEqual(f.errors, []);
 });
 
 test('目录失败禁止保存和测试，重试保留名称；保存失败不改已有工作区', async t => {
@@ -92,7 +94,7 @@ test('目录失败禁止保存和测试，重试保留名称；保存失败不�
   await f.page.getByRole('button', { name: '测试（不保存）' }).click();
   await expect(f.page.locator('#formError')).toHaveText('请先成功读取所选目录');
   fail = false; await f.page.getByRole('button', { name: '重试读取目录' }).click();
-  await expect(f.save).toBeEnabled(); await expect(f.page.getByLabel('连接名称', { exact: true })).toHaveValue('保留名称');
+  await choosePrivate(f); await expect(f.save).toBeEnabled(); await expect(f.page.getByLabel('连接名称', { exact: true })).toHaveValue('保留名称');
   await f.page.route('**/api/manage', route => route.fulfill({ status: 409, json: { error: '管理版本过期' } }));
   await f.save.click(); await expect(f.page.locator('#formError')).toHaveText('管理版本过期');
   await expect(f.page.locator('#editor')).toBeVisible();
@@ -109,13 +111,13 @@ test('授权根切换时旧目录响应不能覆盖当前选择', async t => {
   });
   try {
     await f.local(); await pending;
-    await f.page.getByLabel('授权根目录').selectOption('approved');
-    await expect(f.page.getByLabel('选择子目录', { exact: true })).toBeEnabled();
-    await f.page.getByLabel('选择子目录', { exact: true }).selectOption('当前目录');
-    await expect(f.page.locator('#fields [role=status]')).toHaveText('选定目录：当前目录');
+    await f.page.getByLabel('存储范围').selectOption('approved');
+    await f.page.getByRole('button', { name: '📁 当前目录', exact: true }).click();
+    await expect(f.page.locator('#fields [role=status]')).toHaveText('当前路径：fnOS 已授权测试目录 / 当前目录');
+    await f.page.getByRole('button', { name: '选择此文件夹', exact: true }).click();
     await expect(f.save).toBeEnabled(); release();
-    await expect(f.page.getByLabel('授权根目录')).toHaveValue('approved');
-    await expect(f.page.locator('#fields [role=status]')).toHaveText('选定目录：当前目录');
+    await expect(f.page.getByLabel('存储范围')).toHaveValue('approved');
+    await expect(f.page.locator('#fields [role=status]')).toHaveText('当前路径：fnOS 已授权测试目录 / 当前目录');
     assert.deepEqual(f.errors, []);
   } finally { release(); }
 });
@@ -130,7 +132,7 @@ test('取消加载后迟到的响应不能污染重新打开的 WebDAV 表单', 
     await f.page.locator('#addWebDav').click();
     await expect(f.page.getByLabel('HTTPS 共享父目录（末尾 /）', { exact: true })).toBeVisible();
     release(); await expect(f.save).toBeEnabled();
-    await expect(f.page.getByLabel('授权根目录')).toHaveCount(0); assert.deepEqual(f.errors, []);
+    await expect(f.page.getByLabel('存储范围')).toHaveCount(0); assert.deepEqual(f.errors, []);
   } finally { release(); }
 });
 
@@ -230,4 +232,138 @@ test('快速改选 CSV 时清空旧预览，迟到响应不能覆盖新文件', 
     await expect(f.page.locator('#editor')).not.toBeVisible(); assert.equal(f.app.db.frame.local.sources[0].filename, 'new.csv');
     assert.deepEqual(f.errors, []);
   } finally { release(); }
+});
+
+test('首次本地编辑、常用管理与高级诊断入口清晰可达', async t => {
+  const f = await fixture(t); await f.open(); await f.page.locator('#sourcesPage').click();
+  await expect(f.page.locator('#welcome')).toBeVisible();
+  await f.page.locator('#manage').click();
+  for (const id of ['managerCourse', 'importFile', 'newProfile', 'adjustDate', 'config']) await expect(f.page.locator('#' + id)).toBeVisible();
+  await expect(f.page.locator('#bind')).not.toBeVisible();
+  await expect(f.page.locator('#details')).not.toBeVisible();
+  await f.page.locator('#manager details summary').click(); await expect(f.page.locator('#bind')).toBeVisible();
+  await f.page.locator('#conflicts').click(); await expect(f.page.locator('#fields')).toContainText('暂无冲突');
+  await f.page.keyboard.press('Escape'); await expect(f.page.locator('#editor')).not.toBeVisible();
+  await f.page.locator('#adjustDate').click();
+  await expect(f.page.getByLabel('调整方式')).toHaveValue('none');
+  await expect(f.page.getByLabel('补用星期（1–7）', { exact: true })).toBeDisabled();
+  await f.page.getByLabel('调整方式').selectOption('weekday');
+  await expect(f.page.getByLabel('补用星期（1–7）', { exact: true })).toBeEnabled();
+  await f.page.keyboard.press('Escape');
+  await f.page.locator('#managerCourse').click(); await f.page.getByLabel('课程名', { exact: true }).fill('离线课程');
+  await f.save.click(); await expect(f.page.locator('#week')).toContainText('离线课程');
+  assert.equal(f.app.catalog.manifest.connections.length, 0); assert.equal(f.app.db.frame.datasetId, null);
+  assert.deepEqual(f.errors, []);
+});
+
+test('文件夹浏览与选择分开，面包屑、上级与空目录均可用', async t => {
+  const f = await fixture(t, { authorized: true }), before = structuredClone(f.app.catalog.manifest);
+  await f.page.route('**/api/directories?*', route => route.fulfill({ json: { directories: new URL(route.request().url()).searchParams.get('relative') === '课程/学期' ? [] : [new URL(route.request().url()).searchParams.get('relative') ? '学期' : '课程'] } }));
+  await f.local(); await expect(f.save).toBeDisabled();
+  await f.page.getByLabel('存储范围').selectOption('approved');
+  await f.page.getByRole('button', { name: '📁 课程', exact: true }).click();
+  await f.page.getByRole('button', { name: '📁 学期', exact: true }).click();
+  await expect(f.page.locator('.folder-list')).toContainText('此文件夹没有子目录');
+  await expect(f.save).toBeDisabled();
+  await f.page.getByRole('button', { name: '选择此文件夹', exact: true }).click();
+  await expect(f.page.locator('#selectedFolder')).toHaveText('已选择：fnOS 已授权测试目录 / 课程/学期');
+  await expect(f.save).toBeEnabled();
+  await f.page.getByRole('navigation', { name: '文件夹路径' }).getByRole('button', { name: '课程', exact: true }).click();
+  await expect(f.page.locator('#fields [role=status]')).toContainText('/ 课程'); await expect(f.save).toBeDisabled();
+  await f.page.getByRole('button', { name: '上一级', exact: true }).click();
+  await expect(f.page.locator('#fields [role=status]')).toContainText('根目录');
+  await f.page.keyboard.press('Escape'); await expect(f.page.locator('#addLocal')).toBeFocused();
+  assert.deepEqual(f.app.catalog.manifest, before); assert.deepEqual(f.errors, []);
+});
+
+test('同一根下快速导航与关闭重开会隔离旧目录响应', async t => {
+  const f = await fixture(t); let release, started;
+  const gate = new Promise(r => release = r), waiting = new Promise(r => started = r);
+  await f.page.route('**/api/directories?*', async route => {
+    if (new URL(route.request().url()).searchParams.get('relative') === '慢目录') { started(); await gate; await route.fulfill({ json: { directories: ['旧内容'] } }).catch(() => {}); }
+    else await route.fulfill({ json: { directories: ['慢目录'] } });
+  });
+  try {
+    await f.local(); await f.page.getByRole('button', { name: '📁 慢目录' }).click(); await waiting;
+    await expect(f.save).toBeDisabled();
+    await f.page.getByRole('navigation', { name: '文件夹路径' }).getByRole('button', { name: 'FPK 私有本地数据', exact: true }).click();
+    await choosePrivate(f); await expect(f.save).toBeEnabled();
+    await f.page.keyboard.press('Escape'); await f.page.locator('#addLocal').click(); await choosePrivate(f);
+    release(); await expect(f.page.locator('.folder-list')).not.toContainText('旧内容');
+    await expect(f.page.locator('#selectedFolder')).toContainText('根目录'); assert.deepEqual(f.errors, []);
+  } finally { release(); }
+});
+
+test('编辑本地连接回显原目录；浏览后必须重新确认，取消不保存', async t => {
+  const f = await fixture(t, { authorized: true });
+  await f.page.route('**/api/manage?*', async route => {
+    const response = await route.fetch(), data = await response.json();
+    data.connections.push({ id: 'local-fixture', type: 'local', name: '已有本地目录', rootId: 'approved', relative: '课程/原目录' });
+    await route.fulfill({ json: data });
+  });
+  await f.open(); const row = f.page.locator('#connectionRows article').filter({ hasText: '已有本地目录' });
+  await row.locator('summary').click(); await row.getByRole('button', { name: '编辑连接' }).click();
+  await expect(f.page.getByLabel('存储范围')).toHaveValue('approved');
+  await expect(f.page.locator('#selectedFolder')).toHaveText('已选择：fnOS 已授权测试目录 / 课程/原目录');
+  await expect(f.save).toBeEnabled();
+  await f.page.getByRole('button', { name: '上一级', exact: true }).click(); await expect(f.save).toBeDisabled();
+  await f.page.keyboard.press('Escape'); assert.equal(f.app.catalog.manifest.connections.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('窄窗口目录按钮可触达，管理页面截图可核对', async t => {
+  const f = await fixture(t, { authorized: true }); await f.open();
+  if (process.env.UX_SCREENSHOTS) await f.page.screenshot({ path: process.env.UX_SCREENSHOTS + '/sources-desktop.png', fullPage: true });
+  await f.page.locator('#sourcesPage').click(); await f.page.locator('#manage').click();
+  if (process.env.UX_SCREENSHOTS) await f.page.screenshot({ path: process.env.UX_SCREENSHOTS + '/manage-desktop.png', fullPage: true });
+  await f.page.setViewportSize({ width: 390, height: 640 }); await f.page.locator('#config').click(); await f.page.locator('#addLocal').click();
+  await choosePrivate(f); await expect(f.save).toBeInViewport();
+  assert.equal(await f.page.locator('#editor').evaluate(e => e.scrollWidth <= e.clientWidth), true);
+  await f.page.getByRole('button', { name: '📁 测试子目录', exact: true }).click();
+  await f.page.getByRole('button', { name: '选择此文件夹', exact: true }).click();
+  await expect(f.save).toBeEnabled();
+  if (process.env.UX_SCREENSHOTS) await f.page.screenshot({ path: process.env.UX_SCREENSHOTS + '/folders-narrow.png' });
+  await f.page.keyboard.press('Escape'); assert.deepEqual(f.errors, []);
+});
+
+test('文件夹确认提交所选授权范围和相对路径，保存失败不改配置', async t => {
+  const f = await fixture(t, { authorized: true }), before = structuredClone(f.app.catalog.manifest);
+  let input;
+  await f.page.route('**/api/manage', route => {
+    input = route.request().postDataJSON(); return route.fulfill({ status: 409, json: { error: '测试期间不保存配置' } });
+  });
+  await f.local(); await f.page.getByLabel('存储范围').selectOption('approved');
+  await f.page.getByRole('button', { name: '📁 测试子目录', exact: true }).click();
+  await f.page.getByRole('button', { name: '选择此文件夹', exact: true }).click();
+  await f.save.click(); await expect(f.page.locator('#formError')).toHaveText('测试期间不保存配置');
+  assert.equal(input.action, 'connection.save'); assert.equal(input.rootId, 'approved'); assert.equal(input.relative, '测试子目录'); assert.equal(input.createPrivate, false);
+  assert(input.workspaceId); assert.equal(typeof input.catalogVersion, 'number'); assert.equal(typeof input.version, 'number');
+  assert.deepEqual(f.app.catalog.manifest, before); assert.deepEqual(f.errors, []);
+});
+
+test('数据源高级操作保持可达，重命名生效，创建和绑定仍须确认', async t => {
+  const f = await fixture(t); await f.open();
+  await f.page.locator('#addWebDav').click();
+  await f.page.getByLabel('HTTPS 共享父目录（末尾 /）', { exact: true }).fill('https://example.test/schedule/');
+  await f.page.getByLabel('用户名', { exact: true }).fill('test');
+  await f.page.getByLabel('密码（留空保留已保存密码）', { exact: true }).fill('test-only');
+  await f.save.click(); await expect(f.page.locator('#connectionRows')).toContainText('WebDAV 课程');
+  await f.page.getByRole('button', { name: '新建工作区', exact: true }).click(); await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#workspaceRows')).toContainText('WebDAV 课程');
+  const id = f.app.catalog.manifest.workspaces.find(w => w.connectionId).id;
+  await f.page.locator('#workspaceSelect').selectOption(id); await expect(f.page.locator('#workspaceSelect')).toBeEnabled();
+  let card = f.page.locator('#workspaceRows article').filter({ hasText: 'WebDAV 课程' });
+  await card.getByText('更多操作', { exact: true }).click();
+  await card.getByRole('button', { name: '修改名称', exact: true }).click();
+  await f.page.locator('#feedbackInput').fill('重命名后的课程表'); await f.page.locator('#feedbackAccept').click();
+  card = f.page.locator('#workspaceRows article').filter({ hasText: '重命名后的课程表' }); await expect(card).toBeVisible();
+  await card.getByText('更多操作', { exact: true }).click();
+  await card.getByRole('button', { name: '选择访问端点', exact: true }).click(); await expect(f.page.locator('#editorTitle')).toHaveText('工作区访问端点');
+  await f.page.keyboard.press('Escape');
+  for (const [label, text] of [['接收已有课表…', '确认接收此目录已有数据集'], ['在空目录创建共享课表…', '确认在已配置的空目录创建独立数据集']]) {
+    await card.getByRole('button', { name: label, exact: true }).click(); await expect(f.page.locator('#feedbackMessage')).toContainText(text);
+    await f.page.locator('#feedbackCancel').click();
+  }
+  await card.getByText('高级诊断', { exact: true }).click(); await expect(card.locator('pre')).toBeVisible();
+  await card.getByRole('button', { name: '移除配置', exact: true }).click(); await expect(f.page.locator('#feedbackMessage')).toContainText('只移除配置');
+  await f.page.locator('#feedbackCancel').click(); assert.equal(f.app.catalog.manifest.workspaces.length, 2); assert.deepEqual(f.errors, []);
 });

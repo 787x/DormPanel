@@ -58,7 +58,7 @@ async function equalOriginal(f, before) {
 }
 linux('多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复', async t => {
   const f = await fixture(t), before = await original(f), created = await f.manager.create(f.location);
-  assert(created.verified); assert.equal(created.workspaceCount, 4); assert.equal(created.appVersion, '0.4.3');
+  assert(created.verified); assert.equal(created.workspaceCount, 4); assert.equal(created.appVersion, '0.4.4');
   assert(created.dependencies.some(d => d.included)); assert(created.dependencies.some(d => !d.included && d.type === 'webdav'));
   const newerLocal = await f.catalog.load(f.local.id);
   await newerLocal.edit(operation('备份后新增私有提交'));
@@ -212,7 +212,7 @@ async function forged(f, m, payload = Buffer.alloc(0)) {
   const encrypted = Buffer.concat([cipher.update(Buffer.concat([len, manifest, payload])), cipher.final()]); cipher.getAuthTag().copy(header, 36);
   const name = `backup-${randomUUID()}.dpbk`; await writeFile(join(f.exports, name), Buffer.concat([header, encrypted])); return name;
 }
-for (const oldVersion of ['0.4.1', '0.4.2']) linux(`0.4.3 兼容 ${oldVersion} 版本元数据并精确恢复，备份格式保持不变`, async t => {
+for (const oldVersion of ['0.4.1', '0.4.2', '0.4.3']) linux(`0.4.4 兼容 ${oldVersion} 版本元数据并精确恢复，备份格式保持不变`, async t => {
   const f = await fixture(t), before = await original(f), created = await f.manager.create(f.location);
   const bytes = await readFile(join(f.exports, created.name));
   const secret = scryptSync(password, bytes.subarray(8, 24), 32, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
@@ -238,13 +238,13 @@ for (const attack of ['traversal', 'duplicate', 'size', 'count', 'missing', 'che
   if (attack === 'count') m.files = Array(LIMITS.files + 1).fill(file);
   if (attack === 'missing') m.files = [file];
   if (attack === 'version') m.version = 99;
-  if (attack === 'appVersion') m.appVersion = '0.4.4';
+  if (attack === 'appVersion') m.appVersion = '0.4.5';
   const name = await forged(f, m);
   await assert.rejects(f.manager.verify({ ...f.location, name }, 'admin')); await equalOriginal(f, before);
 });
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
-linux('0.4.0 旧源码生成的真实加密归档在 0.4.3 验证并精确恢复，安装身份边界不变', async t => {
+linux('0.4.0 旧源码生成的真实加密归档在 0.4.4 验证并精确恢复，安装身份边界不变', async t => {
   const f = await fixture(t), base = new URL('./fixtures/backup-0.4.0/', import.meta.url);
   const saved = JSON.parse(await readFile(new URL('expected.json', base), 'utf8'));
   // 夹具全部是合成数据；只在独立临时安装中使用旧安装身份。

@@ -1,6 +1,6 @@
 {
   "name": "dormpanel-schedule-manager",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "type": "module",
   "engines": {
@@ -10,6 +10,7 @@
     "test": "node --test",
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
     "test:frontend": "node --test browser-test/connections.browser.mjs"
   },
   "dependencies": {
