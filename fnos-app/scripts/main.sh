@@ -23,7 +23,11 @@ case "${1:-}" in
     [ -x "$NODE" ] || { echo '缺少 fnOS nodejs_v22 运行时' > "$TRIM_TEMP_LOGFILE"; exit 1; }
     access directory || { echo '不能建立应用私有目录权限；未启动服务' > "$TRIM_TEMP_LOGFILE"; exit 1; }
     rm -f "$SOCKET_PATH" "$READY_FILE"
-    "$NODE" --max-old-space-size=192 "$TRIM_APPDEST/server/src/server.mjs" > "$TRIM_PKGVAR/app.log" 2>&1 &
+    # 同一管理目录的进程级锁由 Node 继承；并发 start 也不能产生第二个 Writer。
+    ( flock -n 9 || exit 1
+      export DORMPANEL_WRITER_LOCK=1
+      exec "$NODE" --max-old-space-size=192 "$TRIM_APPDEST/server/src/server.mjs"
+    ) 9>"$TRIM_PKGVAR/.writer.lock" > "$TRIM_PKGVAR/app.log" 2>&1 &
     echo "$!" > "$PID_FILE"
     n=0
     while [ "$n" -lt 10 ]; do

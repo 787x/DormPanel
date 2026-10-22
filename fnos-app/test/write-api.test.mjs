@@ -208,7 +208,7 @@ test('所有管理写路由拒绝缺失/伪造工作区与过期管理版本；�
   const f = await fixture(t);
   const c = await f.post('/api/manage', { action: 'connection.save', type: 'webdav', name: 'B 连接', url: 'https://b.test/', username: 'u', password: 'p' });
   const w = await f.post('/api/manage', { action: 'workspace.add', connectionId: c.data.connectionId, name: 'B' });
-  const b = f.app.catalog.db(w.data.workspaceId), a = f.app.db;
+  const b = (await f.app.catalog.load(w.data.workspaceId)), a = f.app.db;
   for (const path of ['/api/edit', '/api/sync', '/api/resolve', '/api/import/preview', '/api/import/confirm', '/api/manage', '/api/connections/test']) {
     assert.equal((await f.post(path, { workspaceId: undefined })).status, 400);
     assert.equal((await f.post(path, { workspaceId: randomUUID() })).status, 400);
@@ -222,7 +222,7 @@ test('所有管理写路由拒绝缺失/伪造工作区与过期管理版本；�
   const replay = await f.post('/api/import/confirm', { id: preview.data.id, displayName: '错误目标' });
   assert.equal(replay.status, 409, replay.text); assert.equal(JSON.stringify(b.frame), before);
   const confirmed = await f.post('/api/import/confirm', { workspaceId: f.view.workspaceId, version: a.frame.revision, id: preview.data.id, displayName: '正确目标' });
-  assert.equal(confirmed.status, 200, confirmed.text); assert(a.frame.local.sources.length > 0);
+  assert.equal(confirmed.status, 200, confirmed.text); assert((await f.app.catalog.load(f.view.workspaceId)).frame.local.sources.length > 0);
   assert.equal(b.frame.local.sources.length, 0);
   assert.equal((await f.call('GET', '/api/state')).status, 400);
   const denied = await f.call('GET', '/api/directories?workspaceId=' + w.data.workspaceId + '&rootId=/etc&relative=');
@@ -233,7 +233,7 @@ test('冲突 token 同时绑定工作区，即使两个恢复帧碰巧完全相�
   const f = await fixture(t), a = f.app.db;
   const c = await f.post('/api/manage', { action: 'connection.save', type: 'webdav', name: 'B', url: 'https://b.test/', username: 'u', password: 'p' });
   const w = await f.post('/api/manage', { action: 'workspace.add', name: 'B', connectionId: c.data.connectionId });
-  const b = f.app.catalog.db(w.data.workspaceId), base = structuredClone(a.frame.local);
+  const b = (await f.app.catalog.load(w.data.workspaceId)), base = structuredClone(a.frame.local);
   const plan = { base, localBase: base, branches: [] };
   await a.tx(frame => { frame.conflict = plan; }); await b.tx(frame => { frame.conflict = plan; });
   assert.equal(a.conflictToken(), b.conflictToken());

@@ -1,0 +1,20 @@
+[
+  {
+    "sameInstallationRestoreByteExactFiles": 10,
+    "pendingCaptureCheckpointConflictAndCredentialsExact": true,
+    "twoNewerPrivateCommitsRetainedByteExact": true,
+    "restoreJournalRemoved": true,
+    "previousStateRetained": true,
+    "publicationGuardsPersisted": 3,
+    "idleWindowSeconds": 10.001,
+    "idleCpuPercent": 0.0,
+    "rssKiBBefore": 84452,
+    "rssKiBAfter": 84452
+  },
+  {
+    "normalStopStartAfterRestore": true,
+    "persistentFilesByteExact": 14,
+    "writerAndInstallationIdentityUnchanged": true,
+    "pendingConflictAndPublicationGuardsUnchanged": true
+  }
+]

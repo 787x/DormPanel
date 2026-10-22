@@ -1,4 +1,5 @@
 import http from "node:http";
+import { BackupManager, recoverRestore } from "./backup.mjs";
 import { readFile, writeFile, chmod, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,8 +88,15 @@ export async function createApp({
   remoteFactory,
   authorizedRoots = [],
 }) {
+  await recoverRestore(dataDir, configPath);
   const store = await new Store(dataDir).init();
-  const catalog = await Catalog.open({ store, configPath, remoteFactory, authorizedRoots });
+  let catalog = await Catalog.open({ store, configPath, remoteFactory, authorizedRoots });
+  const backups = new BackupManager({ catalog, configPath, reopen: async () => {
+    catalog = await Catalog.open({ store, configPath, remoteFactory, authorizedRoots }); backups.catalog = catalog;
+    previews.clear(); tokens.clear();
+  } });
+  await backups.cleanupStages();
+  let requests = 0, writes = 0;
   const tokens = new Map(),
     previews = new Map();
   const userToken = (user, origin = null) => {
@@ -101,6 +109,7 @@ export async function createApp({
   };
   const refresh = options => catalog.network(catalog.manifest.activeId, engine => engine.synchronize(options));
   const server = http.createServer(async (req, res) => {
+    requests++; let writing = false;
     const send = (status, value, type = "application/json; charset=utf-8") => {
       res.writeHead(status, {
         "Content-Type": type,
@@ -128,6 +137,7 @@ export async function createApp({
         path = u.pathname.slice(PREFIX.length);
       if (req.method === "POST") {
         const routes = [
+          "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore",
           "/api/edit",
           "/api/refresh",
           "/api/sync",
@@ -152,8 +162,17 @@ export async function createApp({
           return;
         }
         const input = await body(req);
+        writing = true; writes++;
+        ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
+        if (path.startsWith('/api/backups/')) {
+          ensure(writes === 1 && !catalog.configuring, '存在其他写入操作，请稍后重试');
+          ensure(input.catalogVersion === catalog.manifest.revision, '管理版本过期');
+          const action = path.split('/').pop();
+          const result = action === 'verify' || action === 'restore' ? await backups[action](input, user) : await backups[action](input);
+          send(200, result); return;
+        }
         const workspaceId = input.workspaceId;
-        const db = catalog.db(workspaceId);
+        const db = await catalog.load(workspaceId);
         if (
           !Number.isSafeInteger(input.version) ||
           input.version !== db.frame.revision
@@ -238,9 +257,10 @@ export async function createApp({
       if (path.startsWith('/api/') && !['/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
         send(404, { error: '不存在' }); return;
       }
+      ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
       const workspaceId = u.searchParams.get("workspaceId") ??
         (path === "/api/schedule" ? catalog.manifest.activeId : null);
-      const db = path.startsWith('/api/') ? catalog.db(workspaceId) : null;
+      const db = path.startsWith('/api/') && !['/api/manage', '/api/directories'].includes(path) ? await catalog.load(workspaceId) : null;
       const row = db ? catalog.row(workspaceId) : null;
       const c = row?.connectionId ? catalog.connection(row.connectionId) : null;
       const busy = catalog.busy.has(workspaceId);
@@ -297,7 +317,7 @@ export async function createApp({
           f = db.frame,
           state = f.local;
         const viewError =
-          f.error ??
+          (catalog.restoreGuards[workspaceId] ? '恢复后等待只读验证远端身份和历史；验证前禁止发布' : null) ?? f.error ??
           (c && f.bindingKey && f.bindingKey !== catalog.remote(c).key
             ? "配置与本地绑定不一致；请显式验证同一数据集地址迁移或恢复原配置"
             : null);
@@ -355,17 +375,20 @@ export async function createApp({
       send(404, { error: "不存在" });
     } catch (e) {
       send(/过期|变化|失效/.test(e.message) ? 409 : 400, { error: e.message });
+    } finally {
+      if (writing) writes--; requests--;
+      if (requests === 0) catalog.prune();
     }
   });
   server.requestTimeout = 65000;
   server.headersTimeout = 10000;
-  return { server, refresh, store, catalog, get db() { return catalog.db(catalog.manifest.activeId); } };
+  return { server, refresh, store, backups, get catalog() { return catalog; }, get db() { return catalog.db(catalog.manifest.activeId); } };
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   process.umask(0o077);
   const socket = process.env.SOCKET_PATH;
   ensure(
-    socket && process.env.TRIM_PKGVAR && process.env.TRIM_PKGETC,
+    socket && process.env.TRIM_PKGVAR && process.env.TRIM_PKGETC && process.env.DORMPANEL_WRITER_LOCK === '1',
     "需要 fnOS 运行环境",
   );
   const app = await createApp({

@@ -63,3 +63,5 @@ signing.properties
 
 /artifacts/pr41/
 /artifacts/pr41-*.log
+
+/artifacts/pr42/
