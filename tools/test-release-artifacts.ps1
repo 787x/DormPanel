@@ -1,5 +1,5 @@
 param(
-    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\0.1.2'),
+    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\0.1.3'),
     [string]$BuildToolsDirectory,
     [string]$PreviousX08eApk
 )

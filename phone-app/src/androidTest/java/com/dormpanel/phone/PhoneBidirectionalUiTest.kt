@@ -56,7 +56,7 @@ class PhoneBidirectionalUiTest {
                     stage("save encrypted account"); WebDavSettings(context).saveAccount(account); stage("account saved"); SharedScheduleSettings(context).folder = account.baseUrl
                     val transport = V2TestTransport(); val first = SnapshotFixture.snapshot()
                     stage("seed mock commit"); transport.publish(account, account.baseUrl, ScheduleSnapshotCodec.encode(first), null, null); stage("commit seeded")
-                    val bound = transport.inspect(account, account.baseUrl)
+                    val bound = ScheduleV2Binding.inspect(WebDavCommitStore(account, account.baseUrl + "dormpanel-sync-v2/"))
                     stage("launch activity"); launchPhoneTestActivity().use { scenario ->
                         stage("activity launched")
                         waitFor(scenario) { it.source.ready && !it.sharedSync.busy }

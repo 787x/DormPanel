@@ -374,11 +374,27 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         val c = ScheduleCommit(baseline.datasetId, baseline.revision, v2Writer(), emptyList(), baseline.state)
         v2Put(21, ScheduleCommitCodec.encode(c)); v2Frontier(22, emptyList())
     }
-    override fun v2Start(root: ScheduleCommit, binding: Boolean) = blocking {
+    override fun v2Bind(remote: SharedScheduleRemote) = blocking {
+        val bytes = requireNotNull(remote.commitBytes)
+        val root = ScheduleCommitCodec.decode(bytes)
+        check(root.datasetId == remote.head.datasetId && root.commitId == remote.head.revision)
+        check(remote.witness[root.commitId] == digest(bytes) && remote.witness.size <= 256)
+        remote.witness.forEach { (id, hash) -> ScheduleCommitCodec.uuid(id); require(hash.matches(Regex("[0-9a-f]{64}"))) }
+        require(remote.unverifiable.size <= 256); remote.unverifiable.forEach(ScheduleCommitCodec::uuid)
+        val target = requireNotNull(remote.bindingKey)
+        require(target.matches(Regex("[0-9a-f]{64}")))
+        startV2(root, true)
+        v2Put(96, remote.witness.toSortedMap().map { "${it.key} ${it.value}" }.joinToString("\n").toByteArray(Charsets.US_ASCII))
+        v2Put(103, remote.unverifiable.sorted().joinToString("\n").toByteArray(Charsets.US_ASCII))
+        v2Put(102, target.toByteArray(Charsets.US_ASCII))
+    }
+    override fun v2Start(root: ScheduleCommit, binding: Boolean) = blocking { startV2(root, binding) }
+    private fun startV2(root: ScheduleCommit, binding: Boolean) {
         check(v2Commit(21) == null && v2Commit(23) == null) { "v2 already bound" }
         val current = fullState()
         if (binding) {
-            check(decoded(1) == null && decoded(4) == null && current.events.isEmpty() && current.entries.isEmpty() && current.sources.isEmpty() &&
+            check((listOf(1, 3, 4, 5, 6, 7, 21, 22, 23, 24, 25, 26, 27, 29, 96, 97, 100, 101) + (30..93) + (111..117))
+                .none { database.dao().hasSyncRecord(it) } && current.events.isEmpty() && current.entries.isEmpty() && current.sources.isEmpty() && current.imported.isEmpty() &&
                 current.dayAdjustments.isEmpty() && current.classOverrides.isEmpty() && current.customProfileKeys.isEmpty()) { "已有本地数据或旧绑定；拒绝静默覆盖" }
             replaceState(root.state, root.snapshot())
             val bytes = ScheduleCommitCodec.encode(root)

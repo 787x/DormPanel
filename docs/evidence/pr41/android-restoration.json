@@ -1,0 +1,14 @@
+[
+  {
+    "device": "x08e",
+    "exactHashesMatch": true,
+    "files": 32,
+    "sqliteIntegrityOk": 3
+  },
+  {
+    "device": "phone",
+    "exactHashesMatch": true,
+    "files": 22,
+    "sqliteIntegrityOk": 2
+  }
+]

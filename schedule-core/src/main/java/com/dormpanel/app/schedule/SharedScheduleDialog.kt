@@ -9,6 +9,8 @@ import java.time.Instant
 /** Settings surface only; transport, validation and persistence belong to the controller/core. */
 object SharedScheduleDialog {
     fun show(context: Context, source: ScheduleSource, sync: SharedScheduleController, publisher: Boolean): AlertDialog {
+        var active = true
+        var previewDialog: AlertDialog? = null
         val fields = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 12, 24, 12) }
         fun label(text: String) = TextView(context).apply { this.text = text; textSize = 16f; fields.addView(this) }
         fun input(hint: String, value: String, secret: Boolean = false) = EditText(context).apply {
@@ -16,7 +18,7 @@ object SharedScheduleDialog {
             if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             fields.addView(this)
         }
-        label(if (publisher) "X08E 与手机双端可编辑。保存后自动同步，离线修改保留在本地。\n使用已配置的 WebDAV 账号；请选择独立且已存在的目录。" else
+        label(if (publisher) "X08E 与手机双端可编辑。保存后自动同步，离线修改保留在本地。\n使用已配置的 WebDAV 账号；填写已有共享目录完整 URL。未绑定时可创建新课表，或预览并绑定已有课表（要求本地为空）。" else
             "绑定后支持双端编辑与自动同步。真正冲突会保留双方数据并等待处理。首次绑定仍要求空课表，已有 v1 绑定请明确切换到 v2。")
         val public = sync.accounts.publicAccount()
         val url = if (!publisher) input("WebDAV 服务地址", public.first) else null
@@ -28,14 +30,17 @@ object SharedScheduleDialog {
         val status = label("")
         var publishButton: Button? = null
         var synchronizeButton: Button? = null
+        var bindButton: Button? = null
         var conflictButton: Button? = null
         fun refresh() {
             val time = sync.settings.lastSuccess
             status.text = sync.status + (if (time > 0) "\n上次成功：${Instant.ofEpochMilli(time)}" else "") +
                 if (time > 0 && System.currentTimeMillis() - time > 24 * 60 * 60 * 1000L) "\n数据可能过期（超过 24 小时未验证）" else ""
-            publishButton?.text = if (!bound()) "首次创建共享课表" else "立即同步"
+            publishButton?.text = if (!bound()) "创建新的共享课表" else "立即同步"
             folder.isEnabled = !sync.busy && !source.applyingSnapshot && !source.error && !bound()
-            publishButton?.isEnabled = !sync.busy
+            publishButton?.isEnabled = !sync.busy && source.ready
+            bindButton?.isEnabled = !sync.busy && source.ready && !bound()
+            bindButton?.visibility = if (bound()) android.view.View.GONE else android.view.View.VISIBLE
             synchronizeButton?.isEnabled = !sync.busy && source.state.sync != null
             conflictButton?.isEnabled = !sync.busy
         }
@@ -52,23 +57,41 @@ object SharedScheduleDialog {
             sync.settings.folder = folder.text.toString()
         }.onFailure { status.text = "设置无效，请检查地址与凭据。" }.isSuccess
         fun button(text: String, saveRequired: Boolean = true, action: () -> Unit): Button {
-            return Button(context).apply { this.text = text; isAllCaps = false; minHeight = 48
+            return Button(context).apply { this.text = text; isAllCaps = false; minHeight = (48 * context.resources.displayMetrics.density).toInt()
                 setOnClickListener { if (!saveRequired || save()) action() }
                 fields.addView(this)
             }
         }
-        if (publisher) {
-            button("诊断 v2（在独立随机测试目录写入合成提交）") { sync.diagnose() }
-            publishButton = button(if (sync.settings.publishedRevision == null) "首次创建共享课表" else "立即同步") { sync.publish() }
-        } else {
-            button("测试连接 / 检查远端快照") {
-                sync.inspect { remote ->
-                    val v = remote.snapshot.state
-                    AlertDialog.Builder(context).setTitle("已验证的远端课表")
-                        .setMessage("Dataset: ${remote.head.datasetId}\nRevision: ${remote.head.revision}\n协议：Append-only v2\n本地课程 ${v.entries.size} · 日历事件 ${v.events.size}\n来源 ${v.sources.size} · 导入实例 ${v.imported.size}\n日期调整 ${v.dayAdjustments.size} · 课程编辑 ${v.classOverrides.size}\n学期配置 ${v.profiles.size}\n暂不可验证文件 ${remote.unverifiable.size}（不计为完成同步）\n\n确认下载并绑定双向共享？首次绑定要求空课表；已有 v1 数据请使用迁移入口。")
-                        .setNegativeButton("取消", null).setPositiveButton("确认下载并绑定") { _, _ -> sync.bind(remote) }.show()
+        fun inspectAndConfirm() {
+            sync.inspect { remote ->
+                if (!active) return@inspect
+                val v = remote.snapshot.state
+                val details = buildString {
+                    append("Dataset: ${remote.head.datasetId}\nCommit: ${remote.head.revision}\n协议：Append-only v2")
+                    append("\n本地课程 ${v.entries.size} · 日历事件 ${v.events.size}\n来源 ${v.sources.size} · 导入实例 ${v.imported.size}")
+                    append("\n日期调整 ${v.dayAdjustments.size} · 课程编辑 ${v.classOverrides.size}")
+                    append("\n远端历史：${remote.witness.size} 个已验证提交 · 单一分支 · 祖先闭包完整")
+                    append("\n暂不可验证文件 ${remote.unverifiable.size}（不计为完成同步）")
+                    append("\n\n导入来源：")
+                    v.sources.forEach { append("\n${it.displayName.take(160)} · ${it.filename.take(160)} · ${it.kind.take(80)} · ${it.occurrenceCount} 项") }
+                    append("\n\n学期配置 ${v.profiles.size}（自定义 ${v.customProfileKeys.size}）：")
+                    v.profiles.toSortedMap().forEach { (key, profile) ->
+                        append("\n${key.take(160)} · ${profile.timezone} · 首周 ${profile.week1Monday} · ${profile.phases.size} 个时段阶段")
+                    }
+                    append("\n\n确认前将重新检查完整版本图。绑定仅接收已有课程，不创建远端根提交。首次绑定要求空课表；已有本地数据请先保留，已有 v1 绑定请使用迁移入口。")
                 }
+                val content = TextView(context).apply { text = details; textSize = 16f; setPadding(24, 12, 24, 12); setTextIsSelectable(true) }
+                previewDialog = AlertDialog.Builder(context).setTitle("已验证的远端课表")
+                    .setView(ScrollView(context).apply { addView(content) })
+                    .setNegativeButton("取消", null).setPositiveButton("确认下载并绑定") { _, _ -> sync.bind(remote) }.show()
             }
+        }
+        if (publisher) {
+            publishButton = button("创建新的共享课表") { sync.publish() }
+            bindButton = button("绑定已有共享课表（预览）") { inspectAndConfirm() }
+            button("诊断 v2（在独立随机测试目录写入合成提交）") { sync.diagnose() }
+        } else {
+            bindButton = button("测试连接 / 检查远端快照") { inspectAndConfirm() }
             synchronizeButton = button("立即同步") { sync.sync() }
         }
         if (!publisher) {
@@ -118,7 +141,7 @@ object SharedScheduleDialog {
         sync.changed = listener
         val dialog = AlertDialog.Builder(context).setTitle(if (publisher) "共享课表 · WebDAV" else "共享课表 · WebDAV")
             .setView(ScrollView(context).apply { addView(fields) }).setNegativeButton("关闭", null).create()
-        dialog.setOnDismissListener { if (sync.changed === listener) sync.changed = previous; password?.text?.clear() }
+        dialog.setOnDismissListener { active = false; previewDialog?.dismiss(); if (sync.changed === listener) sync.changed = previous; password?.text?.clear() }
         dialog.show()
         return dialog
     }

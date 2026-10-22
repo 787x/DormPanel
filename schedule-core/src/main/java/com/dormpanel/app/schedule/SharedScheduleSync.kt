@@ -21,7 +21,7 @@ data class SharedScheduleHead(val datasetId: String, val revision: String, val s
 }
 class SharedScheduleRace : IllegalStateException("远端已变化，正在重新比较")
 
-data class SharedScheduleRemote(val head: SharedScheduleHead, val etag: String?, val bytes: ByteArray, val snapshot: ScheduleSnapshot, val commitBytes: ByteArray? = null, val witness: Map<String, String> = emptyMap(), val unverifiable: Set<String> = emptySet())
+data class SharedScheduleRemote(val head: SharedScheduleHead, val etag: String?, val bytes: ByteArray, val snapshot: ScheduleSnapshot, val commitBytes: ByteArray? = null, val witness: Map<String, String> = emptyMap(), val unverifiable: Set<String> = emptySet(), val bindingKey: String? = null)
 class SharedScheduleTransport(private val client: WebDavClient = WebDavClient()) {
     fun folder(account: WebDavAccount, raw: String): String {
         val base = client.url(account.baseUrl)
@@ -199,28 +199,13 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         override fun v2Receipt(bytes: ByteArray) = SharedScheduleViews.changing { v2Local().v2Receipt(bytes) }
     }
     fun inspect(done: (SharedScheduleRemote) -> Unit) = run({
-        val ids = v2Remote().list()
-        check(ids.isNotEmpty()) { "尚无 v2 数据集" }
-        var inspectedBytes = 0L
-        val first = ids.take(8).firstNotNullOfOrNull { id ->
-            val bytes = v2Remote().read(id) ?: return@firstNotNullOfOrNull null
-            inspectedBytes += bytes.size; check(inspectedBytes <= 32L * 1024 * 1024) { "初次绑定检查字节数超限" }
-            runCatching { ScheduleCommitCodec.decode(bytes) }.getOrNull()
-        } ?: error("前八个文件均无法验证；请检查目录，保留本地数据")
-        val graph = ScheduleCommitGraph(v2Remote(), first.datasetId).load()
-        check(graph.tips.size == 1) { "首次绑定发现并发分支；请先在已有编辑端处理合并" }
-        val c = graph.commits.getValue(graph.tips.single())
-        val bytes = ScheduleSnapshotCodec.encode(c.snapshot())
-        SharedScheduleRemote(SharedScheduleHead(c.datasetId, c.commitId, digest(bytes)), null, bytes, c.snapshot(), ScheduleCommitCodec.encode(c), graph.commits.mapValues { digest(ScheduleCommitCodec.encode(it.value)) }, graph.deferred.keys)
+        ScheduleV2Binding.inspect(v2Remote())
     }) { busy = false; status = "v2 提交已验证，等待确认" + if (it.unverifiable.isNotEmpty()) " · 另有暂不可验证文件" else ""; notifyChanged(); done(it) }
     fun bind(remote: SharedScheduleRemote) = run({
         synchronized(SharedScheduleRunLock) {
-            val bytes = requireNotNull(v2Remote().read(remote.head.revision))
-            val c = ScheduleCommitCodec.decode(bytes)
-            check(c.datasetId == remote.head.datasetId && ScheduleMerge.same(c.state, remote.snapshot.state))
-            remote.commitBytes?.let { check(it.contentEquals(bytes)) { "绑定检查后提交内容发生变化" } }
-            v2Local().v2CheckTarget(v2Remote().bindingKey)
-            SharedScheduleViews.changing { v2Local().v2Start(c, true); if (remote.witness.isNotEmpty()) v2Local().v2Observe(remote.witness); v2Local().v2Unverifiable(remote.unverifiable) }
+            check(settings.publishedRevision == null && settings.pendingRevision == null) { "旧 v1 发布或待确认回执尚未恢复；请使用迁移入口" }
+            val verified = ScheduleV2Binding.inspect(v2Remote(), remote)
+            SharedScheduleViews.changing { v2Local().v2Bind(verified) }
         }
     }) { source.reload { result -> result.onSuccess { complete("v2 已绑定 · 本地已保存；其他设备接收情况未知", false); sync() }.onFailure(::failure) } }
     fun sync() { settings.resetRetries(); synchronize(false) }

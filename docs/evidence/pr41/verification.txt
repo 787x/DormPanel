@@ -1,0 +1,25 @@
+app:testDebugUnitTest tests=198 failures=0
+schedule-core:testDebugUnitTest tests=141 failures=0
+phone-app:testDebugUnitTest tests=0 failures=0
+core-android-final.log
+com.dormpanel.app.schedule.ScheduleV2BindingRoomTest:.....
+com.dormpanel.app.schedule.AppendOnlyRoomSyncTest:............
+com.dormpanel.app.schedule.AppendOnlyProcessRecoveryTest:
+com.dormpanel.app.schedule.AppendOnlyProcessRecoveryTest:
+com.dormpanel.app.schedule.BidirectionalScheduleSyncTest:..........
+OK (28 tests)
+x08e-ui-android.log
+com.dormpanel.app.schedule.SharedSchedulePublisherAndroidTest:..
+OK (2 tests)
+phone-android.log
+com.dormpanel.phone.PhoneSharedScheduleTest:.
+com.dormpanel.phone.PhoneBidirectionalUiTest:PR35 UI: save encrypted account
+com.dormpanel.phone.PhoneSharedScheduleRestartTest:.
+OK (3 tests)
+API 28 / emulator X08E / 1280x800
+Debug build + app/schedule-core/phone-app lintDebug: BUILD SUCCESSFUL
+Python sync_v2_vectors.py: 6 fixed vectors passed
+test-release-validation.ps1: 37 checks passed
+test-release-artifacts.ps1: 8 rejection checks passed
+app/phone-app/schedule-core lintRelease: BUILD SUCCESSFUL
+Official candidate verify-release.ps1: both APKs passed package, version, SDK, non-debuggable and signer gates
