@@ -24,7 +24,7 @@ class RealDatasetSwitchRoomTest {
         val expectedOld = ScheduleV2Binding.inspect(old)
         val selected = args.getString("migrationDeviceIndex")?.toInt()?.also { require(it in 0..1) }
         for (device in if (selected == null) 0..1 else selected..selected) {
-            val name = "pr47-real-network-room-$device"; TermScheduleProfileStore.overrideNamespace = name; SharedScheduleSettings.overrideNamespace = name
+            val name = "pr47-real-network-room-$device-${targetId.take(8)}"; TermScheduleProfileStore.overrideNamespace = name; SharedScheduleSettings.overrideNamespace = name
             val profiles = TermScheduleProfileStore(context); val settings = SharedScheduleSettings(context)
             val executor = Executors.newSingleThreadExecutor(); val db = Room.databaseBuilder(context, ScheduleDatabase::class.java, "$name.db").build()
             val store = RoomScheduleStore(db, executor, profiles = profiles)

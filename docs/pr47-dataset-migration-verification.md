@@ -34,8 +34,19 @@ FPK 测试覆盖 catalog 已提交而响应中断的幂等恢复，原工作区�
 
 本地最终文件：`artifacts/pr47/dormpanel-schedule-manager-0.6.0.fpk`、`artifacts/pr47/release-final/DormPanel-X08E-0.1.4.apk`、`DormPanel-Phone-0.1.4.apk`，均未发布。实际 SHA-256 见包检查、签名校验记录及本地 sidecar；二进制和带凭据的执行工具不提交。
 
-侧边浏览器只读确认测试机已安装实例仍为 **0.4.4**，未升级该实例、未改其工作区及课程。真实 NAS 测试运行独立候选源码 / 包用户；另一个新建隔离网络命名空间以目录所属测试用户执行实际 WebDAV 互操作，不等同已安装 FPK 网关 / 原位升级验收。第一次共享目录继承 ACL 未满足 0700 时归档安全拒绝；只在新建测试子目录处理默认 ACL 后重试，没有放宽已有目录授权。
+侧边浏览器只读确认测试机已安装实例仍为 **0.4.4**，未升级该实例、未改其工作区及课程。真实 NAS 测试运行独立候选源码 / 包用户；另一个新建隔离网络命名空间以目录所属测试用户执行实际 WebDAV 互操作，不等同已安装 FPK 网关 / 原位升级验收。共享目录的默认 ACL 仅在新建测试子目录内处理，没有放宽已有目录授权。
 
-后续连接 X08E 和 MIX 2S Phone，独立测试 APK 的 Room 换库及恢复专项分别 2 项通过（[X08E](evidence/pr47/physical-room-x08e.txt)、[Phone](evidence/pr47/physical-room-phone.txt)），包含最终本机验收记录的持久化。没有覆盖日用应用数据。实机完整网络流程待最终验收。没有执行两台实机正式应用的升级、手势 / 触控换库、进程终止或正常重启。Android 共享设置入口由两款应用共用、编译通过；本次没有将模拟器的 Room 测试当作实机 UI 验收，也没有做真正 2GB 设备的最大 16MiB 快照内存压力测试。
+后续连接 X08E 和 MIX 2S Phone，独立测试 APK 的 Room 换库及恢复专项分别 2 项通过（[X08E](evidence/pr47/physical-room-x08e.txt)、[Phone](evidence/pr47/physical-room-phone.txt)），包含最终本机验收记录的持久化。没有覆盖日用应用数据。两台设备的独立测试 APK 已完成直接公网 HTTPS WebDAV 换库、四阶段 force-stop 恢复，并正常重启实际设备（分别核对启动身份变化）后继续编辑 / 发布 / 接收。FPK 接收两端后发布新编辑，两台均接收通过。原旧库 2 个提交及其哈希、完整归档仍保留。此为三端同步核心实机联调；没有执行两台实机正式应用的原位升级与手势 / 触控换库界面验收。Android 共享设置入口由两款应用共用、编译通过；本次没有将模拟器的 Room 测试当作实机 UI 验收，也没有做真正 2GB 设备的最大 16MiB 快照内存压力测试。
 
 没有证明源 WebDAV 目录已经在 NAS 服务端停写，没有把“管理员确认”当作永久停写证明。真实日用公网课表服务、ICS 文件夹及原旧库未用于破坏性测试。隔离测试的旧库、候选和归档同样保留；**实际磁盘回收为 0 字节**。退役状态只说明隔离换库及管理员登记流程完成，人工清理条件仍须另行落实。
+
+## 补充：物理设备最终联调
+
+两台均通过普通网络直接访问原测试公网 WebDAV，未使用 USB 隧道或自签名测试连接。测试只使用独立 APK、独立 Room 命名空间及独立 NAS 数据集，未改日用课表。
+
+- [X08E 换库](evidence/pr47/physical-network-x08e-migrate.txt)、[重启后编辑](evidence/pr47/physical-network-x08e-edit.txt)、[接收 FPK 修改](evidence/pr47/physical-network-x08e-receive.txt)。
+- [Phone 换库](evidence/pr47/physical-network-phone-migrate.txt)、[重启后编辑](evidence/pr47/physical-network-phone-edit.txt)、[接收 FPK 修改](evidence/pr47/physical-network-phone-receive.txt)。
+- [FPK 接收并发布、核验旧库及归档](evidence/pr47/physical-network-fpk-publish.txt)。
+- [X08E 四阶段实际进程终止](evidence/pr47/physical-process-x08e.txt)、[Phone 四阶段实际进程终止](evidence/pr47/physical-process-phone.txt)。
+
+正常重启分别通过 boot_id 前后变化及 sys.boot_completed=1 确认；之后的独立测试客户端重新打开原数据库继续同步通过。管理员登记完成与服务端不可写仍分别判断，物理磁盘回收仍为 0 字节。
