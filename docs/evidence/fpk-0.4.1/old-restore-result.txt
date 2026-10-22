@@ -1,0 +1,2 @@
+{"installed041Source":true,"existing040ArchiveSha256":"f3fabb53683a71c7d71927d06855e19b155720bf2c8f8e6ce3fa7c2285bd57b5","verifiedAndRestored":true,"isolated":true,"fileCount":10,"workspaceCount":4,"identityUnchanged":true,"pendingAndConflictPreserved":true,"restoreGuardsPresent":true,"externalWrites":0}
+Could not chdir to home directory /home/w: No such file or directory

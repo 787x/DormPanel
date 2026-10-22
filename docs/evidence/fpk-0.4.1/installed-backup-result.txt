@@ -1,0 +1,2 @@
+{"installedSocketCreateVerifyCancel": true, "backupAppVersion": "0.4.1", "workspaceCount": 5, "fileCount": 22, "cancelledPreviewCleaned": true, "externalVerificationReadOnly": true}
+Could not chdir to home directory /home/w: No such file or directory

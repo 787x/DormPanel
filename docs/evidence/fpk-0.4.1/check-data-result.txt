@@ -1,0 +1,2 @@
+{"installedVersion": "0.4.1", "identityUnchanged": true, "catalogUnchanged": true, "workspaceCount": 5, "workspaces": [{"courses": 2, "pending": false, "conflict": false}, {"courses": 2, "pending": false, "conflict": false}, {"courses": 1, "pending": false, "conflict": false}, {"courses": 2, "pending": false, "conflict": false}, {"courses": 1, "pending": false, "conflict": true}], "persistentFilesByteAndInodeUnchanged": 22, "writerCount": 1, "socketMode": "0600"}
+Could not chdir to home directory /home/w: No such file or directory
