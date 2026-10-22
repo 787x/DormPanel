@@ -1,0 +1,11 @@
+
+> dormpanel-schedule-manager@0.5.0 verify:package
+> node scripts/verify-package.mjs D:/Projects/DormPanel/artifacts/pr46/dormpanel-schedule-manager-0.5.0.fpk
+
+{
+  "version": "0.5.0",
+  "noInstallWizard": true,
+  "folderAuthorizationPreserved": true,
+  "sourceFilesVerified": 21,
+  "sha256": "8a32dc5a5ff4b9c0e9a11cedb146291b23c9c595f332e11b31bcfb4a7ea1dbde"
+}

@@ -78,6 +78,28 @@ class AppendOnlyScheduleSyncTest {
         }
         assertThrows(IllegalArgumentException::class.java) { ScheduleCommitCodec.decode(bytes("bad-checksum")) }
     }
+    @Test fun fpkHistoryRollbackIsAcceptedWithVerifiedAncestorsAndRetainedHashes() {
+        fun bytes(name: String) = requireNotNull(javaClass.getResourceAsStream("/pr46/$name.dpc")).use { it.readBytes() }
+        val root = ScheduleCommitCodec.decode(bytes("root"))
+        val current = ScheduleCommitCodec.decode(bytes("current"))
+        val rollbackBytes = bytes("rollback")
+        val rollback = ScheduleCommitCodec.decode(rollbackBytes)
+        assertEquals(listOf(current.commitId), rollback.parents)
+        assertTrue(ScheduleMerge.same(root.state, rollback.state))
+        assertArrayEquals(rollbackBytes, ScheduleCommitCodec.encode(rollback))
+        val remote = Remote().apply { add(root); add(current) }
+        val local = Local(root)
+        assertTrue(AppendOnlyScheduleSync(local, remote).synchronize().conflicts.isEmpty())
+        val known = local.hashes.toMap()
+        remote.files[rollback.commitId] = rollbackBytes
+        assertTrue(AppendOnlyScheduleSync(local, remote).synchronize().conflicts.isEmpty())
+        assertTrue(ScheduleMerge.same(root.state, local.state))
+        assertEquals(listOf(rollback.commitId), local.frontier)
+        assertTrue(known.all { local.hashes[it.key] == it.value })
+        assertEquals(3, remote.files.size)
+        assertArrayEquals(bytes("root"), remote.files[root.commitId])
+        assertArrayEquals(bytes("current"), remote.files[current.commitId])
+    }
     @Test fun canonicalIntegrityAndUnknownSchema() {
         val c = commit(initial)
         val bytes = ScheduleCommitCodec.encode(c)

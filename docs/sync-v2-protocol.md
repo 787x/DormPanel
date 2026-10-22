@@ -115,3 +115,9 @@ v2 与旧客户端没有双协议桥接；切换后所有端必须停止写 v1�
 `schedule-core/src/test/resources/sync-v2/` 包含 `.dpc` 原始字节、可读 JSON 字段说明和 manifest 中的长度/完整文件 SHA-256。empty、complex-root、left、right、multi-parent 是合法文件；bad-checksum 必须失败。复杂样例含中文、emoji、null 与空字符串、来源/实例/全周覆盖/自定义学期；left/right 从共同根独立编辑，multi-parent 保留双方修改。JSON 是说明数据，不是线上文件格式。
 
 运行 `python tools/sync_v2_vectors.py` 独立校验；`--generate` 重新生成同一固定字节。Kotlin JVM 测试读取相同文件并重新编码做逐字节比较。第三方实现应通过同一组向量，并实现本规范的全部领域校验、关联冲突与故障行为；Python 参考仅作为格式/校验向量工具，不是完整同步客户端。
+
+## 历史回退与独立精简候选（管理工具，不改变协议）
+
+FPK 0.5.0 的历史回退以选中旧快照创建新 DPC2，引用当前全部已验证前沿；原提交及父链保持不变。完整归档复制并回读验证全部合法原始 DPC。精简准备仅在独立新目录创建新 datasetId 的单根候选，不向旧数据集追加无关根，不切换任何已有客户端，也不删祖先。
+
+当前协议不能证明全体 Writer 已退役，不能从时间、Writer、大小或当前 tips 推断有效旧提交可删除。旧库退役与磁盘回收必须由管理员协调全部客户端停写、迁移并验收；不提供活跃目录自动 GC、最近 N 份保留或一键删除。操作、安全校验及验证范围见 [PR46](pr46-fpk-history.md)。

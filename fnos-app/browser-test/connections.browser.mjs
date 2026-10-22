@@ -9,15 +9,18 @@ import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
 import { expect } from 'playwright/test';
 import { createApp, PREFIX } from '../src/server.mjs';
+import { encode, decode } from '../src/protocol.mjs';
+import { loadGraph } from '../src/graph.mjs';
+import { emptyState } from '../src/merge.mjs';
 
 let browser;
 before(async () => { browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chromium') }); });
 after(async () => { await browser?.close(); });
 
 // 只在独立临时实例中注入网关身份；生产服务仍拒绝 TCP 和伪造的客户端身份。
-async function fixture(t, { authorized = false, proxyHost = null } = {}) {
+async function fixture(t, { authorized = false, proxyHost = null, remoteFactory } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'dp-connection-ui-'));
-  const app = await createApp({ dataDir: dir, configPath: join(dir, 'config.json'),
+  const app = await createApp({ dataDir: dir, configPath: join(dir, 'config.json'), remoteFactory,
     authorizedRoots: authorized ? [{ id: 'approved', name: 'fnOS 已授权测试目录', path: dir }] : [] });
   const socketPath = process.platform === 'win32' ? '\\\\.\\pipe\\dp-ui-' + randomUUID() : join(dir, 'app.sock');
   await new Promise(r => app.server.listen(socketPath, r));
@@ -366,4 +369,37 @@ test('数据源高级操作保持可达，重命名生效，创建和绑定仍�
   await card.getByText('高级诊断', { exact: true }).click(); await expect(card.locator('pre')).toBeVisible();
   await card.getByRole('button', { name: '移除配置', exact: true }).click(); await expect(f.page.locator('#feedbackMessage')).toContainText('只移除配置');
   await f.page.locator('#feedbackCancel').click(); assert.equal(f.app.catalog.manifest.workspaces.length, 2); assert.deepEqual(f.errors, []);
+});
+
+test('历史中心完整快照分页、稳定身份比较、回退预览确认及旧历史保留', async t => {
+  const rows = new Map(), datasetId = randomUUID(), writerId = randomUUID(), rootId = randomUUID(), tipId = randomUUID();
+  const entry = (id,title) => ({ id,title,day:1,startMinute:480,endMinute:540,location:'' });
+  const root = { datasetId, writerId, commitId:rootId, parents:[], state:{ ...emptyState(), entries:[entry('stable','原课程')] } };
+  const tip = { ...root, commitId:tipId, parents:[rootId], state:{ ...emptyState(), entries:[entry('stable','修改后课程'), ...Array.from({length:45},(_,i)=>entry('extra-'+i,'新增'+i))] } };
+  rows.set(rootId,encode(root)); rows.set(tipId,encode(tip));
+  const remote = { key:'test',list:async()=>[...rows.keys()],read:async id=>rows.get(id)??null,put:async(id,b)=>rows.set(id,b) };
+  const f = await fixture(t,{remoteFactory:()=>remote});
+  const graph = await loadGraph(remote), id = randomUUID(), manifest = structuredClone(f.app.catalog.manifest);
+  manifest.connections.push({id,name:'测试连接',type:'webdav',config:{url:'https://example.com/test/',username:'test',password:'test'}});manifest.workspaces[0].connectionId=id;
+  await f.app.catalog.commit(manifest);
+  await f.app.db.tx(frame=>{ frame.graph=graph;frame.local=graph.state;frame.baseline=graph.state;frame.frontier=graph.tips;frame.datasetId=datasetId;frame.bindingKey='test';frame.checkpoint={hashes:graph.hashes,datasetId}; });
+  await f.open(); await f.page.locator('#historyPage').click();
+  await expect(f.page.locator('#historyStatus')).toContainText('2 / 256');
+  await f.page.locator('#historyRows button').first().click();
+  await f.page.getByRole('button',{name:'展开此集合',exact:true}).first().click();
+  await f.page.getByRole('button',{name:'继续查看',exact:true}).click();
+  await expect(f.page.locator('#historyOutput')).toContainText('修改后课程');
+  await f.page.locator('#historyFrom').selectOption(rootId);await f.page.locator('#historyTo').selectOption(tipId);
+  await f.page.locator('#historyDiff').click(); await expect(f.page.locator('#historyOutput')).toContainText('共 46 条记录变化');
+  await f.page.getByRole('button',{name:'继续查看下 40 条',exact:true}).click();
+  await expect(f.page.locator('#historyOutput')).toContainText('修改');
+  await f.page.locator('#historyTo').selectOption(rootId); await f.page.locator('#historyPreview').click();
+  await expect(f.page.locator('#historyConfirm')).toBeEnabled();
+  await expect(f.page.locator('#historyOutput')).toContainText('删除 45');
+  await f.page.locator('#historyConfirm').click(); await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#historyStatus')).toContainText('3 / 256');
+  assert.equal(rows.size,3); assert(rows.get(rootId).equals(encode(root))); assert(rows.get(tipId).equals(encode(tip)));
+  const published = decode(rows.get(f.app.db.frame.receipt.commitId)); assert.deepEqual(published.parents,[tipId]);assert.equal(published.state.entries.length,1);
+  await f.page.screenshot({path:new URL('../../docs/evidence/pr46/history-1280x800.png',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),fullPage:true});
+  assert.deepEqual(f.errors,[]);
 });

@@ -1,4 +1,5 @@
 import http from "node:http";
+import { HistoryManager, cachedGraph, historySummary, commitAt, versionDifferences } from './history.mjs';
 import { BackupManager, recoverRestore } from "./backup.mjs";
 import { readFile, writeFile, chmod, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -108,7 +109,8 @@ export async function createApp({
     previews.clear(); tokens.clear();
   } });
   await backups.cleanupStages();
-  let requests = 0, writes = 0;
+  let requests = 0, writes = 0, historyLock = false;
+  const history = new HistoryManager(catalog);
   const tokens = new Map(),
     previews = new Map();
   const userToken = (user, origin = null) => {
@@ -149,6 +151,7 @@ export async function createApp({
         path = u.pathname.slice(PREFIX.length);
       if (req.method === "POST") {
         const routes = [
+          '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
           "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore", "/api/backups/cancel",
           "/api/edit",
           "/api/refresh",
@@ -176,6 +179,7 @@ export async function createApp({
         const input = await body(req);
         writing = true; writes++;
         ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
+        ensure(!historyLock, '历史操作进行中，请稍后重试');
         if (path.startsWith('/api/backups/')) {
           ensure(writes === 1 && !catalog.configuring, '存在其他写入操作，请稍后重试');
           ensure(input.catalogVersion === catalog.manifest.revision, '管理版本过期');
@@ -194,7 +198,25 @@ export async function createApp({
         }
         ensure(!catalog.configuring && !catalog.manifest.transition, "正在保存配置或等待恢复");
         const network = action => catalog.network(workspaceId, action);
-        if (path === "/api/edit") await db.edit(input.operation, input.version);
+        if (path.startsWith('/api/history/')) {
+          ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision && workspaceId === catalog.manifest.activeId, '历史操作版本过期或有并发操作');
+          ensure(!catalog.restoreGuards[workspaceId], '恢复异常需先检查并同步');
+          history.catalog = catalog;
+          historyLock = true;
+          try {
+            let result;
+            await network(async engine => {
+              if (path.endsWith('/check')) { await engine.observe(); return; }
+              if (path.endsWith('/preview')) result = await history.preview(db, engine, input, user);
+              else if (path.endsWith('/rollback')) result = await history.rollback(db, engine, input, user);
+              else result = await history.archive(db, engine, input, path.endsWith('/compact'));
+            });
+            // catalog.network 写入状态清除错误；预览 token 绑定完成后的精确帧。
+            if (result?.token) { const t = history.tokens.get(result.token); t.fingerprint = history.fingerprint(db, t.graph); }
+            send(200, publicValue({ ...result, version: db.frame.revision })); return;
+          } finally { historyLock = false; }
+        }
+        else if (path === "/api/edit") await db.edit(input.operation, input.version);
         else if (path === "/api/refresh" || path === "/api/sync")
           await network(engine => engine.synchronize({
             bind: input.bind === true,
@@ -266,7 +288,7 @@ export async function createApp({
         return;
       }
       // schedule 无 ID 仅用于初次引导；其余数据读取必须明确指定工作区。
-      if (path.startsWith('/api/') && !['/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
+      if (path.startsWith('/api/') && !['/api/history', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
         send(404, { error: '不存在' }); return;
       }
       ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
@@ -276,6 +298,24 @@ export async function createApp({
       const row = db ? catalog.row(workspaceId) : null;
       const c = row?.connectionId ? catalog.connection(row.connectionId) : null;
       const busy = catalog.busy.has(workspaceId);
+      if (path.startsWith('/api/history')) {
+        ensure(workspaceId === catalog.manifest.activeId, '历史只可访问当前工作区');
+        history.catalog = catalog;
+        const g = await cachedGraph(db.frame);
+        let result;
+        if (path === '/api/history') {
+          result = historySummary(db, g);
+          if (catalog.restoreGuards[workspaceId]) { result.blockers.push('恢复后尚未验证远端历史，请先检查并同步'); result.rollbackEnabled = false; }
+        }
+        else if (path.endsWith('/preview-diff')) result = history.previewDiff(db, { workspaceId, token:u.searchParams.get('token'), offset:Number(u.searchParams.get('offset') ?? 0) }, user);
+        else if (path.endsWith('/diff')) result = versionDifferences(g, u.searchParams.get('from'), u.searchParams.get('to'), Number(u.searchParams.get('offset') ?? 0));
+        else {
+          const state = commitAt(g, u.searchParams.get('id')).state, table = u.searchParams.get('table') ?? 'entries', offset = Number(u.searchParams.get('offset') ?? 0);
+          ensure(Object.hasOwn(state, table) && Number.isSafeInteger(offset) && offset >= 0, '快照分页无效');
+          result = { table, total: state[table].length, rows: state[table].slice(offset, offset + 40), next: offset + 40 < state[table].length ? offset + 40 : null };
+        }
+        send(200, publicValue({ ...result, version: db.frame.revision })); return;
+      }
       if (path === "/api/manage") { send(200, await catalog.summary()); return; }
       if (path === "/api/directories") {
         send(200, { directories: await catalog.grants.browse(u.searchParams.get('rootId'), u.searchParams.get('relative') ?? '') }); return;
