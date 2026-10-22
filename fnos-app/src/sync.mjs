@@ -26,13 +26,18 @@ export async function verifyEndpointMove(db, remote) {
   graphPlan(graph, f.baseline, f.frontier);
   for (const [id, expected] of Object.entries(f.abandoned))
     ensure(graph.hashes[id] === expected, "新地址缺少中断路径或内容不符");
+  if (f.pending?.attempted) {
+    const bytes = Buffer.from(f.pending.raw, 'base64'), candidate = decode(bytes);
+    ensure(graph.raw[candidate.commitId] === bytes.toString('base64'), '新地址缺少已尝试发布的候选或内容不符');
+  }
   return graph;
 }
 
 export class SyncEngine {
-  constructor(workspace, remote) {
+  constructor(workspace, remote, validateDataset = () => {}) {
     this.db = workspace;
     this.remote = remote;
+    this.validateDataset = validateDataset;
   }
   async publish() {
     const { db, remote } = this,
@@ -134,8 +139,9 @@ export class SyncEngine {
     const graph = await loadGraph(
       observed,
       previous,
-      async (deferred, verified) =>
-        db.tx((next) => {
+      async (deferred, verified) => {
+        if (verified.datasetId) this.validateDataset(verified.datasetId);
+        return db.tx((next) => {
           next.bindingKey = remote.key;
           next.checkpoint = {
             ...next.checkpoint,
@@ -143,8 +149,10 @@ export class SyncEngine {
             bindingKey: remote.key,
             deferred,
           };
-        }),
+        });
+      },
     );
+    if (graph.datasetId) this.validateDataset(graph.datasetId);
     graph.bindingKey = remote.key;
     await db.tx((next) => {
       next.graph = graph;

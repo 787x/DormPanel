@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, open, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { decode, ensure, hash, uuid } from "./protocol.mjs";
 import { loadGraph } from "./graph.mjs";
@@ -11,7 +11,7 @@ export class Store {
     this.dir = dir;
   }
   async save(name, data) {
-    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    const created = await mkdir(this.dir, { recursive: true, mode: 0o700 });
     const p = join(this.dir, name),
       tmp = p + "." + randomUUID() + ".tmp";
     const f = await open(tmp, "wx", 0o600);
@@ -30,6 +30,19 @@ export class Store {
           await dir.sync();
         } finally {
           await dir.close();
+        }
+        // 新工作区目录的父项也必须持久化，才能随后发布引用它的 catalog。
+        if (created) {
+          const stop = dirname(resolve(created));
+          let parent = dirname(resolve(this.dir));
+          for (;;) {
+            const handle = await open(parent, 'r');
+            try { await handle.sync(); } finally { await handle.close(); }
+            if (parent === stop) break;
+            const next = dirname(parent);
+            if (next === parent) break;
+            parent = next;
+          }
         }
       }
     } finally {
