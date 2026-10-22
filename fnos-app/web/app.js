@@ -1,3 +1,4 @@
+import { notifyUser, confirmAction, requestText } from './feedback.js';
 const $ = (id) => document.getElementById(id),
   base = "/app/dormpanel-schedule-manager";
 const now = () =>
@@ -239,7 +240,7 @@ async function runSync(options) {
   try {
     await post("/api/sync", options);
   } catch (e) {
-    alert(e.message);
+    await notifyUser(e.message);
   } finally {
     await load();
     $("refresh").disabled = false;
@@ -261,7 +262,7 @@ function field(name, value = "", type = "text") {
   return input;
 }
 function dialog(title, build, save) {
-  const scope = workspaceId, formVersion = version;
+  const scope = workspaceId, formVersion = version, formCatalogVersion = catalogVersion;
   $("editorTitle").textContent = title;
   $("fields").replaceChildren();
   $("formError").textContent = "";
@@ -272,8 +273,10 @@ function dialog(title, build, save) {
     e.preventDefault();
     if (!save) return;
     try {
-      if (scope !== workspaceId || formVersion !== version) throw Error("表单版本或工作区已变化，请关闭后重新打开");
-      await save(read());
+      if (scope !== workspaceId || formVersion !== version || formCatalogVersion !== catalogVersion) throw Error("表单版本或工作区已变化，请关闭后重新打开");
+      const input = await read();
+      if (scope !== workspaceId || formVersion !== version || formCatalogVersion !== catalogVersion) throw Error("表单版本或工作区已变化，请关闭后重新打开");
+      await save(input);
       $("editor").close();
       await load();
     } catch (error) {
@@ -287,7 +290,7 @@ $("editor").addEventListener('close', () => {
   $("fields").replaceChildren();
   $("editorForm").onsubmit = null;
 });
-const edit = (operation) => post("/api/edit", { operation });
+const edit = (operation, context = { workspaceId, version }) => post("/api/edit", { ...context, operation });
 const time = (minute) =>
   `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 const minute = (text) => {
@@ -354,6 +357,7 @@ function editEvent(row = {}) {
   );
 }
 function editOccurrence(c) {
+  const context = { workspaceId, version };
   dialog(
     "课程详情：" + c.title,
     () => {
@@ -419,7 +423,7 @@ function editOccurrence(c) {
       );
       $("fields").append(
         button("重置所选范围", async () => {
-          if (confirm("确认重置所选范围？"))
+          if (await confirmAction("确认重置所选范围？"))
             try {
               await edit({
                 kind: "override",
@@ -427,7 +431,7 @@ function editOccurrence(c) {
                 sourceId: c.sourceId,
                 seriesId: c.seriesId,
                 anchorDate: select.value === "all" ? null : c.anchorDate,
-              });
+              }, context);
               $("editor").close();
               await load();
             } catch (e) {
@@ -519,12 +523,13 @@ function adjustDate(row = {}) {
   );
 }
 async function remove(kind, id, label) {
-  if (confirm("确认删除 / 重置 " + label + "？相关覆盖会随课程或来源删除。"))
+  const context = { workspaceId, version };
+  if (await confirmAction("确认删除 / 重置 " + label + "？相关覆盖会随课程或来源删除。"))
     try {
-      await edit({ kind, id, action: "delete" });
+      await edit({ kind, id, action: "delete" }, context);
       await load();
     } catch (e) {
-      alert(e.message);
+      await notifyUser(e.message);
     }
 }
 function renderRecords() {
@@ -624,10 +629,10 @@ async function importFile() {
           info.textContent = e.message;
         }
       };
-      return () => {
+      return async () => {
         if (!preview) throw Error("请先选择文件并检查预览");
         if (
-          !confirm("确认导入以上预览？替换来源将保留原 sourceId 和已有覆盖。")
+          !(await confirmAction("确认导入以上预览？替换来源将保留原 sourceId 和已有覆盖。"))
         )
           throw Error("已取消");
         return {
@@ -710,7 +715,7 @@ async function showConflicts() {
         ])
           $("fields").append(
             button(label, async () => {
-              if (!confirm(label + "？将保存待发布提交。")) return;
+              if (!(await confirmAction(label + "？将保存待发布提交。"))) return;
               try {
                 await post("/api/resolve", { choice, token: c.token, workspaceId: c.workspaceId, version: c.version });
                 $("editor").close();
@@ -725,7 +730,7 @@ async function showConflicts() {
       null,
     );
   } catch (e) {
-    alert(e.message);
+    await notifyUser(e.message);
   }
 }
 $("newCourse").onclick = () => editEntry();
@@ -736,18 +741,21 @@ $("adjustDate").onclick = () => adjustDate();
 $("importFile").onclick = importFile;
 $("config").onclick = () => showSources(true);
 $("conflicts").onclick = showConflicts;
-$("bind").onclick = () => {
-  if (confirm("确认接收此目录已有数据集？本地未发布数据会阻止绑定。"))
-    runSync({ bind: true });
+$("bind").onclick = async () => {
+  const context = { workspaceId, version };
+  if (await confirmAction("确认接收此目录已有数据集？本地未发布数据会阻止绑定。"))
+    runSync({ ...context, bind: true });
 };
-$("create").onclick = () => {
-  if (confirm("确认在已配置的空目录创建独立数据集？不能用于覆盖已有历史。"))
-    runSync({ create: true });
+$("create").onclick = async () => {
+  const context = { workspaceId, version };
+  if (await confirmAction("确认在已配置的空目录创建独立数据集？不能用于覆盖已有历史。"))
+    runSync({ ...context, create: true });
 };
 async function loadManagement(epoch = loadEpoch) {
   const scope = workspaceId, m = await get('/api/manage');
   if (epoch !== loadEpoch || scope !== workspaceId) return;
   management = m; catalogVersion = m.revision;
+  const context = { workspaceId: scope, version: m.workspaces.find(w => w.id === scope).version, catalogVersion: m.revision };
   $('workspaceSelect').replaceChildren(...m.workspaces.map(w => {
     const option = el('option', w.name + (w.conflict ? ' · 冲突' : w.pending ? ' · 待确认' : w.dirty ? ' · 未发布' : ''));
     option.value = w.id; return option;
@@ -757,31 +765,31 @@ async function loadManagement(epoch = loadEpoch) {
     const row = el('article', null, 'course');
     row.append(el('strong', w.name), el('p', `数据集 ${w.datasetId ?? '未绑定'} · ${w.dirty ? '有本地修改' : '本地已保存'} · ${w.pending ? '待发布候选' : '无候选'} · ${w.conflict ? '存在冲突' : '无冲突'} · ${w.busy ? '正在同步' : '空闲'}${w.recovery ? ' · 有恢复信息' : ''}`), el('p', `最近检查：${w.checkedAt ? new Date(w.checkedAt).toLocaleString() : '尚未检查'}${w.error ? ' · 异常：' + w.error : ''}`));
     row.append(button('切换', () => switchWorkspace(w.id)), button('修改名称', async () => {
-      const name = prompt('工作区名称', w.name); if (!name) return;
-      await manageAction({ action: 'workspace.rename', targetId: w.id, targetVersion: w.version, name });
+      const name = await requestText('工作区名称', w.name); if (!name) return;
+      await manageAction({ ...context, action: 'workspace.rename', targetId: w.id, targetVersion: w.version, name });
     }), button('选择访问端点', () => chooseEndpoint(w)), button('移除配置', async () => {
-      const name = prompt('只移除配置，保留课表文件。当前/唯一工作区和有修改、冲突、恢复信息的工作区不能移除。输入名称确认：' + w.name);
+      const name = await requestText('只移除配置，保留课表文件。当前/唯一工作区和有修改、冲突、恢复信息的工作区不能移除。输入名称确认：' + w.name);
       if (name !== w.name) return;
-      await manageAction({ action: 'workspace.remove', targetId: w.id, targetVersion: w.version, confirm: name });
+      await manageAction({ ...context, action: 'workspace.remove', targetId: w.id, targetVersion: w.version, confirm: name });
     })); return row;
   }));
   $('connectionRows').replaceChildren(...m.connections.map(c => {
     const row = el('article', null, 'course');
     row.append(el('strong', c.name + ' · ' + c.type), el('p', c.type === 'webdav' ? c.url : `${m.roots.find(r => r.id === c.rootId)?.name ?? '授权已撤销'} / ${c.relative || '根目录'}`),
       button('编辑连接', () => connectionDialog(c.type, c)), button('测试权限与历史', async () => {
-        try { const result = await post('/api/connections/test', { connectionId: c.id, name: c.name }); alert(`${result.permission}；${result.observed} 个提交；异常 ${result.deferred}`); }
-        catch (e) { alert(e.message); }
+        try { const result = await post('/api/connections/test', { ...context, connectionId: c.id, name: c.name }); await notifyUser(`${result.permission}；${result.observed} 个提交；异常 ${result.deferred}`); }
+        catch (e) { await notifyUser(e.message); }
       }), button('新建工作区', async () => {
-        const name = prompt('新工作区名称', c.name); if (!name) return;
-        await manageAction({ action: 'workspace.add', connectionId: c.id, name });
+        const name = await requestText('新工作区名称', c.name); if (!name) return;
+        await manageAction({ ...context, action: 'workspace.add', connectionId: c.id, name });
       }), button('移除连接', async () => {
-        if (confirm('移除连接配置？仍被工作区使用时会拒绝。')) await manageAction({ action: 'connection.remove', connectionId: c.id });
+        if (await confirmAction('移除连接配置？仍被工作区使用时会拒绝。')) await manageAction({ ...context, action: 'connection.remove', connectionId: c.id });
       })); return row;
   }));
 }
 async function manageAction(input) {
   try { const result = await post('/api/manage', input); await load(); return result; }
-  catch (e) { alert(e.message); await load(); }
+  catch (e) { await notifyUser(e.message); await load(); }
 }
 async function switchWorkspace(id) {
   if (!id || id === workspaceId || switching) return;
@@ -792,7 +800,7 @@ async function switchWorkspace(id) {
     await post('/api/manage', { action: 'workspace.switch', targetId: id });
     ++loadEpoch; workspaceId = id; local = null;
     $('editor').close(); await load();
-  } catch (e) { alert(e.message); await load(); }
+  } catch (e) { await notifyUser(e.message); await load(); }
   finally {
     switching = false; $('workspaceSelect').disabled = false;
     for (const id of ['dashboard', 'dashboardActions', 'dataSources']) $(id).inert = false;
