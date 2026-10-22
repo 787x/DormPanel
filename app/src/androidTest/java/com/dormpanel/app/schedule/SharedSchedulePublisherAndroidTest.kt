@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.*
+import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.IsolatedDashboardRule
@@ -62,6 +63,8 @@ class SharedSchedulePublisherAndroidTest {
                         vm.sharedSchedule.settings.folder = folder
                         dialog = SharedScheduleDialog.show(activity, vm.schedule, vm.sharedSchedule, true)
                     }
+                    onView(withText("创建新的共享课表")).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
+                    onView(withText("绑定已有共享课表（预览）")).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
                     onView(withText("绑定已有共享课表（预览）")).perform(scrollTo(), click())
                     waitFor(scenario) { !it.sharedSchedule.busy }
                     onView(withText("取消")).perform(click())
@@ -82,6 +85,10 @@ class SharedSchedulePublisherAndroidTest {
                     waitFor(scenario) { !it.sharedSchedule.busy }
                     onView(withText("确认下载并绑定")).perform(click())
                     waitFor(scenario) { !it.sharedSchedule.busy && it.schedule.state.sync != null && !it.schedule.applyingSnapshot }
+                    assertEquals(0, puts); assertEquals(2, files.size)
+                    onView(withText("绑定已有共享课表（预览）")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+                    onView(withText("立即同步")).perform(scrollTo(), click())
+                    waitFor(scenario) { !it.sharedSchedule.busy }
                     assertEquals(0, puts); assertEquals(2, files.size)
                     scenario.onActivity { activity ->
                         val vm = ViewModelProvider(activity)[DashboardViewModel::class.java]

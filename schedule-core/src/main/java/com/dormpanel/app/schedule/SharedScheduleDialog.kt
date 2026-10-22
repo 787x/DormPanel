@@ -31,6 +31,7 @@ object SharedScheduleDialog {
         var publishButton: Button? = null
         var synchronizeButton: Button? = null
         var bindButton: Button? = null
+        var inspectButton: Button? = null
         var conflictButton: Button? = null
         fun refresh() {
             val time = sync.settings.lastSuccess
@@ -41,6 +42,8 @@ object SharedScheduleDialog {
             publishButton?.isEnabled = !sync.busy && source.ready
             bindButton?.isEnabled = !sync.busy && source.ready && !bound()
             bindButton?.visibility = if (bound()) android.view.View.GONE else android.view.View.VISIBLE
+            inspectButton?.isEnabled = !sync.busy && source.ready
+            if (bound()) previewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.visibility = android.view.View.GONE
             synchronizeButton?.isEnabled = !sync.busy && source.state.sync != null
             conflictButton?.isEnabled = !sync.busy
         }
@@ -65,6 +68,7 @@ object SharedScheduleDialog {
         fun inspectAndConfirm() {
             sync.inspect { remote ->
                 if (!active) return@inspect
+                val canBind = !bound()
                 val v = remote.snapshot.state
                 val details = buildString {
                     append("Dataset: ${remote.head.datasetId}\nCommit: ${remote.head.revision}\n协议：Append-only v2")
@@ -78,12 +82,17 @@ object SharedScheduleDialog {
                     v.profiles.toSortedMap().forEach { (key, profile) ->
                         append("\n${key.take(160)} · ${profile.timezone} · 首周 ${profile.week1Monday} · ${profile.phases.size} 个时段阶段")
                     }
-                    append("\n\n确认前将重新检查完整版本图。绑定仅接收已有课程，不创建远端根提交。首次绑定要求空课表；已有本地数据请先保留，已有 v1 绑定请使用迁移入口。")
+                    append(if (canBind) "\n\n确认前将重新检查完整版本图。绑定仅接收已有课程，不创建远端根提交。首次绑定要求空课表；已有本地数据请先保留，已有 v1 绑定请使用迁移入口。"
+                        else "\n\n本机已绑定；本次仅检查远端，不下载覆盖本地课程、不重新绑定，也不发布远端提交。")
                 }
                 val content = TextView(context).apply { text = details; textSize = 16f; setPadding(24, 12, 24, 12); setTextIsSelectable(true) }
-                previewDialog = AlertDialog.Builder(context).setTitle("已验证的远端课表")
+                val preview = AlertDialog.Builder(context).setTitle("已验证的远端课表")
                     .setView(ScrollView(context).apply { addView(content) })
-                    .setNegativeButton("取消", null).setPositiveButton("确认下载并绑定") { _, _ -> sync.bind(remote) }.show()
+                    .setNegativeButton(if (canBind) "取消" else "关闭预览", null)
+                if (canBind) preview.setPositiveButton("确认下载并绑定") { _, _ ->
+                    if (active && !bound()) sync.bind(remote)
+                }
+                previewDialog = preview.show()
             }
         }
         if (publisher) {
@@ -91,7 +100,7 @@ object SharedScheduleDialog {
             bindButton = button("绑定已有共享课表（预览）") { inspectAndConfirm() }
             button("诊断 v2（在独立随机测试目录写入合成提交）") { sync.diagnose() }
         } else {
-            bindButton = button("测试连接 / 检查远端快照") { inspectAndConfirm() }
+            inspectButton = button("测试连接 / 检查远端快照") { inspectAndConfirm() }
             synchronizeButton = button("立即同步") { sync.sync() }
         }
         if (!publisher) {

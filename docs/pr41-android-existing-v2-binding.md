@@ -2,6 +2,8 @@
 
 验证日期：2026-10-22（Asia/Shanghai）。开发基线：已合并 PR40 的 main `7a078e5`，Android 正式版 0.1.2、fnOS FPK 正式版 0.3.2。结论：本文限定的 **X08E 首次绑定及三端互操作 LIVE PASS**；候选尚未发布，未创建 tag、Release 或自动合并 PR。
 
+**候选范围更新：**前述 LIVE PASS 以及下文原始实机记录对应 `0.1.3-pr41-candidate1`，其字节清单为 [artifacts.json](evidence/pr41/artifacts.json)。修复 Phone 已绑定检查入口后，已重新构建两端 `candidate2`，不沿用旧哈希或实机结论；本次增量验证及未验证范围见文末补充。
+
 ## 使用方式
 
 1. 在 X08E「Control Center → WebDAV Settings」配置原有共享 WebDAV 账号。已有账号无需另配。
@@ -88,3 +90,20 @@ FPK 修改前完整归档实际 `var/etc`，24 个普通文件逐成员哈希比
 - 候选 Phone 0.1.3 经过 API 28 UI、构建、lint、正式签名验证，未安装到真实手机；实机三端用例使用 Phone 0.1.2。
 - 未重复四小时 soak、整机重启、自启、小爱/Bluetooth Mesh/原生闹钟专项验收、真实 HA 回归或真实非空 v1 日用库迁移。相关产品路径未修改，核心迁移/回执/冲突自动化回归通过，不将代码推断写作实机结论。
 - 多分支首次绑定需在已有编辑端合并；非空本地课表不能自动合并独立 dataset。异常孤立文件仍显示未完成全部同步，服务器列举观察边界保持原协议限制。
+
+## 补充：已绑定 Phone 只读检查入口回归修复
+
+日期仍为 2026-10-22。原 PR41 将 Phone 检查按钮与 X08E 首次绑定按钮共用引用，`refresh()` 在已绑定时隐藏该引用，导致 Phone 丢失原有检查入口。本次仅局部修改 `SharedScheduleDialog`；`SharedScheduleController.inspect()/bind()`、完整版本图复验、Room 事务绑定及本地保护逻辑保持原样。
+
+- Phone 检查按钮独立管理，未绑定和已绑定时均可见；忙碌或本地尚未就绪时禁用。
+- 异步检查结果返回时重新读取当前绑定状态。未绑定时仍显示首次绑定确认；已绑定时显示相同身份、历史、课程、来源、学期信息及只读说明，只有「关闭预览」，不调用 `bind()`。
+- 若预览已打开后才变为已绑定，刷新会隐藏首次绑定确认，确认回调本身也再检查状态。关闭管理窗口继续关闭预览并忽略迟到结果。
+- X08E 创建与首次绑定按钮仍在未绑定时显示；绑定后隐藏首次绑定按钮，保留立即同步和冲突处理。
+
+本次 API 28 / 1280×800 新增 3 项 Phone UI 测试：首次绑定后重复只读检查（包含更晚远端提交）、等待 GET 时本地绑定、等待 GET 时关闭管理窗口。逐项比较本地课程表、来源、事件、日期调整、覆盖及全部同步 checkpoint，包含 datasetId、writerId、frontier 和历史字节；检查前后完全相同，远端文件名及 SHA-256 相同，PUT/MKCOL 等写方法为零。异步结果没有错误的绑定确认或迟到预览。
+
+Phone 全套相关 UI 共 6 项、X08E UI 2 项通过；X08E 用例新增明确检查两种未绑定入口可见、已绑定首次绑定入口隐藏、立即同步无额外 PUT，同时保留原取消、过期预览拒绝及后续发布验证。另运行 17 项绑定/Append-only Room 回归、339 项 JVM 测试，三模块 Debug/Release lint、相关 APK 构建与两端正式签名构建均通过；candidate2 的原生拒绝检查 8 项通过。见 [本次增量验证摘要](evidence/pr41/inspection-verification.txt)。
+
+两端版本仍为 0.1.3 / X08E code 7 / Phone code 5。新产物位于独立 `artifacts/release/0.1.3-pr41-candidate2/`，SHA-256 见 [候选说明](android-0.1.3-candidate-notes.md) 及 [candidate2 清单](evidence/pr41/inspection-candidate2.json)。旧冻结目录和旧实机证据原样保留。新候选仅经过本次构建、签名检查和相同源码 Debug 变体的模拟器 UI 回归，**未安装实机、未重做三端实机验收或 soak**；本轮未访问或修改任何实机日用课表。
+
+按此次入口回归修复任务的验收范围，功能、针对性回归、兼容保护及候选更新已完成，可提交合并审阅；没有自动合并、创建 tag 或 Release。新候选的发布与后续实机验收另行决定。
