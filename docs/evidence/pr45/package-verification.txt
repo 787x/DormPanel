@@ -1,0 +1,11 @@
+
+> dormpanel-schedule-manager@0.4.4 verify:package
+> node scripts/verify-package.mjs
+
+{
+  "version": "0.4.4",
+  "noInstallWizard": true,
+  "folderAuthorizationPreserved": true,
+  "sourceFilesVerified": 20,
+  "sha256": "87386c2a19d296946d128032006c16ce1061ff2c75d20c74cfebafae2121dcc9"
+}
