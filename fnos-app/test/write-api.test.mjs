@@ -327,3 +327,19 @@ test('历史 API 完整闭环、回退确认和授权归档精简，读取默认
     const marker=JSON.parse(await readFile(join(f.dir,result.data.archive,'verified.json'),'utf8'));assert.equal(marker.commits.length,3);
   }
 });
+
+test('未绑定工作区历史检查的第一次列举直接持久化，不能被身份预探测的第二次列举遗忘', async t=>{
+  const f=await fixture(t), root={datasetId:randomUUID(),writerId:randomUUID(),commitId:randomUUID(),parents:[],state:emptyState()}, broken=randomUUID(), connectionId=randomUUID();
+  let lists=0;const reads=[];
+  f.remote.list=async()=>++lists===1?[root.commitId,broken]:[root.commitId];
+  f.remote.read=async id=>{reads.push(id);return id===broken?Buffer.alloc(250):encode(root);};
+  const manifest=structuredClone(f.app.catalog.manifest);
+  manifest.connections.push({id:connectionId,name:'test',type:'webdav',config:{url:'https://example.com/history/',username:'test',password:'test'}});manifest.workspaces[0].connectionId=connectionId;
+  await f.app.catalog.commit(manifest);
+  assert.equal((await f.post('/api/history/check')).status,200);
+  assert.equal(lists,1);assert(reads.includes(broken));assert(f.app.db.frame.checkpoint.deferred.includes(broken));
+  assert.equal(f.app.db.frame.datasetId,null);assert.deepEqual(f.app.db.frame.local,emptyState());
+  reads.length=0;
+  assert.notEqual((await f.post('/api/history/preview',{target:root.commitId})).status,200);
+  assert(reads.includes(broken));assert(f.app.db.frame.checkpoint.deferred.includes(broken));
+});

@@ -92,7 +92,7 @@ export class SyncEngine {
     });
     return true;
   }
-  async observe() {
+  async observe({ expectedRevision } = {}) {
     const { db, remote } = this,
       f = db.snapshot();
     ensure(
@@ -141,7 +141,9 @@ export class SyncEngine {
       previous,
       async (deferred, verified) => {
         if (verified.datasetId) this.validateDataset(verified.datasetId);
-        return db.tx((next) => {
+        let stale = false;
+        await db.tx((next) => {
+          stale = expectedRevision !== undefined && next.revision !== expectedRevision;
           next.bindingKey = remote.key;
           next.checkpoint = {
             ...next.checkpoint,
@@ -150,6 +152,9 @@ export class SyncEngine {
             deferred,
           };
         });
+        if (expectedRevision !== undefined) expectedRevision++;
+        // 即使调用方输入已过期，也先保留观察证据；不能因拒绝操作而遗忘新路径。
+        ensure(!stale, '观察期间工作区版本变化，请刷新');
       },
     );
     if (graph.datasetId) this.validateDataset(graph.datasetId);
@@ -163,7 +168,7 @@ export class SyncEngine {
         bindingKey: remote.key,
       };
       next.bindingKey = remote.key;
-    });
+    }, expectedRevision);
     return graph;
   }
   async synchronize({ create = false, bind = false } = {}) {

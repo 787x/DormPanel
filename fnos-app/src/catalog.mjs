@@ -243,7 +243,7 @@ export class Catalog {
     const graph = await loadGraph(remote);
     return { ok: true, observed: Object.keys(graph.hashes).length, datasetId: graph.datasetId, deferred: graph.deferred.length, permission: c.type === 'local' ? '已验证读写与排他原子发布' : '已验证只读连接；发布权限将在创建/同步时验证' };
   }
-  async network(id, action) {
+  async network(id, action, { probeIdentity = true } = {}) {
     ensure(!this.configuring && !this.maintenance && !this.manifest.transition, '正在保存配置或等待恢复');
     const db = await this.load(id), row = this.row(id);
     ensure(!this.configuring && !this.maintenance, '正在保存配置或备份恢复');
@@ -267,7 +267,7 @@ export class Catalog {
         this.guardQueue = cleared.catch(() => {}); await cleared;
       }
       if (db.frame.datasetId) ensure(!this.manifest.workspaces.some(w => w.id !== id && identities.get(w.id) === db.frame.datasetId), '数据集重复绑定，请保留原工作区');
-      if (!db.frame.datasetId) {
+      if (!db.frame.datasetId && probeIdentity) {
         // 只做一个有界身份探测；完整闭包仍由核心验证，避免把最大图完整下载两次。
         const ids = await remote.list();
         if (ids.length) {

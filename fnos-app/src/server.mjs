@@ -205,14 +205,16 @@ export async function createApp({
           historyLock = true;
           try {
             let result;
-            await network(async engine => {
+            // 未绑定工作区也直接进入持久观察，避免预探测列举后再列举时遗漏新路径。
+            // 逐提交的 validateDataset 仍由 observe 调用，身份去重不放宽。
+            await catalog.network(workspaceId, async engine => {
               if (path.endsWith('/check')) { await engine.observe(); return; }
               if (path.endsWith('/preview')) result = await history.preview(db, engine, input, user);
               else if (path.endsWith('/rollback')) result = await history.rollback(db, engine, input, user);
               else result = await history.archive(db, engine, input, path.endsWith('/compact'));
-            });
-            // catalog.network 写入状态清除错误；预览 token 绑定完成后的精确帧。
-            if (result?.token) { const t = history.tokens.get(result.token); t.fingerprint = history.fingerprint(db, t.graph); }
+            }, { probeIdentity: false });
+            // 网络包装器结束后绑定入口 revision；确认内部的观察增量单独验证。
+            if (result?.token) { const t = history.tokens.get(result.token); t.fingerprint = history.fingerprint(db, t.graph); t.version = db.frame.revision; }
             send(200, publicValue({ ...result, version: db.frame.revision })); return;
           } finally { historyLock = false; }
         }

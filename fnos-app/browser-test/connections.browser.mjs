@@ -400,6 +400,15 @@ test('历史中心完整快照分页、稳定身份比较、回退预览确认�
   await expect(f.page.locator('#historyStatus')).toContainText('3 / 256');
   assert.equal(rows.size,3); assert(rows.get(rootId).equals(encode(root))); assert(rows.get(tipId).equals(encode(tip)));
   const published = decode(rows.get(f.app.db.frame.receipt.commitId)); assert.deepEqual(published.parents,[tipId]);assert.equal(published.state.entries.length,1);
+  const left={...published,commitId:randomUUID(),parents:[published.commitId],state:{...emptyState(),entries:[...published.state.entries,entry('left','左分支新增')]}};
+  const right={...published,commitId:randomUUID(),parents:[published.commitId],state:{...emptyState(),entries:[...published.state.entries,entry('right','右分支新增')]}};
+  const merged={...published,commitId:randomUUID(),parents:[left.commitId,right.commitId].sort(),state:{...emptyState(),entries:[...left.state.entries,entry('right','右分支新增')]}};
+  for(const c of [left,right,merged]) rows.set(c.commitId,encode(c));
+  await f.page.locator('#historyCheck').click();
+  const mergeRow=f.page.locator('#historyRows article.course').first();
+  await expect(mergeRow).toContainText('合并版本');
+  await expect(mergeRow.locator('p').filter({hasText:/相对父版本.*1 条变化/})).toHaveCount(2);
+  await expect(mergeRow).not.toContainText('空快照');
   await f.page.screenshot({path:new URL('../../docs/evidence/pr46/history-1280x800.png',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),fullPage:true});
   assert.deepEqual(f.errors,[]);
 });

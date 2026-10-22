@@ -1130,8 +1130,11 @@ async function historyRead() {
     const row = el('article', null, 'course');
     row.append(el('strong', `因果层 ${r.level} · 版本 ${i + 1}${r.tip ? ' · 当前前沿' : ''}${r.matchesCurrent ? ' · 与当前课程相同' : ''}${r.parents.length > 1 ? ' · 合并版本' : ''}`));
     row.append(el('p', `版本 ${r.id.slice(0,8)} · Writer ${r.writer.slice(0,8)} · ${r.parents.length ? '← 父版本 '+r.parents.map(id => h.rows.findIndex(x => x.id === id)+1).join('、') : '根版本'} · ${h.rows.filter(x => x.parents.includes(r.id)).length > 1 ? '分叉点' : '因果链'}`));
-    for (const c of Object.values(r.changes)) if (c.added+c.deleted+c.modified) row.append(el('small', `${c.label}：+${c.added} / −${c.deleted} / 修改 ${c.modified}；`));
-    row.append(el('p', `相对${r.parents.length === 1 ? '父版本' : '空快照（根或合并，仅统计内容）'}：${r.total} 条变化`));
+    const comparisons = r.comparisons ?? [{ parentId: r.parents[0] ?? null, changes: r.changes, total: r.total }];
+    for (const comparison of comparisons) {
+      row.append(el('p', `相对${comparison.parentId ? '父版本 '+(h.rows.findIndex(x => x.id === comparison.parentId)+1)+'（'+comparison.parentId.slice(0,8)+'）' : '空快照（根版本）'}：${comparison.total} 条变化`));
+      for (const c of Object.values(comparison.changes)) if (c.added+c.deleted+c.modified) row.append(el('small', `${c.label}：+${c.added} / −${c.deleted} / 修改 ${c.modified}；`));
+    }
     const detail = el('details'); detail.append(el('summary', '高级校验详情'), historyJSON(r)); row.append(detail);
     row.append(button('只读查看完整快照', () => historyJob(async () => {
       $('historyOutput').replaceChildren(el('h3', '完整快照 · 按集合分页只读查看'));

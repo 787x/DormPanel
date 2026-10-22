@@ -6,11 +6,11 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| Windows Node 全套 | 159 项：103 通过，56 项按平台跳过，0 失败。[日志](evidence/pr46/windows-node-tests.txt) |
-| 真实 fnOS 官方 Node 22 / 包用户 / 独立临时目录，全套回归 | 159 项：158 通过，1 项按平台跳过，0 失败。[日志](evidence/pr46/fnos-node-tests.txt) |
-| 最终历史与写 API 定向复核，同一真实 fnOS / 非 root 包用户 | 19/19 通过，无跳过。[日志](evidence/pr46/fnos-targeted-node-tests.txt) |
+| Windows Node 全套 | 170 项：113 通过，57 项按平台跳过，0 失败。[日志](evidence/pr46/windows-node-tests.txt) |
+| 真实 fnOS 官方 Node 22 / 包用户 / 独立临时目录，全套回归 | 合并前观察修复的串行全套 169 项：168 通过，1 项按平台跳过，0 失败（补充未绑定 API 前）。[日志](evidence/pr46/fnos-node-tests.txt) |
+| 最终历史与写 API 定向复核，同一真实 fnOS / 非 root 包用户 | 覆盖最终未绑定入口修复，30/30 通过，无跳过。[日志](evidence/pr46/fnos-targeted-node-tests.txt) |
 | 浏览器真实页面脚本与 API 交互 | 20/20 通过，1280×800，包含原 19 项回归及历史 / 分页 / 差异 / 回退闭环。[日志](evidence/pr46/frontend-tests.txt)、[截图](evidence/pr46/history-1280x800.png) |
-| Android 未修改的 Kotlin Sync v2 核心互操作 | AppendOnlyScheduleSyncTest 16 项、FnosWriterParityTest 2 项通过。真实 HistoryManager 链路生成的回退 DPC2 可逐字节解码重编码，祖先和已确认哈希保留，原客户端从当前版本接收回退快照。[构建日志](evidence/pr46/kotlin-tests.txt) |
+| Android 未修改的 Kotlin Sync v2 核心互操作 | 沿用前次 AppendOnlyScheduleSyncTest 16 项、FnosWriterParityTest 2 项通过的证据，本轮未重复 Android 测试或修改 Android / 提交格式。真实 HistoryManager 链路生成的回退 DPC2 可逐字节解码重编码，祖先和已确认哈希保留。[前次构建日志](evidence/pr46/kotlin-tests.txt) |
 | 静态 / 构建 | `npm run check`、`npm run build`、WSL 官方 fnpack 标准 FPK 构建通过。生产 npm 安装审计 0 漏洞。 |
 | 最终候选逐文件检查 | 21 个 src / web / package 文件与工作区字节一致；manifest 为 0.5.0，无旧安装向导、保留授权资源和升级回调，不包含 Playwright。[结果](evidence/pr46/package-verification.txt) |
 
@@ -30,9 +30,23 @@ fnOS 验证通过 SSH 在 `192.168.3.153` 的 `/tmp/dormpanel-pr46/` 运行候�
 
 ## 候选产物
 
-本地：`artifacts/pr46/dormpanel-schedule-manager-0.5.0.fpk`，同目录有 `.sha256`。二进制及含连接信息的本地工具不提交。
+本地：`artifacts/pr46/dormpanel-schedule-manager-0.5.0-premerge.fpk`（1,770,408 字节），同目录有 `.sha256`。二进制及含连接信息的本地工具不提交。
 
-SHA-256：`8a32dc5a5ff4b9c0e9a11cedb146291b23c9c595f332e11b31bcfb4a7ea1dbde`。
+SHA-256：`8e0ef0b0c830898432c9acf1fec80366566286833a0b22994f008dbffead6a65`。
+
+原 `8a32dc5a5ff4b9c0e9a11cedb146291b23c9c595f332e11b31bcfb4a7ea1dbde` 为合并前修复前的历史候选，仍保留原文件，不代表本次最终代码。
+
+## 从 90cef868 开始的合并前修复
+
+修复仅更新原 PR46。所有源历史观察复用带持久化回调的同步观察，包含归档 / 精简结束前的第二次复查；异常失败仍保留 observed / deferred / 已确认哈希。预览与确认的入口 revision 固定，内部观察增量按步检查并推进；不把正常检查点当成业务修改，也不因拒绝过期操作而遗忘列举所得路径。课程 local / baseline / frontier / pending / 回执不被只读历史操作修改，未添加持久化字段。
+
+新增 10 项观察与摘要回归覆盖五个历史入口、PROPFIND 漏列、读取中断、尚未读取的观察路径、重新打开磁盘工作区、缓存页面访问、合法字节恢复、已确认哈希冲突，以及观察期间编辑后复原的拒绝和证据保留。Linux 专项额外验证归档与精简最终复查发现异常时不签发标记，后续漏列仍阻止危险操作。
+
+另补充未绑定工作区的 API 回归：第一次列举包含异常路径，后续列举漏掉它，仍须第一次观察就持久化、后续继续读取并阻止预览；历史检查不绑定数据集或修改本地课程。通过让历史入口跳过原未持久化身份预探测、直接进入带 `validateDataset` 的持久观察解决此窗口，普通同步流程不变。
+
+多父版本现在逐父比较，测试用 20 门课程、两个分支各修改 1 门课，要求每个父比较仅 1 条修改、0 条新增；根仍为 20 条新增，单父仍为 1 条修改。浏览器回退闭环后追加合并历史，断言页面明确显示两个父基线各 1 条变化、没有空快照合并摘要。正常回退、重复回退、预览分页、归档、精简、上传恢复、旧备份兼容均继续回归。
+
+首轮 fnOS 并发全套的功能断言通过，但旧有超限请求拒绝测试结束后出现一次异步 `write EPIPE`，测试运行器因此另报 1 项文件级失败。随后使用 `node --test --test-concurrency=1` 重跑全套，并独立复核最终历史 / 写 API；本轮未修改无关的传输错误处理。SSH 等待串行全套时客户端读超时，远端测试仍继续运行，最终重新回读完整日志，不把 SSH 超时当成通过或重启测试。
 
 ## 未验证范围与边界
 

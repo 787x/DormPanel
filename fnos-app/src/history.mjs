@@ -4,6 +4,7 @@ import { loadGraph, graphPlan } from './graph.mjs';
 import { same, emptyState } from './merge.mjs';
 import { json } from './store.mjs';
 import { LocalCommitStore } from './local.mjs';
+import { SyncEngine } from './sync.mjs';
 
 const digest = value => hash(Buffer.from(json(value))).toString('hex');
 const nextSteps = [
@@ -27,10 +28,8 @@ export async function cachedGraph(f) {
   // 失败观察可能已记录缓存以外的新路径。仅验证旧闭包供只读查看，异常仍明确阻止写入。
   return loadGraph({ list: async () => Object.keys(f.graph.raw), read: async id => f.graph.raw[id] ? Buffer.from(f.graph.raw[id], 'base64') : null }, f.graph);
 }
-const previous = f => ({ ...f.graph, ...f.checkpoint, datasetId: f.datasetId,
-  hashes: { ...f.graph?.hashes, ...f.checkpoint.hashes },
-  deferred: [...new Set([...(f.graph?.deferred ?? []), ...(f.checkpoint.deferred ?? []), ...Object.keys(f.abandoned)])] });
-export const freshGraph = (db, remote) => loadGraph(remote, previous(db.frame));
+// 所有源数据集读取复用同步观察：失败也持久化已观察路径、哈希与待回查集合。
+export const freshGraph = (db, remote, validateDataset) => new SyncEngine(db, remote, validateDataset).observe({ expectedRevision: db.frame.revision });
 export function blockers(db, g) {
   const f = db.frame;
   return [!f.datasetId || g.datasetId !== f.datasetId ? '数据集身份未确认' : null,
@@ -88,9 +87,14 @@ export function historySummary(db, g) {
   const commits = new Map(Object.keys(g.raw).map(id => [id, commitAt(g, id)]));
   function visit(id) { if (levels.has(id)) return levels.get(id); const c = commits.get(id); const level = c.parents.length ? Math.max(...c.parents.map(visit)) + 1 : 0; levels.set(id, level); return level; }
   for (const id of Object.keys(g.raw)) {
-    const c = commits.get(id), base = c.parents.length === 1 ? commits.get(c.parents[0]).state : emptyState();
-    const d = differences(base, c.state, 0, 1);
-    rows.push({ id, writer: c.writerId, parents: c.parents, sha256: g.hashes[id], level: visit(id), tip: g.tips.includes(id), matchesCurrent: same(c.state, db.frame.local), changes: d.counts, total: d.total });
+    const c = commits.get(id);
+    const comparisons = c.parents.map(parentId => {
+      const d = differences(commits.get(parentId).state, c.state, 0, 1);
+      return { parentId, changes: d.counts, total: d.total };
+    });
+    const d = c.parents.length > 1 ? null : c.parents.length ? comparisons[0] : differences(emptyState(), c.state, 0, 1);
+    rows.push({ id, writer: c.writerId, parents: c.parents, sha256: g.hashes[id], level: visit(id), tip: g.tips.includes(id), matchesCurrent: same(c.state, db.frame.local), changes: d?.counts ?? d?.changes ?? null, total: d?.total ?? null,
+      ...(c.parents.length > 1 ? { comparisons } : {}) });
   }
   rows.sort((a, b) => b.level - a.level || a.id.localeCompare(b.id));
   return { datasetId: g.datasetId, count: rows.length, capacity: 256, bytes: Object.values(g.raw).reduce((n, r) => n + Buffer.from(r, 'base64').length, 0), tips: g.tips, status: g.status,
@@ -101,26 +105,32 @@ export function historySummary(db, g) {
 
 export class HistoryManager {
   constructor(catalog) { this.catalog = catalog; this.tokens = new Map(); }
-  fingerprint(db, g) { const c = this.catalog; return digest({ frame: db.snapshot(), graph: typeof g === 'string' ? g : graphIdentity(g), catalogVersion: c.manifest.revision, activeId: c.manifest.activeId }); }
+  fingerprint(db, g) {
+    // 观察会推进 revision 并刷新缓存 / checkpoint；业务输入及远端图身份独立核对。
+    // 确认入口另行校验预览结束时的精确 revision，防止此前的操作被忽略。
+    const { revision, graph, checkpoint, ...inputs } = db.snapshot(), c = this.catalog;
+    return digest({ inputs, graph: typeof g === 'string' ? g : graphIdentity(g), catalogVersion: c.manifest.revision, activeId: c.manifest.activeId });
+  }
   async preview(db, engine, input, user) {
-    const g = await freshGraph(db, engine.remote); ensure(!blockers(db, g).length, blockers(db, g).join('；'));
+    const g = await freshGraph(db, engine.remote, engine.validateDataset); ensure(!blockers(db, g).length, blockers(db, g).join('；'));
     ensure(Object.keys(g.raw).length < 256, '历史容量已满，只能查看和归档');
     const target = commitAt(g, input.target), diff = differences(db.frame.local, target.state, 0, 40, identities(target.state));
     for (const [id, t] of this.tokens) if (t.expires < Date.now()) this.tokens.delete(id);
     ensure(this.tokens.size < 8, '预览过多'); const token = randomUUID();
-    this.tokens.set(token, { user, workspaceId: input.workspaceId, target: input.target, raw: g.raw[input.target], fingerprint: this.fingerprint(db, g), graph: graphIdentity(g), expires: Date.now() + 10 * 60000 });
+    this.tokens.set(token, { user, workspaceId: input.workspaceId, version: db.frame.revision, target: input.target, raw: g.raw[input.target], fingerprint: this.fingerprint(db, g), graph: graphIdentity(g), expires: Date.now() + 10 * 60000 });
     return { token, target: input.target, diff, unchanged: !diff.total, version: db.frame.revision };
   }
   async rollback(db, engine, input, user) {
     const t = this.tokens.get(input.token);
     ensure(t && t.user === user && t.workspaceId === input.workspaceId && t.target === input.target && t.expires > Date.now() && input.confirm === input.target, '回退预览已失效或确认输入变化');
-    const g = await freshGraph(db, engine.remote);
+    ensure(input.version === db.frame.revision && t.version === db.frame.revision, '回退预览版本过期，请刷新');
+    const g = await freshGraph(db, engine.remote, engine.validateDataset);
     ensure(this.fingerprint(db, g) === t.fingerprint && g.raw[t.target] === t.raw, '回退输入变化，请刷新预览');
     ensure(!blockers(db, g).length && Object.keys(g.raw).length < 256, '当前状态不能回退');
     graphPlan(g, db.frame.baseline, db.frame.frontier);
     const target = commitAt(g, t.target); this.tokens.delete(input.token);
     if (same(db.frame.local, target.state)) return { unchanged: true, version: db.frame.revision };
-    await db.tx(f => { f.local = target.state; db.stage(f, f.local, g.tips); }, input.version);
+    await db.tx(f => { f.local = target.state; db.stage(f, f.local, g.tips); }, db.frame.revision);
     ensure(await engine.publish(), '回退尚未获得发布回执；保留候选，请检查并同步恢复');
     // 新提交回读已经确认；再用独立 I/O 预算观察远端，保留并发分支的真实状态。
     engine.remote = this.catalog.remote(this.catalog.connection(this.catalog.row(input.workspaceId).connectionId));
@@ -129,15 +139,15 @@ export class HistoryManager {
   }
   previewDiff(db, input, user) {
     const t = this.tokens.get(input.token);
-    ensure(t && t.user === user && t.workspaceId === input.workspaceId && t.expires > Date.now() && t.fingerprint === this.fingerprint(db, t.graph), '回退预览已失效，请刷新');
+    ensure(t && t.user === user && t.workspaceId === input.workspaceId && t.version === db.frame.revision && t.expires > Date.now() && t.fingerprint === this.fingerprint(db, t.graph), '回退预览已失效，请刷新');
     const target = decode(Buffer.from(t.raw, 'base64'), t.target).state;
     return differences(db.frame.local, target, input.offset, 40, identities(target));
   }
   async archive(db, engine, input, compact = false) {
-    const c = this.catalog, g = await freshGraph(db, engine.remote);
+    const c = this.catalog, g = await freshGraph(db, engine.remote, engine.validateDataset);
     ensure(g.datasetId && g.tips.length && !g.deferred.length, '完整历史尚不可验证');
     if (compact) ensure(!blockers(db, g).length, blockers(db, g).join('；'));
-    const fingerprint = this.fingerprint(db, g);
+    const fingerprint = this.fingerprint(db, g), sourceRevision = db.frame.revision;
     const location = await c.grants.protectedFolder(input.rootId, input.relative ?? '', 'history-' + randomUUID());
     const archive = new LocalCommitStore(location, c.grants); await archive.ensureDirectory();
     for (const id of Object.keys(g.raw)) await new LocalCommitStore(location, c.grants).put(id, Buffer.from(g.raw[id], 'base64'));
@@ -154,7 +164,8 @@ export class HistoryManager {
       ensure(check.tips.length === 1 && Object.keys(check.raw).length === 1 && check.datasetId !== g.datasetId && stateBytes(check.state).equals(stateBytes(g.state)), '精简副本快照不等价');
       candidate = { ...candidate, datasetId: next.datasetId, commitId: next.commitId };
     }
-    const current = await freshGraph(db, c.remote(c.connection(c.row(input.workspaceId).connectionId)));
+    ensure(db.frame.revision === sourceRevision, '源状态变化；请刷新后重新准备');
+    const current = await freshGraph(db, c.remote(c.connection(c.row(input.workspaceId).connectionId)), engine.validateDataset);
     ensure(fingerprint === this.fingerprint(db, current), '源状态变化；输出仅为未完成候选，不能宣布迁移完成');
     await c.grants.writePrivate(location, 'verified.json', Buffer.from(json(manifest)));
     if (candidate) await c.grants.writePrivate(candidate, 'verified.json', Buffer.from(json({ format: 'DormPanel-compact-1', sourceDatasetId: g.datasetId, archive: location.relative, datasetId: candidate.datasetId, migrated: false, nextSteps })));

@@ -17,7 +17,7 @@ try {
   const catalog = { manifest:{revision:0,activeId:'vector'}, remote:()=>remote, row:()=>({connectionId:'vector'}), connection:()=>({}) };
   const manager = new HistoryManager(catalog), engine = new SyncEngine(db,remote), input = { workspaceId:'vector', version:db.frame.revision,target:root };
   const p = await manager.preview(db,engine,input,'vector-admin');
-  await manager.rollback(db,engine,{...input,token:p.token,confirm:root},'vector-admin');
+  await manager.rollback(db,engine,{...input,version:db.frame.revision,token:p.token,confirm:root},'vector-admin');
   await mkdir(target,{recursive:true});
   await writeFile(new URL('root.dpc',target),rows.get(root));
   await writeFile(new URL('current.dpc',target),rows.get(graph.tips[0]));
