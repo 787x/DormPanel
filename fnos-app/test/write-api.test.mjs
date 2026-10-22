@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -170,6 +170,39 @@ test("每条修改路由均检查管理员、CSRF、同源、请求版本；拒�
   );
   assert.equal(f.app.db.frame.local.entries.length, 1);
 });
+test('仅私有目录可完成连接、工作区、编辑和合法发布；保留已有工作区', { skip: process.platform !== 'linux' }, async t => {
+  const f = await fixture(t), original = structuredClone(f.app.db.frame);
+  const roots = (await f.call('GET', '/api/manage')).data.roots;
+  assert.deepEqual(roots.map(r => r.id), ['private']);
+  const result = await f.post('/api/manage', { action: 'connection.save', type: 'local', name: '私有测试', rootId: 'private', relative: '', createPrivate: true });
+  assert.equal(result.status, 200, result.text);
+  const connectionId = result.data.connectionId, connection = f.app.catalog.connection(connectionId);
+  assert.equal(connection.config.relative, connectionId); assert(connection.config.directoryIdentity);
+  assert.equal((await f.post('/api/manage', { action: 'workspace.add', name: '独立测试', connectionId })).status, 200);
+  const targetId = f.app.catalog.manifest.workspaces.find(w => w.connectionId === connectionId).id;
+  assert.equal((await f.post('/api/manage', { action: 'workspace.switch', targetId })).status, 200);
+  assert.equal((await f.post('/api/edit', { operation: { kind: 'entry', action: 'upsert', value: {
+    title: '仅私有目录课程', day: 1, startMinute: 480, endMinute: 530, location: '',
+  } } })).status, 200);
+  const published = await f.post('/api/sync', { create: true }); assert.equal(published.status, 200, published.text);
+  assert(f.app.db.frame.datasetId); assert(f.app.db.receipt || f.app.db.frame.receipt);
+  assert.deepEqual((await f.app.catalog.load(f.view.workspaceId)).frame, original);
+});
+
+test('授权 NAS 目录可选择保存；未授权根、绝对路径、穿越和过期版本不能改配置', { skip: process.platform !== 'linux' }, async t => {
+  const f = await fixture(t), approved = join(f.dir, 'approved'); await mkdir(approved);
+  f.app.catalog.grants.roots.push({ id: 'approved', name: '已授权 NAS 测试目录', path: approved });
+  assert.equal((await f.call('GET', '/api/directories?rootId=approved')).status, 200);
+  const input = { action: 'connection.save', type: 'local', name: 'NAS 测试', rootId: 'approved', relative: '' };
+  assert.equal((await f.post('/api/manage', input)).status, 200);
+  const before = structuredClone(f.app.catalog.manifest);
+  for (const change of [{ rootId: 'unapproved' }, { relative: '/etc' }, { relative: '../approved' }, { catalogVersion: -1 }]) {
+    assert.notEqual((await f.post('/api/manage', { ...input, ...change })).status, 200);
+    assert.deepEqual(f.app.catalog.manifest, before);
+  }
+  assert.equal((await f.call('GET', '/api/directories?rootId=unapproved')).status, 400);
+});
+
 test("多连接配置凭据不返回浏览器，测试不改变当前工作区，拒绝覆盖绑定", async t => {
   const f = await fixture(t), secret = 'private-password-39';
   const result = await f.post('/api/manage', { action: 'connection.save', type: 'webdav', name: '连接 A', url: 'https://example.com/folder/', username: 'w', password: secret });

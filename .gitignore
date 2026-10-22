@@ -65,3 +65,5 @@ signing.properties
 /artifacts/pr41-*.log
 
 /artifacts/pr42/
+
+/artifacts/local-connection/

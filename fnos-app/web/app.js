@@ -188,6 +188,7 @@ async function load() {
     if (epoch !== loadEpoch) return;
     $("status").textContent = e.message;
     $("status").dataset.error = true;
+    $("managementStatus").textContent = '页面初始化失败：' + e.message + '。请点击“刷新状态”重试。';
   }
 }
 $("date").value = now();
@@ -261,32 +262,61 @@ function field(name, value = "", type = "text") {
   $("fields").append(label);
   return input;
 }
+let editorEpoch = 0;
 function dialog(title, build, save) {
-  const scope = workspaceId, formVersion = version, formCatalogVersion = catalogVersion;
+  const epoch = ++editorEpoch, submit = $("editorForm").querySelector("[type=submit]");
+  let scope = workspaceId, formVersion = version, formCatalogVersion = catalogVersion;
+  let read, ready = true, saving = false;
+  const current = () => epoch === editorEpoch && $("editor").open;
+  const update = () => { if (current()) submit.disabled = !read || !ready || saving; };
+  const form = {
+    current,
+    setReady(value) { ready = value; update(); },
+    captureVersion() { scope = workspaceId; formVersion = version; formCatalogVersion = catalogVersion; },
+  };
   $("editorTitle").textContent = title;
-  $("fields").replaceChildren();
-  $("formError").textContent = "";
   $("cancel").textContent = save ? "关闭" : "暂不处理";
-  $("editorForm").querySelector("[type=submit]").hidden = !save;
-  const read = build();
+  submit.hidden = !save;
+  submit.disabled = true;
+  const initialize = async () => {
+    read = null; ready = true;
+    $("fields").replaceChildren(); $("formError").textContent = ""; update();
+    try {
+      const result = await build(form);
+      if (!current()) return;
+      read = result; update();
+    } catch (error) {
+      if (!current()) return;
+      $("formError").textContent = '配置加载失败：' + error.message;
+      $("fields").append(button('重试加载配置', initialize));
+    }
+  };
   $("editorForm").onsubmit = async (e) => {
     e.preventDefault();
-    if (!save) return;
+    if (!save || !read || !ready || saving) return;
+    saving = true; update();
     try {
       if (scope !== workspaceId || formVersion !== version || formCatalogVersion !== catalogVersion) throw Error("表单版本或工作区已变化，请关闭后重新打开");
       const input = await read();
+      if (!current()) return;
       if (scope !== workspaceId || formVersion !== version || formCatalogVersion !== catalogVersion) throw Error("表单版本或工作区已变化，请关闭后重新打开");
       await save(input);
+      if (!current()) return;
       $("editor").close();
       await load();
     } catch (error) {
-      $("formError").textContent = error.message;
+      if (current()) $("formError").textContent = error.message;
+    } finally {
+      saving = false; update();
     }
   };
   $("editor").showModal();
+  // 先给出可见反馈，构建异常和异步加载失败都留在可取消、可重试的弹窗内。
+  void initialize();
 }
 $("cancel").onclick = () => $("editor").close();
 $("editor").addEventListener('close', () => {
+  ++editorEpoch;
   $("fields").replaceChildren();
   $("editorForm").onsubmit = null;
 });
@@ -586,7 +616,7 @@ async function importFile() {
   const scope = workspaceId, importVersion = version;
   dialog(
     "导入预览",
-    () => {
+    (form) => {
       const file = field("选择 ICS 或 CSV", "", "file");
       file.accept = ".ics,.csv";
       const name = field("来源显示名", "课程表"),
@@ -599,21 +629,30 @@ async function importFile() {
         target.append(o);
       }
       $("fields").append(target);
-      const info = el("pre");
-      $("fields").append(info);
-      let preview = null;
-      file.onchange = async () => {
+      const info = el("pre", "请选择文件，预览成功后才能保存。"), retry = button('重试预览', () => previewFile(selectedFile));
+      info.setAttribute('role', 'status'); retry.hidden = true;
+      $("fields").append(info, retry);
+      let preview = null, selectedFile = null, previewError = '请先选择文件', previewEpoch = 0;
+      form.setReady(false);
+      const previewFile = async (f) => {
+        const epoch = ++previewEpoch, current = () => form.current() && epoch === previewEpoch;
+        preview = null; previewError = '正在检查文件预览，请稍候'; form.setReady(false);
+        retry.hidden = true; $('formError').textContent = '';
+        if (!f) { info.textContent = previewError = '未选择文件，请选择 ICS 或 CSV。'; return; }
+        info.textContent = `已选择 ${f.name}，正在检查预览…`;
         try {
-          const f = file.files[0];
           if (f.size > 1048576) throw Error("文件超过 1 MiB");
           const bytes = new Uint8Array(await f.arrayBuffer());
+          if (!current()) return;
           let binary = "";
           for (const b of bytes) binary += String.fromCharCode(b);
-          preview = await post("/api/import/preview", {
+          const result = await post("/api/import/preview", {
             workspaceId: scope, version: importVersion,
             filename: f.name,
             base64: btoa(binary),
           });
+          if (!current()) return;
+          preview = result; previewError = ''; form.setReady(true);
           info.textContent =
             `${preview.filename} · ${preview.count} 个实例\n` +
             preview.warnings.join("\n") +
@@ -625,19 +664,24 @@ async function importFile() {
               )
               .join("\n");
         } catch (e) {
-          preview = null;
-          info.textContent = e.message;
+          if (!current()) return;
+          previewError = '预览失败：' + e.message;
+          info.textContent = `已选择 ${f.name}\n${previewError}` + (/请先配置学期/.test(e.message) ? '\n请关闭此窗口，在管理中新增对应学期及节次时间，然后重新导入。' : '');
+          $('formError').textContent = previewError; retry.hidden = false;
         }
       };
+      file.onchange = () => { selectedFile = file.files[0] ?? null; void previewFile(selectedFile); };
       return async () => {
-        if (!preview) throw Error("请先选择文件并检查预览");
+        if (!preview) throw Error(previewError || '请先完成文件预览');
+        const confirmed = preview;
         if (
           !(await confirmAction("确认导入以上预览？替换来源将保留原 sourceId 和已有覆盖。"))
         )
           throw Error("已取消");
+        if (confirmed !== preview) throw Error('所选文件已变化，请检查最新预览');
         return {
-          workspaceId: scope, version: preview.version,
-          id: preview.id,
+          workspaceId: scope, version: confirmed.version,
+          id: confirmed.id,
           displayName: name.value,
           targetId: target.value || null,
         };
@@ -752,10 +796,23 @@ $("create").onclick = async () => {
     runSync({ ...context, create: true });
 };
 async function loadManagement(epoch = loadEpoch) {
-  const scope = workspaceId, m = await get('/api/manage');
+  const scope = workspaceId;
+  $('managementStatus').textContent = '正在读取管理数据…';
+  let m;
+  try { m = await get('/api/manage'); }
+  catch (error) {
+    if (epoch === loadEpoch && scope === workspaceId) $('managementStatus').textContent = '管理数据加载失败：' + error.message + '。可点击“刷新状态”或重新打开连接弹窗重试。';
+    throw error;
+  }
   if (epoch !== loadEpoch || scope !== workspaceId) return;
+  const active = m.workspaces.find(w => w.id === scope);
+  if (!active) {
+    $('managementStatus').textContent = '工作区尚未就绪，请刷新状态后重试。';
+    throw Error('工作区尚未就绪，请刷新状态后重试');
+  }
+  $('managementStatus').textContent = '';
   management = m; catalogVersion = m.revision;
-  const context = { workspaceId: scope, version: m.workspaces.find(w => w.id === scope).version, catalogVersion: m.revision };
+  const context = { workspaceId: scope, version: active.version, catalogVersion: m.revision };
   $('workspaceSelect').replaceChildren(...m.workspaces.map(w => {
     const option = el('option', w.name + (w.unknown ? ' · 待检查' : w.conflict ? ' · 冲突' : w.pending ? ' · 待确认' : w.dirty ? ' · 未发布' : ''));
     option.value = w.id; return option;
@@ -788,6 +845,7 @@ async function loadManagement(epoch = loadEpoch) {
         if (await confirmAction('移除连接配置？仍被工作区使用时会拒绝。')) await manageAction({ ...context, action: 'connection.remove', connectionId: c.id });
       })); return row;
   }));
+  return m;
 }
 async function manageAction(input) {
   try { const result = await post('/api/manage', input); await load(); return result; }
@@ -818,7 +876,7 @@ function chooseEndpoint(w) {
   }, input => post('/api/manage', input));
 }
 function connectionDialog(type, c = null) {
-  dialog(c ? '编辑连接' : '新增连接', () => {
+  dialog(c ? '编辑连接' : '新增连接', async form => {
     const name = field('连接名称', c?.name ?? (type === 'local' ? '本地课程' : 'WebDAV 课程'));
     let read;
     if (type === 'webdav') {
@@ -827,32 +885,61 @@ function connectionDialog(type, c = null) {
       read = () => ({ type, name: name.value, connectionId: c?.id, url: url.value, username: username.value, password: password.value, certificatePem: system.checked ? '' : cert.value || undefined });
     } else {
       const root = el('select'), path = el('select');
-      for (const r of management.roots) { const o = el('option', r.name); o.value = r.id; root.append(o); }
-      root.value = c?.rootId ?? 'private';
+      root.setAttribute('aria-label', '授权根目录'); path.setAttribute('aria-label', '选择子目录');
+      root.disabled = path.disabled = true;
       let relative = c?.relative ?? '';
-      const current = el('p');
+      let browseEpoch = 0, directoryReady = false;
+      const current = el('p', '正在加载授权目录…'); current.setAttribute('role', 'status');
+      const up = button('上一级', () => { relative = relative.split('/').slice(0, -1).join('/'); void browse(); });
+      up.disabled = true;
+      const retry = button('重试读取目录', () => { void browse(); }); retry.hidden = true;
+      form.setReady(false);
       const browse = async () => {
-        current.textContent = '选定目录：' + (relative || '/');
+        const request = ++browseEpoch, selectedRoot = root.value, selectedPath = relative;
+        const active = () => form.current() && request === browseEpoch;
+        directoryReady = false; form.setReady(false);
+        path.replaceChildren(); path.disabled = up.disabled = true; retry.hidden = true;
+        current.textContent = '正在读取目录：' + (selectedPath || '/');
+        $('formError').textContent = '';
         try {
-          const result = await get('/api/directories?rootId=' + encodeURIComponent(root.value) + '&relative=' + encodeURIComponent(relative));
+          const result = await get('/api/directories?rootId=' + encodeURIComponent(selectedRoot) + '&relative=' + encodeURIComponent(selectedPath));
+          if (!active()) return;
           path.replaceChildren(el('option', '选择子目录…'));
           path.firstChild.value = '';
           for (const dir of result.directories) { const o = el('option', dir); o.value = dir; path.append(o); }
-        } catch (e) { current.textContent += ' · 权限不可用：' + e.message; path.replaceChildren(); }
+          current.textContent = '选定目录：' + (selectedPath || '/');
+          directoryReady = true; form.setReady(true); path.disabled = false; up.disabled = !selectedPath;
+        } catch (e) {
+          if (!active()) return;
+          current.textContent = '目录加载失败：' + e.message;
+          $('formError').textContent = '请重试、选择其他授权目录或关闭。'; retry.hidden = false;
+          up.disabled = !selectedPath;
+        }
       };
-      root.onchange = () => { relative = ''; browse(); };
-      path.onchange = () => { if (path.value) { relative = relative ? relative + '/' + path.value : path.value; browse(); } };
-      $('fields').append(el('p', '仅展示 FPK 私有目录及 fnOS 官方资源授权目录。应用中心撤销权限后会安全停止访问。新增私有连接默认自动创建独立目录；共享目录请选择专用空目录或已有 Sync v2 数据集父目录。'), root, current, path, button('上一级', () => { relative = relative.split('/').slice(0, -1).join('/'); browse(); }));
-      browse();
-      read = () => ({ type, name: name.value, connectionId: c?.id, rootId: root.value, relative, createPrivate: !c && root.value === 'private' && !relative });
+      root.onchange = () => { relative = ''; void browse(); };
+      path.onchange = () => { if (path.value) { relative = relative ? relative + '/' + path.value : path.value; void browse(); } };
+      $('fields').append(el('p', '仅展示 FPK 私有目录及 fnOS 官方资源授权目录。应用中心撤销权限后会安全停止访问。新增私有连接默认自动创建独立目录；共享目录请选择专用空目录或已有 Sync v2 数据集父目录。'), root, current, path, up, retry);
+      const m = await loadManagement();
+      if (!form.current()) return;
+      if (!m || !workspaceId || !token) throw Error('工作区尚未就绪，请重试');
+      if (!Array.isArray(m.roots) || !m.roots.length) throw Error('没有可用的授权目录');
+      for (const r of m.roots) { const o = el('option', r.name); o.value = r.id; root.append(o); }
+      root.value = c?.rootId ?? 'private'; root.disabled = false;
+      if (!root.value) throw Error('原目录未授权或授权已撤销，请关闭并重新配置');
+      form.captureVersion();
+      void browse();
+      read = () => {
+        if (!directoryReady) throw Error('请先成功读取所选目录');
+        return { type, name: name.value, connectionId: c?.id, rootId: root.value, relative, createPrivate: !c && root.value === 'private' && !relative };
+      };
     }
     $('fields').append(button('测试（不保存）', async () => {
       try {
         const input = read();
         if (input.createPrivate) throw Error('新私有目录请先保存连接，再测试权限；测试不会创建工作区');
         const result = await post('/api/connections/test', input);
-        $('formError').textContent = `${result.permission}；${result.observed} 个提交；异常 ${result.deferred}`;
-      } catch (e) { $('formError').textContent = e.message; }
+        if (form.current()) $('formError').textContent = `${result.permission}；${result.observed} 个提交；异常 ${result.deferred}`;
+      } catch (e) { if (form.current()) $('formError').textContent = e.message; }
     }));
     return read;
   }, input => post('/api/manage', { action: 'connection.save', ...input }));

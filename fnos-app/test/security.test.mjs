@@ -3,12 +3,34 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { authorize, csrf, createApp, PREFIX } from '../src/server.mjs';
+import { authorize, csrf, createApp, PREFIX, validatePageOrigin } from '../src/server.mjs';
 import { binding, parseListing } from '../src/webdav.mjs';
 import { Store } from '../src/store.mjs';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 const request = (admin = 'true') => ({ socket: {}, headers: { 'x-trim-userid': '1000', 'x-trim-isadmin': admin }, rawHeaders: ['X-Trim-Userid', '1000', 'X-Trim-Isadmin', admin] });
+
+test('公网代理来源引导仅兼容浏览器同源 fetch；拒绝跨源和伪造 Forwarded', () => {
+  const origin = 'https://qweasdf.fnos.net', host = 'internal.test:5666';
+  const headers = { host, 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' };
+  validatePageOrigin({ headers }, origin);
+  validatePageOrigin({ headers: { host: 'nas.test' } }, 'http://nas.test:5666');
+  for (const changes of [
+    { 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-site': 'same-site' },
+    { 'sec-fetch-site': 'none' }, { 'sec-fetch-site': undefined },
+    { 'sec-fetch-mode': 'navigate' }, { 'sec-fetch-mode': 'no-cors' }, { 'sec-fetch-mode': undefined },
+    { origin: 'https://evil.test' },
+  ]) assert.throws(() => validatePageOrigin({ headers: { ...headers, ...changes } }, origin), /页面来源/);
+  for (const value of ['null', 'file:///tmp/a', 'https://u:p@qweasdf.fnos.net', origin + '/path', origin + '?query'])
+    assert.throws(() => validatePageOrigin({ headers }, value));
+  assert.throws(() => validatePageOrigin({ headers: { host, forwarded: 'host=qweasdf.fnos.net;proto=https',
+    'x-forwarded-host': 'qweasdf.fnos.net', 'x-forwarded-proto': 'https' } }, origin));
+  const bound = { headers: { origin, 'x-dormpanel-csrf': 'token' } };
+  csrf(bound, 'token', origin);
+  for (const other of ['http://qweasdf.fnos.net', origin + ':444', 'https://evil.test'])
+    assert.throws(() => csrf({ headers: { ...bound.headers, origin: other } }, 'token', origin), /Origin/);
+  assert.throws(() => csrf(bound, 'different', origin), /CSRF/);
+});
 test('管理员身份、重复 Header、客户端 TCP 和 CSRF 边界', () => {
   assert.equal(authorize(request()), '1000'); assert.throws(() => authorize(request('false'))); assert.throws(() => authorize({ socket: {}, headers: {}, rawHeaders: [] }));
   const r = request(); r.socket.remoteAddress = '127.0.0.1'; assert.throws(() => authorize(r));

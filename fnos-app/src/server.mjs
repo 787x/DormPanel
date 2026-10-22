@@ -12,6 +12,18 @@ import { mergePlan } from "./merge.mjs";
 import { previewImport, commitImport } from "./import.mjs";
 
 export const PREFIX = "/app/dormpanel-schedule-manager";
+export function validatePageOrigin(req, value) {
+  const origin = new URL(value), host = new URL('http://' + req.headers.host);
+  // fnOS 公网入口可能改写 Host。仅浏览器同源 fetch 的不可脚本设置元数据
+  // 允许此代理场景；不信任 Forwarded/X-Forwarded-*，不接受跨源引导。
+  const sameOriginFetch = req.headers['sec-fetch-site'] === 'same-origin' &&
+    ['cors', 'same-origin'].includes(req.headers['sec-fetch-mode']);
+  ensure(!['cross-site', 'same-site'].includes(req.headers['sec-fetch-site']) &&
+    origin.origin === value && ['http:', 'https:'].includes(origin.protocol) &&
+    !origin.username && !origin.password &&
+    (!req.headers.origin || req.headers.origin === value) &&
+    (origin.hostname === host.hostname || sameOriginFetch), '页面来源不匹配');
+}
 export function authorize(req) {
   // Header 仅在 owner-only Socket 边界之内可信；root/包用户已有完整代码与数据权限。
   ensure(req.socket.remoteAddress == null, "拒绝 TCP");
@@ -34,7 +46,7 @@ export function csrf(req, token, boundOrigin = null) {
     "拒绝跨源请求",
   );
   const origin = req.headers.origin;
-  // 网关 TLS 终止，不信任客户端 Forwarded；比较 Host 且只接受 HTTP(S) Origin。
+  // 网关 TLS 终止，不信任 Forwarded；引导 token 绑定完整 Origin，旧调用回退到 Host 检查。
   if (boundOrigin) ensure(origin === boundOrigin, "Origin 不匹配");
   else if (origin) {
     const u = new URL(origin);
@@ -295,18 +307,7 @@ export async function createApp({
       }
       if (path === "/api/schedule") {
         const pageOrigin = u.searchParams.get("origin");
-        if (pageOrigin) {
-          const o = new URL(pageOrigin),
-            h = new URL("http://" + req.headers.host);
-          ensure(
-            o.origin === pageOrigin &&
-              ["http:", "https:"].includes(o.protocol) &&
-              o.hostname === h.hostname &&
-              !o.username &&
-              !o.password,
-            "页面来源不匹配",
-          );
-        }
+        if (pageOrigin) validatePageOrigin(req, pageOrigin);
         const z = zone(u.searchParams.get("zone") ?? "Asia/Shanghai"),
           first = monday(
             date(
