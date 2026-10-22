@@ -1,0 +1,71 @@
+{
+  "result": {
+    "type": "object",
+    "value": [
+      {
+        "forbidden": true,
+        "forged": false,
+        "hasCsrf": false,
+        "hasDataset": false,
+        "path": "/api/schedule",
+        "status": 403
+      },
+      {
+        "forbidden": true,
+        "forged": false,
+        "hasCsrf": false,
+        "hasDataset": false,
+        "path": "/api/manage",
+        "status": 403
+      },
+      {
+        "forbidden": true,
+        "forged": false,
+        "hasCsrf": false,
+        "hasDataset": false,
+        "path": "/api/state?workspaceId=d3f0b9ba-bf6b-4aae-8303-c9afd8af562d",
+        "status": 403
+      },
+      {
+        "forbidden": true,
+        "forged": false,
+        "hasCsrf": false,
+        "hasDataset": false,
+        "path": "/api/edit",
+        "status": 403
+      },
+      {
+        "forbidden": true,
+        "forged": true,
+        "hasCsrf": false,
+        "hasDataset": false,
+        "path": "/api/schedule",
+        "status": 403
+      },
+      {
+        "forbidden": true,
+        "forged": true,
+        "hasCsrf": false,
+        "hasDataset": false,
+        "path": "/api/manage",
+        "status": 403
+      },
+      {
+        "forbidden": true,
+        "forged": true,
+        "hasCsrf": false,
+        "hasDataset": false,
+        "path": "/api/state?workspaceId=d3f0b9ba-bf6b-4aae-8303-c9afd8af562d",
+        "status": 403
+      },
+      {
+        "forbidden": true,
+        "forged": true,
+        "hasCsrf": false,
+        "hasDataset": false,
+        "path": "/api/edit",
+        "status": 403
+      }
+    ]
+  }
+}

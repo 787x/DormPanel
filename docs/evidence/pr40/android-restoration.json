@@ -1,0 +1,14 @@
+[
+  {
+    "device": "phone",
+    "restoredFiles": 22,
+    "exactHashesMatch": true,
+    "sqliteIntegrityCount": 2
+  },
+  {
+    "device": "x08e",
+    "restoredFiles": 32,
+    "exactHashesMatch": true,
+    "sqliteIntegrityCount": 3
+  }
+]

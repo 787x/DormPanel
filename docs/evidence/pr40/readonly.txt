@@ -1,0 +1,2 @@
+READONLY_WRITE_RESULT 400 {"error": "EACCES: permission denied, mkdir '/proc/self/fd/24/.dormpanel-stage-63fa1898-fbcc-4bd2-a4fa-f6d4723ae257'"} BEFORE 1 AFTER 1
+OFFICIAL_READONLY_DANGEROUS_WRITE_REFUSED_PASS

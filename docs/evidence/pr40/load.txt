@@ -1,0 +1,6 @@
+FIVE_WORKSPACE_LOAD
+默认工作区 {"entries": 2, "imported": 1, "events": 1, "commits": 8, "dirty": false, "conflict": false}
+PR39 FPK 本地 A {"entries": 2, "imported": 0, "events": 0, "commits": 1, "dirty": true, "conflict": false}
+PR39 FPK 本地 B {"entries": 1, "imported": 0, "events": 0, "commits": 1, "dirty": false, "conflict": false}
+PR39 FPK WebDAV A {"entries": 2, "imported": 0, "events": 0, "commits": 4, "dirty": false, "conflict": false}
+PR39 FPK WebDAV B {"entries": 1, "imported": 0, "events": 0, "commits": 3, "dirty": true, "conflict": true}

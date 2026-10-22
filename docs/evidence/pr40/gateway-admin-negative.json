@@ -1,0 +1,17 @@
+{
+  "result": {
+    "type": "object",
+    "value": [
+      {
+        "error": "CSRF 或同源校验失败",
+        "name": "missingCsrf",
+        "status": 403
+      },
+      {
+        "error": "请求版本过期，请重新读取",
+        "name": "stale",
+        "status": 409
+      }
+    ]
+  }
+}

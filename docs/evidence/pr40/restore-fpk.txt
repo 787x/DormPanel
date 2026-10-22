@@ -1,0 +1,3 @@
+POST_ACCEPTANCE_FULL_BACKUP_READ_VERIFIED 22 files 10 workspaces
+ORIGINAL_FIVE_WORKSPACES_IDENTITY_CONFIG_CATALOG_RESTORED_ALL_8_EXACT_HASHES
+Synthetic workspace files and all commit history retained; original catalog restored only while stopped; test catalog is in verified private archive

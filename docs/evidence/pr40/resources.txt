@@ -1,0 +1,4 @@
+FINAL_FIVE_WORKSPACES_IDLE {"start": {"ticks": 40, "rssKiB": 75184}, "end": {"ticks": 46, "rssKiB": 77492}, "seconds": 30, "cpuPercent": 0.2}
+FINAL_FIVE_WORKSPACES_MANUAL_SYNC {"status": 200, "seconds": 0.33677374499529833, "cpuSeconds": 0.16, "rssStartKiB": 77492, "rssPeakSampledKiB": 80892, "rssEndKiB": 80892, "sampleIntervalMs": 20, "commits": 4, "noNewCommits": true}
+AFTER_SYNC_IDLE {"start": {"ticks": 62, "rssKiB": 80892}, "end": {"ticks": 62, "rssKiB": 80904}, "seconds": 30, "cpuPercent": 0.0}
+OFFICIAL_ROOT_AFTER_RESTART [{'id': 'private', 'name': 'FPK 私有本地数据'}, {'id': 'resource-e153d4c68e4be708348cbf675f1391f9a9065f0bad6a5361967aaf63add3ec78', 'name': 'fnOS 应用共享目录'}]
