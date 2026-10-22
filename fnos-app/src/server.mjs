@@ -137,7 +137,7 @@ export async function createApp({
         path = u.pathname.slice(PREFIX.length);
       if (req.method === "POST") {
         const routes = [
-          "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore",
+          "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore", "/api/backups/cancel",
           "/api/edit",
           "/api/refresh",
           "/api/sync",
@@ -168,7 +168,7 @@ export async function createApp({
           ensure(writes === 1 && !catalog.configuring, '存在其他写入操作，请稍后重试');
           ensure(input.catalogVersion === catalog.manifest.revision, '管理版本过期');
           const action = path.split('/').pop();
-          const result = action === 'verify' || action === 'restore' ? await backups[action](input, user) : await backups[action](input);
+          const result = ['verify', 'restore', 'cancel'].includes(action) ? await backups[action](input, user) : await backups[action](input);
           send(200, result); return;
         }
         const workspaceId = input.workspaceId;
@@ -380,6 +380,7 @@ export async function createApp({
       if (requests === 0) catalog.prune();
     }
   });
+  server.once('close', () => { void backups.close(); });
   server.requestTimeout = 65000;
   server.headersTimeout = 10000;
   return { server, refresh, store, backups, get catalog() { return catalog; }, get db() { return catalog.db(catalog.manifest.activeId); } };
@@ -408,6 +409,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await writeFile(ready, String(process.pid), { mode: 0o600 });
   process.on("SIGTERM", () => {
     app.server.close(async () => {
+      await app.backups.close();
       await unlink(socket).catch(() => {});
       await unlink(ready).catch(() => {});
       process.exit(0);

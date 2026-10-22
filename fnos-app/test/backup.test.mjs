@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, readFile, writeFile, readdir, symlink, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readFile, writeFile, readdir, symlink, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID, createCipheriv, scryptSync } from 'node:crypto';
@@ -17,7 +17,8 @@ const password = 'synthetic backup passphrase';
 const operation = title => ({ kind: 'entry', action: 'upsert', value: { id: 'course', title, day: 1, startMinute: 480, endMinute: 530, location: '' } });
 async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'pr42-')), dataDir = join(dir, 'var'), exports = join(dir, 'exports'), etc = join(dir, 'etc');
-  await mkdir(exports); await mkdir(etc); t.after(() => rm(dir, { recursive: true, force: true }));
+  let manager;
+  await mkdir(exports); await mkdir(etc); t.after(async () => { await manager?.close(); await rm(dir, { recursive: true, force: true }); });
   const store = await new Store(dataDir).init(), rows = new Map();
   const remoteFactory = c => {
     if (!rows.has(c.url)) rows.set(c.url, new Map()); const data = rows.get(c.url);
@@ -26,7 +27,7 @@ async function fixture(t) {
   const configPath = join(etc, 'webdav.json'); await writeFile(configPath, json({ url: 'https://default.test/', username: 'legacy-u', password: 'legacy-secret' }));
   const options = { store, configPath, remoteFactory, authorizedRoots: [{ id: 'exports', name: '测试授权目录', path: exports }] };
   let catalog = await Catalog.open(options);
-  const manager = new BackupManager({ catalog, configPath, reopen: async () => { catalog = await Catalog.open(options); manager.catalog = catalog; } });
+  manager = new BackupManager({ catalog, configPath, reopen: async () => { catalog = await Catalog.open(options); manager.catalog = catalog; } });
   const manage = input => catalog.manage({ catalogVersion: catalog.manifest.revision, ...input });
   async function add(name, type = 'webdav') {
     const c = await manage({ action: 'connection.save', type, name, ...(type === 'webdav' ? { url: `https://${name}.test/`, username: 'sensitive-user', password: 'sensitive-password', certificatePem: await readFile(new URL('./fixtures/test-certificate.pem', import.meta.url), 'utf8') } : { rootId: 'private', createPrivate: true }) });
@@ -183,15 +184,19 @@ linux('实际 Socket 备份 API：管理员、CSRF、版本、口令、敏感响
     });
   }
   const view = (await call('GET', '/api/schedule')).data, input = { ...f.location, catalogVersion: app.catalog.manifest.revision };
-  for (const action of ['create', 'list', 'verify', 'restore']) {
+  for (const action of ['create', 'list', 'verify', 'restore', 'cancel']) {
     assert.equal((await call('POST', '/api/backups/' + action, input, { 'X-Trim-Isadmin': 'false' })).status, 403);
     assert.equal((await call('POST', '/api/backups/' + action, input)).status, 403);
     assert.equal((await call('POST', '/api/backups/' + action, { ...input, catalogVersion: -1 }, { 'X-DormPanel-CSRF': view.csrf })).status, 409);
   }
   const post = (action, data) => call('POST', '/api/backups/' + action, { ...input, ...data }, { 'X-DormPanel-CSRF': view.csrf });
   const created = await post('create'); assert.equal(created.status, 200, created.text);
-  const verified = await post('verify', { name: created.data.name }); assert.equal(verified.status, 200, verified.text);
+  let verified = await post('verify', { name: created.data.name }); assert.equal(verified.status, 200, verified.text);
   for (const secret of ['sensitive-user', 'sensitive-password', 'legacy-secret', 'BEGIN CERTIFICATE', 'synthetic backup passphrase']) assert(!verified.text.includes(secret));
+  assert.equal((await post('cancel', { token: verified.data.token })).status, 200); await app.backups.runCleanup();
+  assert(!app.backups.previews.has(verified.data.token));
+  assert.equal((await post('restore', { token: verified.data.token, confirm: '恢复应用数据' })).status, 409);
+  verified = await post('verify', { name: created.data.name }); assert.equal(verified.status, 200, verified.text);
   assert.equal((await post('restore', { token: verified.data.token, confirm: 'yes' })).status, 409);
   const restored = await post('restore', { token: verified.data.token, confirm: '恢复应用数据' }); assert.equal(restored.status, 200, restored.text);
   await equalOriginal(f, before);
@@ -219,4 +224,97 @@ for (const attack of ['traversal', 'duplicate', 'size', 'count', 'missing', 'che
   if (attack === 'version') m.version = 99;
   const name = await forged(f, m);
   await assert.rejects(f.manager.verify({ ...f.location, name }, 'admin')); await equalOriginal(f, before);
+});
+
+const delay = ms => new Promise(r => setTimeout(r, ms));
+async function eventually(check) {
+  const deadline = Date.now() + 5000;
+  while (!(await check())) { assert(Date.now() < deadline, '生命周期清理未在期限内完成'); await delay(10); }
+}
+const exists = path => stat(path).then(() => true, e => { if (e.code !== 'ENOENT') throw e; return false; });
+linux('预览无后续 API 或重启也按到期定时器释放，且空闲时无清理定时器', async t => {
+  const f = await fixture(t), backup = await f.manager.create(f.location); await f.manager.runCleanup();
+  f.manager.previewTtlMs = 250;
+  const p = await f.manager.verify({ ...f.location, name: backup.name }, 'admin'), stage = f.manager.previews.get(p.token).stage;
+  assert.equal((await stat(stage)).mode & 0o777, 0o700); assert.equal(f.manager.cleanupTimer.hasRef(), false);
+  await eventually(async () => !f.manager.previews.has(p.token) && !(await exists(stage)) && !f.manager.pendingCleanup.size && !f.manager.cleanupTask && !f.manager.cleanupTimer);
+  assert.equal(f.manager.pendingCleanup.size, 0); assert.equal(f.manager.cleanupTimer, null);
+});
+linux('取消只释放当前管理员选定的预览，不影响其他仍有效预览', async t => {
+  const f = await fixture(t), backup = await f.manager.create(f.location);
+  const a = await f.manager.verify({ ...f.location, name: backup.name }, 'admin'), b = await f.manager.verify({ ...f.location, name: backup.name }, 'admin');
+  const sa = f.manager.previews.get(a.token).stage, sb = f.manager.previews.get(b.token).stage;
+  await assert.rejects(f.manager.cancel({ token: a.token }, 'other'), /当前管理员/); assert(await exists(sa));
+  await f.manager.cancel({ token: a.token }, 'admin'); await f.manager.runCleanup();
+  assert(!(await exists(sa))); assert(await exists(sb)); assert(f.manager.previews.has(b.token));
+  await f.manager.cleanupStages(); assert(await exists(sb));
+});
+linux('认证后注册预览失败及认证失败均交回明文目录，不留无主暂存', async t => {
+  const f = await fixture(t), backup = await f.manager.create(f.location); await f.manager.runCleanup();
+  f.manager.stamps = async () => { throw Error('验证后注入失败'); };
+  await assert.rejects(f.manager.verify({ ...f.location, name: backup.name }, 'admin'), /验证后注入失败/);
+  await f.manager.runCleanup(); assert.equal(f.manager.previews.size, 0);
+  assert(!(await readdir(f.dataDir)).some(n => n.startsWith('.backup-')));
+  await assert.rejects(f.manager.verify({ ...f.location, name: backup.name, password: 'wrong backup password' }, 'admin'), /认证失败/);
+  await f.manager.runCleanup(); assert.equal(f.manager.pendingCleanup.size, 0);
+  assert(!(await readdir(f.dataDir)).some(n => n.startsWith('.backup-')));
+});
+linux('清理失败撤销令牌但保留待清理所有权，自动重试成功后停止定时器', async t => {
+  const f = await fixture(t), backup = await f.manager.create(f.location); await f.manager.runCleanup();
+  const p = await f.manager.verify({ ...f.location, name: backup.name }, 'admin'), value = f.manager.previews.get(p.token), discard = f.manager.discard.bind(f.manager);
+  let failures = 0; f.manager.cleanupRetryMs = 100;
+  f.manager.discard = async path => { if (path === value.stage && failures++ === 0) throw Error('模拟 EACCES'); return discard(path); };
+  value.expires = Date.now(); f.manager.scheduleCleanup();
+  await eventually(() => failures === 1 && f.manager.pendingCleanup.has(value.stage));
+  assert(!f.manager.previews.has(p.token)); assert(await exists(value.stage));
+  await assert.rejects(f.manager.restore({ token: p.token, confirm: '恢复应用数据' }, 'admin'), /预览失效/);
+  await eventually(async () => !(await exists(value.stage)) && !f.manager.pendingCleanup.size && !f.manager.cleanupTask);
+  assert.equal(f.manager.pendingCleanup.size, 0); assert.equal(f.manager.cleanupTimer, null);
+});
+linux('保护引用读取失败时不猜测删除，后续定时重试安全释放', async t => {
+  const f = await fixture(t), backup = await f.manager.create(f.location); await f.manager.runCleanup();
+  const p = await f.manager.verify({ ...f.location, name: backup.name }, 'admin'), value = f.manager.previews.get(p.token), read = f.store.read.bind(f.store);
+  let failed = false; f.manager.cleanupRetryMs = 100;
+  f.store.read = async name => { if (name === '.restore-journal.json' && !failed) { failed = true; throw Error('模拟引用读取失败'); } return read(name); };
+  value.expires = Date.now(); f.manager.scheduleCleanup();
+  await eventually(() => failed && f.manager.pendingCleanup.size > 0); assert(await exists(value.stage));
+  await eventually(async () => !(await exists(value.stage)) && !f.manager.cleanupTask && !f.manager.cleanupTimer); assert.equal(f.manager.cleanupTimer, null);
+});
+linux('清理持续失败后关服，启动重试仅清理无主预览并保留恢复前快照', async t => {
+  const f = await fixture(t), backup = await f.manager.create(f.location); await f.manager.runCleanup();
+  const p = await f.manager.verify({ ...f.location, name: backup.name }, 'admin'), stage = f.manager.previews.get(p.token).stage;
+  const old = await f.manager.stage(); await f.store.save('restore-result.json', { previousState: old.split('/').pop() });
+  f.manager.discard = async () => { throw Error('持续 EACCES'); };
+  await f.manager.cancel({ token: p.token }, 'admin'); await f.manager.runCleanup(); await f.manager.close();
+  assert(await exists(stage)); assert.equal(f.manager.cleanupTimer, null);
+  const startup = new BackupManager({ catalog: await Catalog.open(f.options), configPath: f.configPath });
+  try { await startup.cleanupStages(); assert(!(await exists(stage))); assert(await exists(old)); assert.equal(startup.cleanupTimer, null); }
+  finally { await startup.close(); }
+});
+linux('恢复使用中越过预览到期点也不清理输入；成功后释放预览并保留旧快照', async t => {
+  const f = await fixture(t), backup = await f.manager.create(f.location);
+  const p = await f.manager.verify({ ...f.location, name: backup.name }, 'admin'), value = f.manager.previews.get(p.token);
+  let release, entered; const gate = new Promise(r => release = r), waiting = new Promise(r => entered = r);
+  f.manager.fault = async point => { if (point === 'restore-precommit') { entered(); await gate; } };
+  const restoring = f.manager.restore({ token: p.token, confirm: '恢复应用数据' }, 'admin'); await waiting;
+  value.expires = Date.now() - 1; f.manager.scheduleCleanup(); await delay(20);
+  assert(await exists(value.stage)); await f.manager.runCleanup(); assert(await exists(value.stage));
+  await assert.rejects(f.manager.cancel({ token: p.token }, 'admin'), /操作/);
+  release(); await restoring; await f.manager.runCleanup();
+  assert(!(await exists(value.stage))); assert.equal(f.manager.previews.size, 0);
+  const old = (await f.store.read('restore-result.json')).previousState; assert(await exists(join(f.dataDir, old)));
+  await f.manager.cleanupStages(); assert(await exists(join(f.dataDir, old)));
+});
+linux('已提交恢复中断后到期和关服不删除日志输入，启动清理也保留新旧状态', async t => {
+  const f = await fixture(t), backup = await f.manager.create(f.location), p = await f.manager.verify({ ...f.location, name: backup.name }, 'admin');
+  const value = f.manager.previews.get(p.token);
+  f.manager.fault = async point => { if (point === 'restore-committed') throw Error('模拟恢复中断'); };
+  await assert.rejects(f.manager.restore({ token: p.token, confirm: '恢复应用数据' }, 'admin'), /中断/);
+  value.expires = Date.now() - 1; f.manager.scheduleCleanup(); await delay(20); await f.manager.close();
+  const journal = await f.store.read('.restore-journal.json'); assert(await exists(value.stage)); assert(await exists(join(f.dataDir, journal.old)));
+  const startup = new BackupManager({ catalog: await Catalog.open(f.options), configPath: f.configPath });
+  try {
+    await startup.cleanupStages(); assert(await exists(value.stage)); assert(await exists(join(f.dataDir, journal.old)));
+    await recoverRestore(f.dataDir, f.configPath); assert(!(await exists(value.stage))); assert(await exists(join(f.dataDir, journal.old)));
+  } finally { await startup.close(); }
 });

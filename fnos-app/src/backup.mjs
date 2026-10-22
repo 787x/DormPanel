@@ -188,31 +188,92 @@ function preview(m) {
 }
 
 export class BackupManager {
-  constructor({ catalog, configPath, reopen, fault = async () => {} }) {
-    Object.assign(this, { catalog, configPath, reopen, fault }); this.previews = new Map();
+  constructor({ catalog, configPath, reopen, fault = async () => {}, previewTtlMs = 15 * 60000, cleanupRetryMs = 60000 }) {
+    Object.assign(this, { catalog, configPath, reopen, fault, previewTtlMs, cleanupRetryMs });
+    this.previews = new Map(); this.pendingCleanup = new Map();
+  }
+  async protectedStages() {
+    const journal = await this.catalog.store.read('.restore-journal.json'), last = await this.catalog.store.read('restore-result.json');
+    const paths = new Set([...this.previews.values()].map(p => resolve(p.stage)));
+    for (const name of [journal?.stage, journal?.old, last?.previousState]) if (name) {
+      ensure(/^\.backup-[0-9a-f-]{36}$/.test(name), '恢复暂存引用无效；停止自动清理');
+      paths.add(resolve(this.catalog.store.dir, name));
+    }
+    return paths;
+  }
+  retireStage(path) {
+    this.pendingCleanup.set(resolve(path), Date.now()); this.scheduleCleanup();
+  }
+  expirePreviews() {
+    for (const [id, p] of this.previews) if (p.expires <= Date.now()) {
+      this.previews.delete(id); this.retireStage(p.stage);
+    }
+  }
+  scheduleCleanup() {
+    clearTimeout(this.cleanupTimer); this.cleanupTimer = null;
+    if (this.closed || this.cleanupTask || this.catalog.maintenance || this.poisoned) return;
+    const due = Math.min(...[...this.previews.values()].map(p => p.expires), ...this.pendingCleanup.values());
+    if (!Number.isFinite(due)) return;
+    // 一个到期定时器；仅真实清理失败时延后重试，不扫描空闲目录。
+    this.cleanupTimer = setTimeout(() => { this.cleanupTimer = null; void this.runCleanup(); }, Math.max(0, due - Date.now()));
+    this.cleanupTimer.unref();
+  }
+  runCleanup() {
+    if (this.cleanupTask) return this.cleanupTask;
+    if (this.catalog.maintenance || this.poisoned) return Promise.resolve();
+    this.cleanupTask = Promise.resolve().then(async () => {
+      this.expirePreviews();
+      if (!this.pendingCleanup.size) return;
+      try {
+        const protectedPaths = await this.protectedStages();
+        for (const [path, due] of this.pendingCleanup) {
+          if (protectedPaths.has(path)) { this.pendingCleanup.delete(path); continue; }
+          if (due > Date.now()) continue;
+          try { await this.discard(path); this.pendingCleanup.delete(path); }
+          catch { this.pendingCleanup.set(path, Date.now() + this.cleanupRetryMs); }
+        }
+      } catch {
+        // 引用无法读取时不能猜测哪些目录可删；保留队列，后续定时或启动重试。
+        for (const path of this.pendingCleanup.keys()) this.pendingCleanup.set(path, Date.now() + this.cleanupRetryMs);
+      }
+    }).finally(() => { this.cleanupTask = null; this.scheduleCleanup(); });
+    return this.cleanupTask;
+  }
+  async close() {
+    this.closed = true; clearTimeout(this.cleanupTimer); this.cleanupTimer = null;
+    await this.cleanupTask;
+    // 中断的恢复由磁盘日志接管；关服不清理其输入及旧状态。
+    if (this.catalog.maintenance || this.poisoned) return;
+    for (const p of this.previews.values()) this.retireStage(p.stage);
+    this.previews.clear(); await this.runCleanup();
   }
   async cleanupStages() {
     // 预览令牌只在内存中有效。重启后仅保留最近一次恢复前快照；不触及提交历史。
-    const last = await this.catalog.store.read('restore-result.json');
-    for (const name of await readdir(this.catalog.store.dir)) if (/^\.backup-[0-9a-f-]{36}$/.test(name) && name !== last?.previousState) await this.discard(join(this.catalog.store.dir, name));
+    if (this.catalog.maintenance || this.poisoned) return;
+    const protectedPaths = await this.protectedStages(), names = await readdir(this.catalog.store.dir);
+    if (this.catalog.maintenance || this.poisoned) return;
+    for (const name of names) if (/^\.backup-[0-9a-f-]{36}$/.test(name) && !protectedPaths.has(resolve(this.catalog.store.dir, name))) this.retireStage(join(this.catalog.store.dir, name));
+    await this.runCleanup();
   }
   async isolated(action) {
     const c = this.catalog;
-    ensure(!c.maintenance && !c.configuring && !c.busy.size && !c.loading.size && !c.manifest.transition, '存在同步、配置或备份恢复操作，请稍后重试');
+    ensure(!this.closed && !c.maintenance && !c.configuring && !c.busy.size && !c.loading.size && !c.manifest.transition, '已关闭或存在同步、配置或备份恢复操作，请稍后重试');
     c.maintenance = true;
-    try { await Promise.all([...c.workspaces.values()].map(db => db.queue)); return await action(); }
-    finally { if (!this.poisoned) { c.maintenance = false; c.prune(); } }
+    try { await this.cleanupTask; await Promise.all([...c.workspaces.values()].map(db => db.queue)); return await action(); }
+    finally { if (!this.poisoned) { c.maintenance = false; c.prune(); } this.scheduleCleanup(); }
   }
   async stage() {
     const fs = await statfs(this.catalog.store.dir);
     ensure(fs.bavail * fs.bsize >= 3 * LIMITS.total, '私有磁盘可用空间不足（至少需要 768 MiB 暂存预算）');
     const id = randomUUID(), path = join(this.catalog.store.dir, '.backup-' + id);
-    await mkdir(path, { mode: 0o700 }); await syncDir(this.catalog.store.dir); return path;
+    await mkdir(path, { mode: 0o700 });
+    try { await syncDir(this.catalog.store.dir); return path; }
+    catch (e) { this.retireStage(path); throw e; }
   }
   async discard(path) {
     const root = resolve(this.catalog.store.dir), target = resolve(path);
     ensure(dirname(target) === root && /^\.backup-[0-9a-f-]{36}$/.test(target.slice(root.length + 1)), '暂存清理范围无效');
-    await rm(target, { recursive: true, force: true });
+    await rm(target, { recursive: true, force: true }); await syncDir(root);
   }
   async stamps() {
     const result = [];
@@ -259,11 +320,11 @@ export class BackupManager {
         await writeAt(output, cipher.getAuthTag(), 36); await output.sync(); await output.close(); output = null;
         await this.fault('backup-written');
         // 公开文件名前，重新读取实际密文并做认证解密及全部文件/领域校验。
-        const check = await this.decrypt(fdPath(d.fd, tmp), input.password); await this.discard(check.stage);
+        const check = await this.decrypt(fdPath(d.fd, tmp), input.password); this.retireStage(check.stage);
         await link(fdPath(d.fd, tmp), fdPath(d.fd, name)); await d.fd.sync();
         return { name, directoryIdentity: d.stamp, verified: true, ...preview(m) };
       } finally { secret.fill(0); await output?.close(); await unlink(fdPath(d.fd, tmp)).catch(() => {}); await d.fd.close(); }
-      } finally { await this.discard(stage); }
+      } finally { this.retireStage(stage); }
     });
   }
   async decrypt(path, password) {
@@ -294,7 +355,11 @@ export class BackupManager {
       await new Store(stage).save('.manifest.json', m);
       success = true;
       return { stage, manifest: m };
-    } finally { await plain?.close(); await unlink(join(stage, '.plain')).catch(() => {}); await source?.close(); if (!success) await this.discard(stage); }
+    } finally {
+      // 即使关闭句柄失败也必须把明文暂存交给清理队列，不能留下无主目录。
+      try { await Promise.allSettled([plain?.close(), source?.close()]); await unlink(join(stage, '.plain')).catch(() => {}); }
+      finally { if (!success) this.retireStage(stage); }
+    }
   }
   async list(input) {
     const d = await this.directory(input);
@@ -311,11 +376,11 @@ export class BackupManager {
   async verify(input, user) {
     return this.isolated(async () => {
       ensure(fileName(input.name), '备份文件名无效');
-      for (const [id, p] of this.previews) if (p.expires < Date.now()) { this.previews.delete(id); await this.discard(p.stage); }
+      this.expirePreviews();
       ensure(this.previews.size < 8, '恢复预览过多');
-      const d = await this.directory(input);
+      const d = await this.directory(input); let result, registered = false;
       try {
-        const result = await this.decrypt(fdPath(d.fd, input.name), input.password);
+        result = await this.decrypt(fdPath(d.fd, input.name), input.password);
         const external = [], catalog = await new Store(result.stage).read('catalog.json'), started = Date.now();
         for (const row of catalog.workspaces) {
           const c = catalog.connections.find(c => c.id === row.connectionId);
@@ -327,9 +392,19 @@ export class BackupManager {
           catch (e) { external.push({ workspaceId: row.id, verified: false, reason: e.message }); }
         }
         const token = randomUUID();
-        this.previews.set(token, { ...result, user, expires: Date.now() + 15 * 60000, catalogVersion: this.catalog.manifest.revision, stamps: await this.stamps() });
+        this.previews.set(token, { ...result, user, expires: Date.now() + this.previewTtlMs, catalogVersion: this.catalog.manifest.revision, stamps: await this.stamps() }); registered = true;
         return { token, verified: true, ...preview(result.manifest), external, externalStatus: '外部依赖不在归档内；恢复后先只读验证身份与已知历史，再允许发布' };
-      } finally { await d.fd.close(); }
+      } finally {
+        if (result && !registered) this.retireStage(result.stage);
+        await d.fd.close();
+      }
+    });
+  }
+  async cancel(input, user) {
+    return this.isolated(async () => {
+      const p = this.previews.get(input.token);
+      if (p) { ensure(p.user === user, '恢复预览不属于当前管理员'); this.previews.delete(input.token); this.retireStage(p.stage); }
+      return { ok: true };
     });
   }
   async restore(input, user) {
@@ -355,7 +430,7 @@ export class BackupManager {
       await this.fault('restore-committed');
       await recoverRestore(c.store.dir, this.configPath, this.fault);
       await this.reopen(); this.poisoned = false;
-      for (const value of this.previews.values()) if (value.stage !== p.stage) await this.discard(value.stage);
+      for (const value of this.previews.values()) this.retireStage(value.stage);
       this.previews.clear();
       return { ok: true, result: '恢复完成；外部绑定和历史重新验证前禁止发布。恢复前状态已私有保留。' };
     });

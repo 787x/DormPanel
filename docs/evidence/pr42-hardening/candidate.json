@@ -1,0 +1,10 @@
+{
+  "version": "0.4.0",
+  "bytes": 1757319,
+  "sha256": "67d789b14b61bfd9194b31d5887e817d52231b12ff3d90f216de1b810e353a0c",
+  "supersededCandidateSha256": "e344e5a59e9b7ecd5102505ee1aa471c0b2a4a2784c49f68b228441a473ef40d",
+  "sourceAndWebAndPackageFilesByteMatched": 20,
+  "outerMainAndInnerControlByteMatched": true,
+  "newCandidateInstalledOnNas": false,
+  "verification": "fnOS Node 22 package-user Linux regression and isolated full server/main.sh lifecycle tests; no full installed upgrade/restore repeated"
+}

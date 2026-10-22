@@ -930,7 +930,10 @@ $('backupCreate').onclick = () => backupJob(async () => {
 $('backupRestore').onclick = () => backupJob(async () => {
   const token = backupToken;
   const confirm = await requestText('将用已验证备份替换当前全部应用工作区和连接。恢复前状态会保留，外部历史不会改写。输入“恢复应用数据”确认：');
-  if (confirm !== '恢复应用数据') { $('backupStatus').textContent = '已取消恢复'; return; }
+  if (confirm !== '恢复应用数据') {
+    await post('/api/backups/cancel', { token }); backupToken = null;
+    $('backupStatus').textContent = '已取消恢复并撤销预览'; return;
+  }
   const result = await post('/api/backups/restore', { token, confirm });
   backupToken = null; workspaceId = undefined; await load(); $('backupStatus').textContent = result.result;
 });
