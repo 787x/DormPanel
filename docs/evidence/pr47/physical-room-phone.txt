@@ -1,0 +1,8 @@
+
+com.dormpanel.app.schedule.ScheduleDatasetMigrationRoomTest:..
+
+Time: 9.261
+
+OK (2 tests)
+
+

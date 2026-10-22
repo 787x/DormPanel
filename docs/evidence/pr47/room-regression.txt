@@ -1,0 +1,10 @@
+
+com.dormpanel.app.schedule.ScheduleDatasetMigrationRoomTest:..
+com.dormpanel.app.schedule.ScheduleV2BindingRoomTest:.....
+com.dormpanel.app.schedule.ScheduleSnapshotPersistenceTest:....
+
+Time: 13.008
+
+OK (11 tests)
+
+

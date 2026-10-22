@@ -17,6 +17,9 @@ data class TimetableRow(@PrimaryKey val id: String, val title: String, val day: 
 data class ScheduleSyncCheckpoint(@PrimaryKey val id: Int = 1, val payload: ByteArray)
 @Dao
 interface ScheduleDao {
+    @Query("SELECT * FROM schedule_sync_checkpoint ORDER BY id") fun syncRecords(): List<ScheduleSyncCheckpoint>
+    @Query("SELECT * FROM schedule_sync_checkpoint WHERE id < 200 ORDER BY id") fun currentSyncRecords(): List<ScheduleSyncCheckpoint>
+    @Query("SELECT MAX(id) FROM schedule_sync_checkpoint") fun maxSyncRecordId(): Int?
     @Query("SELECT * FROM schedule_sync_checkpoint WHERE id = 1") fun checkpoint(): ScheduleSyncCheckpoint?
     @Query("SELECT * FROM schedule_sync_checkpoint WHERE id = :id") fun syncRecord(id: Int): ScheduleSyncCheckpoint?
     @Query("SELECT EXISTS(SELECT 1 FROM schedule_sync_checkpoint WHERE id = :id)") fun hasSyncRecord(id: Int): Boolean
@@ -124,6 +127,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     }
     private fun <T> write(callback: (Result<T>) -> Unit, operation: () -> T) = submit(callback) {
         database.runInTransaction<T> {
+            requireNoDatasetMigration()
             operation()
         }.also { onCommitted?.invoke() }
     }
@@ -160,6 +164,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         val snapshot = ScheduleSnapshotCodec.decode(stable)
         var conflicted = false
         database.runInTransaction {
+            requireNoDatasetMigration()
             val dao = database.dao()
             val old = dao.checkpoint()?.let { ScheduleSnapshotCodec.decode(it.payload) }
             if (old != null) {
@@ -215,6 +220,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         catalog?.state?.let { it.profiles to it.customProfileKeys }
     }
     internal fun changeProfile(profile: TermScheduleProfile?, key: String): Boolean = blocking {
+        requireNoDatasetMigration()
         val base = (v2Commit(21) ?: v2Commit(23))?.snapshot() ?: decoded(1)
         if (base == null) {
             // Serialize preference edits with the first Room baseline/catalog establishment.
@@ -235,6 +241,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         true
     }.also { if (it) onCommitted?.invoke() }
     override fun establishBaseline(bytes: ByteArray) = blocking {
+        requireNoDatasetMigration()
         val base = ScheduleSnapshotCodec.decode(bytes)
         val existing = decoded(1)
         check(existing == null || existing == base) { "Baseline already established" }
@@ -245,6 +252,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         }
     }
     override fun stagePublication(bytes: ByteArray, captured: ScheduleState) = blocking {
+        requireNoDatasetMigration()
         val candidate = ScheduleSnapshotCodec.decode(bytes)
         val base = decoded(1)
         check(candidate.parentRevision == base?.revision && (base == null || candidate.datasetId == base.datasetId))
@@ -295,7 +303,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         if (receipt) { database.dao().deleteSyncRecord(4); database.dao().deleteSyncRecord(5) }
         return emptyList()
     }
-    override fun integrateRemote(bytes: ByteArray): List<ScheduleMerge.Conflict> = blocking { integrate(bytes) }
+    override fun integrateRemote(bytes: ByteArray): List<ScheduleMerge.Conflict> = blocking { requireNoDatasetMigration(); integrate(bytes) }
     /** Called only after a verified history walk proves the candidate is absent from the head chain. */
     override fun discardUncommittedPublication() = blocking {
         database.dao().deleteSyncRecord(4); database.dao().deleteSyncRecord(5)
@@ -310,6 +318,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         database.dao().checkpoint(ScheduleSyncCheckpoint(7, cursor.copyOf()))
     }
     override fun resolveConflict(choice: ScheduleMerge.Choice) = blocking {
+        requireNoDatasetMigration()
         val remote = requireNotNull(decoded(3)) { "No saved conflict" }
         val pending = decoded(4)
         val ancestor = if (pending?.revision == remote.revision) requireNotNull(decoded(5)) else requireNotNull(decoded(1))
@@ -324,6 +333,95 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     // 25/26 conflict bases,27 conflict frontier,30..93 conflict branches,29 PUT attempted,
     // 96 verified ID/hash witness,97 own abandoned paths (explicit quarantine).
     private fun v2Commit(id: Int) = database.dao().syncRecord(id)?.payload?.let(ScheduleCommitCodec::decode)
+    // 200 active journal, 202 observed paths, 203 inspection pause; >=1000 immutable recovery blobs/manifests.
+    private fun datasetMigration() = database.dao().syncRecord(200)?.payload?.let(ScheduleDatasetMigration::decode)
+    private fun requireNoDatasetMigration() { check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "换库期间课程及同步检查点受保护；请继续或取消换库" } }
+    override fun v2DatasetPaused() = blocking { database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) }
+    override fun v2DatasetResult() = blocking { database.dao().syncRecord(204)?.payload?.toString(Charsets.UTF_8) }
+    override fun v2RequireSyncAllowed() = blocking { requireNoDatasetMigration() }
+    override fun v2DatasetInspection(): List<String>? = blocking {
+        database.dao().syncRecord(203)?.payload?.let { bytes -> org.json.JSONArray(String(bytes, Charsets.UTF_8)).let { a -> (0 until a.length()).map(a::getString) } }
+    }
+    override fun v2BeginDatasetInspection(oldFolder: String, newFolder: String, datasetId: String) = blocking {
+        check(datasetMigration() == null); ScheduleCommitCodec.uuid(datasetId)
+        check(oldFolder != newFolder)
+        val config = org.json.JSONArray(listOf(oldFolder, newFolder, datasetId)).toString().toByteArray(Charsets.UTF_8)
+        database.dao().syncRecord(203)?.let { check(it.payload.contentEquals(config)) { "已有准备操作，先恢复或取消" }; return@blocking }
+        val baseline = requireNotNull(v2Commit(21)); check(ScheduleMerge.same(fullState(), baseline.state)) { "有未发布修改" }
+        check(v2Commit(23) == null && v2Plan() == null && !database.dao().hasSyncRecord(29) && v2Hashes(97).isEmpty() && v2Problems().isEmpty()) { "有待恢复同步状态" }
+        check(listOf(3, 4, 5, 6, 7).none { database.dao().hasSyncRecord(it) }) { "旧 v1 恢复尚未完成" }
+        database.dao().deleteSyncRecord(202); v2Put(203, config)
+    }
+    override fun v2CancelDatasetInspection() = blocking {
+        check(datasetMigration() == null)
+        val key = database.dao().syncRecord(102)?.payload?.toString(Charsets.US_ASCII)
+        val observations = database.dao().syncRecord(202)?.payload?.let { org.json.JSONObject(String(it, Charsets.UTF_8)).optJSONArray(key.orEmpty()) }
+        val ids = (v2Problems() + (observations?.let { a -> (0 until a.length()).map(a::getString) }.orEmpty())).sorted()
+        check(ids.size <= 256); v2Put(103, ids.joinToString("\n").toByteArray(Charsets.US_ASCII))
+        database.dao().deleteSyncRecord(203)
+    }
+    override fun v2Migration() = blocking { datasetMigration() }
+    override fun v2Witness() = blocking { v2Hashes(96) }
+    override fun v2MigrationPaths(key: String, observed: List<String>) = blocking {
+        check(database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203))
+        val all = database.dao().syncRecord(202)?.payload?.let { org.json.JSONObject(String(it, Charsets.UTF_8)) } ?: org.json.JSONObject()
+        val previous = all.optJSONArray(key)?.let { a -> (0 until a.length()).map(a::getString) }.orEmpty()
+        val paths = (previous + observed).distinct().sorted(); check(paths.size <= 256); paths.forEach(ScheduleCommitCodec::uuid)
+        all.put(key, org.json.JSONArray(paths)); v2Put(202, all.toString().toByteArray(Charsets.UTF_8)); paths
+    }
+    override fun v2PrepareMigration(journal: ScheduleDatasetMigration) = blocking {
+        check(datasetMigration() == null)
+        database.dao().syncRecord(203)?.let { check(it.payload.contentEquals(org.json.JSONArray(listOf(journal.oldFolder, journal.newFolder, journal.target.head.datasetId)).toString().toByteArray(Charsets.UTF_8))) }
+        val baseline = requireNotNull(v2Commit(21)); val local = fullState()
+        check(journal.phase == "prepared" && journal.writerId == v2Writer() && journal.source.head.datasetId == baseline.datasetId)
+        check(v2Commit(23) == null && v2Plan() == null && !database.dao().hasSyncRecord(29) && v2Hashes(97).isEmpty() && v2Problems().isEmpty())
+        check(listOf(3, 4, 5, 6, 7).none { database.dao().hasSyncRecord(it) }) { "旧 v1 恢复尚未完成" }
+        check(ScheduleMerge.same(local, baseline.state) && ScheduleMerge.same(local, journal.source.snapshot.state) && ScheduleMerge.same(local, journal.target.snapshot.state))
+        check(journal.source.witness == v2Hashes(96) && v2Ids(22).all { journal.source.witness.containsKey(it) })
+        val root = ScheduleCommitCodec.decode(requireNotNull(journal.target.commitBytes))
+        check(root.parents.isEmpty() && root.datasetId != baseline.datasetId && journal.target.witness == mapOf(root.commitId to digest(journal.target.commitBytes)))
+        check(journal.source.bindingKey == database.dao().syncRecord(102)?.payload?.toString(Charsets.US_ASCII) && journal.target.bindingKey != journal.source.bindingKey)
+        var archiveId = maxOf(1000, (database.dao().maxSyncRecordId() ?: 0) + 1)
+        fun archive(bytes: ByteArray): org.json.JSONObject {
+            val id = archiveId++; v2Put(id, bytes)
+            return org.json.JSONObject().put("recordId", id).put("sha256", digest(bytes))
+        }
+        val records = org.json.JSONObject()
+        database.dao().currentSyncRecords().forEach { records.put(it.id.toString(), archive(it.payload)) }
+        // Individual immutable blobs avoid base64-copying all checkpoints into one giant JSON value.
+        val manifest = org.json.JSONObject().put("format", "DormPanel-dataset-recovery-1").put("id", journal.id)
+            .put("writerId", journal.writerId).put("oldFolder", journal.oldFolder).put("newFolder", journal.newFolder)
+            .put("sourceDatasetId", journal.source.head.datasetId).put("targetDatasetId", root.datasetId)
+            .put("local", archive(ScheduleCommitCodec.encode(baseline.copy(state = local))))
+            .put("targetRoot", archive(requireNotNull(journal.target.commitBytes))).put("records", records)
+        val body = manifest.toString().toByteArray(Charsets.UTF_8)
+        v2Put(archiveId, org.json.JSONObject().put("sha256", digest(body)).put("body", java.util.Base64.getEncoder().encodeToString(body)).toString().toByteArray(Charsets.UTF_8))
+        database.dao().deleteSyncRecord(202); v2Put(200, journal.bytes()); database.dao().deleteSyncRecord(203)
+    }
+    override fun v2CommitMigration(id: String) = blocking {
+        val j = requireNotNull(datasetMigration()); check(j.id == id)
+        if (j.phase == "committed") return@blocking
+        check(j.phase == "prepared" && v2Writer() == j.writerId && v2Hashes(96) == j.source.witness)
+        val root = ScheduleCommitCodec.decode(requireNotNull(j.target.commitBytes))
+        check(ScheduleMerge.same(fullState(), root.state) && v2Commit(21)?.datasetId == j.source.head.datasetId)
+        // Course rows remain in place; only independent dataset checkpoint and catalog identity change.
+        v2Put(21, j.target.commitBytes); v2Frontier(22, listOf(root.commitId))
+        v2Put(96, "${root.commitId} ${digest(j.target.commitBytes)}".toByteArray(Charsets.US_ASCII))
+        v2Put(102, requireNotNull(j.target.bindingKey).toByteArray(Charsets.US_ASCII))
+        v2Put(2, catalogBytes(root.snapshot(), root.state)); v2Put(200, j.copy(phase = "committed").bytes())
+    }
+    override fun v2FinishMigration(id: String, cancel: Boolean) = blocking {
+        val j = requireNotNull(datasetMigration()); check(j.id == id)
+        check(if (cancel) j.phase == "prepared" else j.phase == "committed") { "切换后禁止反向覆盖；请保护新数据再处理" }
+        val summary = org.json.JSONObject().put("id", j.id).put("phase", if (cancel) "cancelled" else "completed-local-verified")
+            .put("sourceDatasetId", j.source.head.datasetId).put("targetDatasetId", j.target.head.datasetId).put("writerId", j.writerId)
+            .put("origin", "Android 本机实际验证结果").put("checkedAt", java.time.Instant.now().toString())
+            .put("oldFolder", j.oldFolder).put("newFolder", j.newFolder).put("sourceCount", j.source.witness.size)
+            .put("targetRoot", j.target.head.revision).put("targetSha256", digest(requireNotNull(j.target.commitBytes)))
+        v2Put(maxOf(1000, (database.dao().maxSyncRecordId() ?: 0) + 1), summary.toString().toByteArray(Charsets.UTF_8))
+        v2Put(204, summary.toString().toByteArray(Charsets.UTF_8))
+        database.dao().deleteSyncRecord(200)
+    }
     private fun v2Put(id: Int, bytes: ByteArray) = database.dao().checkpoint(ScheduleSyncCheckpoint(id, bytes))
     private fun v2Ids(id: Int) = database.dao().syncRecord(id)?.payload?.toString(Charsets.US_ASCII)?.split('\n')?.filter { it.isNotEmpty() }.orEmpty().also { ids ->
         require(ids.size <= 64 && ids.distinct().size == ids.size); ids.forEach(ScheduleCommitCodec::uuid)
@@ -349,6 +447,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         v2Put(100, bytes)
     }
     override fun v2CheckTarget(identity: String) = blocking {
+        requireNoDatasetMigration()
         require(identity.matches(Regex("[0-9a-f]{64}")))
         val old = database.dao().syncRecord(102)?.payload?.toString(Charsets.US_ASCII)
         if (v2Commit(21) != null || v2Commit(23) != null) check(old == null || old == identity) {
@@ -366,15 +465,18 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     private fun v2Problems(): Set<String> = database.dao().syncRecord(103)?.payload?.toString(Charsets.US_ASCII)?.split('\n')
         ?.filter { it.isNotEmpty() }?.toSet().orEmpty().also { ids -> require(ids.size <= 256); ids.forEach(ScheduleCommitCodec::uuid) }
     override fun v2Unverifiable(ids: Set<String>) = blocking {
+        check(!database.dao().hasSyncRecord(200)) { "换库预览已保存，禁止修改原观察证据" }
         require(ids.size <= 256) { "未验证路径数量超限；保留本地修改" }; ids.forEach(ScheduleCommitCodec::uuid)
         if (v2Problems() != ids) v2Put(103, ids.sorted().joinToString("\n").toByteArray(Charsets.US_ASCII))
     }
     override fun v2Migrate(baseline: ScheduleSnapshot) = blocking {
+        requireNoDatasetMigration()
         check(v2Commit(21) == null && v2Commit(23) == null && decoded(1) == baseline && decoded(3) == null && decoded(4) == null)
         val c = ScheduleCommit(baseline.datasetId, baseline.revision, v2Writer(), emptyList(), baseline.state)
         v2Put(21, ScheduleCommitCodec.encode(c)); v2Frontier(22, emptyList())
     }
     override fun v2Bind(remote: SharedScheduleRemote) = blocking {
+        requireNoDatasetMigration()
         val bytes = requireNotNull(remote.commitBytes)
         val root = ScheduleCommitCodec.decode(bytes)
         check(root.datasetId == remote.head.datasetId && root.commitId == remote.head.revision)
@@ -390,6 +492,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     }
     override fun v2Start(root: ScheduleCommit, binding: Boolean) = blocking { startV2(root, binding) }
     private fun startV2(root: ScheduleCommit, binding: Boolean) {
+        requireNoDatasetMigration()
         check(v2Commit(21) == null && v2Commit(23) == null) { "v2 already bound" }
         val current = fullState()
         if (binding) {
@@ -408,15 +511,17 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         }
     }
     override fun v2Stage(bytes: ByteArray) = blocking {
+        requireNoDatasetMigration()
         val c = ScheduleCommitCodec.decode(bytes)
         check(v2Commit(23) == null && v2Commit(21)?.datasetId == c.datasetId && c.parents == v2Ids(22))
         v2Put(23, bytes.copyOf()); v2Put(24, bytes.copyOf())
     }
-    override fun v2Attempt() = blocking { v2Put(29, byteArrayOf(1)) }
+    override fun v2Attempt() = blocking { requireNoDatasetMigration(); v2Put(29, byteArrayOf(1)) }
     private fun v2Hashes(id: Int) = database.dao().syncRecord(id)?.payload?.toString(Charsets.US_ASCII)?.lines()?.filter { it.isNotEmpty() }?.associate {
         val parts = it.split(' '); check(parts.size == 2); ScheduleCommitCodec.uuid(parts[0]); check(parts[1].matches(Regex("[0-9a-f]{64}"))); parts[0] to parts[1]
     }.orEmpty()
     override fun v2Observe(commits: Map<String, String>) = blocking {
+        check(!database.dao().hasSyncRecord(200)) { "换库预览已保存，禁止修改原观察证据" }
         val saved = v2Hashes(96)
         check(saved.all { (id, hash) -> commits[id] == hash }) { "已验证历史缺失或内容改变；未完成同步" }
         check(commits.size <= 256)
@@ -424,6 +529,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         v2Put(96, commits.toSortedMap().map { "${it.key} ${it.value}" }.joinToString("\n").toByteArray(Charsets.US_ASCII))
     }
     override fun v2RenewPending() = blocking {
+        requireNoDatasetMigration()
         val old = requireNotNull(v2Commit(23)); val capture = requireNotNull(v2Commit(24))
         val abandoned = v2Hashes(97) + (old.commitId to digest(database.dao().syncRecord(23)!!.payload))
         check(abandoned.size <= 64) { "中断路径数量超限；保留待确认修改" }
@@ -434,6 +540,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         v2Put(24, ScheduleCommitCodec.encode(capture.copy(commitId = id)))
     }
     override fun v2Receipt(bytes: ByteArray) = blocking {
+        requireNoDatasetMigration()
         check(database.dao().syncRecord(23)!!.payload.contentEquals(bytes)) { "Pending receipt changed" }
         val c = ScheduleCommitCodec.decode(bytes)
         val replay = ScheduleMerge.merge(requireNotNull(v2Commit(24)).state, fullState(), c.state)
@@ -443,6 +550,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         database.dao().deleteSyncRecord(23); database.dao().deleteSyncRecord(24); database.dao().deleteSyncRecord(29)
     }
     override fun v2Apply(plan: ScheduleV2Plan): List<ScheduleMerge.Conflict> = blocking {
+        requireNoDatasetMigration()
         check(plan.branches.isNotEmpty() && plan.branches.size <= 64)
         val result = plan.merge(fullState())
         if (result.conflicts.isNotEmpty()) {
@@ -464,6 +572,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         result.conflicts
     }
     override fun v2Resolve(choice: ScheduleMerge.Choice, expectedToken: String?) = blocking {
+        requireNoDatasetMigration()
         val plan = requireNotNull(v2Plan())
         check(expectedToken == null || expectedToken == plan.token()) { "冲突版本已经变化；请重新查看后再选择" }
         val result = plan.merge(fullState(), choice)

@@ -1,5 +1,6 @@
 import http from "node:http";
 import { HistoryManager, cachedGraph, historySummary, commitAt, versionDifferences } from './history.mjs';
+import { DatasetMigration } from './migration.mjs';
 import { BackupManager, recoverRestore } from "./backup.mjs";
 import { readFile, writeFile, chmod, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -151,6 +152,7 @@ export async function createApp({
         path = u.pathname.slice(PREFIX.length);
       if (req.method === "POST") {
         const routes = [
+          '/api/migration',
           '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
           "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore", "/api/backups/cancel",
           "/api/edit",
@@ -181,6 +183,7 @@ export async function createApp({
         ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
         ensure(!historyLock, '历史操作进行中，请稍后重试');
         if (path.startsWith('/api/backups/')) {
+          if (path.endsWith('/restore')) ensure(!catalog.migrations.some(m => m.phase !== 'cancelled'), '换库保护期间及退役后禁止恢复旧应用备份覆盖迁移证据');
           ensure(writes === 1 && !catalog.configuring, '存在其他写入操作，请稍后重试');
           ensure(input.catalogVersion === catalog.manifest.revision, '管理版本过期');
           const action = path.split('/').pop();
@@ -198,6 +201,12 @@ export async function createApp({
         }
         ensure(!catalog.configuring && !catalog.manifest.transition, "正在保存配置或等待恢复");
         const network = action => catalog.network(workspaceId, action);
+        if (path === '/api/migration') {
+          ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision && workspaceId === catalog.manifest.activeId, '迁移版本过期或有并发操作');
+          historyLock = true;
+          try { send(200, publicValue(await new DatasetMigration(catalog).action(db, input, user))); return; }
+          finally { historyLock = false; }
+        }
         if (path.startsWith('/api/history/')) {
           ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision && workspaceId === catalog.manifest.activeId, '历史操作版本过期或有并发操作');
           ensure(!catalog.restoreGuards[workspaceId], '恢复异常需先检查并同步');
@@ -290,7 +299,7 @@ export async function createApp({
         return;
       }
       // schedule 无 ID 仅用于初次引导；其余数据读取必须明确指定工作区。
-      if (path.startsWith('/api/') && !['/api/history', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
+      if (path.startsWith('/api/') && !['/api/migration', '/api/history', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
         send(404, { error: '不存在' }); return;
       }
       ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
@@ -300,6 +309,7 @@ export async function createApp({
       const row = db ? catalog.row(workspaceId) : null;
       const c = row?.connectionId ? catalog.connection(row.connectionId) : null;
       const busy = catalog.busy.has(workspaceId);
+      if (path === '/api/migration') { ensure(workspaceId === catalog.manifest.activeId, '迁移只可访问当前工作区'); send(200, publicValue(new DatasetMigration(catalog).summary(workspaceId))); return; }
       if (path.startsWith('/api/history')) {
         ensure(workspaceId === catalog.manifest.activeId, '历史只可访问当前工作区');
         history.catalog = catalog;
@@ -307,6 +317,7 @@ export async function createApp({
         let result;
         if (path === '/api/history') {
           result = historySummary(db, g);
+          if (catalog.protection(workspaceId)) { result.blockers.push('迁移保护 / 退役工作区只读；从换库向导继续'); result.rollbackEnabled = false; }
           if (catalog.restoreGuards[workspaceId]) { result.blockers.push('恢复后尚未验证远端历史，请先检查并同步'); result.rollbackEnabled = false; }
         }
         else if (path.endsWith('/preview-diff')) result = history.previewDiff(db, { workspaceId, token:u.searchParams.get('token'), offset:Number(u.searchParams.get('offset') ?? 0) }, user);
@@ -369,6 +380,7 @@ export async function createApp({
           publicValue({
             workspaceId,
             workspaceName: row.name,
+            writeProtection: catalog.protection(workspaceId) ? '换库保护 / 退役工作区只读；请在历史与版本继续或取消迁移' : null,
             catalogVersion: catalog.manifest.revision,
             writerId: store.identity.writerId,
             csrf: userToken(user, pageOrigin),

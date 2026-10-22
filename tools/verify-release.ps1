@@ -1,5 +1,5 @@
 param(
-    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\0.1.3'),
+    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\0.1.4'),
     [string]$BuildToolsDirectory
 )
 $ErrorActionPreference = 'Stop'

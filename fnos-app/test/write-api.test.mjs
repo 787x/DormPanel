@@ -92,6 +92,7 @@ test("每条修改路由均检查管理员、CSRF、同源、请求版本；拒�
     "/api/manage",
     "/api/connections/test",
     '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
+    '/api/migration',
   ]) {
     assert.equal(
       (await f.post(path, {}, { "X-Trim-Isadmin": "false" })).status,

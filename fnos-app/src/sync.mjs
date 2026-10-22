@@ -40,6 +40,7 @@ export class SyncEngine {
     this.validateDataset = validateDataset;
   }
   async publish() {
+    this.db.assertWritable?.();
     const { db, remote } = this,
       pending = db.frame.pending;
     if (!pending) return false;
@@ -172,6 +173,7 @@ export class SyncEngine {
     return graph;
   }
   async synchronize({ create = false, bind = false } = {}) {
+    this.db.assertWritable?.();
     const { db, remote } = this;
     ensure(
       !db.frame.bindingKey || db.frame.bindingKey === remote.key,
@@ -233,6 +235,7 @@ export class SyncEngine {
     }
   }
   async resolve(choice, token, expected) {
+    this.db.assertWritable?.();
     ensure(["local", "remote"].includes(choice), "未知冲突决策");
     const before = this.db.snapshot();
     ensure(
