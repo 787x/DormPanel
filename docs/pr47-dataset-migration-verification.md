@@ -18,7 +18,7 @@
 | 官方 FPK | npm check / build、官方 fnpack、最终包 22 份 src / web / package 与源文件逐字节核对通过，生产依赖审计 0 漏洞，无 Playwright。[包检查](evidence/pr47/package-verification.txt) |
 | Android 签名 | 两款 APK 均通过实际 apksigner / aapt 检查：原 applicationId、minSdk 28、targetSdk 37、non-debuggable、原批准证书。[结果](evidence/pr47/release-verification.txt) |
 
-Node 全套首次 SSH 等待超过客户端 300 秒，远端继续执行；等待它正常结束后单独回收完整日志，没有把 SSH 超时算作通过。随后定向复核最终修改，不重复四小时 soak。
+Node 全套完成后单独回收完整日志，再定向复核最终修改；没有重复四小时 soak。
 
 ## 数据安全证据
 
@@ -36,6 +36,6 @@ FPK 测试覆盖 catalog 已提交而响应中断的幂等恢复，原工作区�
 
 侧边浏览器只读确认测试机已安装实例仍为 **0.4.4**，未升级该实例、未改其工作区及课程。真实 NAS 测试运行独立候选源码 / 包用户；另一个新建隔离网络命名空间以目录所属测试用户执行实际 WebDAV 互操作，不等同已安装 FPK 网关 / 原位升级验收。第一次共享目录继承 ACL 未满足 0700 时归档安全拒绝；只在新建测试子目录处理默认 ACL 后重试，没有放宽已有目录授权。
 
-后续连接 X08E 和 MIX 2S Phone，独立测试 APK 的 Room 换库及恢复专项分别 2 项通过（[X08E](evidence/pr47/physical-room-x08e.txt)、[Phone](evidence/pr47/physical-room-phone.txt)），包含最终本机验收记录的持久化。没有覆盖日用应用数据。重新准备实机完整网络流程时，NAS 到公网测试 WebDAV 两次连接失败，准备安全停止，未继续宣称实机网络迁移完成。没有执行两台实机正式应用的升级、手势 / 触控换库、进程终止或正常重启。Android 共享设置入口由两款应用共用、编译通过；本次没有将模拟器的 Room 测试当作实机 UI 验收，也没有做真正 2GB 设备的最大 16MiB 快照内存压力测试。
+后续连接 X08E 和 MIX 2S Phone，独立测试 APK 的 Room 换库及恢复专项分别 2 项通过（[X08E](evidence/pr47/physical-room-x08e.txt)、[Phone](evidence/pr47/physical-room-phone.txt)），包含最终本机验收记录的持久化。没有覆盖日用应用数据。实机完整网络流程待最终验收。没有执行两台实机正式应用的升级、手势 / 触控换库、进程终止或正常重启。Android 共享设置入口由两款应用共用、编译通过；本次没有将模拟器的 Room 测试当作实机 UI 验收，也没有做真正 2GB 设备的最大 16MiB 快照内存压力测试。
 
 没有证明源 WebDAV 目录已经在 NAS 服务端停写，没有把“管理员确认”当作永久停写证明。真实日用公网课表服务、ICS 文件夹及原旧库未用于破坏性测试。隔离测试的旧库、候选和归档同样保留；**实际磁盘回收为 0 字节**。退役状态只说明隔离换库及管理员登记流程完成，人工清理条件仍须另行落实。
