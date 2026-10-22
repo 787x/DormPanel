@@ -1,6 +1,6 @@
 {
   "name": "dormpanel-schedule-manager",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,11 +9,15 @@
   "scripts": {
     "test": "node --test",
     "build": "node scripts/build.mjs",
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs",
+    "test:frontend": "node --test browser-test/connections.browser.mjs"
   },
   "dependencies": {
     "@js-temporal/polyfill": "0.5.1",
     "fast-xml-parser": "5.11.2",
     "ical.js": "2.2.1"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
   }
 }

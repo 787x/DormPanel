@@ -1,4 +1,4 @@
-# DormPanel Schedule Manager 0.4.1
+# DormPanel Schedule Manager 0.4.3
 
 “备份与恢复”支持在 fnOS 官方授权目录保存带 scrypt / AES-256-GCM 认证加密的完整应用归档，回读验证后公开文件。同一 writerId + installationId 的恢复必须先验证和明确确认，保留旧状态、通过持久化恢复日志完成切换，外部身份/已知历史验证前不允许发布。WebDAV 和用户授权目录的远端历史不默认复制，不能将应用备份视作完整远端数据集备份。
 
@@ -45,6 +45,14 @@ PR38 原位升级先逐字段完整复制 `workspace.json` 到 `var/workspaces/<
 包用户运行，仅 Unix Socket；target 0700、Socket 0600，撤销 shared-user/group ACL，失败即停止，不放宽权限。真实网关为 root trim_http_cgi。root 和包用户已有完整代码/数据权限，属于残余信任边界，不能宣称隔离其 Header 伪造。[PR37 审计](../docs/pr37-gateway-security-audit.md)说明该边界。
 
 每个写路由检查管理员、私有传输、用户及完整 Origin 绑定的 CSRF、请求版本、JSON 和 2 MiB 上限。fnOS Host 可能丢端口，页面完整 Origin token 保留精确端口校验。冲突确认绑定完整输入 token，决策前重查远端。拒绝重定向越界、路径穿越、XML 实体、回环/链路本地/元数据目标；LAN 仅为管理员明确配置的 NAS 地址。浏览器不直连 WebDAV；导入文本用 textContent，CSP 禁止内联/外部脚本。
+
+## 本地连接按钮回归测试
+
+`npm ci` 后执行 `npm run test:frontend`，使用真实页面脚本、独立临时服务和 Playwright 验证弹窗交互。Windows 默认使用已安装的 Edge；其他平台先执行 `npx playwright install chromium`，也可通过 `BROWSER_CHANNEL` 指定浏览器。视口固定为 1280×800。测试代理仅在隔离实例注入管理员身份，不连接真实课表；目录列表在交互测试中使用桩数据，Linux 本地目录的真实读写、授权边界和发布由 Node API 测试覆盖。Playwright 仅为开发依赖，FPK 使用 `npm ci --omit=dev`，不包含浏览器或自动化运行时。
+
+实际公网故障、来源校验兼容方案和验证范围见 [本地连接修复记录](../docs/fpk-local-connection-fix.md)。
+
+0.4.3 增加 CSV 预览进度、真实错误和重试反馈，预览成功后才允许保存；已用 NAS 导入用户指定 CSV 并让 X08E 接收，详见 [候选及实机同步记录](../docs/fpk-0.4.3-candidate-notes.md)。
 
 ## 构建
 
