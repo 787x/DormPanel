@@ -91,7 +91,7 @@ class PhoneSharedScheduleTest {
                     waitFor(scenario) { it.source.ready && it.hasWindowFocus() && !it.sharedSync.busy && !controller!!.busy }
                     scenario.onActivity { dialog = SharedScheduleDialog.show(it, writer!!, controller!!, true) }
                     waitFor(scenario) { dialog?.window?.decorView?.hasWindowFocus() == true }
-                    onView(withText("首次创建共享课表")).perform(scrollTo(), click())
+                    onView(withText("创建新的共享课表")).perform(scrollTo(), click())
                     waitFor(scenario) { !controller!!.busy }
                     assertNotNull(writerStore.v2Frame().baseline?.commitId)
                     onView(withText("关闭")).perform(click())

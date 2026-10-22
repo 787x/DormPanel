@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.*
+import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.IsolatedDashboardRule
@@ -28,11 +29,102 @@ class SharedSchedulePublisherAndroidTest {
         }
         error("Publisher did not reach expected state")
     }
+    @Test fun existingDatasetCanBePreviewedCancelledRevalidatedBoundAndEditedFromX08eUi() {
+        val namespace = "pr41-binding-${UUID.randomUUID()}"
+        SharedScheduleSettings.overrideNamespace = namespace
+        TermScheduleProfileStore.overrideNamespace = namespace
+        MockWebServer().use { server ->
+            server.start()
+            val files = ConcurrentHashMap<String, ByteArray>()
+            var puts = 0
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    v2Listing(files, request)?.let { return it }
+                    val path = request.path!!
+                    if (request.method == "GET") return files[path]?.let { MockResponse().setBody(okio.Buffer().write(it)) }
+                        ?: MockResponse().setResponseCode(404)
+                    if (request.method == "PUT") { puts++; files[path] = request.body.readByteArray(); return MockResponse().setResponseCode(201) }
+                    return MockResponse().setResponseCode(405)
+                }
+            }
+            val root = ScheduleCommit(UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString(),
+                emptyList(), ScheduleState(entries = listOf(TimetableEntry("existing", "Existing FPK class", 4, 540, 585, "A301"))))
+            fun path(c: ScheduleCommit) = "/shared/dormpanel-sync-v2/commit-${c.commitId}.dpc"
+            files[path(root)] = ScheduleCommitCodec.encode(root)
+            val account = WebDavAccount(server.url("/").toString(), "user", "secret")
+            val folder = server.url("/shared/").toString()
+            var dialog: android.app.AlertDialog? = null
+            try {
+                ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                    waitFor(scenario) { it.schedule.ready && !it.sharedSchedule.busy }
+                    scenario.onActivity { activity ->
+                        val vm = ViewModelProvider(activity)[DashboardViewModel::class.java]
+                        vm.webDav.settings.saveAccount(account)
+                        vm.sharedSchedule.settings.folder = folder
+                        dialog = SharedScheduleDialog.show(activity, vm.schedule, vm.sharedSchedule, true)
+                    }
+                    onView(withText("创建新的共享课表")).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
+                    onView(withText("绑定已有共享课表（预览）")).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
+                    onView(withText("绑定已有共享课表（预览）")).perform(scrollTo(), click())
+                    waitFor(scenario) { !it.sharedSchedule.busy }
+                    onView(withText("取消")).perform(click())
+                    scenario.onActivity { assertNull(ViewModelProvider(it)[DashboardViewModel::class.java].schedule.state.sync) }
+                    assertEquals(0, puts); assertEquals(1, files.size)
+                    onView(withText("绑定已有共享课表（预览）")).perform(scrollTo(), click())
+                    waitFor(scenario) { !it.sharedSchedule.busy }
+                    val next = root.copy(commitId = UUID.randomUUID().toString(), parents = listOf(root.commitId))
+                    files[path(next)] = ScheduleCommitCodec.encode(next)
+                    onView(withText("确认下载并绑定")).perform(click())
+                    waitFor(scenario) { !it.sharedSchedule.busy }
+                    scenario.onActivity {
+                        val vm = ViewModelProvider(it)[DashboardViewModel::class.java]
+                        assertNull(vm.schedule.state.sync); assertTrue(vm.sharedSchedule.status.contains("重新预览"))
+                    }
+                    assertEquals(0, puts)
+                    onView(withText("绑定已有共享课表（预览）")).perform(scrollTo(), click())
+                    waitFor(scenario) { !it.sharedSchedule.busy }
+                    onView(withText("确认下载并绑定")).perform(click())
+                    waitFor(scenario) { !it.sharedSchedule.busy && it.schedule.state.sync != null && !it.schedule.applyingSnapshot }
+                    assertEquals(0, puts); assertEquals(2, files.size)
+                    onView(withText("绑定已有共享课表（预览）")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+                    onView(withText("立即同步")).perform(scrollTo(), click())
+                    waitFor(scenario) { !it.sharedSchedule.busy }
+                    assertEquals(0, puts); assertEquals(2, files.size)
+                    scenario.onActivity { activity ->
+                        val vm = ViewModelProvider(activity)[DashboardViewModel::class.java]
+                        assertEquals(root.datasetId, vm.schedule.state.sync!!.datasetId)
+                        assertEquals("Existing FPK class", vm.schedule.state.entries.single().title)
+                        dialog!!.dismiss()
+                    }
+                    scenario.recreate()
+                    waitFor(scenario) { it.schedule.ready && it.schedule.state.sync != null && !it.sharedSchedule.busy }
+                    scenario.onActivity { activity ->
+                        val vm = ViewModelProvider(activity)[DashboardViewModel::class.java]
+                        assertEquals(root.datasetId, vm.schedule.state.sync!!.datasetId)
+                        assertTrue(vm.schedule.saveEntry("X08E edit", 4, 540, 585, "B201", "existing"))
+                        vm.sharedSchedule.sync()
+                    }
+                    waitFor(scenario) { !it.sharedSchedule.busy && files.size == 3 }
+                    val latest = files.values.map(ScheduleCommitCodec::decode).single { it.commitId != root.commitId && it.commitId != next.commitId }
+                    assertEquals(root.datasetId, latest.datasetId); assertNotEquals(root.writerId, latest.writerId)
+                    assertEquals(listOf(next.commitId), latest.parents); assertEquals("X08E edit", latest.state.entries.single().title)
+                    scenario.onActivity { ViewModelProvider(it)[DashboardViewModel::class.java].sharedSchedule.sync() }
+                    waitFor(scenario) { !it.sharedSchedule.busy }
+                    assertEquals(3, files.size)
+                }
+            } finally {
+                instrumentation.runOnMainSync { dialog?.dismiss() }
+                SharedScheduleSettings.overrideNamespace = null; TermScheduleProfileStore.overrideNamespace = null
+                instrumentation.targetContext.getSharedPreferences(namespace, 0).edit().clear().commit()
+            }
+        }
+    }
     @Test fun sourcesEntryCreatesAndPublishesWithoutChangingImportBindings() {
         val namespace = "pr31-publisher-${UUID.randomUUID()}"
         SharedScheduleSettings.overrideNamespace = namespace
         TermScheduleProfileStore.overrideNamespace = namespace
         MockWebServer().use { server ->
+            server.start()
             val files = ConcurrentHashMap<String, ByteArray>()
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
@@ -61,9 +153,9 @@ class SharedSchedulePublisherAndroidTest {
                         ui = ScheduleImportUi(activity, vm.schedule, vm.appearance, vm.webDav, vm.termProfiles, vm.sharedSchedule) {}
                         ui!!.sources()
                     }
-                    onView(withText("Publish shared timetable (WebDAV)")).perform(scrollTo(), click())
+                    onView(withText("共享课表管理（WebDAV）")).perform(scrollTo(), click())
                     waitFor(scenario) { !it.sharedSchedule.busy }
-                    onView(withText("首次创建共享课表")).perform(scrollTo(), click())
+                    onView(withText("创建新的共享课表")).perform(scrollTo(), click())
                     waitFor(scenario) { !it.sharedSchedule.busy && files.isNotEmpty() }
                     scenario.onActivity { assertTrue("${ViewModelProvider(it)[DashboardViewModel::class.java].sharedSchedule.status}; files=${files.keys}", files.isNotEmpty()) }
                     val first = V2TestTransport().inspect(account, server.url("/shared/").toString())

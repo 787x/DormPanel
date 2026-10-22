@@ -1,0 +1,43 @@
+[
+  {
+    "device": "x08e",
+    "datasetId": "600b460d-09d1-42ab-9749-ac1e5106daf7",
+    "baseline": "64682219-7168-44b4-a358-eb8543fa9740",
+    "writerId": "bd3668fb-3759-4645-858e-4702dcfd895f",
+    "frontier": [
+      "64682219-7168-44b4-a358-eb8543fa9740"
+    ],
+    "records": {
+      "2": "f5863dc71c4f5e4a04727a8754f5b2faa5db224ff60b10597b064c6cac24bbf9",
+      "20": "dffb973d278d9e56fdd26ce6b567f078e089aec088bb16688b695cc8ca76f019",
+      "21": "7672d8089114aa7a949503a9d48368980da3f7c83c30b91e2fe4c8a6aa7479a6",
+      "22": "67d11a53a1f6d41c3b11889c56282d8bed9776483569d7ce1bc15c42015f0f78",
+      "96": "73e8d82f74e6b3eeb163ae4219f6bd71b7fae2bf1e8c72cb54c27e9a652411e0",
+      "102": "57a27a41c782e6ba50010b33d4a26b5d76d01324f10b9ba562ed31a719482c69",
+      "103": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "restartLogicalStateIdentical": true,
+    "entries": 3,
+    "overrides": 2
+  },
+  {
+    "device": "phone",
+    "datasetId": "600b460d-09d1-42ab-9749-ac1e5106daf7",
+    "baseline": "64682219-7168-44b4-a358-eb8543fa9740",
+    "writerId": "33cd6732-8bfa-42cb-989c-9ce74b0024c6",
+    "frontier": [
+      "64682219-7168-44b4-a358-eb8543fa9740"
+    ],
+    "records": {
+      "2": "f5863dc71c4f5e4a04727a8754f5b2faa5db224ff60b10597b064c6cac24bbf9",
+      "20": "589d3e1304f3ebf811fb3174aac241f7dad60bfe0b9bfc3210e9e48912ba2051",
+      "21": "7672d8089114aa7a949503a9d48368980da3f7c83c30b91e2fe4c8a6aa7479a6",
+      "22": "67d11a53a1f6d41c3b11889c56282d8bed9776483569d7ce1bc15c42015f0f78",
+      "96": "73e8d82f74e6b3eeb163ae4219f6bd71b7fae2bf1e8c72cb54c27e9a652411e0",
+      "102": "57a27a41c782e6ba50010b33d4a26b5d76d01324f10b9ba562ed31a719482c69"
+    },
+    "restartLogicalStateIdentical": true,
+    "entries": 3,
+    "overrides": 2
+  }
+]

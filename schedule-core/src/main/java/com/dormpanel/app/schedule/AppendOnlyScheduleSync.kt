@@ -54,6 +54,7 @@ interface ScheduleV2Store {
     fun v2Unverifiable(ids: Set<String>) {}
     fun v2Frame(): ScheduleV2Frame
     fun v2Migrate(baseline: ScheduleSnapshot)
+    fun v2Bind(remote: SharedScheduleRemote) { error("此存储不支持事务绑定") }
     fun v2Start(root: ScheduleCommit, binding: Boolean)
     fun v2Stage(bytes: ByteArray)
     fun v2Attempt()

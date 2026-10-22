@@ -1,0 +1,13 @@
+{
+  ".gitattributes": "d2726aab12deca9406a7b85fcc55381ec39caa753e0d2db9e7fd0258e313520e",
+  "android-restart.json": "b8d5248e40200c625810bf3db6d02715cb1daf4023fe657b2c98034a9e0aa9c7",
+  "android-restoration.json": "f8377d35b8b2e5a332a5c785d7e129526a2548adc3ceebd64c27a7d431e58ded",
+  "artifacts.json": "93ac7ff45e14b6c97979d709fe6fb64bcb91fedc8a2bd8bdf466794077f6ea69",
+  "inspection-candidate2.json": "a27c2a0c83ccf914bcb092648807705e75d265602ebe8083c2af600c9c65f33a",
+  "inspection-verification.txt": "d575876c722d12e8304c46f9c2d6f22a5d5d7a8c0fd6170c04d1a01e57b2d360",
+  "real-sync.txt": "98dadb05e364daa84a788826a555db1ca4db72b90a4c9a8a5b73cca713db92db",
+  "verification.txt": "275391d4f802b8ff35a569b80eded06f649466d91928ac75f18e82bc3d6567bc",
+  "x08e-preview.png": "8822eab9ba627ee067c95936109ba8fb2278f95f8e55046ff2b9ce96f922589e",
+  "x08e-stale-preview.png": "4ead479cb3f2843d7392447485c0974dfea1b0596bbf7311c4daba0eebcb7ef2",
+  "x08e-three-writers.png": "2b1a43486c019248477a59ccd48fc8b678857743f8f0808516fb5ef3812f29cb"
+}
