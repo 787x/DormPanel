@@ -1,0 +1,21 @@
+{
+  ".gitattributes": "d2726aab12deca9406a7b85fcc55381ec39caa753e0d2db9e7fd0258e313520e",
+  "android-restoration.json": "4bae8ec415b21bd14502a081d0502fdd6a19a1da907b3d42093779d40adda9f6",
+  "final-audit.txt": "decc217d98bbc9975344adf68bfe3d1565ab28aad1713e7e9657e8ce3ba691ee",
+  "fpk-1280x800.png": "ed0a748ae9b94ba3abcc357430087d22a2310892cbd2e3c0a0336ff77fd182e4",
+  "fpk-real-conflict.png": "df56720b6fb262b9526e136d6860f6d65d1f8cabbf74c7eb35ee54f171df3874",
+  "gateway-admin-negative.json": "5f709be2f184321b2c9cca9618ff20a0b96a9ddeebd222036207c8eb369753bb",
+  "gateway-ordinary.json": "d0a8b7a4bf23f0581dd95064a52ac8dfd8a218e677538eebe830569695d0a4be",
+  "guarded-recheck.txt": "8d2f5ec290aca935e081f9d2b6dc444b02e1e4fbff16968d58beb3b03f489de0",
+  "inflight-revoked.txt": "1f45803be7522916192e484a65705901d2cb43f8d94328588f8299fb7708e4de",
+  "lifecycle.txt": "a88b66435d40d7cc75f84a78640b05863c30a6989cbc2b57020b4fdaaa40505b",
+  "load.txt": "0173e54f8e32159e386b8fccd418948b182920cf3408fae7ab20b881389f40b1",
+  "local-real.txt": "c75faff3b1e7a6e0f4e4e796aaffcb9f8e32ea5858170e9229c7e3f09e0d9d7d",
+  "payload-comparison.txt": "9a9df611436ea487b77d45f94744f7367df91479d6b4cc7644d299c4397b0d9b",
+  "post-decision.txt": "35327c6861de1567c7e6ac4595f5cb053e8440308c2d412ff7656d9992b61597",
+  "readonly.txt": "dbc8aa5b7fdef110defd8c52844c4f398a527fca71cc35426b9e591c1c78b795",
+  "resources.txt": "e8dcbad7185e5b55f67e3c9a7b6a0ed203fddd7629563ea0b25e104fe4dc5c2c",
+  "restore-fpk.txt": "2e006e206894e21cb7fc91faf4138133430be6ea042dbbcf9d69407fa27e4c9f",
+  "strict-negative.txt": "4371363e1640c0aa163918ae9f28bfa62ed12954eae8f102a54acb242d1e8e69",
+  "x08e-formal-0.1.2.png": "dd1370478b0b5972c07b02165d868151e6a363612a6d698c090d6618b9387522"
+}

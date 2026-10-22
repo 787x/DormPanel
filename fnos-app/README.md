@@ -59,6 +59,8 @@ fnpack build --directory build/dormpanel-schedule-manager
 
 PR39 实机与升级记录见 [验证文档](../docs/pr39-fnos-verification.md)。独立真实后端验收可显式配置 `PR39_TEST_DIR` 运行 `scripts/verify-workspaces.mjs`：目录名及 config.json 中 URL 必须为同一 `pr39-e2e-UUID`，只建立合成数据集并保留所有结果。
 
+FPK 0.3.2 首次独立发布的真实三端、权限与数据保留验收见 [PR40](../docs/pr40-fnos-release-acceptance.md)，支持环境、产物哈希及限制见 [发布说明](../docs/fpk-0.3.2-release-notes.md)。该记录不代表已经创建 Release。
+
 同一已获官方授权的合成目录可继续运行 `scripts/verify-local-webdav.mjs`，验证本地发布的提交由 WebDAV 完整回读，以及同数据集端点迁移与重复绑定保护。环境必须带 fnOS 官方注入的 `TRIM_DATA_ACCESSIBLE_PATHS`，不在脚本内授予目录权限。
 
 0.3.1 的提示、确认、名称输入均为页面自带对话框，不调用浏览器 alert/confirm/prompt。支持取消/Escape，保留导入预览及冲突输入；等待确认后会再次检查表单和工作区版本。

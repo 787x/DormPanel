@@ -1,0 +1,7 @@
+原五工作区正常重启
+STOP_START_ALL_8_FILES_IDENTICAL
+FIVE_WORKSPACES_RESOURCE {"startup": {"cpuTicks": 42, "rssKiB": 83608}, "idle20s": {"cpuTicks": 47, "rssKiB": 75412}, "idleCpuPercent": 0.25}
+三端冲突决策 pending：八工作区正常重启
+STOP_START_ALL_FILES_IDENTICAL 11
+FIVE_WORKSPACES_RESOURCE {"startup": {"cpuTicks": 43, "rssKiB": 83076}, "idle20s": {"cpuTicks": 49, "rssKiB": 74864}, "idleCpuPercent": 0.3}
+备注：第二段原始采样程序的 FIVE_WORKSPACES_RESOURCE 标签沿用旧名称，实际为八个注册工作区，不计入五工作区资源结论。
