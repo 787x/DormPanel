@@ -8,8 +8,11 @@ import http from "node:http";
 import { createApp, PREFIX } from "../src/server.mjs";
 import { safeAddress, tlsOptions } from "../src/webdav.mjs";
 import { X509Certificate } from "node:crypto";
+import { encode } from '../src/protocol.mjs';
+import { emptyState } from '../src/merge.mjs';
+import { loadGraph } from '../src/graph.mjs';
 
-async function fixture(t) {
+async function fixture(t, authorized = false) {
   const dir = await mkdtemp(join(tmpdir(), "pr38-api-"));
   t.after(() => rm(dir, { force: true, recursive: true }));
   const configPath = join(dir, "webdav.json"),
@@ -25,6 +28,7 @@ async function fixture(t) {
       dataDir: dir,
       configPath,
       remoteFactory: () => remote,
+      authorizedRoots: authorized ? [{ id:'approved', path:dir, name:'独立测试目录' }] : [],
     }),
     socketPath =
       process.platform === "win32"
@@ -74,7 +78,7 @@ async function fixture(t) {
         ...headers,
       },
     );
-  return { app, dir, configPath, call, post, view };
+  return { app, dir, configPath, call, post, view, remote };
 }
 test("每条修改路由均检查管理员、CSRF、同源、请求版本；拒绝过期重放", async (t) => {
   const f = await fixture(t);
@@ -87,6 +91,7 @@ test("每条修改路由均检查管理员、CSRF、同源、请求版本；拒�
     "/api/import/confirm",
     "/api/manage",
     "/api/connections/test",
+    '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
   ]) {
     assert.equal(
       (await f.post(path, {}, { "X-Trim-Isadmin": "false" })).status,
@@ -294,4 +299,47 @@ test("显式信任的独立证书仍启用 TLS 校验，精确拒绝另一个证
   assert.throws(() => tlsOptions({ certificatePem: "invalid" }));
   assert.throws(() => tlsOptions({ certificatePem: "x".repeat(16385) }));
   assert.deepEqual(tlsOptions({}), {});
+});
+
+test('历史 API 完整闭环、回退确认和授权归档精简，读取默认不暴露原始图', async t => {
+  const f = await fixture(t, true), datasetId=randomUUID(), rootId=randomUUID(), tipId=randomUUID(), connectionId=randomUUID(), rows=new Map();
+  const root={datasetId,writerId:randomUUID(),commitId:rootId,parents:[],state:emptyState()}, tip={...root,commitId:tipId,parents:[rootId],state:{...emptyState(),entries:[{id:'course',title:'测试课程',day:1,startMinute:480,endMinute:540,location:''}]}};
+  rows.set(rootId,encode(root));rows.set(tipId,encode(tip));
+  f.remote.list=async()=>[...rows.keys()];f.remote.read=async id=>rows.get(id)??null;f.remote.put=async(id,b)=>rows.set(id,b);
+  const graph=await loadGraph(f.remote), manifest=structuredClone(f.app.catalog.manifest);
+  manifest.connections.push({id:connectionId,name:'test',type:'webdav',config:{url:'https://example.com/test/',username:'test',password:'hidden-test-secret'}});manifest.workspaces[0].connectionId=connectionId;await f.app.catalog.commit(manifest);
+  await f.app.db.tx(frame=>{frame.local=graph.state;frame.baseline=graph.state;frame.datasetId=datasetId;frame.graph=graph;frame.frontier=graph.tips;frame.checkpoint={hashes:graph.hashes,datasetId};frame.bindingKey=f.remote.key;});
+  const path='/api/history?workspaceId='+manifest.activeId;
+  const h=await f.call('GET',path);assert.equal(h.status,200);assert.equal(h.data.count,2);assert(!h.text.includes('base64'));assert(!h.text.includes('hidden-test-secret'));assert.equal(h.data.rows[0].state,undefined);
+  const p=await f.post('/api/history/preview',{target:rootId});assert.equal(p.status,200);assert.equal(p.data.diff.total,1);
+  const previewPath='/api/history/preview-diff?workspaceId='+manifest.activeId+'&token='+p.data.token+'&offset=0';
+  assert.equal((await f.call('GET',previewPath)).data.total,1);
+  assert.equal((await f.call('GET',previewPath,undefined,{'X-Trim-Userid':'1001'})).status,409);
+  const confirm=await f.post('/api/history/rollback',{token:p.data.token,target:rootId,confirm:rootId});assert.equal(confirm.status,200,confirm.text);assert.equal(rows.size,3);
+  const check=await f.post('/api/history/check');assert.equal(check.status,200);
+  let entered, release; const ready=new Promise(r=>{entered=r;}), gate=new Promise(r=>{release=r;}), list=f.remote.list;
+  f.remote.list=async()=>{entered();await gate;return list();};
+  const checking=f.post('/api/history/check');await ready;
+  try {const blocked=await f.post('/api/edit',{operation:{kind:'entry',action:'delete',id:'course'}});assert.notEqual(blocked.status,200);assert.match(blocked.data.error,/历史操作/);}
+  finally {release();f.remote.list=list;} assert.equal((await checking).status,200);
+  if(process.platform==='linux') {
+    const result=await f.post('/api/history/compact',{rootId:'approved',relative:''});assert.equal(result.status,200,result.text);assert(result.data.candidate);assert.equal(rows.size,3);
+    const marker=JSON.parse(await readFile(join(f.dir,result.data.archive,'verified.json'),'utf8'));assert.equal(marker.commits.length,3);
+  }
+});
+
+test('未绑定工作区历史检查的第一次列举直接持久化，不能被身份预探测的第二次列举遗忘', async t=>{
+  const f=await fixture(t), root={datasetId:randomUUID(),writerId:randomUUID(),commitId:randomUUID(),parents:[],state:emptyState()}, broken=randomUUID(), connectionId=randomUUID();
+  let lists=0;const reads=[];
+  f.remote.list=async()=>++lists===1?[root.commitId,broken]:[root.commitId];
+  f.remote.read=async id=>{reads.push(id);return id===broken?Buffer.alloc(250):encode(root);};
+  const manifest=structuredClone(f.app.catalog.manifest);
+  manifest.connections.push({id:connectionId,name:'test',type:'webdav',config:{url:'https://example.com/history/',username:'test',password:'test'}});manifest.workspaces[0].connectionId=connectionId;
+  await f.app.catalog.commit(manifest);
+  assert.equal((await f.post('/api/history/check')).status,200);
+  assert.equal(lists,1);assert(reads.includes(broken));assert(f.app.db.frame.checkpoint.deferred.includes(broken));
+  assert.equal(f.app.db.frame.datasetId,null);assert.deepEqual(f.app.db.frame.local,emptyState());
+  reads.length=0;
+  assert.notEqual((await f.post('/api/history/preview',{target:root.commitId})).status,200);
+  assert(reads.includes(broken));assert(f.app.db.frame.checkpoint.deferred.includes(broken));
 });

@@ -1000,6 +1000,7 @@ function connectionDialog(type, c = null) {
 }
 $('workspaceSelect').onchange = () => switchWorkspace($('workspaceSelect').value);
 function showSources(open) {
+  $('history').hidden = true;
   $('backups').hidden = true;
   $('dataSources').hidden = !open;
   $('dashboard').hidden = open;
@@ -1053,7 +1054,7 @@ async function browseBackups() {
   $('backupStatus').textContent = `${result.backups.length} 个加密备份；未输入口令的文件不标为已验证。` + (result.lastRestore?.ok ? ' 最近恢复完成：' + new Date(result.lastRestore.restoredAt).toLocaleString() : '');
 }
 $('backupsPage').onclick = () => backupJob(async () => {
-  $('backups').hidden = false; $('dataSources').hidden = true; $('dashboard').hidden = true; $('dashboardActions').hidden = true;
+  $('history').hidden = true; $('backups').hidden = false; $('dataSources').hidden = true; $('dashboard').hidden = true; $('dashboardActions').hidden = true;
   $('pageTitle').textContent = '备份与恢复';
   const old = $('backupRoot').value;
   $('backupRoot').replaceChildren(...management.roots.filter(r => r.id !== 'private').map(r => { const o = el('option', r.name); o.value = r.id; return o; }));
@@ -1079,3 +1080,107 @@ $('backupRestore').onclick = () => backupJob(async () => {
   backupToken = null; workspaceId = undefined; await load(); $('backupStatus').textContent = result.result;
 });
 await load();
+
+let historyPreview = null, historyScope = null, historyEligible = false;
+async function historyJob(action) {
+  const scope = workspaceId;
+  const buttons = [...$('history').querySelectorAll('button')];
+  buttons.forEach(b => b.disabled = true);
+  try { await action(); }
+  catch (e) { $('historyStatus').textContent = e.message; historyPreview = null; await load(); }
+  finally { buttons.forEach(b => b.disabled = false); $('historyConfirm').disabled = !historyPreview || workspaceId !== scope; $('historyPreview').disabled = !historyEligible; }
+}
+function historyJSON(value) { return el('pre', JSON.stringify(value, null, 2)); }
+function historyRecord(table, r) {
+  const card = el('article', null, 'source-card');
+  if (typeof r === 'string') { card.append(el('strong', r)); return card; }
+  const clock = n => n == null ? '未设置' : String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
+  const instant = n => n == null ? '未设置' : new Date(Number(n)).toLocaleString('zh-CN', {timeZone:$('zone').value});
+  card.append(el('strong', r.title ?? r.displayName ?? r.termKey ?? r.date ?? r.key ?? r.id));
+  if (table === 'entries') card.append(el('p', `每周${r.day} · ${clock(r.startMinute)}–${clock(r.endMinute)} · ${r.location || '未设置教室'}`));
+  if (table === 'events' || table === 'imported') card.append(el('p', `${instant(r.start)} → ${instant(r.end)} · ${r.location ?? ''}`));
+  if (table === 'imported') card.append(el('p', `来源 ${r.sourceId} · 系列 ${r.seriesId} · 原始发生 ${instant(r.originalStart)} · ${r.timezone}`));
+  if (table === 'sources') card.append(el('p', `${r.filename} · ${r.occurrenceCount} 个原始实例 · 学期 ${r.termKey ?? '按来源推导 / 未关联'}；关联覆盖在覆盖集合中保留。`));
+  if (table === 'classOverrides') card.append(el('p', `${r.anchorDate === null ? '全周覆盖' : '指定周 '+r.anchorDate} · ${r.date ? '调整到 '+r.date : r.weekday ? '改为周'+r.weekday : '保留原日期'} · ${r.timingMode === 'linked' ? '关联节次 '+r.periodStart+'–'+r.periodEnd : r.startMinute != null ? clock(r.startMinute)+'–'+clock(r.endMinute) : '保留原时间'} · ${r.location ?? '保留原教室'}`));
+  if (table === 'dayAdjustments') card.append(el('p', `${r.mode === 'none' ? '停课' : '按周'+r.weekday+'补课'} · ${r.label}`));
+  if (table === 'profiles') card.append(el('p', `第一周周一 ${r.week1Monday} · ${r.timezone} · ${r.phases.length} 个作息阶段（节次完整字段见详情）`));
+  const fields = el('details'); fields.append(el('summary','完整字段与业务身份'),historyJSON(r)); card.append(fields);return card;
+}
+
+function renderHistoryDiff(d, append = false, more = null) {
+  const output = $('historyOutput'); if (!append) output.replaceChildren();
+  if (!append) {
+    output.append(el('h3', '目标状态相对起始状态的变化'));
+    for (const c of Object.values(d.counts)) if (c.added + (c.restored ?? 0) + c.deleted + c.modified) output.append(el('p', `${c.label}：新增 ${c.added} · 恢复 ${c.restored ?? 0} · 删除 ${c.deleted} · 修改 ${c.modified}`));
+    for (const g of d.groups ?? []) output.append(el('p', `关联组「${g.title}」${g.termKey ? ' · 学期 '+g.termKey : ''}：新增 ${g.added} · 恢复 ${g.restored ?? 0} · 删除 ${g.deleted} · 修改 ${g.modified}`));
+    output.append(el('p', `共 ${d.total} 条记录变化。来源、原始实例和覆盖通过关联组标识对应；来源替换须一起检查这些关联。`));
+  }
+  for (const r of d.rows) {
+    const row = el('details'); row.append(el('summary', `${r.label} · ${{added:'新增',restored:'恢复',deleted:'删除',modified:'修改'}[r.action]} · ${r.title}`), el('p', '关联组：' + r.group), el('p','变化前'), r.before === undefined ? el('p','无此记录') : historyRecord(r.table,r.before), el('p','目标状态'), r.after === undefined ? el('p','删除此记录') : historyRecord(r.table,r.after)); output.append(row);
+  }
+  if (d.next !== null && more) output.append(button('继续查看下 40 条', e => { e.currentTarget.remove(); return historyJob(() => more(d.next)); }));
+}
+async function historyRead() {
+  historyPreview = null; historyEligible = false; historyScope = workspaceId; $('historyOutput').replaceChildren();
+  const h = await get('/api/history'); if (historyScope !== workspaceId) return;
+  version = h.version;
+  $('historyStatus').textContent = `${h.count} / ${h.capacity} 个已验证提交 · 原始字节 ${h.bytes} · 前沿 ${h.tips.length} · 缓存视图，需主动检查远端。${h.warning ?? ''} ${h.error ?? ''} ${h.blockers.join('；')}`;
+  $('historyRows').replaceChildren();
+  for (const [i, r] of h.rows.entries()) {
+    const row = el('article', null, 'course');
+    row.append(el('strong', `因果层 ${r.level} · 版本 ${i + 1}${r.tip ? ' · 当前前沿' : ''}${r.matchesCurrent ? ' · 与当前课程相同' : ''}${r.parents.length > 1 ? ' · 合并版本' : ''}`));
+    row.append(el('p', `版本 ${r.id.slice(0,8)} · Writer ${r.writer.slice(0,8)} · ${r.parents.length ? '← 父版本 '+r.parents.map(id => h.rows.findIndex(x => x.id === id)+1).join('、') : '根版本'} · ${h.rows.filter(x => x.parents.includes(r.id)).length > 1 ? '分叉点' : '因果链'}`));
+    const comparisons = r.comparisons ?? [{ parentId: r.parents[0] ?? null, changes: r.changes, total: r.total }];
+    for (const comparison of comparisons) {
+      row.append(el('p', `相对${comparison.parentId ? '父版本 '+(h.rows.findIndex(x => x.id === comparison.parentId)+1)+'（'+comparison.parentId.slice(0,8)+'）' : '空快照（根版本）'}：${comparison.total} 条变化`));
+      for (const c of Object.values(comparison.changes)) if (c.added+c.deleted+c.modified) row.append(el('small', `${c.label}：+${c.added} / −${c.deleted} / 修改 ${c.modified}；`));
+    }
+    const detail = el('details'); detail.append(el('summary', '高级校验详情'), historyJSON(r)); row.append(detail);
+    row.append(button('只读查看完整快照', () => historyJob(async () => {
+      $('historyOutput').replaceChildren(el('h3', '完整快照 · 按集合分页只读查看'));
+      const tables = { entries:'本地课程',events:'日历事件',sources:'来源',imported:'原始实例',classOverrides:'全周 / 指定周覆盖',dayAdjustments:'停课 / 补课',profiles:'学期与节次',customProfileKeys:'自定义身份' };
+      for (const [table, label] of Object.entries(tables)) {
+        const group = el('section'); group.append(el('h4', label)); $('historyOutput').append(group);
+        const read = async offset => { const v = await get(`/api/history/snapshot?id=${r.id}&table=${table}&offset=${offset}`); group.append(el('p', `记录 ${offset} / ${v.total}`), ...v.rows.map(row => historyRecord(table,row)));  if (v.next !== null) group.append(button('继续查看', e => { e.currentTarget.remove(); return historyJob(() => read(v.next)); })); };
+        group.append(button('展开此集合', () => historyJob(() => read(0))));
+      }
+    })));
+    $('historyRows').append(row);
+  }
+  for (const key of ['historyFrom','historyTo']) $(key).replaceChildren(...h.rows.map(r => { const o = el('option', `层 ${r.level} · ${r.id.slice(0,8)}${r.tip ? ' · 前沿' : ''}`); o.value = r.id; return o; }));
+  historyEligible = h.rollbackEnabled; $('historyPreview').disabled = !historyEligible;
+}
+$('historyPage').onclick = () => historyJob(async () => {
+  $('history').hidden = false; $('backups').hidden = true; $('dataSources').hidden = true; $('dashboard').hidden = true; $('dashboardActions').hidden = true; $('pageTitle').textContent = '历史与版本';
+  await loadManagement();
+  $('historyRoot').replaceChildren(...management.roots.filter(r => r.id !== 'private').map(r => { const o = el('option',r.name); o.value = r.id; return o; }));
+  await historyRead();
+});
+$('historyCheck').onclick = () => historyJob(async () => { await post('/api/history/check'); await historyRead(); });
+$('historyDiff').onclick = () => historyJob(async () => {
+  historyPreview = null;
+  const from = $('historyFrom').value, to = $('historyTo').value;
+  const read = async offset => { const d = await get(`/api/history/diff?from=${from}&to=${to}&offset=${offset}`); renderHistoryDiff(d, offset > 0, read); };
+  await read(0);
+});
+$('historyPreview').onclick = () => historyJob(async () => {
+  historyPreview = await post('/api/history/preview', { target: $('historyTo').value });
+  const preview = historyPreview;
+  const more = async offset => renderHistoryDiff(await get(`/api/history/preview-diff?token=${preview.token}&offset=${offset}`), true, more);
+  renderHistoryDiff(preview.diff, false, more);
+  $('historyStatus').textContent = historyPreview.unchanged ? '目标与当前相同，不会创建提交。' : '请检查新增 / 恢复、修改与删除。确认时将重新验证远端和全部输入。';
+});
+for (const key of ['historyFrom','historyTo','workspaceSelect']) $(key).addEventListener('change', () => { historyPreview = null; $('historyConfirm').disabled = true; if (key === 'workspaceSelect') $('history').hidden = true; });
+$('historyConfirm').onclick = () => historyJob(async () => {
+  const p = historyPreview, scope = workspaceId;
+  if (!p || scope !== historyScope) throw Error('工作区已变化，请刷新');
+  if (!await confirmAction('将以此完整历史快照发布新版本，预览中的删除也会生效。旧提交仍然保留。', '确认回退')) return;
+  await post('/api/history/rollback', { token:p.token, target:p.target, confirm:p.target }); historyPreview = null;
+  await load(); await historyRead(); $('historyStatus').textContent += ' 回退候选已按原协议处理；其他设备接收情况未知。';
+});
+for (const [id, action] of [['historyArchive','archive'],['historyCompact','compact']]) $(id).onclick = () => historyJob(async () => {
+  historyPreview = null;
+  if (!await confirmAction(action === 'compact' ? '将先完整归档，再在另一个新目录准备单根数据集。不会切换客户端或删除旧库。' : '将完整课程历史复制到受保护的新目录，请保护 NAS 授权。', '确认导出')) return;
+  const result = await post('/api/history/' + action, { rootId:$('historyRoot').value, relative:$('historyRelative').value });
+  $('historyOutput').replaceChildren(historyJSON(result)); $('historyStatus').textContent = result.message;
+});
