@@ -58,7 +58,7 @@ async function equalOriginal(f, before) {
 }
 linux('多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复', async t => {
   const f = await fixture(t), before = await original(f), created = await f.manager.create(f.location);
-  assert(created.verified); assert.equal(created.workspaceCount, 4);
+  assert(created.verified); assert.equal(created.workspaceCount, 4); assert.equal(created.appVersion, '0.4.1');
   assert(created.dependencies.some(d => d.included)); assert(created.dependencies.some(d => !d.included && d.type === 'webdav'));
   const newerLocal = await f.catalog.load(f.local.id);
   await newerLocal.edit(operation('备份后新增私有提交'));
@@ -212,7 +212,7 @@ async function forged(f, m, payload = Buffer.alloc(0)) {
   const encrypted = Buffer.concat([cipher.update(Buffer.concat([len, manifest, payload])), cipher.final()]); cipher.getAuthTag().copy(header, 36);
   const name = `backup-${randomUUID()}.dpbk`; await writeFile(join(f.exports, name), Buffer.concat([header, encrypted])); return name;
 }
-for (const attack of ['traversal', 'duplicate', 'size', 'count', 'missing', 'checksum', 'version']) linux(`认证归档仍拒绝恶意 ${attack}`, async t => {
+for (const attack of ['traversal', 'duplicate', 'size', 'count', 'missing', 'checksum', 'version', 'appVersion']) linux(`认证归档仍拒绝恶意 ${attack}`, async t => {
   const f = await fixture(t), before = await original(f), m = { format: 'DormPanel FPK backup', version: 1, appVersion: '0.4.0', identity: f.store.identity, files: [], dependencies: [] };
   const file = { name: 'identity.json', size: 0, sha256: '0'.repeat(64) };
   m.files = [file, { ...file, name: 'catalog.json' }];
@@ -222,11 +222,34 @@ for (const attack of ['traversal', 'duplicate', 'size', 'count', 'missing', 'che
   if (attack === 'count') m.files = Array(LIMITS.files + 1).fill(file);
   if (attack === 'missing') m.files = [file];
   if (attack === 'version') m.version = 99;
+  if (attack === 'appVersion') m.appVersion = '0.4.2';
   const name = await forged(f, m);
   await assert.rejects(f.manager.verify({ ...f.location, name }, 'admin')); await equalOriginal(f, before);
 });
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
+linux('0.4.0 旧源码生成的真实加密归档在 0.4.1 验证并精确恢复，安装身份边界不变', async t => {
+  const f = await fixture(t), base = new URL('./fixtures/backup-0.4.0/', import.meta.url);
+  const saved = JSON.parse(await readFile(new URL('expected.json', base), 'utf8'));
+  // 夹具全部是合成数据；只在独立临时安装中使用旧安装身份。
+  await writeFile(join(f.dataDir, 'identity.json'), saved.identity);
+  f.store.identity = JSON.parse(saved.identity);
+  const name = `backup-${randomUUID()}.dpbk`;
+  await writeFile(join(f.exports, name), await readFile(new URL('backup.dpbk', base)));
+  const input = { ...f.location, name }, currentIdentity = f.store.identity;
+  for (const field of ['writerId', 'installationId']) {
+    f.store.identity = { ...currentIdentity, [field]: randomUUID() };
+    await assert.rejects(f.manager.verify(input, 'admin'));
+  }
+  f.store.identity = currentIdentity;
+  const p = await f.manager.verify(input, 'admin');
+  assert.equal(p.appVersion, '0.4.0'); assert.equal(p.formatVersion, 1); assert.equal(p.workspaceCount, 4);
+  await f.manager.restore({ token: p.token, confirm: '恢复应用数据' }, 'admin');
+  await equalOriginal(f, { ...saved, files: new Map(saved.files) });
+  assert.equal(f.catalog.store.identity.writerId, currentIdentity.writerId);
+  assert.equal(f.catalog.store.identity.installationId, currentIdentity.installationId);
+  assert(Object.keys(f.catalog.restoreGuards).length > 0);
+});
 async function eventually(check) {
   const deadline = Date.now() + 5000;
   while (!(await check())) { assert(Date.now() < deadline, '生命周期清理未在期限内完成'); await delay(10); }
