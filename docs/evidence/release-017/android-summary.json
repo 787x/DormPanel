@@ -1,0 +1,20 @@
+[
+  {
+    "device": "X08E",
+    "version": "0.1.7",
+    "code": 10,
+    "backupFiles": 32,
+    "installSuccess": true,
+    "allDataIdenticalImmediatelyAfterInstall": true,
+    "changedAfterLaunch": []
+  },
+  {
+    "device": "Phone",
+    "version": "0.1.7",
+    "code": 9,
+    "backupFiles": 20,
+    "installSuccess": true,
+    "allDataIdenticalImmediatelyAfterInstall": true,
+    "changedAfterLaunch": []
+  }
+]
