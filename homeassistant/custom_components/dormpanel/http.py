@@ -88,8 +88,9 @@ class DownloadView(HomeAssistantView):
             raise web.HTTPNotFound()
         kind = item.get("kind", "schedule_ics")
         content_type = "application/vnd.android.package-archive" if kind == "apk" else \
+            "application/vnd.ms-excel" if kind == "schedule_xls" else \
             "text/csv" if kind == "schedule_csv" else "text/calendar"
-        fallback = "timetable.csv" if kind == "schedule_csv" else "timetable.ics"
+        fallback = "timetable.xls" if kind == "schedule_xls" else "timetable.csv" if kind == "schedule_csv" else "timetable.ics"
         return web.FileResponse(path, headers={
             "Content-Type": content_type, "Content-Length": str(item["size"]),
             "Cache-Control": "no-store",

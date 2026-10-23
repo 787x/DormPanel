@@ -49,6 +49,7 @@ class DormPanelPanel extends HTMLElement {
     for (const [kind, title, extension, limit, capability] of [
       ["schedule_ics", "Send timetable", ".ics", 1048576, "schedule_relay_v1"],
       ["schedule_csv", "Send timetable (CSV)", ".csv", 1048576, "schedule_csv_v1"],
+      ["schedule_xls", "发送湖北大学课表 (XLS)", ".xls", 1048576, "schedule_xls_v1"],
       ["apk", "Send APK", ".apk", 268435456, "apk_install_v1"]]) {
     const send = this.section(title);
     const fileLabel = this.element("label", `File (${extension}, up to ${kind === "apk" ? "256" : "1"} MiB)`);
@@ -63,6 +64,9 @@ class DormPanelPanel extends HTMLElement {
       targets.append(label);
     }
     send.append(targets);
+    if (kind === "schedule_xls" && !targets.children.length) {
+      send.append(this.element("p", "没有兼容 XLS 的设备，请升级目标 X08E 并重新连接 Home Assistant。", "error"));
+    }
     const retentionLabel = this.element("label", "Keep temporarily: ");
     const retention = this.element("select");
     for (const [seconds, label] of [[3600,"1 hour"],[86400,"24 hours"],[604800,"7 days"]]) {

@@ -76,7 +76,9 @@ class HaRelayProfileOverrideTest {
         override fun removeEventListener(listener: (JSONObject) -> Unit) { eventListeners -= listener }
     }
 
-    @Test fun haRelayUsesPersistedProfileOverrideInsteadOfBuiltIn() {
+    @Test fun haRelayUsesPersistedProfileOverrideInsteadOfBuiltIn() = profileOverride("csv")
+    @Test fun xlsRelayUsesPersistedProfileOverrideInsteadOfBuiltIn() = profileOverride("xls")
+    private fun profileOverride(format: String) {
         // Persist a custom profile with periods 1-2 shifted to 10:00–11:00.
         val store = TermScheduleProfileStore(instrumentation.targetContext)
         val custom = BuiltInProfiles.term2026.copy(
@@ -91,7 +93,7 @@ class HaRelayProfileOverrideTest {
         )
         store.put(custom)
 
-        val csv = instrumentation.context.assets.open("hubei_2026-2027-1.csv").use { it.readBytes() }
+        val csv = instrumentation.context.assets.open("hubei_2026-2027-1.$format").use { it.readBytes() }
         MockWebServer().use { server ->
             val identity = HaRelayIdentityStore(instrumentation.targetContext)
             val hash = MessageDigest.getInstance("SHA-256").digest(csv).joinToString("") { "%02x".format(it) }
@@ -100,7 +102,7 @@ class HaRelayProfileOverrideTest {
                 pending += id
                 claimResponse = {
                     JSONObject().put("transfer_id", id).put("size", csv.size)
-                        .put("filename", "schedule.csv").put("sha256", hash).put("kind", "schedule_csv")
+                        .put("filename", "schedule.$format").put("sha256", hash).put("kind", "schedule_$format")
                         .put("signed_path", "/api/dormpanel/transfers/$id?authSig=test")
                 }
             }
@@ -116,7 +118,7 @@ class HaRelayProfileOverrideTest {
             try {
                 await(received)
                 val preview = delivery!!.preview!!
-                assertEquals("schedule_csv", "schedule_csv") // kind was accepted
+                assertEquals(131, preview.occurrences.size)
                 assertEquals("2026-2027-1", preview.termKey)
                 // Period 1 in the custom profile is 10:00, not the built-in 08:00.
                 val zone = ZoneId.of("Asia/Shanghai")

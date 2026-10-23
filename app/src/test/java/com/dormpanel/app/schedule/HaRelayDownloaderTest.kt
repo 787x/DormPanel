@@ -50,6 +50,35 @@ class HaRelayDownloaderTest {
         }
     }
 
+    @Test fun xlsDownloadUsesBinaryImporterAndPreservesPreviewBoundary() {
+        val bytes = javaClass.getResourceAsStream("/schedule/hubei_2026-2027-1.xls")!!.readBytes()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody(okio.Buffer().write(bytes)))
+            val artifact = downloader.download(server.url("/").toString(),
+                claim(bytes).put("kind", "schedule_xls").put("filename", "plan.xls"))
+            assertEquals("application/vnd.ms-excel", artifact.mimeType)
+            assertArrayEquals(bytes, artifact.bytes())
+            val preview = (TimetableImporter().parseOutcome(artifact) as TimetableImporter.ParseOutcome.Ready).preview
+            assertEquals(13, preview.seriesCount)
+            assertEquals(131, preview.occurrences.size)
+        }
+    }
+
+    @Test fun xlsRejectsCrossKindFilenameLengthAndHash() {
+        MockWebServer().use { server ->
+            val bytes = "invalid XLS".toByteArray()
+            for (payload in listOf(
+                claim(bytes).put("kind", "schedule_xls"),
+                claim(bytes).put("kind", "schedule_csv").put("filename", "plan.xls"),
+                claim(bytes).put("kind", "schedule_xls").put("filename", "../plan.xls"),
+                claim(bytes).put("kind", "schedule_xls").put("filename", "plan.xls").put("size", bytes.size + 1),
+                claim(bytes).put("kind", "schedule_xls").put("filename", "plan.xls").put("sha256", "0".repeat(64)))) {
+                server.enqueue(MockResponse().setBody(okio.Buffer().write(bytes)))
+                assertThrows(HaRelayIntegrityException::class.java) { downloader.download(server.url("/").toString(), payload) }
+            }
+        }
+    }
+
     private fun claim(bytes: ByteArray) = JSONObject().put("transfer_id", id).put("filename", "test.ics")
         .put("size", bytes.size).put("sha256", digest(bytes)).put("signed_path", signed)
 }
