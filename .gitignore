@@ -45,7 +45,7 @@ signing.properties
 # Local RC verification logs, screenshots and candidate fixtures
 /artifacts/pr33/
 
-# ���� PR35 ��֤��־�ͽ�ͼ
+# ���� PR35 ��֤��־�ͽ�ͼ
 /artifacts/pr35*
 
 # Local PR36 backups, credentials and raw physical evidence
@@ -73,3 +73,6 @@ signing.properties
 
 /artifacts/pr47/
 /artifacts/pr47-*.log
+
+# PR48 本地验证日志、截图和候选构建
+/artifacts/pr48*
