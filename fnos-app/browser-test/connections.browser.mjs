@@ -12,6 +12,7 @@ import { createApp, PREFIX } from '../src/server.mjs';
 import { encode, decode } from '../src/protocol.mjs';
 import { loadGraph } from '../src/graph.mjs';
 import { emptyState } from '../src/merge.mjs';
+import { Workspace } from '../src/workspace.mjs';
 
 let browser;
 before(async () => { browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chromium') }); });
@@ -409,6 +410,50 @@ test('历史中心完整快照分页、稳定身份比较、回退预览确认�
   await expect(mergeRow).toContainText('合并版本');
   await expect(mergeRow.locator('p').filter({hasText:/相对父版本.*1 条变化/})).toHaveCount(2);
   await expect(mergeRow).not.toContainText('空快照');
-  await f.page.screenshot({path:new URL('../../docs/evidence/pr46/history-1280x800.png',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),fullPage:true});
+  await f.page.screenshot({path:new URL('../../docs/evidence/pr47/history-1280x800.png',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),fullPage:true});
   assert.deepEqual(f.errors,[]);
+});
+
+test('换库向导显示真实来源、人工设备清单与零物理回收；失败保留可恢复入口', async t => {
+  const root = { datasetId: randomUUID(), commitId: randomUUID(), writerId: randomUUID(), parents: [], state: emptyState() };
+  const rows = new Map([[root.commitId, encode(root)]]), remote = { key: 'migration-ui', list: async () => [...rows.keys()], read: async id => rows.get(id) ?? null };
+  const f = await fixture(t, { authorized: true, remoteFactory: () => remote });
+  const graph = await loadGraph(remote), manifest = structuredClone(f.app.catalog.manifest), connectionId = randomUUID();
+  manifest.connections.push({ id: connectionId, name: '目标地址', type: 'webdav', config: { url: 'https://example.test/compact/', username: 'synthetic', password: 'synthetic' } });
+  manifest.workspaces[0].connectionId = connectionId; await f.app.catalog.commit(manifest);
+  await f.app.db.tx(frame => { frame.graph = graph; frame.datasetId = root.datasetId; frame.local = root.state; frame.baseline = root.state; frame.frontier = graph.tips; frame.checkpoint = { datasetId: root.datasetId, hashes: graph.hashes }; });
+  await f.open(); await f.page.locator('#historyPage').click();
+  await expect(f.page.locator('#datasetMigration')).toContainText('迁移到精简数据集');
+  await f.page.getByLabel('精简候选相对目录').fill('compact-synthetic');
+  await f.page.getByRole('button', { name: '检查归档与候选，准备换库', exact: true }).click();
+  await expect(f.page.locator('#historyStatus')).toContainText('目标连接已有工作区');
+  assert.equal(f.app.catalog.migrations.length, 0); assert.equal(rows.size, 1);
+  const m = { id: randomUUID(), revision: 0, sourceId: manifest.activeId, targetId: randomUUID(), phase: 'frozen', sourceDatasetId: root.datasetId, targetDatasetId: randomUUID(), oldCount: 2, newCount: 1, reclaimEstimateBytes: 1024, archive: { relative: 'history-synthetic' }, sourceWriters: [root.writerId], lastCheck: 'FPK 实际验证（浏览器合成展示夹具）', failure: '离线，已保留保护', devices: [{ name: '床头', type: 'X08E', stopped: true, accepted: false, evidence: '尚未执行本机迁移', origin: '管理员登记 / 确认' }] };
+  f.app.catalog.migrations = [m]; await f.app.catalog.store.save('dataset-migrations.json', [m]);
+  await f.page.locator('#historyPage').click();
+  await expect(f.page.locator('#datasetMigration')).toContainText('实际已回收 0 字节');
+  await expect(f.page.locator('#datasetMigration')).toContainText('管理员登记 / 确认');
+  await expect(f.page.locator('#datasetMigration')).toContainText('尚未执行本机迁移');
+  await expect(f.page.getByRole('button', { name: '5. 切换 FPK（仍保持新旧停写）', exact: true })).toBeVisible();
+  await f.page.screenshot({ path: new URL('../../docs/evidence/pr47/migration-1280x800.png', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
+  // 仅模拟后端已经成功切换；验证页面不再携带旧工作区身份请求历史。
+  await f.page.route('**/api/migration', async route => {
+    const data = route.request().postDataJSON();
+    if (data.action !== 'switch') return route.continue();
+    const next = structuredClone(f.app.catalog.manifest);
+    const db = await Workspace.open(f.app.catalog.workspaceStore(m.targetId), graph);
+    next.workspaces.push({ id: m.targetId, name: '已切换的新工作区', connectionId });
+    next.activeId = m.targetId; next.revision++;
+    await f.app.catalog.commit(next); f.app.catalog.attach(m.targetId, db);
+    m.phase = 'switched';
+    await route.fulfill({ json: { records: [m] } });
+  });
+  await f.page.getByRole('button', { name: '5. 切换 FPK（仍保持新旧停写）', exact: true }).click();
+  await f.page.locator('#feedbackInput').fill(m.targetDatasetId);
+  await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#workspaceSelect')).toHaveValue(m.targetId);
+  await expect(f.page.locator('#datasetMigration')).toContainText('阶段：switched');
+  await expect(f.page.locator('#historyStatus')).toContainText('1 / 256');
+  await expect(f.page.locator('#historyStatus')).not.toContainText('迁移只可访问当前工作区');
+  assert.deepEqual(f.errors, []);
 });

@@ -92,6 +92,7 @@ export class Workspace {
       );
       const value = change(next);
       ensure(!(value instanceof Promise), "本地事务不得执行异步操作");
+      this.mutationGuard?.(this.frame, next);
       next.local = canonical(next.local);
       next.revision++;
       await this.store.save("workspace.json", next);
@@ -108,6 +109,7 @@ export class Workspace {
     }, expected);
   }
   stage(f, state, parents) {
+    this.assertWritable?.();
     ensure(!f.pending && f.datasetId, "已有待确认提交或未绑定");
     const c = {
       datasetId: f.datasetId,

@@ -70,3 +70,6 @@ signing.properties
 
 /artifacts/pr45/
 /artifacts/pr46/
+
+/artifacts/pr47/
+/artifacts/pr47-*.log

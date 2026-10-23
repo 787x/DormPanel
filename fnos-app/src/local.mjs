@@ -39,6 +39,17 @@ async function absoluteDirectory(path) {
 }
 export class LocalGrants {
   constructor(roots) { this.roots = roots; }
+  async readPrivate(config, name = 'verified.json') {
+    ensure(name === 'verified.json', '无效清单');
+    const dir = await this.directory(config.rootId, config.relative, config.directoryIdentity); let file;
+    try {
+      file = await open(fdPath(dir.fd, name), C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
+      const s = await file.stat(); ensure(s.isFile() && s.size <= 128 * 1024, '清单类型或大小无效');
+      const b = Buffer.alloc(s.size + 1); const r = await file.read(b, 0, b.length, 0);
+      ensure(r.bytesRead === s.size, '清单读取不完整');
+      return JSON.parse(b.subarray(0, s.size).toString('utf8'));
+    } finally { await file?.close(); await dir.fd.close(); }
+  }
   async protectedFolder(rootId, relative, name) {
     ensure(rootId !== 'private', '请使用 fnOS 授权的导出目录');
     ensure(!segments(relative).includes('dormpanel-sync-v2'), '不能写入活跃协议目录');

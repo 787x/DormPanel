@@ -1,7 +1,7 @@
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Store } from './store.mjs';
+import { Store, json } from './store.mjs';
 import { Workspace, workspaceSummary, workspaceStamp } from './workspace.mjs';
 import { binding, WebDav } from './webdav.mjs';
 import { LocalGrants, LocalCommitStore, segments } from './local.mjs';
@@ -21,6 +21,7 @@ export class Catalog {
     const self = new Catalog();
     Object.assign(self, { store, remoteFactory, grants: new LocalGrants([{ id: 'private', name: 'FPK 私有本地数据', path: privateRoot }, ...authorizedRoots]), guardQueue: Promise.resolve(), workspaces: new Map(), loading: new Map(), busy: new Set(), configuring: false });
     self.restoreGuards = (await store.read('restore-guards.json')) ?? {};
+    self.migrations = (await store.read('dataset-migrations.json')) ?? [];
     self.manifest = await store.read('catalog.json');
     if (!self.manifest) {
       // 固定迁移 ID + 最后提交 manifest；中断时复用完整副本，原始文件从不删除或改写。
@@ -59,11 +60,18 @@ export class Catalog {
   }
   attach(id, db) {
     db.guard = () => ensure(!this.maintenance && !this.invalidated && this.workspaces.get(id) === db, '正在备份恢复或工作区引用已失效');
+    db.assertWritable = () => ensure(!this.protection(id), '换库保护 / 退役工作区只读；请在历史与版本继续或取消迁移');
+    db.mutationGuard = (before, after) => {
+      if (this.protection(id)) ensure(['local', 'baseline', 'frontier', 'datasetId', 'pending', 'conflict', 'receipt', 'abandoned'].every(k => json(before[k]) === json(after[k])), '换库保护禁止课程编辑、发布与冲突决策');
+    };
     this.workspaces.set(id, db); return db;
   }
   workspaceStore(id) {
     uuid(id); const child = new Store(join(this.store.dir, 'workspaces', id));
     child.identity = this.store.identity; return child;
+  }
+  protection(id) {
+    return this.migrations.find(m => m.sourceId === id && m.phase !== 'cancelled' || m.targetId === id && m.phase !== 'retired');
   }
   row(id) { uuid(id); const row = this.manifest.workspaces.find(x => x.id === id); ensure(row, '工作区不存在'); return row; }
   db(id) { this.row(id); const db = this.workspaces.get(id); ensure(db, '工作区不可用'); return db; }
@@ -173,6 +181,11 @@ export class Catalog {
         ensure(this.db(input.targetId).frame.revision === input.targetVersion, '目标工作区版本过期');
       }
       const next = structuredClone(this.manifest);
+      if (input.action !== 'workspace.switch' && input.action !== 'workspace.rename') {
+        ensure(!this.migrations.some(m => m.phase !== 'cancelled' && m.targetConnectionId === input.connectionId), '迁移目标连接受保护');
+        const affected = input.connectionId ? this.manifest.workspaces.filter(w => w.connectionId === input.connectionId) : [];
+        ensure(![input.workspaceId, input.targetId, ...affected.map(w => w.id)].filter(Boolean).some(id => this.protection(id)), '迁移关联配置受保护；先完成或取消迁移');
+      }
       if (input.action === 'connection.save') {
         ensure(next.connections.length < 64 || input.connectionId, '连接数量超限');
         const old = input.connectionId ? this.connection(input.connectionId) : null;
@@ -282,7 +295,7 @@ export class Catalog {
       });
       await action(engine); await db.tx(f => { f.error = null; });
     } catch (e) {
-      await db.tx(f => { f.error = e.message; }); throw e;
+      if (!this.protection(id)) await db.tx(f => { f.error = e.message; }); throw e;
     } finally { this.busy.delete(id); if (binding) this.bindingBusy = false; }
   }
 }

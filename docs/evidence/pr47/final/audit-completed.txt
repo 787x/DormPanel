@@ -1,0 +1,2 @@
+x08e FORMAL_UI_SYNC_PASS; received Phone UI class and FPK UI event; original imported business rows exact; original Writer; no active migration; recovery retained
+phone FORMAL_UI_SYNC_PASS; received Phone UI class and FPK UI event; original imported business rows exact; original Writer; no active migration; recovery retained

@@ -208,6 +208,62 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
             SharedScheduleViews.changing { v2Local().v2Bind(verified) }
         }
     }) { source.reload { result -> result.onSuccess { complete("v2 已绑定 · 本地已保存；其他设备接收情况未知", false); sync() }.onFailure(::failure) } }
+    private fun migrationRemote(folder: String): CommitStore {
+        val a = account()
+        val backend = WebDavCommitStore(a, WebDavClient().url(transport.folder(a, folder)).newBuilder().addPathSegment("dormpanel-sync-v2").addPathSegment("").build().toString())
+        return object : CommitStore by backend {
+            override fun list(): List<String> {
+                val ids = backend.list()
+                return if (!v2Local().v2DatasetPaused()) ids else v2Local().v2MigrationPaths(backend.bindingKey, ids)
+            }
+        }
+    }
+    fun prepareDatasetSwitch(folder: String, datasetId: String, done: (ScheduleDatasetMigration) -> Unit) = run({
+        synchronized(SharedScheduleRunLock) {
+            check(settings.pendingRevision == null) { "旧 v1 待确认发布尚未恢复" }
+            val store = v2Local()
+            val newFolder = transport.folder(account(), folder)
+            store.v2BeginDatasetInspection(settings.folder, newFolder, datasetId)
+            val (old, target) = ScheduleDatasetSwitch.inspect(store, migrationRemote(settings.folder), migrationRemote(newFolder))
+            check(target.head.datasetId == datasetId) { "目标 datasetId 不符" }
+            val j = ScheduleDatasetMigration(UUID.randomUUID().toString(), "prepared", settings.folder, newFolder, old, target, store.v2Frame().writerId)
+            store.v2PrepareMigration(j); j
+        }
+    }) { busy = false; status = "换库预览已持久保存；原自动同步及后台重试已暂停"; notifyChanged(); done(it) }
+    fun inspectDatasetSwitch(done: (ScheduleDatasetMigration?, List<String>?, String?) -> Unit) = run({ Triple(v2Local().v2Migration(), v2Local().v2DatasetInspection(), v2Local().v2DatasetResult()) }) { busy = false; notifyChanged(); done(it.first, it.second, it.third) }
+    fun cancelDatasetInspection() = run({ synchronized(SharedScheduleRunLock) { v2Local().v2CancelDatasetInspection() } }) { complete("已取消未完成预检；原课程与观察证据保留", false) }
+    fun commitDatasetSwitch(id: String) = run({
+        synchronized(SharedScheduleRunLock) {
+            val store = v2Local(); val j = requireNotNull(store.v2Migration()); check(j.id == id)
+            if (j.phase == "prepared") {
+                check(settings.folder == j.oldFolder) { "旧目录配置变化，请恢复后继续" }
+                ScheduleDatasetSwitch.inspect(store, migrationRemote(j.oldFolder), migrationRemote(j.newFolder), j)
+                store.v2CommitMigration(id)
+            }
+            // Journal remains active across this SharedPreferences write and every restart.
+            // Jobs/core refuse all sync until final local verification and explicit release.
+            settings.folder = j.newFolder
+        }
+    }) { source.reload { complete("本机已切换到新数据集；保持停写。请在 FPK 登记验收，待管理员允许后完成验收并恢复同步", false) } }
+    fun finishDatasetSwitch(id: String, cancel: Boolean = false) = run({
+        synchronized(SharedScheduleRunLock) {
+            val store = v2Local(); val j = requireNotNull(store.v2Migration()); check(j.id == id)
+            if (cancel) {
+                check(j.phase == "prepared") { "已经切换，禁止简单反向覆盖旧库" }
+                settings.folder = j.oldFolder; store.v2FinishMigration(id, true)
+            } else {
+                check(j.phase == "committed")
+                val oldBackend = migrationRemote(j.oldFolder)
+                check(oldBackend.bindingKey == j.source.bindingKey)
+                val old = ScheduleCommitGraph(oldBackend, j.source.head.datasetId).load(j.source.witness.keys.toList())
+                check(old.deferred.isEmpty() && old.commits.mapValues { digest(ScheduleCommitCodec.encode(it.value)) } == j.source.witness) { "旧源变化，需要重新检查；禁止跨库合并" }
+                val target = ScheduleV2Binding.inspect(migrationRemote(j.newFolder), j.target)
+                check(store.v2Frame().writerId == j.writerId && ScheduleMerge.same(store.v2Frame().local, target.snapshot.state)) { "本机数据或身份变化" }
+                settings.folder = j.newFolder
+                store.v2FinishMigration(id)
+            }
+        }
+    }) { source.reload { complete(if (cancel) "已取消准备；原数据与证据保留" else "Android 本机换库验收完成；恢复新库正常同步，其他设备由管理员验收", false); sync() } }
     fun sync() { settings.resetRetries(); synchronize(false) }
     fun publish() { settings.resetRetries(); synchronize(true) }
     /** Explicit UI switch, after all old clients have been stopped. Read v1 only. */
@@ -232,6 +288,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     private fun synchronize(create: Boolean) {
         if (!source.ready || settings.folder.isBlank() || source.syncStore == null) return
         run({ synchronized(SharedScheduleRunLock) {
+            v2Local().v2RequireSyncAllowed()
             val frame = v2Local().v2Frame()
             savedConflict = frame.conflict != null
             if (frame.baseline == null && frame.pending == null) {

@@ -59,6 +59,7 @@ async function load() {
           ? " · 有待发布修改"
           : " · 无待发布本地修改") +
       (s.published ? "\n本机发布已回读确认；其他设备接收情况未知" : "");
+    if (s.writeProtection) $('status').textContent += '\n' + s.writeProtection;
     $('managerStatus').textContent = $('status').textContent;
     $('welcome').dataset.unbound = String(s.status === 'unbound');
     $('welcome').hidden = s.status !== 'unbound' || !$('manager').hidden;
@@ -1121,6 +1122,7 @@ function renderHistoryDiff(d, append = false, more = null) {
   if (d.next !== null && more) output.append(button('继续查看下 40 条', e => { e.currentTarget.remove(); return historyJob(() => more(d.next)); }));
 }
 async function historyRead() {
+  await migrationRead();
   historyPreview = null; historyEligible = false; historyScope = workspaceId; $('historyOutput').replaceChildren();
   const h = await get('/api/history'); if (historyScope !== workspaceId) return;
   version = h.version;
@@ -1184,3 +1186,55 @@ for (const [id, action] of [['historyArchive','archive'],['historyCompact','comp
   const result = await post('/api/history/' + action, { rootId:$('historyRoot').value, relative:$('historyRelative').value });
   $('historyOutput').replaceChildren(historyJSON(result)); $('historyStatus').textContent = result.message;
 });
+
+async function migrationRead() {
+  let panel = $('datasetMigration');
+  if (!panel) { panel = el('section'); panel.id = 'datasetMigration'; $('history').append(panel); }
+  const result = await get('/api/migration');
+  panel.replaceChildren(el('h3', '迁移到精简数据集'), el('p', result.warning));
+  const form = el('div');
+  const candidate = el('input'); candidate.placeholder = 'PR46 compact-UUID 相对目录'; candidate.id = 'migrationCandidate'; candidate.setAttribute('aria-label', '精简候选相对目录');
+  const connection = el('select'); connection.id = 'migrationConnection'; connection.setAttribute('aria-label', 'Android 实际使用的目标 WebDAV 连接');
+  const management = await get('/api/manage');
+  connection.append(...management.connections.filter(c => c.type === 'webdav').map(c => { const o = el('option', `${c.name} · ${c.url}`); o.value = c.id; return o; }));
+  const job = async data => {
+    await post('/api/migration', data);
+    // 切换会由后端改变活动工作区；重新读取它，避免继续携带旧工作区身份。
+    if (data.action === 'switch') workspaceId = undefined;
+    await load();
+    await historyRead();
+  };
+  form.append(el('p', '1. 先用上方功能归档并准备候选，再添加指向该候选的独立 WebDAV 连接。选择 Android 实际使用的地址，后端将通过它读取全图。准备成功即保护新旧工作区；重启后从本页继续。'), candidate, connection,
+    button('检查归档与候选，准备换库', () => historyJob(() => job({ action: 'prepare', rootId: $('historyRoot').value, candidateRelative: candidate.value, targetConnectionId: connection.value }))));
+  panel.append(form);
+  for (const m of result.records) {
+    const card = el('article'); card.append(el('h4', `阶段：${m.phase}`), el('p', `旧库 ${m.sourceDatasetId} → 新库 ${m.targetDatasetId}`), el('p', `旧 ${m.oldCount} 个提交 → 新 ${m.newCount} 个根。旧目录原始 DPC 可回收估算 ${m.reclaimEstimateBytes} 字节（仅旧副本，不含保留归档）；实际已回收 0 字节。`), el('p', `最后检查：${m.lastCheck}`));
+    if (m.failure) card.append(el('p', `失败：${m.failure}。恢复网络/正确原始字节后重新检查；禁止跨 dataset 合并。`));
+    card.append(el('p', `归档位置：${m.archive.relative}。旧工作区保留完整缓存、身份与历史。`));
+    card.append(el('p', `旧图实际观察到的 Writer：${(m.sourceWriters ?? []).join('、')}。这不表示全部客户端；同一 Writer 可能有多份安装副本，管理员须另行登记全部设备。`));
+    const action = (name, data = {}) => job({ action: name, migrationId: m.id, migrationVersion: m.revision, ...data });
+    const steps = [ ['prepared', '2–4. 已登记所有已知 Writer，确认停写', 'freeze', m.sourceDatasetId], ['frozen', '5. 切换 FPK（仍保持新旧停写）', 'switch', m.targetDatasetId], ['switching', '恢复 FPK 切换', 'switch', m.targetDatasetId], ['switched', '6–7. 已逐台验收，标记旧库退役并开放新库', 'retire', m.sourceDatasetId] ];
+    for (const [phase, label, name, identity] of steps) if (m.phase === phase) card.append(button(label, () => historyJob(async () => {
+      const confirm = await requestText(`请输入 ${identity} 确认。管理员勾选不证明全部设备永久停写。`);
+      if (confirm !== null) await action(name, { confirm });
+    })));
+    card.append(button('重新检查两库、归档与目标地址', () => historyJob(() => action('recheck'))));
+    if (!['retired','cancelled'].includes(m.phase)) card.append(button('取消（切换后不覆盖旧库）', () => historyJob(async () => {
+      if (await confirmAction('取消后仅原工作区恢复写入；保留新工作区与恢复证据。确认所有设备仍停写，尚未在新库独立编辑？')) await action('cancel', { confirm: m.sourceDatasetId, writersStopped: true });
+    })));
+    const list = el('ul');
+    for (const d of m.devices) list.append(el('li', `${d.name} / ${d.type} · 停写确认 ${d.stopped ? '是' : '否'} · 新库验收 ${d.accepted ? '是' : '未完成'} · ${d.origin} · ${d.evidence} · 最后登记 ${d.lastCheck?.at ?? '未记录'} ${d.lastCheck?.status ?? ''}`));
+    card.append(el('p', '设备清单（人工维护；Android 本机结果请在设备换库页查看后记录）：'), list);
+    if (!['retired','cancelled'].includes(m.phase)) {
+      const name = el('input'); name.placeholder = '设备名称（同名可更新登记）'; name.setAttribute('aria-label', '迁移设备名称');
+      const type = el('select'); for (const label of ['X08E','Phone','其他']) { const o = el('option', label); o.value = label; type.append(o); }
+      const stopped = el('input'); stopped.type = 'checkbox'; const accepted = el('input'); accepted.type = 'checkbox';
+      const stopLabel = el('label', '管理员确认已停写旧库'); stopLabel.append(stopped);
+      const acceptLabel = el('label', '管理员已核对 Android 本机结果'); acceptLabel.append(accepted);
+      const evidence = el('input'); evidence.placeholder = '本机阶段、datasetId、Writer 及验收记录'; evidence.setAttribute('aria-label', '本机迁移验收记录');
+      card.append(name, type, stopLabel, acceptLabel, evidence, button('登记 / 更新设备', () => historyJob(() => action('device', { name: name.value, type: type.value, stopped: stopped.checked, accepted: accepted.checked, evidence: evidence.value }))));
+    }
+    card.append(el('p', '人工清理指导：全部客户端完成换库、NAS 管理员已在存储或服务端禁止旧目录写入、完整归档已复制到独立安全位置并验证后，再由管理员在 fnOS 文件管理器人工处理旧目录。先保留本日志及全部哈希，核对目录身份，禁止删除归档或新库；本应用不执行 WebDAV 批量 DELETE。'));
+    panel.append(card);
+  }
+}

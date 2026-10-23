@@ -1,0 +1,2 @@
+x08e FORMAL_UI_COMMITTED_PASS; all six business tables byte-value equivalent; original Writer; target witness one root; recovery records retained; no phantom writes
+phone FORMAL_UI_COMMITTED_PASS; all six business tables byte-value equivalent; original Writer; target witness one root; recovery records retained; no phantom writes

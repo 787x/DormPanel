@@ -10,12 +10,13 @@ const digest = value => hash(Buffer.from(json(value))).toString('hex');
 const nextSteps = [
   '当前仅准备独立候选，任何已绑定 FPK / Android 均未切换，旧库全部保留。',
   '管理员先登记所有客户端和 Writer，协调停止旧库写入；本协议无法证明全体 Writer 已退役。',
-  'FPK 如需试用候选，应另建指向 compact 目录的连接和全新工作区，明确确认接收；不要把新根复制到旧目录。',
-  '已绑定 Android 的换库需后续独立迁移流程逐台确认，保留离线修改与待发布状态；不得清空数据库或改写确认哈希来绕过身份校验。',
+  '在历史与版本的“迁移到精简数据集”中选择 compact 目录与 Android 实际使用的独立 WebDAV 连接，按向导创建新工作区；不要把新根复制到旧目录。',
+  '已绑定 Android 使用“更换共享课表数据集 / 恢复换库”逐台验证、暂停、切换和验收；不得清空数据库或改写确认哈希来绕过身份校验。',
   '逐台验收课程、事件、来源、原始实例、覆盖和学期配置，并再次检查旧库无新分支；全部验收完成前不得退役旧库。',
   '旧库退役、归档保管与磁盘回收由管理员另行安排；此工具不提供旧 DPC 自动删除。',
 ];
-export const graphIdentity = g => digest({ datasetId: g.datasetId, hashes: g.hashes, tips: g.tips, deferred: g.deferred });
+export const graphIdentity = g => digest({ datasetId: g.datasetId,
+  hashes: Object.fromEntries(Object.entries(g.hashes).sort(([a], [b]) => a.localeCompare(b))), tips: [...g.tips].sort(), deferred: [...g.deferred].sort() });
 export function commitAt(g, id) {
   ensure(g?.raw?.[id], '版本未经过完整验证');
   const b = Buffer.from(g.raw[id], 'base64');

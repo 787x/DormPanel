@@ -1,0 +1,14 @@
+[
+  {
+    "device": "x08e",
+    "exactDailyFiles": 32,
+    "sqliteIntegrity": 3,
+    "originalBusinessAndWriter": true
+  },
+  {
+    "device": "phone",
+    "exactDailyFiles": 22,
+    "sqliteIntegrity": 2,
+    "originalBusinessAndWriter": true
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "device": "x08e",
+    "package": "com.dormpanel.app",
+    "installedApkMatchesCandidate": true,
+    "sha256": "5f792f3126e1586c84368c0caa598fefc7a2c31b52f1f7870d128b260dc326c4",
+    "api": "28",
+    "bootCompleted": "1"
+  },
+  {
+    "device": "phone",
+    "package": "com.dormpanel.timetable",
+    "installedApkMatchesCandidate": true,
+    "sha256": "d7c90487dcfbb01fa2373e5a8a62b86c196c597cad86744d6bbb8275a6ee4475",
+    "api": "33",
+    "bootCompleted": "1"
+  }
+]

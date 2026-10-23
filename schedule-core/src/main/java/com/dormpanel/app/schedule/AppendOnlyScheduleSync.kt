@@ -50,6 +50,18 @@ data class ScheduleV2Plan(val base: ScheduleCommit, val localBase: ScheduleCommi
 }
 
 interface ScheduleV2Store {
+    fun v2Migration(): ScheduleDatasetMigration? = null
+    fun v2DatasetPaused(): Boolean = v2Migration() != null || v2DatasetInspection() != null
+    fun v2DatasetResult(): String? = null
+    fun v2DatasetInspection(): List<String>? = null
+    fun v2BeginDatasetInspection(oldFolder: String, newFolder: String, datasetId: String) { error("此存储不支持持久暂停") }
+    fun v2CancelDatasetInspection() { error("此存储不支持持久暂停") }
+    fun v2Witness(): Map<String, String> = emptyMap()
+    fun v2MigrationPaths(key: String, observed: List<String> = emptyList()): List<String> = observed
+    fun v2PrepareMigration(journal: ScheduleDatasetMigration) { error("此存储不支持安全换库") }
+    fun v2CommitMigration(id: String) { error("此存储不支持安全换库") }
+    fun v2FinishMigration(id: String, cancel: Boolean = false) { error("此存储不支持安全换库") }
+    fun v2RequireSyncAllowed() { check(!v2DatasetPaused()) { "换库保护已暂停自动同步与重试；请继续或取消换库" } }
     fun v2CheckTarget(identity: String) {}
     fun v2Unverifiable(ids: Set<String>) {}
     fun v2Frame(): ScheduleV2Frame
@@ -89,6 +101,7 @@ class AppendOnlyScheduleSync(private val local: ScheduleV2Store, backend: Commit
         }
     }
     fun synchronize(createDataset: String? = null): ScheduleSyncEngine.Outcome {
+        local.v2RequireSyncAllowed()
         started = System.nanoTime(); requests = 0; transferred = 0
         remote.bindingKey?.let(local::v2CheckTarget)
         var frame = local.v2Frame()

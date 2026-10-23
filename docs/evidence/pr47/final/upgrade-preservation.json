@@ -1,0 +1,14 @@
+[
+  {
+    "device": "x08e",
+    "preUpgradeBackupReadable": true,
+    "beforeLaunchAfterUpgradeFileHashesEqual": true,
+    "protectedFiles": 32
+  },
+  {
+    "device": "phone",
+    "preUpgradeBackupReadable": true,
+    "beforeLaunchAfterUpgradeFileHashesEqual": true,
+    "protectedFiles": 20
+  }
+]

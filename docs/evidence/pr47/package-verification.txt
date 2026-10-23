@@ -1,0 +1,7 @@
+{
+  "version": "0.6.0",
+  "noInstallWizard": true,
+  "folderAuthorizationPreserved": true,
+  "sourceFilesVerified": 22,
+  "sha256": "dbba2f762cd5ff5f5d9b9cef1b853a4e82ac6765b38f83c47dcce3c802833cc4"
+}

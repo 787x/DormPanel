@@ -112,6 +112,44 @@ object SharedScheduleDialog {
                 .setMessage("必须先停止所有设备上的 v1 自动同步，之后所有编辑端均使用 v2。旧客户端无法看到 v2 修改，禁止继续写入旧目录。迁移仅读取旧远端文件，保留课程身份、账号及历史。不能证明共同基线或存在待确认上传时会停止。确认所有旧客户端已停止？")
                 .setNegativeButton("取消", null).setPositiveButton("旧客户端已停止，切换") { _, _ -> sync.migrate() }.show()
         }
+        button("更换共享课表数据集 / 恢复换库", false) {
+            fun showJournal(j: ScheduleDatasetMigration) {
+                val v = j.target.snapshot.state
+                val summary = "阶段：${j.phase}\n旧库：${j.source.head.datasetId}\n${j.oldFolder}\n新库：${j.target.head.datasetId}\n${j.newFolder}\nWriter：${j.writerId}\n\n已逐字段验证前后等价：课程 ${v.entries.size}、事件 ${v.events.size}、来源 ${v.sources.size}、实例 ${v.imported.size}、覆盖 ${v.classOverrides.size}、日期调整 ${v.dayAdjustments.size}、学期 ${v.profiles.size}（自定义 ${v.customProfileKeys.size}）。\n旧图 ${j.source.witness.size} 个提交 → 新图 1 个根。原课程与恢复证据保存在本机，旧库未删除。\n\n原自动同步与重试已暂停。请停止全部独立客户端写入；本机无法证明全部 Writer 已停写。确认将再次完整读取两库，离线或版本变化会拒绝。"
+                val content = TextView(context).apply { text = summary; textSize = 16f; setPadding(24, 12, 24, 12); setTextIsSelectable(true) }
+                val dialog = AlertDialog.Builder(context).setTitle("安全换库 · 本机验收")
+                    .setView(ScrollView(context).apply { addView(content) }).setNegativeButton("保持暂停", null)
+                if (j.phase == "prepared") {
+                    dialog.setNeutralButton("取消准备") { _, _ -> sync.finishDatasetSwitch(j.id, true) }
+                    dialog.setPositiveButton("确认切换（继续停写）") { _, _ -> sync.commitDatasetSwitch(j.id) }
+                } else {
+                    dialog.setNeutralButton("恢复目标目录设置") { _, _ -> sync.commitDatasetSwitch(j.id) }
+                    dialog.setPositiveButton("管理员已允许新库写入，完成验收") { _, _ -> sync.finishDatasetSwitch(j.id) }
+                }
+                dialog.show()
+            }
+            sync.inspectDatasetSwitch { journal, inspection, lastResult ->
+                if (!active) return@inspectDatasetSwitch
+                if (journal != null) showJournal(journal) else if (inspection != null) {
+                    AlertDialog.Builder(context).setTitle("换库预检中断 · 同步已暂停")
+                        .setMessage("旧目录：${inspection[0]}\n新目录：${inspection[1]}\n目标：${inspection[2]}\n未切换基线。恢复网络后重试，或取消预检；原数据和已观察异常保留。")
+                        .setNegativeButton("保持暂停", null).setNeutralButton("取消预检") { _, _ -> sync.cancelDatasetInspection() }
+                        .setPositiveButton("重新验证") { _, _ -> sync.prepareDatasetSwitch(inspection[1], inspection[2]) { if (active) showJournal(it) } }.show()
+                } else {
+                    val form = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 12, 24, 12) }
+                    if (lastResult != null) {
+                        val r = org.json.JSONObject(lastResult)
+                        form.addView(TextView(context).apply { text = "上次本机结果：${if (r.getString("phase") == "cancelled") "已取消准备" else "已验证完成换库"}\n检查时间：${r.getString("checkedAt")}\n旧库：${r.getString("sourceDatasetId")}（${r.getInt("sourceCount")} 个提交）\n新库：${r.getString("targetDatasetId")}\nWriter：${r.getString("writerId")}\n新根：${r.getString("targetRoot")}\nSHA-256：${r.getString("targetSha256")}\n原本地数据和恢复清单仍保留；可向 FPK 管理员登记此结果。"; textSize = 16f; setTextIsSelectable(true) })
+                    }
+                    val target = EditText(context).apply { hint = "新共享目录完整 URL（使用当前 WebDAV 账号）"; setSingleLine(); form.addView(this) }
+                    val dataset = EditText(context).apply { hint = "FPK 显示的目标 datasetId"; setSingleLine(); form.addView(this) }
+                    form.addView(TextView(context).apply { text = "当前旧库目录：${sync.settings.folder}\n先在 FPK 停写并验证完整归档及候选。准备成功即持久暂停同步，关闭界面或重启后可从此入口继续。" })
+                    AlertDialog.Builder(context).setTitle("更换共享课表数据集")
+                        .setView(ScrollView(context).apply { addView(form) }).setNegativeButton("取消", null)
+                        .setPositiveButton("验证并保存迁移预览") { _, _ -> sync.prepareDatasetSwitch(target.text.toString(), dataset.text.toString()) { if (active) showJournal(it) } }.show()
+                }
+            }
+        }
         conflictButton = button("查看 / 处理同步冲突", false) {
             sync.loadConflicts { items ->
                 if (items.isEmpty()) {

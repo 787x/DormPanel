@@ -1,0 +1,7 @@
+Performing Streamed Install
+Success
+PASS: process force-stop after durable inspect; next phase uses a fresh process.
+PASS: process force-stop after durable prepare; next phase uses a fresh process.
+PASS: process force-stop after durable commit; next phase uses a fresh process.
+PASS: process force-stop after durable preferences; next phase uses a fresh process.
+PASS: original business state / Writer / recovery evidence retained; only target witnesses active; normal target sync resumed.

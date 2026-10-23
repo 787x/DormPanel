@@ -1,0 +1,41 @@
+模拟器 + 真实 NAS/WebDAV 验证；不代表正式应用 UI 三端 LIVE PASS。
+
+artifacts/pr47/android-network-migrate.txt
+
+com.dormpanel.app.schedule.RealDatasetSwitchRoomTest:.
+
+Time: 16.164
+
+OK (1 test)
+
+
+
+artifacts/pr47/android-network-edit.txt
+
+com.dormpanel.app.schedule.RealDatasetSwitchRoomTest:.
+
+Time: 4.937
+
+OK (1 test)
+
+
+
+artifacts/pr47/fpk-network-retire.txt
+PASS: isolated administrator-confirmed synthetic-client retirement; source service remains writable, no disk reclaimed.
+{"phase":"retired","oldCount":2,"targetDatasetId":"2d792574-b343-4df7-a0ec-6a3727f7dbcb","writerId":"240f6316-71b5-4ea5-bd70-e50816d320dc","sourceServerWriteBlocked":false,"reclaimedBytes":0}
+Could not chdir to home directory /home/w: No such file or directory
+
+artifacts/pr47/fpk-network-publish.txt
+PASS: FPK received both Android Room edits, published own edit, verified retired source/archive and legal new descendants.
+{"phase":"retired","oldCount":2,"targetDatasetId":"2d792574-b343-4df7-a0ec-6a3727f7dbcb","writerId":"240f6316-71b5-4ea5-bd70-e50816d320dc","sourceServerWriteBlocked":false,"reclaimedBytes":0}
+Could not chdir to home directory /home/w: No such file or directory
+
+artifacts/pr47/android-network-receive.txt
+
+com.dormpanel.app.schedule.RealDatasetSwitchRoomTest:.
+
+Time: 2.85
+
+OK (1 test)
+
+

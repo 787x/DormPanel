@@ -36,6 +36,7 @@ class ScheduleSyncJobService : JobService() {
                 if (settings.folder.isNotBlank() && store is ScheduleSyncStore) {
                     val result = synchronized(SharedScheduleRunLock) {
                         val local = store as ScheduleV2Store
+                        if (local.v2DatasetPaused()) return@synchronized null
                         val frame = local.v2Frame()
                         if (frame.baseline == null && frame.pending == null) null else {
                             val account = requireNotNull(WebDavSettings(this).account())
