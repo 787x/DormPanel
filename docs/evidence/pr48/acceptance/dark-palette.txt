@@ -1,0 +1,13 @@
+Performing Streamed Install
+Success
+Performing Streamed Install
+Success
+Row: 0 _display_name=wakeup.ics
+
+com.dormpanel.phone.PhoneTimetableTest:.
+
+Time: 3.436
+
+OK (1 test)
+
+

@@ -6,7 +6,12 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.util.concurrent.atomic.AtomicReference
 
 /** Explicit opt-in test harness only. No root code or permissions enter either application. */
+private val passwordWatcherStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 internal fun launchPhoneTestActivity(): ActivityScenario<TimetableActivity> {
+    if (passwordWatcherStarted.compareAndSet(false, true)) Thread {
+        // Instrumentation-only watcher: MIUI can open its prompt after any dialog transition.
+        repeat(6000) { runCatching { dismissTestPasswordPrompt() }; Thread.sleep(100) }
+    }.apply { isDaemon = true; name = "test-password-prompt"; start() }
     if (InstrumentationRegistry.getArguments().getString("pr35RootUi") != "true") return ActivityScenario.launch(TimetableActivity::class.java)
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val pkg = instrumentation.targetContext.packageName
@@ -45,6 +50,20 @@ internal fun launchPhoneTestActivity(): ActivityScenario<TimetableActivity> {
 internal fun dismissTestPasswordPrompt() {
     val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return
     if (root.findAccessibilityNodeInfosByText("自动保存账号密码").isNotEmpty()) {
-        root.findAccessibilityNodeInfosByText("取消").firstOrNull()?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+        val cancel = root.findAccessibilityNodeInfosByText("取消").firstOrNull() ?: return
+        var node: android.view.accessibility.AccessibilityNodeInfo? = cancel
+        while (node != null) {
+            if (node.isClickable && node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)) return
+            node = node.parent
+        }
+        val bounds = android.graphics.Rect(); cancel.getBoundsInScreen(bounds)
+        if (!bounds.isEmpty) {
+            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+            val now = android.os.SystemClock.uptimeMillis()
+            for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+                val event = android.view.MotionEvent.obtain(now, android.os.SystemClock.uptimeMillis(),action,bounds.exactCenterX(),bounds.exactCenterY(),0)
+                automation.injectInputEvent(event,true); event.recycle()
+            }
+        }
     }
 }

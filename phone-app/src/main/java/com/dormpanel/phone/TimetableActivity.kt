@@ -260,12 +260,17 @@ class TimetableActivity : AppCompatActivity() {
                 }
             }.setNegativeButton("关闭", null).show()
     }
+    internal var profileSaveStage = "idle"; private set
     private fun editProfile(key: String, done: ((TermScheduleProfile) -> Unit)? = null) {
+        profileSaveStage = "editing"
         val existing = profiles.get(key)
         val fields = scheduleColumn()
         fun input(label: String, value: String, multiline: Boolean = false) = EditText(this).apply {
             hint = label; contentDescription = label; setText(value); minHeight = dp(48)
-            if (multiline) { minLines = 6; inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE }
+            if (multiline) {
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                minLines = 6; maxLines = 6; isVerticalScrollBarEnabled = true
+            }
             fields.addView(this)
         }
         fields.addView(scheduleLabel("填写学期、时区和第一周周一。阶段格式：日期一行，随后每行填写“节次 开始时间 结束时间”，可添加多个日期阶段。", 16f))
@@ -276,12 +281,14 @@ class TimetableActivity : AppCompatActivity() {
         val error = scheduleLabel("", 16f); fields.addView(error)
         val dialog = AlertDialog.Builder(this).setTitle("学期与节次").setView(ScrollView(this).apply { addView(fields) })
             .setNegativeButton("取消", null).setPositiveButton("保存", null).create()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         dialog.show()
         dialog.getButton(-1).setOnClickListener {
+            profileSaveStage = "clicked"
             runCatching {
                 val p = TermProfileForm.parseProfileForm(term.text.toString(), zone.text.toString(), monday.text.toString(), phases.text.toString())
-                profiles.put(p); source.refreshProfiles(); selectTerm(p.termKey); p
-            }.onSuccess { dialog.dismiss(); render(); done?.invoke(it) }.onFailure { error.text = it.message }
+                profileSaveStage = "parsed"; profiles.put(p); profileSaveStage = "stored"; source.refreshProfiles(); selectTerm(p.termKey); p
+            }.onSuccess { profileSaveStage = "callback"; dialog.dismiss(); render(); done?.invoke(it); profileSaveStage = "done" }.onFailure { profileSaveStage = "failed: ${it.message}"; error.text = it.message?.takeIf { message -> message.isNotBlank() } ?: "保存失败，请检查学期配置"; error.requestRectangleOnScreen(android.graphics.Rect(0,0,error.width,error.height), true) }
         }
     }
     private fun message(text: String) { if (!isDestroyed) AlertDialog.Builder(this).setMessage(text).setPositiveButton("确定", null).show() }

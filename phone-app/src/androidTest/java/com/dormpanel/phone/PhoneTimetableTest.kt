@@ -104,6 +104,18 @@ class PhoneTimetableTest {
                         return null
                     }
                     val view = find(a.window.decorView)!!
+                    fun inspect(v: android.view.View) {
+                        if (v is CourseCard) for (j in 0 until v.childCount) {
+                            val text = v.getChildAt(j)
+                            if (text.visibility == android.view.View.VISIBLE) {
+                                assertTrue("Text right edge", text.right <= v.width - v.paddingRight)
+                                assertTrue("Text bottom edge", text.bottom <= v.height - v.paddingBottom)
+                                assertTrue(text.left >= v.paddingLeft && text.top >= v.paddingTop)
+                            }
+                        }
+                        if (v is android.view.ViewGroup) for (j in 0 until v.childCount) inspect(v.getChildAt(j))
+                    }
+                    inspect(view)
                     assertEquals(8, view.childCount)
                     for (i in 1..7) {
                         val column = view.getChildAt(i)
@@ -184,16 +196,103 @@ class PhoneTimetableTest {
             s.onActivity { WebDavFolderDialog.show(it, WebDavAccount(serverRoot, "user", "secret")) { value -> selected = value } }
             val deadline = System.currentTimeMillis() + 10000
             while (true) {
-                try { onView(withText("▸ room")).perform(click()); break }
+                try { onView(withText("▸ room")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click()); break }
                 catch (e: androidx.test.espresso.NoMatchingViewException) { if (System.currentTimeMillis() > deadline) throw e; Thread.sleep(50) }
             }
             Thread.sleep(500); instrumentation.waitForIdleSync()
-            onView(withText("选择此文件夹")).perform(click())
+            onView(withText("选择此文件夹")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
             assertEquals(server.url("/dav/room/").toString(), selected)
             s.onActivity { assertNull(it.source.state.sync); assertTrue(it.source.state.entries.isEmpty()) }
             assertEquals("PROPFIND", server.takeRequest().method)
             assertEquals("PROPFIND", server.takeRequest().method)
         } } finally { server.shutdown() }
+    }
+    @Test fun folderErrorsCancellationAndLateResponses() {
+        val server = okhttp3.mockwebserver.MockWebServer(); server.start()
+        val rootUrl = server.url("/dav/").toString()
+        fun listing(path: String, child: Boolean) = "<d:multistatus xmlns:d=\"DAV:\">" +
+            (listOf(path) + if (child) listOf("/dav/child/") else emptyList()).joinToString("") { "<d:response><d:href>$it</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>" } + "</d:multistatus>"
+        fun awaitText(value: String) {
+            val until = System.currentTimeMillis() + 10000
+            while (true) { try { onView(withText(startsWith(value))).check(matches(isDisplayed())); return }
+                catch (e: androidx.test.espresso.NoMatchingViewException) { if (System.currentTimeMillis() > until) throw e; Thread.sleep(40) } }
+        }
+        try { open().use { s ->
+            var selected: String? = null
+            var dialog: android.app.AlertDialog? = null
+            fun show() { s.onActivity { dialog = WebDavFolderDialog.show(it, WebDavAccount(rootUrl,"u","secret")) { selected = it } }; waitFor(s) { dialog?.window?.decorView?.hasWindowFocus() == true } }
+            for (response in listOf(okhttp3.mockwebserver.MockResponse().setResponseCode(403), okhttp3.mockwebserver.MockResponse().setResponseCode(404), okhttp3.mockwebserver.MockResponse().setResponseCode(207).setBody("invalid"))) {
+                server.enqueue(response); show(); awaitText("无法列出目录")
+                onView(withText("取消")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click()); assertNull(selected)
+            }
+            s.onActivity { dialog = WebDavFolderDialog.show(it, WebDavAccount("http://127.0.0.1:1/dav/","u","secret")) { selected = it } }
+            awaitText("无法列出目录"); onView(withText("取消")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click()); assertNull(selected)
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(207).setBody(listing("/dav/",false)))
+            show(); awaitText("没有子文件夹"); onView(withText("取消")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click()); assertNull(selected)
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(207).setBody(listing("/dav/",true)))
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(207).setBody(listing("/dav/child/",false)).setBodyDelay(400, java.util.concurrent.TimeUnit.MILLISECONDS))
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(207).setBody(listing("/dav/",true)))
+            show(); awaitText("▸ child"); onView(withText("▸ child")).perform(click())
+            onView(withText("上一级")).perform(click()); awaitText("▸ child")
+            onView(withText(rootUrl)).check(matches(isDisplayed()))
+            onView(withText("取消")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click()); assertNull(selected)
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(207).setBody(listing("/dav/",false)).setBodyDelay(400, java.util.concurrent.TimeUnit.MILLISECONDS))
+            show(); onView(withText("取消")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click()); Thread.sleep(650)
+            s.onActivity { assertFalse(dialog!!.isShowing); assertNull(it.source.state.sync); assertTrue(it.source.state.entries.isEmpty()) }
+            assertNull(selected)
+            repeat(server.requestCount) { assertEquals("PROPFIND", server.takeRequest().method) }
+        } } finally { server.shutdown() }
+    }
+    @Test fun cardTextBoundsAndIdentityColors() {
+        open().use { scenario -> scenario.onActivity { a ->
+            val date = LocalDate.now()
+            val start = date.atTime(8,0).atZone(java.time.ZoneId.systemDefault()).toInstant()
+            val original = ClassOccurrence(TimetableEntry("id", "很长的课程名称用于验证测量边界与确定性的截断规则",1,480,580,"很长的教学楼和教室名称 A101"),date,start,start.plusSeconds(6000),seriesId="seriesA")
+            fun color(card: CourseCard) = ((card.background as android.graphics.drawable.RippleDrawable).getDrawable(0) as android.graphics.drawable.GradientDrawable).color!!.defaultColor
+            val first = CourseCard(a,listOf(original),java.time.ZoneId.systemDefault()) {}
+            assertEquals(color(first),color(CourseCard(a,listOf(original.copy(date=date.plusWeeks(1))),java.time.ZoneId.systemDefault()) {}))
+            assertNotEquals(color(first),color(CourseCard(a,listOf(original.copy(seriesId="seriesB")),java.time.ZoneId.systemDefault()) {}))
+            for (palette in 0..5) for (width in listOf(34,80,120)) for (height in listOf(1,16,48,80,200)) {
+                val card = CourseCard(a,listOf(original.copy(seriesId="palette-$palette")),java.time.ZoneId.systemDefault()) {}
+                card.measure(android.view.View.MeasureSpec.makeMeasureSpec(a.dp(width),android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(a.dp(height),android.view.View.MeasureSpec.EXACTLY))
+                card.layout(0,0,card.measuredWidth,card.measuredHeight)
+                for (j in 0 until card.childCount) {
+                    val text = card.getChildAt(j) as android.widget.TextView
+                    if (text.visibility == android.view.View.VISIBLE) {
+                        assertTrue("Width $width height $height text bottom",text.bottom <= card.height-card.paddingBottom)
+                        assertTrue(text.right <= card.width-card.paddingRight)
+                        val ink = androidx.core.graphics.ColorUtils.setAlphaComponent(text.currentTextColor,(text.alpha*255).toInt())
+                        val effective = androidx.core.graphics.ColorUtils.compositeColors(ink,color(card))
+                        assertTrue("Text contrast",androidx.core.graphics.ColorUtils.calculateContrast(effective,color(card)) >= 4.5)
+                    }
+                }
+            }
+        } }
+    }
+    @Test fun midnightAndShortIcsInstancesKeepOriginalDetails() {
+        open().use { scenario ->
+            pick("night.ics"); preview(scenario); onView(withText("确认导入")).perform(click())
+            waitFor(scenario) { it.source.state.imported.size == 3 }
+            onView(withText("周视图")).perform(click())
+            scenario.onActivity { a ->
+                fun find(v: android.view.View): PhoneWeekView? {
+                    if (v is PhoneWeekView) return v
+                    if (v is android.view.ViewGroup) for (i in 0 until v.childCount) find(v.getChildAt(i))?.let { return it }
+                    return null
+                }
+                val week = find(a.window.decorView)!!
+                week.getChildAt(1).tag = "test-monday"; week.getChildAt(2).tag = "test-tuesday"
+            }
+            for (day in listOf("test-monday", "test-tuesday")) {
+                onView(allOf(withContentDescription(startsWith("夜间跨日测试")),isDescendantOfA(withTagValue(equalTo(day as Any))))).perform(timeBlockClick())
+                onView(withText("夜间跨日测试")).check(matches(isDisplayed()))
+                onView(withText("Edit")).perform(scrollTo()).check(matches(isDisplayed()))
+                androidx.test.espresso.Espresso.pressBack()
+            }
+            onView(withContentDescription(startsWith("短时测试"))).perform(timeBlockClick())
+            onView(withText("短时测试")).check(matches(isDisplayed()))
+            androidx.test.espresso.Espresso.pressBack()
+        }
     }
     @Test fun emptyLocalEditorAndRestartPersistence() {
         open().use { s ->
@@ -348,17 +447,30 @@ class PhoneTimetableTest {
         open().use { s ->
             pick("future.csv"); waitFor(s) { !it.busy }
             onView(withContentDescription("第一周周一 yyyy-MM-dd")).perform(scrollTo(), replaceText("2027-08-30"), closeSoftKeyboard())
-            onView(withContentDescription("分阶段节次")).perform(scrollTo(), replaceText(TermProfileForm.phasesToText(BuiltInProfiles.term2026)), closeSoftKeyboard())
-            onView(withText("保存")).perform(object : androidx.test.espresso.ViewAction {
-                override fun getConstraints() = isAssignableFrom(android.widget.Button::class.java)
-                override fun getDescription() = "Confirm profile with native button action"
-                override fun perform(controller: androidx.test.espresso.UiController, view: android.view.View) { view.performClick(); controller.loopMainThreadUntilIdle() }
-            })
+            // Keep the final editor/IME geometry stable. Closing IME immediately before the
+            // footer tap races MIUI's input-window transition and can consume that tap.
+            onView(withContentDescription("分阶段节次")).perform(scrollTo(), replaceText(TermProfileForm.phasesToText(BuiltInProfiles.term2026)))
+            instrumentation.waitForIdleSync()
+            onView(withContentDescription("分阶段节次")).check { view, error ->
+                if (error != null) throw error
+                val field = view as android.widget.EditText
+                assertEquals(6, field.maxLines)
+                val metrics = field.paint.fontMetricsInt
+                val fontPadding = (metrics.ascent - metrics.top) + (metrics.bottom - metrics.descent)
+                val limit = maxOf(field.minimumHeight, 6 * field.lineHeight + field.compoundPaddingTop + field.compoundPaddingBottom + fontPadding)
+                assertTrue("Phase editor height ${field.height}, six-line limit $limit", field.height <= limit)
+            }
+            onView(withText("保存")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
+            s.onActivity { println("PROFILE DIAGNOSTIC ${it.profileSaveStage} busy=${it.busy} profiles=${it.source.state.profiles.keys}"); assertEquals("done", it.profileSaveStage) }
             preview(s)
             s.onActivity { assertTrue(it.source.state.imported.isEmpty()) }
             onView(withText("确认导入")).perform(click())
             waitFor(s) { it.source.state.imported.size == 131 }
-            s.onActivity { assertEquals("2027-2028-1", it.source.state.sources.single().termKey) }
+            s.onActivity { assertEquals("2027-2028-1", it.source.state.sources.single().termKey); assertEquals(13, it.source.state.imported.map { c -> c.seriesId }.distinct().size) }
+        }
+        open().use { scenario ->
+            waitFor(scenario) { it.source.state.imported.size == 131 }
+            scenario.onActivity { assertEquals(13,it.source.state.imported.map { c -> c.seriesId }.distinct().size) }
         }
     }
 
