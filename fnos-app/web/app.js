@@ -1238,3 +1238,37 @@ async function migrationRead() {
     panel.append(card);
   }
 }
+
+async function loadAgentAccess() {
+  const r = await fetch(base + '/api/agent');
+  const state = await r.json(); if (!r.ok) throw Error(state.error);
+  const panel = $('agentPanel'); panel.replaceChildren();
+  const choices = [];
+  for (const permission of ['edit', 'admin', 'maintenance']) {
+    const label = el('label', permission + ' '), box = document.createElement('input');
+    box.type = 'checkbox'; box.checked = state.permissions.includes(permission); label.append(box); panel.append(label); choices.push([permission, box]);
+  }
+  const save = el('button', '保存 Agent 权限');
+  save.onclick = async () => {
+    try {
+      if (!await confirmAction('授予的权限适用于所有以可信包用户连接的本地客户端。高影响操作仍需独立批准。')) return;
+      await post('/api/agent', { action:'permissions', permissions:choices.filter(([,box]) => box.checked).map(([p]) => p) }); await loadAgentAccess();
+    } catch (e) { await notifyUser(e.message); }
+  }; panel.append(save);
+  for (const p of state.approvals) {
+    const item = el('article'), summary = el('pre', JSON.stringify({ operation:p.operation, operationId:p.operationId, summary:p.summary, expires:new Date(p.expires).toLocaleString(), approvedBy:p.approvedBy, consumed:p.consumed }, null, 2));
+    item.append(summary);
+    if (!p.approvedBy && !p.consumed) {
+      const approve = el('button', '核对并批准此具体操作');
+      approve.onclick = async () => {
+        try {
+          if (!await confirmAction('请核对上方工作区、数据集、版本和操作摘要。批准十分钟内一次有效。')) return;
+          await post('/api/agent', { action:'approve', id:p.id }); await loadAgentAccess();
+        } catch (e) { await notifyUser(e.message); }
+      }; item.append(approve);
+    }
+    panel.append(item);
+  }
+  panel.append(el('pre', JSON.stringify(state.audit.slice(-20), null, 2)));
+}
+$('agentReload').onclick = () => loadAgentAccess().catch(e => notifyUser(e.message));

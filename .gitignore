@@ -76,3 +76,5 @@ signing.properties
 
 # PR48 本地验证日志、截图和候选构建
 /artifacts/pr48*
+
+/artifacts/pr49/

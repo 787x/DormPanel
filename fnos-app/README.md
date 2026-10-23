@@ -1,4 +1,6 @@
-# DormPanel Schedule Manager 0.4.4
+# DormPanel Schedule Manager 0.7.1
+
+0.7.1 增加随包 CLI 与官方 MCP stdio Server，共 69 项业务操作、只读资源和工作流 Prompt；沿用运行中进程的单 Writer、版本检查与保护规则。默认只读，管理员在原网页授权并独立批准高影响操作。实际安装路径、SSH 配置、权限、幂等语义和限制见 [CLI / MCP 使用说明](../docs/fpk-0.7.1-agent-guide.md)，候选、代码测试及已安装验收见 [PR49 验证记录](../docs/pr49-fpk-agent-verification.md)。
 
 “备份与恢复”支持在 fnOS 官方授权目录保存带 scrypt / AES-256-GCM 认证加密的完整应用归档，回读验证后公开文件。同一 writerId + installationId 的恢复必须先验证和明确确认，保留旧状态、通过持久化恢复日志完成切换，外部身份/已知历史验证前不允许发布。WebDAV 和用户授权目录的远端历史不默认复制，不能将应用备份视作完整远端数据集备份。
 
