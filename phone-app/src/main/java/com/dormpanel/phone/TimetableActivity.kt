@@ -23,6 +23,15 @@ class TimetableActivity : AppCompatActivity() {
     private lateinit var editors: PhoneEditors
     private lateinit var root: LinearLayout
     private var selected = LocalDate.now()
+    private var weekView = true
+    private var scroll: ScrollView? = null
+    private var scrollOffset = 0
+    private var renderedKey = ""
+    override fun onPause() {
+        getPreferences(MODE_PRIVATE).edit().putString("date", selected.toString()).putBoolean("weekView", weekView)
+            .putInt("scroll", scroll?.scrollY ?: scrollOffset).apply()
+        super.onPause()
+    }
     private var activeTerm: String? = null
     private var replacement: String? = null
     internal var busy = false; private set
@@ -43,7 +52,9 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        selected = savedInstanceState?.getString("date")?.let(LocalDate::parse) ?: LocalDate.now()
+        selected = savedInstanceState?.getString("date")?.let(LocalDate::parse) ?: getPreferences(MODE_PRIVATE).getString("date", null)?.let(LocalDate::parse) ?: LocalDate.now()
+        weekView = savedInstanceState?.getBoolean("weekView") ?: getPreferences(MODE_PRIVATE).getBoolean("weekView", true)
+        scrollOffset = savedInstanceState?.getInt("scroll") ?: getPreferences(MODE_PRIVATE).getInt("scroll", 0)
         replacement = savedInstanceState?.getString("replacement")
         activeTerm = savedInstanceState?.getString("term") ?: getPreferences(MODE_PRIVATE).getString("term", null)
         profiles = TermScheduleProfileStore(this)
@@ -71,6 +82,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("date", selected.toString()); outState.putString("replacement", replacement)
+        outState.putBoolean("weekView", weekView); outState.putInt("scroll", scroll?.scrollY ?: scrollOffset)
         outState.putString("term", activeTerm); super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
@@ -81,39 +93,46 @@ class TimetableActivity : AppCompatActivity() {
     private fun monday() = selected.minusDays((selected.dayOfWeek.value - 1).toLong())
     private fun row(parent: LinearLayout = root) = LinearLayout(this).also { parent.addView(it) }
     private fun action(row: LinearLayout, label: String, action: () -> Unit) {
-        row.addView(scheduleButton(label, action).apply { isEnabled = source.ready && !busy && !source.applyingSnapshot },
+        row.addView(scheduleButton(label, action).apply { minWidth = 0; minimumWidth = 0; minHeight = dp(36); minimumHeight = 0; textSize = 12f; setPadding(0, 0, 0, 0); isEnabled = source.ready && !busy && !source.applyingSnapshot },
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
     }
     private fun render() {
+        val key = "${monday()}:$weekView:${if (weekView) "" else selected}"
+        if (renderedKey == key) scrollOffset = scroll?.scrollY ?: scrollOffset
+        else if (renderedKey.isNotEmpty()) scrollOffset = 0
+        renderedKey = key
         root.removeAllViews()
         if (source.state.sync != null && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
         val profile = activeTerm?.let(profiles::get)
-        root.addView(scheduleLabel(if (source.state.sync != null) "课程表 · 双向共享" else "课程表 · 离线", 24f))
+        if (resources.configuration.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE) root.addView(scheduleLabel(if (source.state.sync != null) "课程表 · 双向共享" else "课程表 · 离线", 24f))
         if (::sharedSync.isInitialized) {
             val stale = sharedSync.settings.lastSuccess.let { it > 0 && System.currentTimeMillis() - it > 86_400_000L }
             root.addView(scheduleLabel(sharedSync.status + if (stale) " · 数据过期，显示缓存" else "", 14f))
         }
         val week = profile?.let { ChronoUnit.WEEKS.between(it.week1Monday, monday()) + 1 }
-        root.addView(scheduleLabel(if (week == null) "${monday()} · 未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f))
+        root.addView(scheduleLabel("${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f))
         row().also { bar ->
             action(bar, "‹ 上周") { selected = selected.minusWeeks(1); render() }
             action(bar, "今天") { selected = source.clock.today(); render() }
             action(bar, "下周 ›") { selected = selected.plusWeeks(1); render() }
+            action(bar, "周视图") { weekView = true; render() }
+            action(bar, "日视图") { weekView = false; render() }
         }
-        val days = row()
+        val days = row().apply { if (weekView) setPadding(dp(32), 0, 0, 0) }
         val labels = listOf("一", "二", "三", "四", "五", "六", "日")
         repeat(7) { i ->
             val date = monday().plusDays(i.toLong())
-            days.addView(scheduleButton("${labels[i]}\n${date.dayOfMonth}") { selected = date; render() }.apply {
-                textSize = 14f; minWidth = 0; minimumWidth = 0; setPadding(0, dp(6), 0, dp(6))
+            days.addView(scheduleButton("${labels[i]}\n${date.dayOfMonth}") { selected = date; weekView = false; render() }.apply {
+                textSize = 12f; minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0; includeFontPadding = false; setPadding(0, 0, 0, 0)
                 isSelected = date == selected
                 if (date == selected) {
                     setTypeface(typeface, android.graphics.Typeface.BOLD)
                     backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(55, 85, 155))
                     setTextColor(android.graphics.Color.WHITE)
                 }
-                contentDescription = "$date${if (date == selected) " 已选择" else ""}"
-            }, LinearLayout.LayoutParams(0, dp(64), 1f))
+                if (date == source.clock.today()) text = "●${labels[i]}\n${date.dayOfMonth}"
+                contentDescription = "$date${if (date == source.clock.today()) " 今天" else ""}${if (date == selected) " 已选择" else ""}"
+            }, LinearLayout.LayoutParams(0, dp(48), 1f))
         }
         row().also { bar ->
             if (!source.readOnly) action(bar, "＋ 课程") { editors.entry() }
@@ -121,13 +140,21 @@ class TimetableActivity : AppCompatActivity() {
             action(bar, "管理") { management() }
         }
         val list = scheduleColumn()
-        root.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        scroll = ScrollView(this).apply { addView(list); isFillViewport = true }
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         if (!source.ready) { list.addView(scheduleLabel(if (source.error) "读取失败，请重新打开应用。原有数据未清除。" else "正在读取课程…", 16f)); return }
         if (source.error || source.state.invalidRecords > 0) list.addView(scheduleLabel("存储异常或存在无效记录，请检查。更改可能尚未保存。", 16f))
         if (busy) list.addView(scheduleLabel("正在处理文件…", 16f))
+        val projected = ScheduleProjection.week(source.state, monday(), source.clock.zone())
+        if (weekView) {
+            list.addView(PhoneWeekView(this, projected, monday(), source.clock.zone(), editors::classDetail))
+            scroll?.post { scroll?.scrollTo(0, scrollOffset) }
+            return
+        }
+        scroll?.post { scroll?.scrollTo(0, scrollOffset) }
         val adjustment = source.state.daysByDate[selected.toString()]
         list.addView(scheduleLabel("$selected${adjustment?.let { " · ${if (it.mode == "none") "无课" else "使用星期 ${it.weekday} 课表"}" }.orEmpty()}", 16f))
-        val classes = ScheduleProjection.week(source.state, monday(), source.clock.zone()).filter { it.date == selected }
+        val classes = projected.filter { it.start < selected.plusDays(1).atStartOfDay(source.clock.zone()).toInstant() && it.end > selected.atStartOfDay(source.clock.zone()).toInstant() }
         if (classes.isEmpty()) list.addView(scheduleLabel(if (source.readOnly) "今天没有课程。当前显示已缓存的共享课表；请在 X08E 修改并发布。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV。", 18f))
         classes.forEach { item ->
             list.addView(scheduleButton(buildString {

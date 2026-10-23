@@ -24,6 +24,8 @@ class PhoneTimetableTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private lateinit var dbName: String
     @Before fun setup() {
+        for (name in listOf("TimetableActivity", "com.dormpanel.phone.TimetableActivity"))
+            instrumentation.targetContext.getSharedPreferences(name, 0).edit().clear().commit()
         dbName = "phone-test-${UUID.randomUUID()}.db"
         ScheduleStores.overrideFactory = { context -> RoomScheduleStore(Room.databaseBuilder(context, ScheduleDatabase::class.java, dbName).build()) }
         TermScheduleProfileStore.overrideNamespace = "phone-test-${UUID.randomUUID()}"
@@ -42,7 +44,7 @@ class PhoneTimetableTest {
         assertTrue("Timed out waiting for phone state", ready)
         instrumentation.waitForIdleSync()
     }
-    private fun open() = launchPhoneTestActivity().also { waitFor(it) { a -> a.source.ready } }
+    private fun open() = launchPhoneTestActivity().also { waitFor(it) { a -> a.source.ready }; onView(withText("日视图")).perform(click()) }
     private fun pick(filename: String) {
         Intents.intending(hasAction(Intent.ACTION_OPEN_DOCUMENT)).respondWith(ActivityResult(Activity.RESULT_OK,
             Intent().setData(Uri.parse("content://${instrumentation.context.packageName}.fixtures/$filename"))))
@@ -50,8 +52,14 @@ class PhoneTimetableTest {
         onView(withText("导入 ICS / 湖北大学 CSV")).perform(click())
     }
     private fun preview(s: ActivityScenario<TimetableActivity>) {
-        waitFor(s) { !it.busy }
-        onView(withText("确认导入")).check(matches(isDisplayed()))
+        val deadline = System.currentTimeMillis() + 10000
+        while (true) {
+            try { onView(withText("确认导入")).check(matches(isDisplayed())); break }
+            catch (e: androidx.test.espresso.NoMatchingViewException) {
+                if (System.currentTimeMillis() >= deadline) throw e
+                Thread.sleep(80)
+            }
+        }
     }
     private fun screenshot(name: String) {
         instrumentation.waitForIdleSync(); Thread.sleep(350) // Let native dialog transitions finish before visual QA.
@@ -59,6 +67,44 @@ class PhoneTimetableTest {
         java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "phone-$name.png").outputStream().use {
             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
         }; bitmap.recycle()
+    }
+    @Test fun sevenColumnsRotateRefreshAndOpenDetail() {
+        open().use { s ->
+            s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+            Thread.sleep(1000); instrumentation.waitForIdleSync()
+            onView(withText("今天")).perform(click())
+            s.onActivity { a ->
+                a.source.saveEntry("周视图测试", LocalDate.now().dayOfWeek.value, 480, 540, "测试教室")
+            }
+            waitFor(s) { it.source.state.entries.isNotEmpty() }
+            onView(withText("周视图")).perform(click())
+            fun checkColumns() {
+                s.onActivity { a ->
+                    fun find(v: android.view.View): PhoneWeekView? {
+                        if (v is PhoneWeekView) return v
+                        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) find(v.getChildAt(i))?.let { return it }
+                        return null
+                    }
+                    val view = find(a.window.decorView)!!
+                    assertEquals(8, view.childCount)
+                    for (i in 1..7) {
+                        val column = view.getChildAt(i)
+                        assertTrue(column.width > 0)
+                        assertTrue(column.right <= view.width)
+                    }
+                }
+            }
+            instrumentation.waitForIdleSync(); checkColumns(); screenshot("week-portrait")
+            onView(withText(startsWith("周视图测试"))).perform(scrollTo(), click())
+            onView(withText("Edit")).check(matches(isDisplayed()))
+            androidx.test.espresso.Espresso.pressBack()
+            s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            Thread.sleep(1000); instrumentation.waitForIdleSync(); checkColumns(); screenshot("week-landscape")
+            s.recreate(); waitFor(s) { it.source.ready }; checkColumns()
+            onView(withText("日视图")).perform(click())
+            onView(withText(startsWith("周视图测试"))).check(matches(isDisplayed()))
+            s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+        }
     }
     @Test fun emptyLocalEditorAndRestartPersistence() {
         open().use { s ->
@@ -72,7 +118,7 @@ class PhoneTimetableTest {
         }
         open().use { s ->
             waitFor(s) { it.source.state.entries.singleOrNull()?.title == "Phone local" }
-            onView(withText(startsWith("Phone local"))).perform(click())
+            onView(withText(startsWith("Phone local"))).perform(scrollTo(), click())
             onView(withText("Edit")).perform(click())
             onView(withText("All weeks for this timetable item")).perform(click())
             onView(withHint("Course name")).perform(replaceText("Edited local"), closeSoftKeyboard())
@@ -81,7 +127,7 @@ class PhoneTimetableTest {
         }
         open().use { s ->
             waitFor(s) { it.source.state.classOverrides.singleOrNull()?.title == "Edited local" }
-            onView(withText(startsWith("Edited local"))).perform(click())
+            onView(withText(startsWith("Edited local"))).perform(scrollTo(), click())
             onView(withText("Reset all-weeks edit")).perform(click())
             onView(withText(startsWith("Phone local"))).check(matches(isDisplayed()))
         }
@@ -143,7 +189,7 @@ class PhoneTimetableTest {
             onView(withText("This week")).perform(click())
             onView(withHint("Course name")).perform(replaceText("Week only"), closeSoftKeyboard())
             onView(withText("Save")).perform(click())
-            onView(withText(startsWith("Week only"))).perform(click())
+            onView(withText(startsWith("Week only"))).perform(scrollTo(), click())
             onView(withText("Reset this week")).perform(click())
             onView(withText(startsWith(title))).perform(scrollTo(), click())
             onView(withText("Edit")).perform(click())
@@ -167,7 +213,7 @@ class PhoneTimetableTest {
             s.onActivity { a -> assertEquals(id, a.source.state.sources.single().id); assertEquals("All weeks", a.source.state.classOverrides.single().title) }
             onView(withText("管理")).perform(click())
             onView(withText("导入来源（替换 / 删除）")).perform(click())
-            onView(withText(startsWith("Replacement ·"))).perform(click())
+            onView(withText(startsWith("Replacement ·"))).perform(scrollTo(), click())
             onView(withText("替换")).perform(click())
             preview(s)
             onView(withText("确认导入")).perform(click())
@@ -175,7 +221,7 @@ class PhoneTimetableTest {
             s.onActivity { a -> assertEquals(id, a.source.state.sources.single().id); assertEquals("All weeks", a.source.state.classOverrides.single().title) }
             onView(withText("管理")).perform(click())
             onView(withText("导入来源（替换 / 删除）")).perform(click())
-            onView(withText(startsWith("Replacement ·"))).perform(click())
+            onView(withText(startsWith("Replacement ·"))).perform(scrollTo(), click())
             onView(withText("删除")).perform(click())
             onView(withText("删除")).perform(click())
             waitFor(s) { it.source.state.sources.isEmpty() && it.source.state.imported.isEmpty() && it.source.state.classOverrides.isEmpty() }
