@@ -2,7 +2,7 @@ import { cp, mkdir, readFile, writeFile, chmod, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 const root = new URL('../', import.meta.url), build = new URL('../build/dormpanel-schedule-manager/', import.meta.url);
 await mkdir(build, { recursive: true });
-for (const folder of ['cmd', 'config', 'wizard', 'app/ui/images', 'app/server']) await mkdir(new URL(folder + '/', build), { recursive: true });
+for (const folder of ['cmd', 'config', 'wizard', 'app/ui/images', 'app/server', 'app/bin']) await mkdir(new URL(folder + '/', build), { recursive: true });
 for (const name of ['src', 'web']) await cp(new URL(name, root), new URL('app/server/' + name, build), { recursive: true });
 for (const name of ['package.json', 'package-lock.json']) await cp(new URL(name, root), new URL('app/server/' + name, build));
 // npm ci 的运行依赖是纯 JS；不打包开发机二进制、缓存或开发依赖。
@@ -10,7 +10,7 @@ if (!process.env.npm_execpath) throw Error('请使用 npm run build');
 const installed = spawnSync(process.execPath, [process.env.npm_execpath, 'ci', '--omit=dev', '--ignore-scripts', '--prefix', new URL('app/server/', build).pathname.replace(/^\/(\w:)/, '$1')], { stdio: 'inherit' });
 if (installed.status !== 0) throw Error('依赖安装失败');
 await writeFile(new URL('manifest', build), `appname=dormpanel-schedule-manager
-version=0.6.1
+version=0.7.1
 display_name=DormPanel Schedule Manager
 desc=多工作区、本地与 WebDAV 数据源、Sync v2 课表编辑与发布
 platform=all
@@ -41,3 +41,8 @@ await writeFile(new URL('wizard/config', build), JSON.stringify([{ stepTitle: '�
 // 仓库内自绘 PNG 图标，无外部图片、字体或构建时下载。
 for (const [source, targets] of [['icon64.png', ['ICON.PNG', 'app/ui/images/icon_64.png']], ['icon256.png', ['ICON_256.PNG', 'app/ui/images/icon_256.png']]]) for (const target of targets) await cp(new URL(source, import.meta.url), new URL(target, build));
 console.log('FPK 工程已生成：' + build.pathname);
+
+for (const [name, entry] of [['dormpanel-cli', 'cli.mjs'], ['dormpanel-mcp', 'mcp.mjs']]) {
+  await writeFile(new URL('app/bin/' + name, build), '#!/bin/sh\nset -eu\numask 077\nAPP=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\ncd "$APP/server"\nexec /var/apps/nodejs_v22/target/bin/node "$APP/server/src/' + entry + '" "$@"\n');
+  await chmod(new URL('app/bin/' + name, build), 0o755);
+}

@@ -1,0 +1,26 @@
+{
+  "version": "0.7.1",
+  "upgrade061To070": {
+    "stateFiles": 36,
+    "allHashesUnchanged": true
+  },
+  "upgrade070To071": {
+    "stateFiles": 38,
+    "allHashesUnchanged": true
+  },
+  "webConcurrency": {
+    "workspace": "independent-synthetic",
+    "savedVia": "fnOS gateway browser UI",
+    "staleCliError": "STALE",
+    "staleCliExit": 3,
+    "lostUpdate": false
+  },
+  "cleanup": {
+    "activeWorkspaceRestored": true,
+    "permissions": [
+      "read"
+    ],
+    "syntheticWorkspaceRetained": true
+  },
+  "destructiveDailyDataTests": false
+}

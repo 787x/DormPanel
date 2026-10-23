@@ -1,4 +1,6 @@
 import http from "node:http";
+import { Readable } from "node:stream";
+import { AgentService } from "./agent-service.mjs";
 import { HistoryManager, cachedGraph, historySummary, commitAt, versionDifferences } from './history.mjs';
 import { DatasetMigration } from './migration.mjs';
 import { BackupManager, recoverRestore } from "./backup.mjs";
@@ -9,7 +11,7 @@ import { randomBytes, timingSafeEqual, randomUUID, createHash } from "node:crypt
 import { Store, json } from "./store.mjs";
 import { Catalog } from "./catalog.mjs";
 import { date, ensure, zone } from "./protocol.mjs";
-import { projectWeek, monday } from "./projection.mjs";
+import { projectWeek, monday, addDays } from "./projection.mjs";
 import { mergePlan } from "./merge.mjs";
 import { previewImport, commitImport } from "./import.mjs";
 
@@ -107,7 +109,7 @@ export async function createApp({
   let catalog = await Catalog.open({ store, configPath, remoteFactory, authorizedRoots });
   const backups = new BackupManager({ catalog, configPath, reopen: async () => {
     catalog = await Catalog.open({ store, configPath, remoteFactory, authorizedRoots }); backups.catalog = catalog;
-    previews.clear(); tokens.clear();
+    previews.clear(); tokens.clear(); history.tokens.clear();
   } });
   await backups.cleanupStages();
   let requests = 0, writes = 0, historyLock = false;
@@ -123,7 +125,8 @@ export async function createApp({
     return tokens.get(key);
   };
   const refresh = options => catalog.network(catalog.manifest.activeId, engine => engine.synchronize(options));
-  const server = http.createServer(async (req, res) => {
+  let agents;
+  const handle = async (req, res, internal = false) => {
     requests++; let writing = false;
     const send = (status, value, type = "application/json; charset=utf-8") => {
       res.writeHead(status, {
@@ -139,7 +142,7 @@ export async function createApp({
     try {
       let user;
       try {
-        user = authorize(req);
+        user = internal ? 'agent-package-os' : authorize(req);
       } catch {
         send(403, { error: "需要管理员身份及私有 Socket 访问路径" });
         return;
@@ -152,7 +155,8 @@ export async function createApp({
         path = u.pathname.slice(PREFIX.length);
       if (req.method === "POST") {
         const routes = [
-          '/api/migration',
+          '/api/agent', '/api/import/cancel',
+          '/api/migration', '/api/migration/verify',
           '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
           "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore", "/api/backups/cancel",
           "/api/edit",
@@ -169,7 +173,7 @@ export async function createApp({
           return;
         }
         try {
-          csrf(
+          if (!internal) csrf(
             req,
             userToken(user, req.headers.origin ?? null),
             req.headers.origin ?? null,
@@ -179,6 +183,7 @@ export async function createApp({
           return;
         }
         const input = await body(req);
+        if (path === '/api/agent') { ensure(!internal, 'Agent 不能批准自身'); send(200, await agents.admin(input, user)); return; }
         writing = true; writes++;
         ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
         ensure(!historyLock, '历史操作进行中，请稍后重试');
@@ -201,10 +206,17 @@ export async function createApp({
         }
         ensure(!catalog.configuring && !catalog.manifest.transition, "正在保存配置或等待恢复");
         const network = action => catalog.network(workspaceId, action);
-        if (path === '/api/migration') {
+        if (path === '/api/migration' || path === '/api/migration/verify') {
           ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision && workspaceId === catalog.manifest.activeId, '迁移版本过期或有并发操作');
           historyLock = true;
-          try { send(200, publicValue(await new DatasetMigration(catalog).action(db, input, user))); return; }
+          try {
+            const migration = new DatasetMigration(catalog);
+            if (path.endsWith('/verify')) {
+              const result = await migration.verify(db, { ...input, sourceId:workspaceId });
+              send(200, { verified:true, sourceDatasetId:result.source.datasetId, targetDatasetId:result.target.datasetId, sourceTips:result.source.tips, targetTips:result.target.tips, archive:result.archive.relative, candidate:result.candidate.relative, targetUrl:result.targetUrl });
+            } else send(200, publicValue(await migration.action(db, input, user)));
+            return;
+          }
           finally { historyLock = false; }
         }
         if (path.startsWith('/api/history/')) {
@@ -264,6 +276,10 @@ export async function createApp({
             samples: preview.occurrences.slice(0, 20),
           });
           return;
+        } else if (path === "/api/import/cancel") {
+          const p = previews.get(input.id);
+          ensure(p && p.user === user && p.workspaceId === workspaceId, '导入预览已失效');
+          previews.delete(input.id);
         } else if (path === "/api/import/confirm") {
           const p = previews.get(input.id);
           ensure(
@@ -299,13 +315,24 @@ export async function createApp({
         return;
       }
       // schedule 无 ID 仅用于初次引导；其余数据读取必须明确指定工作区。
-      if (path.startsWith('/api/') && !['/api/migration', '/api/history', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
+      if (path.startsWith('/api/') && !['/api/maintenance', '/api/agent', '/api/import/rows', '/api/schedule/range', '/api/migration', '/api/history', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
         send(404, { error: '不存在' }); return;
       }
       ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
       const workspaceId = u.searchParams.get("workspaceId") ??
         (path === "/api/schedule" ? catalog.manifest.activeId : null);
-      const db = path.startsWith('/api/') && !['/api/manage', '/api/directories'].includes(path) ? await catalog.load(workspaceId) : null;
+      const db = path.startsWith('/api/') && !['/api/agent', '/api/manage', '/api/directories'].includes(path) ? await catalog.load(workspaceId) : null;
+      if (path === '/api/agent') { ensure(!internal, 'Agent 不能读取管理员审批通道'); send(200, agents.adminSummary()); return; }
+      if (path === '/api/import/rows') {
+        const p = previews.get(u.searchParams.get('id')), offset = Number(u.searchParams.get('offset') ?? 0), limit = Number(u.searchParams.get('limit') ?? 40);
+        ensure(p && p.user === user && p.workspaceId === workspaceId && p.expires > Date.now() && p.version === db.frame.revision, '导入预览已失效');
+        ensure(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 100, '预览分页无效');
+        send(200, { version:db.frame.revision, total:p.preview.occurrences.length, rows:p.preview.occurrences.slice(offset, offset + limit), next:offset + limit < p.preview.occurrences.length ? offset + limit : null }); return;
+      }
+      if (path === '/api/maintenance') {
+        const protection = catalog.protection(workspaceId), restored = await store.read('restore-result.json');
+        send(200, { workspaceId, version:db.frame.revision, catalogVersion:catalog.manifest.revision, datasetId:db.frame.datasetId, restoreGuard:!!catalog.restoreGuards[workspaceId], restorePoisoned:backups.poisoned, restorePreviews:backups.previews.size, lastRestore:restored ? { ok:restored.ok, restoredAt:restored.restoredAt, backupCreatedAt:restored.backupCreatedAt } : null, protection:protection ? { id:protection.id, phase:protection.phase, sourceId:protection.sourceId, targetId:protection.targetId } : null, historyCount:Object.keys(db.frame.checkpoint.hashes ?? {}).length, historyCapacity:256, automaticDelete:false, reclaimedBytes:0 }); return;
+      }
       const row = db ? catalog.row(workspaceId) : null;
       const c = row?.connectionId ? catalog.connection(row.connectionId) : null;
       const busy = catalog.busy.has(workspaceId);
@@ -357,6 +384,21 @@ export async function createApp({
           }),
         );
         return;
+      }
+      if (path === '/api/schedule/range') {
+        const start = date(u.searchParams.get('start')).toString(), end = date(u.searchParams.get('end')).toString(), z = zone(u.searchParams.get('zone') ?? 'Asia/Shanghai');
+        const days = date(start).until(date(end)).days;
+        ensure(days >= 0 && days <= 30, '日期范围须为 1–31 天');
+        const rows = [];
+        for (let first = monday(start); first <= end; first = addDays(first, 7)) rows.push(...projectWeek(db.frame.local, first, z).filter(r => r.date >= start && r.date <= end).map(r => ({ ...r, recordType:'course' })));
+        // 与周投影使用同一时区，事件保留原毫秒时间与稳定 ID。
+        const from = date(start).toZonedDateTime(z).epochMilliseconds, to = date(addDays(end, 1)).toZonedDateTime(z).epochMilliseconds;
+        rows.push(...db.frame.local.events.filter(r => Number(r.end) > from && Number(r.start) < to).map(r => ({ ...r, recordType:'event' })));
+        rows.sort((a,b) => Number(a.start) - Number(b.start) || a.id.localeCompare(b.id));
+        const offset = Number(u.searchParams.get('offset') ?? 0), limit = Number(u.searchParams.get('limit') ?? 40);
+        ensure(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 100, '分页无效');
+        // IPC 在统一服务分页；网页调用也必须有界。
+        send(200, { workspaceId, version:db.frame.revision, ...(internal ? { rows } : { total:rows.length, rows:rows.slice(offset, offset+limit), next:offset+limit < rows.length ? offset+limit : null }) }); return;
       }
       if (path === "/api/schedule") {
         const pageOrigin = u.searchParams.get("origin");
@@ -434,11 +476,34 @@ export async function createApp({
       if (writing) writes--; requests--;
       if (requests === 0) catalog.prune();
     }
-  });
+  };
+  const dispatch = async (method, path, input) => {
+    const query = method === 'GET' ? '?' + new URLSearchParams(Object.entries(input).filter(([,v]) => v != null).map(([k,v]) => [k, String(v)])) : '';
+    const req = Readable.from(method === 'POST' ? [Buffer.from(json(input))] : []);
+    Object.assign(req, { method, url:PREFIX + path + query, headers:{ 'content-type':'application/json' }, socket:{}, rawHeaders:[] });
+    let status, data;
+    await handle(req, { writeHead:s => { status = s; }, end:b => { data = JSON.parse(b); } }, true);
+    return { status, data };
+  };
+  agents = await AgentService.open({ store, catalog:() => catalog, dispatch, approvalSummary:async (operation, input) => {
+    if (operation === 'backups.restore') {
+      const p = backups.previews.get(input.token);
+      ensure(p && p.user === 'agent-package-os' && p.expires > Date.now(), '恢复预览已失效');
+      return { createdAt:p.manifest.createdAt, appVersion:p.manifest.appVersion, workspaceCount:p.manifest.workspaceCount, fileCount:p.manifest.files.length, dependencies:p.manifest.dependencies, scope:'完整应用状态覆盖；恢复后重新验证外部历史' };
+    }
+    if (operation === 'history.rollback') {
+      const p = history.tokens.get(input.token);
+      ensure(p && p.user === 'agent-package-os' && p.target === input.target && p.workspaceId === input.workspaceId && p.expires > Date.now(), '回退预览已失效');
+      return { target:p.target, graph:p.graph, version:p.version, scope:'发布新的完整回退快照，保留旧历史' };
+    }
+    return { scope:operation.startsWith('migration.') ? '按现有迁移保护验证执行；设备声明仅为管理员登记，非自动发现证明' : '输出至已授权目录，不删除旧库' };
+  } });
+  const agentServer = agents.createServer();
+  const server = http.createServer((req, res) => handle(req, res));
   server.once('close', () => { void backups.close(); });
   server.requestTimeout = 65000;
   server.headersTimeout = 10000;
-  return { server, refresh, store, backups, get catalog() { return catalog; }, get db() { return catalog.db(catalog.manifest.activeId); } };
+  return { server, agentServer, agents, refresh, store, backups, get catalog() { return catalog; }, get db() { return catalog.db(catalog.manifest.activeId); } };
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   process.umask(0o077);
@@ -460,11 +525,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     app.server.listen(socket, resolve);
   });
   await chmod(socket, 0o600);
+  const agentSocket = join(dirname(socket), 'agent.sock');
+  // 同一进程、同一启动锁；新 Socket 不出现在 fnOS gateway 配置。
+  await unlink(agentSocket).catch(e => { if (e.code !== 'ENOENT') throw e; });
+  await new Promise((resolve, reject) => { app.agentServer.once('error', reject); app.agentServer.listen(agentSocket, resolve); });
+  await chmod(agentSocket, 0o600);
   const ready = join(process.env.TRIM_PKGVAR, "socket.ready");
   await writeFile(ready, String(process.pid), { mode: 0o600 });
   process.on("SIGTERM", () => {
+    app.agentServer.close();
+    app.agentServer.closeAllConnections();
     app.server.close(async () => {
       await app.backups.close();
+      await unlink(agentSocket).catch(() => {});
       await unlink(socket).catch(() => {});
       await unlink(ready).catch(() => {});
       process.exit(0);

@@ -20,5 +20,9 @@ case "${1:-}" in
     [ -S "$TRIM_APPDEST/app.sock" ] && [ ! -L "$TRIM_APPDEST/app.sock" ]
     private_access "$TRIM_APPDEST/app.sock" 600
     ;;
+  agent)
+    [ -S "$TRIM_APPDEST/agent.sock" ] && [ ! -L "$TRIM_APPDEST/agent.sock" ]
+    private_access "$TRIM_APPDEST/agent.sock" 600
+    ;;
   *) exit 1 ;;
 esac
