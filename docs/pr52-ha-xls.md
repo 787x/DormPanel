@@ -17,7 +17,7 @@ main 已由 PR51 更新 X08E 至 0.1.7 / 10，因此本次使用 0.1.8 / 11，�
 - `:app:testDebugUnitTest --tests '*HaRelayDownloaderTest'`：5/5，含真实脱敏 BIFF8 下载、13 系列/131 实例、MIME、跨类型、路径、长度和哈希拒绝。
 - `:schedule-core:testDebugUnitTest --tests '*HubeiXlsReaderTest'`：4/4，含 NeedsProfile、XLS/CSV 身份等价和无效文件。
 - `:app:assembleRelease`、`:app:lintDebug` 通过。初次使用不存在的编译任务、混合 testBuildType 的任务选择及测试字段拼写失败后已修正，最终上述命令通过。
-- X08E API 28 隔离 testbed：HaRelayProfileOverrideTest 2/2（CSV 与 XLS 自定义学期），HaRelayRecoveryAndroidTest 9/9（含 XLS 中断恢复、重复通知及原 APK 回归）。相同测试由 Gradle 同时在已连接 MIX 2S 隔离包运行并通过；没有改动 Phone 产品代码或版本。多类过滤首次仅执行第一类，后续改为逐类执行。
+- X08E API 28 隔离 testbed：HaRelayProfileOverrideTest 2/2（CSV 与 XLS 自定义学期），HaRelayRecoveryAndroidTest 9/9（含 XLS 中断恢复、重复通知及原 APK 回归）。HaRelayInvalidatedPreviewTest 1/1（确认前配置失效保护）。相同测试由 Gradle 同时在已连接 MIX 2S 隔离包运行并通过；没有改动 Phone 产品代码或版本。多类过滤首次仅执行第一类，后续改为逐类执行。
 
 ## 候选与验收边界
 
