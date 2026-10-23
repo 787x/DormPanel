@@ -78,3 +78,6 @@ signing.properties
 /artifacts/pr48*
 
 /artifacts/pr49/
+
+# 本地构建、验收和发布产物，统一忽略以避免逐版本遗漏
+/artifacts/
