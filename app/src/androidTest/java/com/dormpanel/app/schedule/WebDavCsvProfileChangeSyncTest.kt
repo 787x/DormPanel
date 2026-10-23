@@ -37,14 +37,16 @@ class WebDavCsvProfileChangeSyncTest {
         assertTrue(loaded)
     }
 
-    @Test fun profileChangeForcesReimportWhenRemoteEtagUnchanged() {
+    @Test fun profileChangeForcesReimportWhenRemoteEtagUnchanged() = verifyProfileChange("csv")
+    @Test fun xlsProfileChangeForcesReimportWhenRemoteEtagUnchanged() = verifyProfileChange("xls")
+    private fun verifyProfileChange(format: String) {
         val namespace = "pr35-csv-profile-${java.util.UUID.randomUUID()}"
         val previous = TermScheduleProfileStore.overrideNamespace
         TermScheduleProfileStore.overrideNamespace = namespace
-        val csv = instrumentation.context.assets.open("hubei_2026-2027-1.csv").use { it.readBytes() }
+        val csv = instrumentation.context.assets.open("hubei_2026-2027-1.$format").use { it.readBytes() }
         try { MockWebServer().use { server -> ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             ready(scenario)
-            val remote = server.url("/dav/timetable.csv").toString()
+            val remote = server.url("/dav/timetable.$format").toString()
             val account = WebDavAccount(server.url("/dav/").toString(), "user", "secret")
 
             // 1. Initial CSV import via the real controller path.
@@ -77,12 +79,12 @@ class WebDavCsvProfileChangeSyncTest {
                 bind(WebDavBinding(sourceId, WebDavMode.FILE, remote,
                     autoSync = false, etag = item.etag, lastModified = item.lastModified,
                     currentFile = item.url, lastSuccess = System.currentTimeMillis(),
-                    format = "csv", termKey = "2026-2027-1", profileFingerprint = profilePrint))
+                    format = format, termKey = "2026-2027-1", profileFingerprint = profilePrint))
             } }
             // Verify the binding is readable with the correct metadata before sync.
             scenario.onActivity {
                 val b = model(it).webDav.binding(sourceId)!!
-                assertEquals("csv", b.format)
+                assertEquals(format, b.format)
                 assertEquals("2026-2027-1", b.termKey)
                 assertEquals(profilePrint, b.profileFingerprint)
             }
@@ -100,7 +102,7 @@ class WebDavCsvProfileChangeSyncTest {
                 val b = model(it).webDav.binding(sourceId)!!
                 val ps = TermScheduleProfileStore(instrumentation.targetContext)
                 val cur = b.termKey?.let { t -> ps.get(t)?.let { TimetableImporter.profileFingerprint(it) } }
-                assertTrue("binding.format should be csv, was '${b.format}'", b.format == "csv")
+                assertTrue("binding.format should be csv, was '${b.format}'", b.format == format)
                 assertTrue("binding.profileFingerprint should differ from current, stored=${b.profileFingerprint} current=$cur",
                     b.profileFingerprint != null && b.profileFingerprint != cur)
             }
@@ -121,7 +123,7 @@ class WebDavCsvProfileChangeSyncTest {
             scenario.onActivity {
                 val vm = model(it)
                 val binding = vm.webDav.binding(sourceId)!!
-                assertEquals("csv", binding.format)
+                assertEquals(format, binding.format)
                 assertEquals("2026-2027-1", binding.termKey)
                 updatedPrint = binding.profileFingerprint
             }

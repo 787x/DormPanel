@@ -42,7 +42,7 @@ export async function main(args = process.argv.slice(2)) {
     }
     const operation = words.join('.') || 'help';
     if (operation === 'help') {
-      const help = { version:VERSION, usage:'dormpanel-cli <领域> <操作> [--json] [--input FILE] [--file CSV/ICS]；JSON 默认从 stdin 读取', flags:'--workspace-id --dataset-id --version --catalog-version --offset --limit --id --table --filter --confirm --operation-id --approval-id', operationId:'写入自动生成并回显操作 ID。SSH 重试必须保存并复用同一 ID 和完全相同参数；退出码 9 后先查 operations receipt。', exitCodes:{ success:0, validation:2, stale:3, permissionOrApproval:4, protected:5, busy:6, limit:7, unavailable:8, unknown:9 }, operations:operations.map(({ name, description }) => ({ name, description })) };
+      const help = { version:VERSION, usage:'dormpanel-cli <领域> <操作> [--json] [--input FILE] [--file CSV/ICS/XLS]；JSON 默认从 stdin 读取', flags:'--workspace-id --dataset-id --version --catalog-version --offset --limit --id --table --filter --confirm --operation-id --approval-id', operationId:'写入自动生成并回显操作 ID。SSH 重试必须保存并复用同一 ID 和完全相同参数；退出码 9 后先查 operations receipt。', exitCodes:{ success:0, validation:2, stale:3, permissionOrApproval:4, protected:5, busy:6, limit:7, unavailable:8, unknown:9 }, operations:operations.map(({ name, description }) => ({ name, description })) };
       process.stdout.write(json ? JSON.stringify({ ok:true, data:help }) + '\n' : help.usage + '\n' + help.flags + '\n' + help.operationId + '\n' + help.operations.map(o => o.name.replaceAll('.', ' ') + ' — ' + o.description).join('\n') + '\n'); return 0;
     }
     if (operation === 'version' || operation === 'schema') {

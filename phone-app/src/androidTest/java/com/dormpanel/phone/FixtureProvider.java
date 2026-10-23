@@ -13,7 +13,7 @@ import java.util.Arrays;
 /** Test APK only. Java keeps this separate provider process independent of the target Kotlin runtime. */
 public class FixtureProvider extends ContentProvider {
     public boolean onCreate() { return true; }
-    public String getType(Uri uri) { return uri.getLastPathSegment().endsWith("csv") ? "text/csv" : "text/calendar"; }
+    public String getType(Uri uri) { return uri.getLastPathSegment().endsWith("xls") ? "application/vnd.ms-excel" : uri.getLastPathSegment().endsWith("csv") ? "text/csv" : "text/calendar"; }
     public Cursor query(Uri uri, String[] projection, String selection, String[] args, String sort) {
         MatrixCursor cursor = new MatrixCursor(new String[] { OpenableColumns.DISPLAY_NAME });
         cursor.addRow(new Object[] { uri.getLastPathSegment() });
@@ -21,7 +21,7 @@ public class FixtureProvider extends ContentProvider {
     }
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         String name = uri.getLastPathSegment();
-        if (!Arrays.asList("wakeup.ics", "hubei_2026-2027-1.csv", "bad.ics", "future.csv", "night.ics").contains(name)) throw new FileNotFoundException();
+        if (!Arrays.asList("wakeup.ics", "hubei_2026-2027-1.csv", "hubei_2026-2027-1.xls", "bad.ics", "future.csv", "night.ics").contains(name)) throw new FileNotFoundException();
         File file = new File(getContext().getCacheDir(), name);
         try (OutputStream out = new FileOutputStream(file)) {
             if (name.equals("bad.ics")) out.write("not a calendar".getBytes("UTF-8"));

@@ -224,3 +224,27 @@ linux('Agent 加密备份回读、预览、取消和独立批准恢复；Catalog
   assert((await f.call('operations.receipt',{ operationId:restored.operationId })).ok);
   const audit = await readFile(join(f.dir,'agent-control.json'),'utf8'); assert(!audit.includes(password)); assert(!audit.includes('备份后新增'));
 });
+
+
+test('XLS Agent 预览、取消、确认和 CSV 来源替换保留身份', async t => {
+ const f=await fixture(t);await f.grant();
+ const profile={termKey:'2026-2027-1',timezone:'Asia/Shanghai',week1Monday:'2026-08-31',phases:[{effectiveFrom:'2026-08-31',periods:Array.from({length:11},(_,i)=>({periodNumber:i+1,start:`${String(8+i).padStart(2,'0')}:00`,end:`${String(8+i).padStart(2,'0')}:45`}))}]};
+ assert((await f.write('profile.upsert',{edit:{id:profile.termKey,value:profile}})).ok);
+ const preview=async ext=>f.write('import.preview',{filename:'oracle.'+ext,base64:(await readFile(new URL('../../schedule-core/src/test/resources/schedule/hubei_2026-2027-1.'+ext,import.meta.url))).toString('base64')});
+ const cliResult=await cli(f.socketPath,['import','preview','--json','--file',fileURLToPath(new URL('../../schedule-core/src/test/resources/schedule/hubei_2026-2027-1.xls',import.meta.url))],JSON.stringify(f.context()));
+ assert.equal(cliResult.code,0,cliResult.stdout);const cliPreview=JSON.parse(cliResult.stdout);assert.equal(cliPreview.data.count,131);assert((await f.write('import.cancel',{id:cliPreview.data.id})).ok);
+ const client=new Client({name:'pr50-xls',version:'1.0.0'});
+ const transport=new StdioClientTransport({command:process.execPath,args:['src/mcp.mjs'],cwd:new URL('../',import.meta.url).pathname.replace(/^\/(\w:)/,'$1'),env:{...process.env,DORMPANEL_AGENT_SOCKET:f.socketPath},stderr:'pipe',maxBufferSize:2*1024*1024});
+ t.after(()=>client.close());await client.connect(transport);
+ const mcp=await client.callTool({name:'import_preview',arguments:{...f.context(),filename:'mcp.xls',base64:(await readFile(new URL('../../schedule-core/src/test/resources/schedule/hubei_2026-2027-1.xls',import.meta.url))).toString('base64'),operationId:operationId()}});
+ assert.equal(mcp.isError,false);assert.equal(mcp.structuredContent.data.count,131);assert((await f.write('import.cancel',{id:mcp.structuredContent.data.id})).ok);
+ let p=await preview('xls');assert(p.ok,JSON.stringify(p));assert.equal(p.data.count,131);
+ assert((await f.write('import.cancel',{id:p.data.id})).ok);
+ assert.equal((await f.write('import.confirm',{id:p.data.id,displayName:'已取消'})).ok,false);
+ p=await preview('csv');assert(p.ok);assert((await f.write('import.confirm',{id:p.data.id,displayName:'CSV'})).ok);
+ const before=structuredClone(f.app.db.frame.local);
+ p=await preview('xls');assert(p.ok);const rows=await f.call('import.rows',{workspaceId:f.context().workspaceId,id:p.data.id,limit:100});assert(rows.ok);
+ assert((await f.write('import.confirm',{id:p.data.id,displayName:'XLS',targetId:before.sources[0].id})).ok);
+ assert.equal(f.app.db.frame.local.sources[0].id,before.sources[0].id);
+ assert.deepEqual(f.app.db.frame.local.imported,before.imported);
+});

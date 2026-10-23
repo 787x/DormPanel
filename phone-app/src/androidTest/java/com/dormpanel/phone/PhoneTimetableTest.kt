@@ -53,7 +53,7 @@ class PhoneTimetableTest {
         Intents.intending(hasAction(Intent.ACTION_OPEN_DOCUMENT)).respondWith(ActivityResult(Activity.RESULT_OK,
             Intent().setData(Uri.parse("content://${instrumentation.context.packageName}.fixtures/$filename"))))
         onView(withText("管理")).perform(click())
-        onView(withText("导入 ICS / 湖北大学 CSV")).perform(click())
+        onView(withText("导入 ICS / 湖北大学 CSV、XLS")).perform(click())
     }
     private fun preview(s: ActivityScenario<TimetableActivity>) {
         val deadline = System.currentTimeMillis() + 10000
@@ -320,9 +320,11 @@ class PhoneTimetableTest {
             onView(withText(startsWith("Phone local"))).check(matches(isDisplayed()))
         }
     }
-    @Test fun csvPickerPreviewConfirmationAndRestart() {
+    @Test fun csvPickerPreviewConfirmationAndRestart() = verifyPicker("csv")
+    @Test fun xlsPickerPreviewConfirmationAndRestart() = verifyPicker("xls")
+    private fun verifyPicker(format: String) {
         open().use { s ->
-            pick("hubei_2026-2027-1.csv"); preview(s)
+            pick("hubei_2026-2027-1.$format"); preview(s)
             s.onActivity { assertTrue(it.source.state.sources.isEmpty()) }
             screenshot("csv-preview")
             onView(withText("确认导入")).perform(click())

@@ -1,6 +1,6 @@
 // 三个入口共用的操作目录。业务写入仍全部进入 server 的原事务/互斥处理器。
 import { z } from 'zod';
-export const VERSION = '0.7.1';
+export const VERSION = '0.7.2';
 export const BUDGET = 2 * 1024 * 1024;
 const text = z.string().max(4096), id = z.uuid(), number = z.number().int().nonnegative();
 const workspace = { workspaceId: id };
@@ -47,7 +47,7 @@ for (const kind of ['entry','event','profile','date','source','override']) for (
 }
 for (const [name, fixed] of [['run', {}], ['create', { create:true }], ['bind', { bind:true }]]) add('sync.' + name, '检查、发布并回读确认；保留恢复和数据集身份保护', write, '/api/sync', 'edit', { fixed });
 add('conflicts.resolve', '在当前冲突 token 下明确选择 local 或 remote', { ...write, token:text, choice:z.enum(['local','remote']) }, '/api/resolve', 'edit');
-add('import.preview', '有界 ICS/CSV 字节预览；不得提供 NAS 文件路径', { ...write, filename:text, base64:z.string().max(1800000) }, '/api/import/preview', 'edit');
+add('import.preview', '有界 ICS/CSV/XLS 字节预览；不得提供 NAS 文件路径', { ...write, filename:text, base64:z.string().max(1800000) }, '/api/import/preview', 'edit');
 add('import.rows', '分页查看未过期导入预览', { ...workspace, id, ...paging }, '/api/import/rows');
 add('import.cancel', '取消导入预览', { ...write, id }, '/api/import/cancel', 'edit');
 add('import.confirm', '确认新增导入或替换指定来源；保留覆盖关联', { ...write, id, displayName:text, targetId:text.nullable().optional() }, '/api/import/confirm', 'edit');

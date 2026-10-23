@@ -447,7 +447,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                                 autoSync = webDav.binding(it.source.id)?.autoSync ?: false,
                                 etag = choice.item.etag, lastModified = choice.item.lastModified,
                                 currentFile = choice.item.url, lastSuccess = System.currentTimeMillis(),
-                                format = if (isCsv) "csv" else "ics",
+                                format = if (preview.formatLabel?.endsWith("XLS") == true) "xls" else if (isCsv) "csv" else "ics",
                                 termKey = preview.termKey, profileFingerprint = profilePrint))
                         }
                         resolveRelay("imported")
@@ -479,6 +479,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                 val filename = binding.currentFile?.let { runCatching { WebDavClient().run { filename(url(it)) } }.getOrNull() }
                 fields.addView(context.scheduleLabel("WebDAV ${when (binding.mode) {
                     WebDavMode.FILE -> "file"
+                    WebDavMode.FOLDER_LATEST_XLS -> "folder · following newest XLS"
                     WebDavMode.FOLDER_LATEST_CSV -> "folder · following newest CSV"
                     else -> "folder · following newest ICS"
                 }} · $remote\n" +
@@ -540,9 +541,12 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         fields.addView(context.scheduleButton("Follow newest CSV in this folder") {
             dialog.dismiss(); remotePreview(account, WebDavMode.FOLDER_LATEST_CSV, folder, targetId)
         })
+        fields.addView(context.scheduleButton("Follow newest XLS in this folder") {
+            dialog.dismiss(); remotePreview(account, WebDavMode.FOLDER_LATEST_XLS, folder, targetId)
+        })
         webDav.browse(account, folder) { result -> if (!closed && dialog.isShowing) {
             result.onSuccess { items ->
-                status.text = if (items.isEmpty()) "No folders or timetable files." else "Select a folder, .ics, or .csv file."
+                status.text = if (items.isEmpty()) "No folders or timetable files." else "Select a folder, .ics, or .csv / .xls file."
                 items.forEach { item -> fields.addView(context.scheduleButton("${if (item.folder) "📁" else "📄"} ${item.name}") {
                     dialog.dismiss()
                     if (item.folder) browse(account, item.url, targetId)

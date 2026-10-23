@@ -96,14 +96,14 @@ class TemporaryLanUploadServer private constructor(
                     val boundary = Regex("boundary=(?:\"([^\"]+)\"|([^;]+))", RegexOption.IGNORE_CASE)
                         .find(type)?.let { it.groupValues[1].ifEmpty { it.groupValues[2].trim() } }
                     if (!type.startsWith("multipart/form-data", true) || boundary == null || boundary.length !in 1..70) {
-                        reply(output, 400, "Choose one .ics or .csv file."); return
+                        reply(output, 400, "Choose one .ics, .csv or .xls file."); return
                     }
                     val body = ByteArray(length)
                     var read = 0
                     while (read < length) { val count = input.read(body, read, length - read); if (count < 0) throw IOException("Short body"); read += count }
                     val artifact = try { multipart(body, boundary) } catch (error: ScheduleImportException) {
                         if (error.message?.contains("limit") == true) reply(output, 413, "Timetable file exceeds the 1 MiB size limit.")
-                        else reply(output, 400, "Choose one valid .ics or .csv file.")
+                        else reply(output, 400, "Choose one valid .ics, .csv or .xls file.")
                         return
                     }
                     val valid = try { validate(artifact) } catch (_: Exception) { false }
@@ -135,7 +135,7 @@ class TemporaryLanUploadServer private constructor(
         const val LIFETIME_MS = 10 * 60 * 1000L
         private const val HEADER_LIMIT = 8192
         private const val BODY_LIMIT = ImportLimits.BYTES + 16 * 1024
-        private val FORM = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DormPanel timetable upload</title><style>body{font:18px system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:1rem;line-height:1.5}input,button{font:inherit;margin:.5rem 0;padding:.6rem}button{min-height:3rem}</style></head><body><h1>DormPanel timetable upload</h1><form method="post" action="upload" enctype="multipart/form-data"><label>Choose .ics or .csv file <input type="file" name="file" accept=".ics,.csv,text/calendar,text/csv" required></label><br><button type="submit">Upload</button></form><p>This upload goes directly to the DormPanel currently showing the QR code.</p></body></html>"""
+        private val FORM = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DormPanel timetable upload</title><style>body{font:18px system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:1rem;line-height:1.5}input,button{font:inherit;margin:.5rem 0;padding:.6rem}button{min-height:3rem}</style></head><body><h1>DormPanel timetable upload</h1><form method="post" action="upload" enctype="multipart/form-data"><label>Choose .ics, .csv or .xls file <input type="file" name="file" accept=".ics,.csv,.xls,text/calendar,text/csv,application/vnd.ms-excel" required></label><br><button type="submit">Upload</button></form><p>This upload goes directly to the DormPanel currently showing the QR code.</p></body></html>"""
 
         fun start(address: String, validate: (ScheduleArtifact) -> Boolean, onAccepted: () -> Unit = {}, onExpired: () -> Unit = {},
             now: () -> Long = System::currentTimeMillis, lifetimeMs: Long = LIFETIME_MS): TemporaryLanUploadServer {
@@ -169,8 +169,8 @@ class TemporaryLanUploadServer private constructor(
                 val filename = Regex("filename=\"([^\"]*)\"", RegexOption.IGNORE_CASE).find(disposition)?.groupValues?.get(1)
                 if (filename != null) {
                     val safeName = filename.substringAfterLast('/').substringAfterLast('\\')
-                    val isTimetable = safeName.endsWith(".ics", true) || safeName.endsWith(".csv", true)
-                    importCheck(artifact == null && isTimetable, "Choose one .ics or .csv file.")
+                    val isTimetable = safeName.endsWith(".ics", true) || safeName.endsWith(".csv", true) || safeName.endsWith(".xls", true)
+                    importCheck(artifact == null && isTimetable, "Choose one .ics, .csv or .xls file.")
                     val bytes = body.copyOfRange(headersEnd + 4, next)
                     importCheck(bytes.size <= ImportLimits.BYTES, "Timetable file exceeds the 1 MiB size limit.")
                     val mime = headers.lines().firstOrNull { it.startsWith("Content-Type:", true) }?.substringAfter(':')?.trim()

@@ -88,9 +88,10 @@ class TimetableImporter(
 
     fun parseOutcome(artifact: ScheduleArtifact, profileOverride: TermScheduleProfile? = null): ParseOutcome {
         val bytes = artifact.bytes()
-        val text = runCatching { CsvReader.decode(bytes) }.getOrNull()
-        if (text != null && HubeiCsvTimetableParser.looksLike(text)) {
-            val structure = HubeiCsvTimetableParser.parse(text)
+        val isXls = HubeiXlsReader.signature(bytes) || artifact.filename.endsWith(".xls", true)
+        val text = if (isXls) null else runCatching { CsvReader.decode(bytes) }.getOrNull()
+        if (isXls || (text != null && HubeiCsvTimetableParser.looksLike(text))) {
+            val structure = if (isXls) HubeiXlsReader.parse(bytes) else HubeiCsvTimetableParser.parse(text!!)
             val rawDigest = digest(bytes)
             val profile = profileOverride
                 ?: profiles?.get(structure.termKey)
@@ -99,10 +100,10 @@ class TimetableImporter(
                 return ParseOutcome.NeedsProfile(structure, artifact.filename, artifact.kind, artifact.locator, rawDigest)
             }
             val parsed = CsvTimetableResolver.resolve(structure, profile)
-            val fingerprint = csvFingerprint(bytes, profile)
+            val fingerprint = csvFingerprintFromDigest(rawDigest, profile, structure.parserId)
             return ParseOutcome.Ready(ImportPreview(artifact.filename, artifact.kind, artifact.locator,
                 fingerprint, parsed,
-                formatLabel = "Hubei University CSV",
+                formatLabel = if (structure.parserId == HubeiXlsReader.PARSER_ID) "Hubei University XLS" else "Hubei University CSV",
                 termKey = profile.termKey,
                 week1Monday = profile.week1Monday.toString(),
                 timezone = profile.timezone,
@@ -130,11 +131,11 @@ class TimetableImporter(
          * Fingerprint from a pre-computed raw-file digest. Used by the NeedsProfile flow
          * so ephemeral parse results match the Ready path without retaining source bytes.
          */
-        fun csvFingerprintFromDigest(rawDigest: String, profile: TermScheduleProfile): String {
+        fun csvFingerprintFromDigest(rawDigest: String, profile: TermScheduleProfile, parserId: String = HubeiCsvTimetableParser.PARSER_ID): String {
             val out = ByteArrayOutputStream()
             out.write(rawDigest.toByteArray(Charsets.UTF_8))
             out.write(0)
-            out.write(HubeiCsvTimetableParser.PARSER_ID.toByteArray(Charsets.UTF_8))
+            out.write(parserId.toByteArray(Charsets.UTF_8))
             out.write(0)
             out.write(profile.fingerprintMaterial().toByteArray(Charsets.UTF_8))
             return digest(out.toByteArray())
@@ -155,9 +156,9 @@ fun resolveHubeiCsv(structure: HubeiCsvStructure, profile: TermScheduleProfile,
     filename: String, kind: String = "local_document", locator: String? = null,
     rawDigest: String): ImportPreview {
     val parsed = CsvTimetableResolver.resolve(structure, profile)
-    val fingerprint = TimetableImporter.csvFingerprintFromDigest(rawDigest, profile)
+    val fingerprint = TimetableImporter.csvFingerprintFromDigest(rawDigest, profile, structure.parserId)
     return ImportPreview(filename, kind, locator, fingerprint, parsed,
-        formatLabel = "Hubei University CSV",
+        formatLabel = if (structure.parserId == HubeiXlsReader.PARSER_ID) "Hubei University XLS" else "Hubei University CSV",
         termKey = profile.termKey,
         week1Monday = profile.week1Monday.toString(),
         timezone = profile.timezone,

@@ -637,8 +637,8 @@ async function importFile() {
   dialog(
     "导入预览",
     (form) => {
-      const file = field("选择 ICS 或 CSV", "", "file");
-      file.accept = ".ics,.csv";
+      const file = field("选择 ICS、CSV 或 XLS", "", "file");
+      file.accept = ".ics,.csv,.xls";
       const name = field("来源显示名", "课程表"),
         target = el("select");
       target.append(el("option", "新增来源"));
@@ -658,7 +658,7 @@ async function importFile() {
         const epoch = ++previewEpoch, current = () => form.current() && epoch === previewEpoch;
         preview = null; previewError = '正在检查文件预览，请稍候'; form.setReady(false);
         retry.hidden = true; $('formError').textContent = '';
-        if (!f) { info.textContent = previewError = '未选择文件，请选择 ICS 或 CSV。'; return; }
+        if (!f) { info.textContent = previewError = '未选择文件，请选择 ICS、CSV 或 XLS。'; return; }
         info.textContent = `已选择 ${f.name}，正在检查预览…`;
         try {
           if (f.size > 1048576) throw Error("文件超过 1 MiB");
@@ -695,7 +695,7 @@ async function importFile() {
         if (!preview) throw Error(previewError || '请先完成文件预览');
         const confirmed = preview;
         if (
-          !(await confirmAction("确认导入以上预览？替换来源将保留原 sourceId 和已有覆盖。"))
+          !(await confirmAction("确认导入以上预览？替换来源将保留原 sourceId 和已有覆盖。" + (() => { const r = preview.replacements?.find(r => r.sourceId === target.value); return r ? `\n替换 ${r.count} 个原实例 → ${preview.count} 个新实例。\n可能不再匹配的课程：${r.unmatchedTitles.join("、") || "无"}` : ""; })()))
         )
           throw Error("已取消");
         if (confirmed !== preview) throw Error('所选文件已变化，请检查最新预览');

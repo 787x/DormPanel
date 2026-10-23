@@ -238,15 +238,17 @@ object WebDavSelection {
         runCatching { URLDecoder.decode(it.replace("+", "%2B"), "UTF-8") }.getOrDefault(it)
     } ?: ""
     private fun WebDavItem.isIcs(): Boolean = decodedName().endsWith(".ics", true)
+    private fun WebDavItem.isXls(): Boolean = decodedName().endsWith(".xls", true)
     private fun WebDavItem.isCsv(): Boolean = decodedName().endsWith(".csv", true)
     fun children(folder: String, items: List<WebDavItem>): List<WebDavItem> = items.filter { it.url.trimEnd('/') != folder.trimEnd('/') &&
-        (it.folder || it.isIcs() || it.isCsv()) }.sortedWith(compareByDescending<WebDavItem> { it.folder }.thenBy { it.name.lowercase() })
+        (it.folder || it.isIcs() || it.isCsv() || it.isXls()) }.sortedWith(compareByDescending<WebDavItem> { it.folder }.thenBy { it.name.lowercase() })
     fun latest(items: List<WebDavItem>, extension: String = "ics"): WebDavItem {
         val match: (WebDavItem) -> Boolean = when (extension.lowercase()) {
+            "xls" -> { item -> !item.folder && item.isXls() }
             "csv" -> { item -> !item.folder && item.isCsv() }
             else -> { item -> !item.folder && item.isIcs() }
         }
-        val label = if (extension.equals("csv", true)) "CSV" else "ICS"
+        val label = extension.uppercase()
         val files = items.filter(match)
         if (files.isEmpty()) throw WebDavException("No $label files in folder.")
         if (files.size > 1 && files.any { it.modifiedAt == null })

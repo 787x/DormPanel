@@ -274,6 +274,11 @@ export async function createApp({
             warnings: preview.warnings,
             termKey: preview.termKey,
             samples: preview.occurrences.slice(0, 20),
+            replacements: db.frame.local.sources.map(source => {
+              const old = db.frame.local.imported.filter(row => row.sourceId === source.id);
+              const identities = new Set(preview.occurrences.map(row => row.seriesId + '\0' + row.originalStart));
+              return { sourceId: source.id, count: old.length, unmatchedTitles: [...new Set(old.filter(row => !identities.has(row.seriesId + '\0' + row.originalStart)).map(row => row.title))] };
+            }),
           });
           return;
         } else if (path === "/api/import/cancel") {
