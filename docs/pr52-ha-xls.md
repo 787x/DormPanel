@@ -24,3 +24,16 @@ main 已由 PR51 更新 X08E 至 0.1.7 / 10，因此本次使用 0.1.8 / 11，�
 本地候选位于 `artifacts/pr52/`：HA 0.1.2 zip、X08E 0.1.8 unsigned APK 和各自 SHA-256；二进制不提交 Git。当前环境没有注入 release 签名参数，因此不能把未签名 APK 当作可直接原位升级的正式签名包；发布前须使用现有证书重建并验证签名。
 
 尚未进行真实 HAOS 面板上传 → X08E 可视预览 → 用户确认 → HA imported 的全链路验收，亦未验证正式签名日用包原位升级、历史数据保留与最终 1280×800 可视布局。设备测试使用 MockWebServer / Fake channel，不是 LIVE PASS。没有发布 Release、tag 或自动合并。
+
+
+## 真实环境补充验收（2026-10-24）
+
+使用用户指定的 HA 环境，在 Codex 侧边浏览器通过 Filebrowser 更新本次变更的 const.py、http.py、relay.py、manifest.json、frontend/panel.js；重启 HA 后 XLS 区域正常出现。没有更换 HA 的注册记录或密钥。
+
+使用本机原 keystore 构建正式签名 X08E 0.1.8 / 11，apksigner 与 aapt 检查通过：包名 com.dormpanel.app、minSdk 28、targetSdk 37、非 debuggable，证书 SHA-256 与既有 32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7 一致。正式候选为 artifacts/pr52/DormPanel-X08E-0.1.8.apk，附 SHA-256；前述 unsigned 包仅保留作构建记录。签名口令未写入文件或仓库。
+
+真实 X08E 通过 adb install -r 从 0.1.7 / 10 原位更新成功，启动后沿用同一 installation_id 注册 XLS 能力。HA 面板选择脱敏 BIFF8 fixture、1 小时保留和该 X08E，发送后 HA 显示 preview_ready。设备 1280×800 预览显示 Hubei University XLS、13 series、131 classes、学期日期和分阶段作息；选择 Import as new timetable，点击 Import 后设备显示 Timetable imported / 131 classes，HA 实时更新为 imported。此路径为真实 HA 与日用 X08E 网络、解析、预览和本地提交回执的全链路通过，不使用 Fake channel。
+
+本地证据：artifacts/pr52/live/x08e-preview.png、ha-imported.jpg、device-ui.xml。截图不提交到公共仓库。此次以新来源添加脱敏测试课表，没有替换已有课表来源；测试来源保留在设备，便于复核。没有执行清数据、卸载日用包或系统服务调整。
+
+剩余边界：日用包所有历史数据的逐项对照、真实 HA 断线/超时/坏文件组合与未知学期交互未全部重演；这些边界由前述定向测试覆盖，不能表述为所有真实场景均已验收。
