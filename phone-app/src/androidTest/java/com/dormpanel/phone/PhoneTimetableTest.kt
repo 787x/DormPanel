@@ -30,6 +30,10 @@ class PhoneTimetableTest {
         ScheduleStores.overrideFactory = { context -> RoomScheduleStore(Room.databaseBuilder(context, ScheduleDatabase::class.java, dbName).build()) }
         TermScheduleProfileStore.overrideNamespace = "phone-test-${UUID.randomUUID()}"
         Intents.init()
+        // Start and verify the test-only provider before handing a URI to the picker.
+        instrumentation.context.contentResolver.query(Uri.parse("content://${instrumentation.context.packageName}.fixtures/wakeup.ics"), null, null, null, null)!!.use {
+            assertTrue("Fixture provider must expose the requested file", it.moveToFirst())
+        }
     }
     @After fun teardown() {
         Intents.release(); ScheduleStores.overrideFactory = null
@@ -68,6 +72,20 @@ class PhoneTimetableTest {
             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
         }; bitmap.recycle()
     }
+    // A time block can be taller than the viewport. Tap its visible portion, as a user does.
+    private fun timeBlockClick() = object : androidx.test.espresso.ViewAction {
+        override fun getConstraints() = isAssignableFrom(android.view.View::class.java)
+        override fun getDescription() = "Reveal and tap visible course block"
+        override fun perform(controller: androidx.test.espresso.UiController, view: android.view.View) {
+            view.requestRectangleOnScreen(android.graphics.Rect(0, 0, view.width, minOf(view.height, view.context.dp(48))), true)
+            controller.loopMainThreadUntilIdle()
+            androidx.test.espresso.action.GeneralClickAction(androidx.test.espresso.action.Tap.SINGLE, { v ->
+                val rect = android.graphics.Rect()
+                check(v.getGlobalVisibleRect(rect))
+                floatArrayOf(rect.exactCenterX(), rect.exactCenterY())
+            }, androidx.test.espresso.action.Press.FINGER).perform(controller, view)
+        }
+    }
     @Test fun sevenColumnsRotateRefreshAndOpenDetail() {
         open().use { s ->
             s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
@@ -95,7 +113,7 @@ class PhoneTimetableTest {
                 }
             }
             instrumentation.waitForIdleSync(); checkColumns(); screenshot("week-portrait")
-            onView(withText(startsWith("周视图测试"))).perform(scrollTo(), click())
+            onView(withText(startsWith("周视图测试"))).perform(timeBlockClick())
             onView(withText("Edit")).check(matches(isDisplayed()))
             androidx.test.espresso.Espresso.pressBack()
             s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
@@ -103,6 +121,53 @@ class PhoneTimetableTest {
             s.recreate(); waitFor(s) { it.source.ready }; checkColumns()
             onView(withText("日视图")).perform(click())
             onView(withText(startsWith("周视图测试"))).check(matches(isDisplayed()))
+            s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+        }
+    }
+    @Test fun overlappingInstancesLateScrollAndSyncRefresh() {
+        open().use { s ->
+            onView(withText("今天")).perform(click())
+            s.onActivity { a ->
+                val day = a.source.clock.today().dayOfWeek.value
+                a.source.saveEntry("Overlap A", day, 480, 540, "A101")
+                a.source.saveEntry("Overlap B", day, 510, 570, "B202")
+                a.source.saveEntry("Late class", day, 1320, 1380, "C303")
+            }
+            waitFor(s) { it.source.state.entries.size == 3 }
+            onView(withText("周视图")).perform(click())
+            for (title in listOf("Overlap A", "Overlap B")) {
+                onView(withText(startsWith("2 门重叠"))).perform(timeBlockClick())
+                onView(withText(startsWith(title))).perform(click())
+                onView(withText(title)).check(matches(isDisplayed()))
+                onView(withText("Edit")).perform(scrollTo()).check(matches(isDisplayed()))
+                androidx.test.espresso.Espresso.pressBack()
+            }
+            s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            Thread.sleep(1000); instrumentation.waitForIdleSync()
+            onView(withText(startsWith("Late class"))).perform(timeBlockClick())
+            onView(withText("Late class")).check(matches(isDisplayed()))
+            androidx.test.espresso.Espresso.pressBack()
+            var offset = 0
+            s.onActivity { a ->
+                val scroller = a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll")
+                assertTrue("Landscape course viewport", scroller.height >= a.dp(90))
+                offset = scroller.scrollY
+                assertTrue(offset > 0)
+                a.sharedSync.changed?.invoke()
+            }
+            instrumentation.waitForIdleSync()
+            s.onActivity { a -> assertEquals(offset, a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll").scrollY) }
+            s.recreate(); waitFor(s) { it.source.ready }; instrumentation.waitForIdleSync()
+            s.onActivity { a -> assertEquals(offset, a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll").scrollY) }
+            screenshot("late-landscape")
+            onView(withText("下周 ›")).perform(click())
+            var date = ""
+            s.onActivity { a ->
+                date = a.window.decorView.findViewWithTag<android.widget.TextView>("week-range").text.toString()
+                a.sharedSync.changed?.invoke()
+            }
+            instrumentation.waitForIdleSync()
+            s.onActivity { a -> assertEquals(date, a.window.decorView.findViewWithTag<android.widget.TextView>("week-range").text.toString()) }
             s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
         }
     }
@@ -119,7 +184,7 @@ class PhoneTimetableTest {
         open().use { s ->
             waitFor(s) { it.source.state.entries.singleOrNull()?.title == "Phone local" }
             onView(withText(startsWith("Phone local"))).perform(scrollTo(), click())
-            onView(withText("Edit")).perform(click())
+            onView(withText("Edit")).perform(scrollTo(), click())
             onView(withText("All weeks for this timetable item")).perform(click())
             onView(withHint("Course name")).perform(replaceText("Edited local"), closeSoftKeyboard())
             onView(withText("Save")).perform(click())
@@ -128,7 +193,7 @@ class PhoneTimetableTest {
         open().use { s ->
             waitFor(s) { it.source.state.classOverrides.singleOrNull()?.title == "Edited local" }
             onView(withText(startsWith("Edited local"))).perform(scrollTo(), click())
-            onView(withText("Reset all-weeks edit")).perform(click())
+            onView(withText("Reset all-weeks edit")).perform(scrollTo(), click())
             onView(withText(startsWith("Phone local"))).check(matches(isDisplayed()))
         }
     }
@@ -185,14 +250,14 @@ class PhoneTimetableTest {
                 id = a.source.state.sources.single().id
             }
             onView(withText(startsWith(title))).perform(scrollTo(), click())
-            onView(withText("Edit")).perform(click())
+            onView(withText("Edit")).perform(scrollTo(), click())
             onView(withText("This week")).perform(click())
             onView(withHint("Course name")).perform(replaceText("Week only"), closeSoftKeyboard())
             onView(withText("Save")).perform(click())
             onView(withText(startsWith("Week only"))).perform(scrollTo(), click())
-            onView(withText("Reset this week")).perform(click())
+            onView(withText("Reset this week")).perform(scrollTo(), click())
             onView(withText(startsWith(title))).perform(scrollTo(), click())
-            onView(withText("Edit")).perform(click())
+            onView(withText("Edit")).perform(scrollTo(), click())
             onView(withText("All weeks for this timetable item")).perform(click())
             onView(withHint("Course name")).perform(replaceText("All weeks"), closeSoftKeyboard())
             onView(withText("Save")).perform(click())

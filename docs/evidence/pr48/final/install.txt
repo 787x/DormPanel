@@ -1,0 +1,18 @@
+Performing Streamed Install
+Success
+b9a8194b71a046e8c0eb30995827b582b4bea834f630a5df2483b778a7d7d8a4  /data/user/0/com.dormpanel.timetable/databases/pr32-ui-1488de90-4c1b-4764-840e-4ed17894c542.db
+1101012abc444ac6e0503c51b6a37309d26817891275603f4e49b476d8fb5139  /data/user/0/com.dormpanel.timetable/databases/pr32-ui-1488de90-4c1b-4764-840e-4ed17894c542.db-shm
+ffe4d0c9d437285aee9d58ed5816184b2b3eb2c1271871d77244e0628f3c35f2  /data/user/0/com.dormpanel.timetable/databases/pr32-ui-1488de90-4c1b-4764-840e-4ed17894c542.db-wal
+d5b659abbb014aa05a427e3731fdf480d0773adfd511aa47f17cde62f759ae8f  /data/user/0/com.dormpanel.timetable/databases/schedule.db
+fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb  /data/user/0/com.dormpanel.timetable/databases/schedule.db-shm
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /data/user/0/com.dormpanel.timetable/databases/schedule.db-wal
+安装前后数据库文件哈希全部一致；正式包未启动，未写入验收数据。
+
+    versionCode=7 minSdk=28 targetSdk=37
+    versionName=0.1.5
+
+
+Algorithm : SHA256
+Hash      : FE06E89C3413F65923E5A91FB950E7F95D9E3813F71E83F8CB5BF09788BFE89A
+Path      : D:\Projects\DormPanel\artifacts\pr48-installed-final.apk
+

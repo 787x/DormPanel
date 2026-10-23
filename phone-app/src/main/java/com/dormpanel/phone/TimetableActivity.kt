@@ -27,9 +27,15 @@ class TimetableActivity : AppCompatActivity() {
     private var scroll: ScrollView? = null
     private var scrollOffset = 0
     private var renderedKey = ""
+    private var restoringScroll = true
+    private fun restoreScroll() {
+        val view = scroll ?: return
+        val offset = scrollOffset
+        view.post { if (scroll === view) { view.scrollTo(0, offset); restoringScroll = false } }
+    }
     override fun onPause() {
         getPreferences(MODE_PRIVATE).edit().putString("date", selected.toString()).putBoolean("weekView", weekView)
-            .putInt("scroll", scroll?.scrollY ?: scrollOffset).apply()
+            .putInt("scroll", if (restoringScroll) scrollOffset else scroll?.scrollY ?: scrollOffset).apply()
         super.onPause()
     }
     private var activeTerm: String? = null
@@ -82,7 +88,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("date", selected.toString()); outState.putString("replacement", replacement)
-        outState.putBoolean("weekView", weekView); outState.putInt("scroll", scroll?.scrollY ?: scrollOffset)
+        outState.putBoolean("weekView", weekView); outState.putInt("scroll", if (restoringScroll) scrollOffset else scroll?.scrollY ?: scrollOffset)
         outState.putString("term", activeTerm); super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
@@ -98,9 +104,10 @@ class TimetableActivity : AppCompatActivity() {
     }
     private fun render() {
         val key = "${monday()}:$weekView:${if (weekView) "" else selected}"
-        if (renderedKey == key) scrollOffset = scroll?.scrollY ?: scrollOffset
-        else if (renderedKey.isNotEmpty()) scrollOffset = 0
+        if (renderedKey == key && !restoringScroll) scrollOffset = scroll?.scrollY ?: scrollOffset
+        else if (renderedKey != key && renderedKey.isNotEmpty()) scrollOffset = 0
         renderedKey = key
+        restoringScroll = true
         root.removeAllViews()
         if (source.state.sync != null && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
         val profile = activeTerm?.let(profiles::get)
@@ -110,7 +117,11 @@ class TimetableActivity : AppCompatActivity() {
             root.addView(scheduleLabel(sharedSync.status + if (stale) " · 数据过期，显示缓存" else "", 14f))
         }
         val week = profile?.let { ChronoUnit.WEEKS.between(it.week1Monday, monday()) + 1 }
-        root.addView(scheduleLabel("${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f))
+        root.addView(scheduleLabel("${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f).apply { tag = "week-range"
+            if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+                textSize = 12f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(8), 0, dp(8), 0)
+            } })
         row().also { bar ->
             action(bar, "‹ 上周") { selected = selected.minusWeeks(1); render() }
             action(bar, "今天") { selected = source.clock.today(); render() }
@@ -123,7 +134,7 @@ class TimetableActivity : AppCompatActivity() {
         repeat(7) { i ->
             val date = monday().plusDays(i.toLong())
             days.addView(scheduleButton("${labels[i]}\n${date.dayOfMonth}") { selected = date; weekView = false; render() }.apply {
-                textSize = 12f; minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0; includeFontPadding = false; setPadding(0, 0, 0, 0)
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 12f * resources.displayMetrics.density * minOf(resources.configuration.fontScale, 1.2f)); minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0; includeFontPadding = false; setPadding(0, 0, 0, 0)
                 isSelected = date == selected
                 if (date == selected) {
                     setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -140,7 +151,7 @@ class TimetableActivity : AppCompatActivity() {
             action(bar, "管理") { management() }
         }
         val list = scheduleColumn()
-        scroll = ScrollView(this).apply { addView(list); isFillViewport = true }
+        scroll = ScrollView(this).apply { tag = "timetable-scroll"; addView(list); isFillViewport = true }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         if (!source.ready) { list.addView(scheduleLabel(if (source.error) "读取失败，请重新打开应用。原有数据未清除。" else "正在读取课程…", 16f)); return }
         if (source.error || source.state.invalidRecords > 0) list.addView(scheduleLabel("存储异常或存在无效记录，请检查。更改可能尚未保存。", 16f))
@@ -148,10 +159,10 @@ class TimetableActivity : AppCompatActivity() {
         val projected = ScheduleProjection.week(source.state, monday(), source.clock.zone())
         if (weekView) {
             list.addView(PhoneWeekView(this, projected, monday(), source.clock.zone(), editors::classDetail))
-            scroll?.post { scroll?.scrollTo(0, scrollOffset) }
+            restoreScroll()
             return
         }
-        scroll?.post { scroll?.scrollTo(0, scrollOffset) }
+        restoreScroll()
         val adjustment = source.state.daysByDate[selected.toString()]
         list.addView(scheduleLabel("$selected${adjustment?.let { " · ${if (it.mode == "none") "无课" else "使用星期 ${it.weekday} 课表"}" }.orEmpty()}", 16f))
         val classes = projected.filter { it.start < selected.plusDays(1).atStartOfDay(source.clock.zone()).toInstant() && it.end > selected.atStartOfDay(source.clock.zone()).toInstant() }

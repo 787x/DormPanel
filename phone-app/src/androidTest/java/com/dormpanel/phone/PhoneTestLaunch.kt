@@ -38,3 +38,12 @@ internal fun launchPhoneTestActivity(): ActivityScenario<TimetableActivity> {
     failure.get()?.let { scenario.close(); throw it }
     return scenario
 }
+
+/** MIUI's system save-password overlay steals focus after synthetic WebDAV credentials.
+ * Cancel only this identified prompt; never save test credentials or dismiss app dialogs. */
+internal fun dismissTestPasswordPrompt() {
+    val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return
+    if (root.findAccessibilityNodeInfosByText("自动保存账号密码").isNotEmpty()) {
+        root.findAccessibilityNodeInfosByText("取消").firstOrNull()?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+    }
+}

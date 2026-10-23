@@ -21,7 +21,7 @@ internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, mon
         val axis = FrameLayout(context)
         addView(axis, LayoutParams(context.dp(32), height))
         for (minute in first..last step 60) {
-            axis.addView(TextView(context).apply { text = "%02d:%02d".format(minute / 60, minute % 60); textSize = 9f },
+            axis.addView(TextView(context).apply { text = "%02d:%02d".format(minute / 60, minute % 60); setSingleLine(true); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 9f * resources.displayMetrics.density) },
                 FrameLayout.LayoutParams(-1, context.dp(24)).apply { topMargin = ((minute - first) * scale).toInt() })
         }
         repeat(7) { day ->

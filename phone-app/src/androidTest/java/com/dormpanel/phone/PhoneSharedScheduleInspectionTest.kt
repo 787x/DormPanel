@@ -22,6 +22,7 @@ class PhoneSharedScheduleInspectionTest {
     private fun waitFor(s: ActivityScenario<TimetableActivity>, predicate: (TimetableActivity) -> Boolean) {
         val deadline = System.currentTimeMillis() + 20000
         while (System.currentTimeMillis() < deadline) {
+            dismissTestPasswordPrompt()
             var done = false; s.onActivity { done = predicate(it) }
             if (done) return
             Thread.sleep(40)
@@ -101,8 +102,16 @@ class PhoneSharedScheduleInspectionTest {
     }
     @Test fun firstBindThenRepeatedBoundInspectionIsReadOnlyIncludingAllCheckpoints() {
         Fixture().use { f -> launchPhoneTestActivity().use { s ->
-            f.open(s); f.inspect(); waitFor(s) { !it.sharedSync.busy }
-            onView(withText("确认下载并绑定")).check(matches(isDisplayed())).perform(click())
+            f.open(s); f.inspect(); waitFor(s) { !it.sharedSync.busy }; dismissTestPasswordPrompt()
+            val previewDeadline = System.currentTimeMillis() + 20000
+            while (true) {
+                try { onView(withText("确认下载并绑定")).check(matches(isDisplayed())); break }
+                catch (e: androidx.test.espresso.NoMatchingViewException) {
+                    if (System.currentTimeMillis() >= previewDeadline) throw e
+                    Thread.sleep(40)
+                }
+            }
+            onView(withText("确认下载并绑定")).perform(click())
             waitFor(s) { it.source.state.sync != null && !it.source.applyingSnapshot && !it.sharedSync.busy }
             val before = f.localBytes()
             // A later remote version must remain a preview, rather than being applied locally by inspect.
@@ -112,7 +121,7 @@ class PhoneSharedScheduleInspectionTest {
             val remoteBefore = f.files.mapValues { digest(it.value) }
             repeat(2) {
                 onView(withText("测试连接 / 检查远端快照")).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
-                f.inspect(); waitFor(s) { !it.sharedSync.busy }
+                f.inspect(); waitFor(s) { !it.sharedSync.busy }; dismissTestPasswordPrompt()
                 onView(withText(containsString("Commit: ${next.commitId}"))).check(matches(isDisplayed()))
                 onView(withText(containsString("远端历史：2 个已验证提交"))).check(matches(isDisplayed()))
                 onView(withText("确认下载并绑定")).check(doesNotExist())

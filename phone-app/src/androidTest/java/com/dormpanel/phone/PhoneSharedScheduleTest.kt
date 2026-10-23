@@ -25,6 +25,7 @@ class PhoneSharedScheduleTest {
     private fun waitFor(scenario: ActivityScenario<TimetableActivity>, predicate: (TimetableActivity) -> Boolean) {
         val deadline = System.currentTimeMillis() + 20000
         while (System.currentTimeMillis() < deadline) {
+            dismissTestPasswordPrompt()
             var done = false; scenario.onActivity { done = predicate(it) }
             if (done) return
             Thread.sleep(40)
@@ -96,6 +97,7 @@ class PhoneSharedScheduleTest {
                     assertNotNull(writerStore.v2Frame().baseline?.commitId)
                     onView(withText("关闭")).perform(click())
                     waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
+                    waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
                     instrumentation.waitForIdleSync()
                     Thread.sleep(350) // Native window dismissal is not tracked by Espresso idleness.
 
@@ -109,6 +111,7 @@ class PhoneSharedScheduleTest {
                     // Transport finishes asynchronously; wait for its confirmation dialog without accepting it early.
                     val deadline = System.currentTimeMillis() + 20000
                     while (System.currentTimeMillis() < deadline) {
+            dismissTestPasswordPrompt()
                         try { onView(withText("确认下载并绑定")).check(matches(isDisplayed())); break } catch (_: AssertionError) { Thread.sleep(40) }
                         catch (_: androidx.test.espresso.NoMatchingViewException) { Thread.sleep(40) }
                     }
@@ -116,6 +119,7 @@ class PhoneSharedScheduleTest {
                     onView(withText("确认下载并绑定")).perform(click())
                     waitFor(scenario) { it.source.state.sync != null && !it.source.applyingSnapshot }
                     onView(withText("关闭")).perform(click())
+                    waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
                     onView(withText("＋ 课程")).check(matches(isDisplayed()))
                     onView(withText("日期调整")).check(matches(isDisplayed()))
                     scenario.onActivity {
@@ -160,6 +164,7 @@ class PhoneSharedScheduleTest {
                     waitFor(scenario) { it.source.state.entries.singleOrNull()?.title == "New revision" && !it.source.applyingSnapshot }
                     scenario.onActivity { assertEquals("Asia/Tokyo", it.source.state.profiles["custom-term"]!!.timezone) }
                     onView(withText("关闭")).perform(click())
+                    waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
                     // Bad remote bytes must leave the successful revision intact.
                     dav.files["/share/dormpanel-sync-v2/commit-${writerStore.v2Frame().baseline?.commitId}.dpc"] = byteArrayOf(1, 2)
                     onView(withText("管理")).perform(click())
@@ -168,6 +173,7 @@ class PhoneSharedScheduleTest {
                     waitFor(scenario) { !it.sharedSync.busy }
                     scenario.onActivity { assertEquals("New revision", it.source.state.entries.single().title); assertTrue(it.sharedSync.status.contains("同步失败")) }
                     onView(withText("关闭")).perform(click())
+                    waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
                     dav.offline = true
                 }
                 launchPhoneTestActivity().use { scenario ->
