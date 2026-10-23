@@ -198,7 +198,7 @@ class RelayTest(unittest.IsolatedAsyncioTestCase):
                                   ["schedule_relay_v1", "schedule_csv_v1"], True)
         temporary = self.relay.directory / ("c" * 32 + ".tmp")
         temporary.write_bytes(b"x")
-        for name in ("plan.ics", "plan.txt", "plan", ".csv"):
+        for name in ("plan.xls", "plan.ics", "plan.txt", "plan", ".csv"):
             with self.assertRaises(ValueError):
                 await self.relay.create_from_file(name, temporary, 1, "a" * 64, ["screen-one"], 3600, "schedule_csv")
         self.assertTrue(temporary.exists())
@@ -249,15 +249,106 @@ class RelayTest(unittest.IsolatedAsyncioTestCase):
         await self.relay.acknowledge("screen-one", "first-secret", item["transfer_id"], "imported")
         self.assertFalse(self.relay._path(item["transfer_id"]).exists())
 
+    async def test_schedule_xls_create_claim_ack(self):
+        await self.relay.register("screen-one", "first-secret", "Bedside", "1.0",
+                                  ["schedule_relay_v1", "schedule_xls_v1"], True)
+        temporary = self.relay.directory / ("c" * 32 + ".tmp")
+        body = (ROOT.parents[2] / "schedule-core/src/test/resources/schedule/hubei_2026-2027-1.xls").read_bytes()
+        temporary.write_bytes(body)
+        item = await self.relay.create_from_file("plan.xls", temporary, len(body), hashlib.sha256(body).hexdigest(),
+                                                 ["screen-one"], 3600, "schedule_xls")
+        self.assertEqual("schedule_xls", item["kind"])
+        restarted = relay_module.Relay(self.hass)
+        await restarted.start()
+        self.relay = restarted
+        self.assertEqual(1, len(restarted.pending("screen-one", "first-secret")))
+
+        self.assertEqual("plan.xls", item["filename"])
+        claimed, claim_id = self.relay.claim("screen-one", "first-secret", item["transfer_id"])
+        self.assertEqual("schedule_xls", claimed["kind"])
+        self.assertEqual(body, self.relay.downloadable(item["transfer_id"], claim_id)[1].read_bytes())
+        await self.relay.acknowledge("screen-one", "first-secret", item["transfer_id"], "preview_ready")
+        self.assertEqual(1, len(self.relay.pending("screen-one", "first-secret")))
+        await self.relay.acknowledge("screen-one", "first-secret", item["transfer_id"], "imported")
+        self.assertEqual([], self.relay.pending("screen-one", "first-secret"))
+        self.assertFalse(self.relay._path(item["transfer_id"]).exists())
+
+    async def test_schedule_xls_filename_must_end_xls(self):
+        await self.relay.register("screen-one", "first-secret", "Bedside", "1.0",
+                                  ["schedule_relay_v1", "schedule_xls_v1"], True)
+        temporary = self.relay.directory / ("c" * 32 + ".tmp")
+        temporary.write_bytes(b"x")
+        for name in ("plan.ics", "plan.csv", "plan.xlsx", "plan.txt", "plan", ".xls"):
+            with self.assertRaises(ValueError):
+                await self.relay.create_from_file(name, temporary, 1, "a" * 64, ["screen-one"], 3600, "schedule_xls")
+        self.assertTrue(temporary.exists())
+
+    async def test_schedule_xls_requires_schedule_xls_v1(self):
+        temporary = self.relay.directory / ("c" * 32 + ".tmp")
+        temporary.write_bytes(b"x")
+        with self.assertRaises(ValueError):
+            await self.relay.create_from_file("plan.xls", temporary, 1, "a" * 64, ["screen-two"], 3600, "schedule_xls")
+        self.assertTrue(temporary.exists())
+        await self.relay.register("screen-two", "second-secret", "Desk", "1.0",
+                                  ["schedule_relay_v1", "schedule_xls_v1"], True)
+        item = await self.relay.create_from_file("plan.xls", temporary, 1, "a" * 64, ["screen-two"], 3600, "schedule_xls")
+        self.assertEqual("schedule_xls", item["kind"])
+        self.assertEqual("plan.xls", item["filename"])
+
+    async def test_schedule_xls_size_limit_is_one_mib(self):
+        await self.relay.register("screen-one", "first-secret", "Bedside", "1.0",
+                                  ["schedule_relay_v1", "schedule_xls_v1"], True)
+        temporary = self.relay.directory / ("c" * 32 + ".tmp")
+        temporary.write_bytes(b"x")
+        with self.assertRaises(ValueError):
+            await self.relay.create_from_file("large.xls", temporary, 1024 * 1024 + 1, "a" * 64,
+                                              ["screen-one"], 3600, "schedule_xls")
+        self.assertTrue(temporary.exists())
+        item = await self.relay.create_from_file("ok.xls", temporary, 1024 * 1024, "a" * 64,
+                                                 ["screen-one"], 3600, "schedule_xls")
+        self.assertEqual("schedule_xls", item["kind"])
+
+    async def test_schedule_xls_outcomes(self):
+        await self.relay.register("screen-one", "first-secret", "Bedside", "1.0",
+                                  ["schedule_relay_v1", "schedule_xls_v1"], True)
+        temporary = self.relay.directory / ("c" * 32 + ".tmp")
+        for outcome in ("imported", "dismissed", "rejected_invalid"):
+            temporary.write_bytes(b"xls")
+            item = await self.relay.create_from_file("plan.xls", temporary, 3, hashlib.sha256(b"xls").hexdigest(),
+                                                     ["screen-one"], 3600, "schedule_xls")
+            await self.relay.acknowledge("screen-one", "first-secret", item["transfer_id"], outcome)
+            self.assertFalse(self.relay._path(item["transfer_id"]).exists())
+        temporary.write_bytes(b"xls")
+        item = await self.relay.create_from_file("plan.xls", temporary, 3, hashlib.sha256(b"xls").hexdigest(),
+                                                 ["screen-one"], 3600, "schedule_xls")
+        await self.relay.acknowledge("screen-one", "first-secret", item["transfer_id"], "preview_ready")
+        self.assertTrue(self.relay._path(item["transfer_id"]).exists())
+        for wrong in ("installed", "install_failed", "bogus"):
+            with self.assertRaises(ValueError):
+                await self.relay.acknowledge("screen-one", "first-secret", item["transfer_id"], wrong)
+        await self.relay.acknowledge("screen-one", "first-secret", item["transfer_id"], "imported")
+        self.assertFalse(self.relay._path(item["transfer_id"]).exists())
+
     async def test_schedule_ics_filename_rejects_csv(self):
         await self.relay.register("screen-one", "first-secret", "Bedside", "1.0",
                                   ["schedule_relay_v1", "schedule_csv_v1"], True)
         temporary = self.relay.directory / ("c" * 32 + ".tmp")
         temporary.write_bytes(b"x")
-        for name in ("plan.csv", "plan.txt", "plan"):
+        for name in ("plan.xls", "plan.csv", "plan.txt", "plan"):
             with self.assertRaises(ValueError):
                 await self.relay.create_from_file(name, temporary, 1, "a" * 64, ["screen-one"], 3600, "schedule_ics")
         self.assertTrue(temporary.exists())
+
+    async def test_legacy_record_without_kind_remains_ics(self):
+        item = await self.relay.create("legacy.ics", b"calendar", ["screen-one"], 3600)
+        self.relay.transfers[item["transfer_id"]].pop("kind")
+        await self.relay._save()
+        restarted = relay_module.Relay(self.hass)
+        await restarted.start()
+        claimed, _ = restarted.claim("screen-one", "first-secret", item["transfer_id"])
+        self.assertEqual("schedule_ics", claimed.get("kind", "schedule_ics"))
+        await restarted.acknowledge("screen-one", "first-secret", item["transfer_id"], "imported")
+        self.assertFalse(restarted._path(item["transfer_id"]).exists())
 
     async def test_schedule_ics_remains_compatible(self):
         item = await self.relay.create("folder\\WakeUp.ics", b"calendar", ["screen-one"], 3600)

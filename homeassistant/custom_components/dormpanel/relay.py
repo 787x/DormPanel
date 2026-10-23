@@ -22,7 +22,7 @@ from .const import (DOMAIN, EVENT_AVAILABLE, EVENT_CHANGED, MAX_BYTES, MAX_APK_B
 def safe_filename(value: str, kind: str = "schedule_ics") -> str:
     name = value.replace("\\", "/").split("/")[-1]
     name = re.sub(r"[^\w.() -]", "_", name, flags=re.UNICODE).strip(" .")[:120]
-    extension = {"apk": ".apk", "schedule_csv": ".csv"}.get(kind, ".ics")
+    extension = {"apk": ".apk", "schedule_csv": ".csv", "schedule_xls": ".xls"}.get(kind, ".ics")
     if not name.lower().endswith(extension) or name.lower() == extension:
         raise ValueError(f"Choose one {extension} file")
     return name

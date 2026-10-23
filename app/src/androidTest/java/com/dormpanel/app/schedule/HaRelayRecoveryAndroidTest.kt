@@ -185,6 +185,41 @@ class HaRelayRecoveryAndroidTest {
         }
     }
 
+    @Test fun xlsReconnectReclaimsInterruptedTransferAndIgnoresLateCallback() {
+        MockWebServer().use { server ->
+            val identity = HaRelayIdentityStore(instrumentation.targetContext)
+            val raw = instrumentation.context.assets.open("hubei_2026-2027-1.xls").use { it.readBytes() }
+            val hash = MessageDigest.getInstance("SHA-256").digest(raw).joinToString("") { "%02x".format(it) }
+            val id = "c".repeat(32)
+            val channel = Channel(server.url("/").toString()).apply {
+                pending += id
+                deferNextClaim = true
+                claimResponse = { JSONObject().put("transfer_id", id).put("size", raw.size)
+                    .put("kind", "schedule_xls").put("filename", "schedule.xls").put("sha256", hash)
+                    .put("signed_path", "/api/dormpanel/transfers/$id?authSig=test") }
+            }
+            server.enqueue(MockResponse().setBody(okio.Buffer().write(raw)))
+            val delivered = CountDownLatch(1)
+            var previews = 0
+            lateinit var controller: HaScheduleRelayController
+            main {
+                controller = HaScheduleRelayController(channel, identity, OkHttpClient())
+                controller.attach { previews++; delivered.countDown() }
+                assertEquals(listOf(id), channel.claims)
+                channel.reconnect()
+                channel.deferredClaim?.invoke(JSONObject().put("success", false))
+            }
+            try {
+                await(delivered)
+                main {
+                    assertEquals(listOf(id, id), channel.claims)
+                    assertEquals(1, previews)
+                    controller.close()
+                }
+            } finally { main { controller.close() } }
+        }
+    }
+
     @Test fun recoveredHaInstalledIsAcceptedWithoutActivePreviewAndAckedAfterRegister() {
         MockWebServer().use { server ->
             val identity = HaRelayIdentityStore(instrumentation.targetContext)

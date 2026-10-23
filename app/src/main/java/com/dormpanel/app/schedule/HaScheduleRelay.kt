@@ -48,7 +48,16 @@ class HaRelayDownloader(http: OkHttpClient) {
             val body = response.body ?: throw IOException("Empty HA response")
             if (body.contentLength() > ImportLimits.BYTES) throw HaRelayIntegrityException("HA file exceeds size limit")
             val kind = claim.optString("kind", "schedule_ics")
-            val mime = if (kind == "schedule_csv") "text/csv" else "text/calendar"
+            val (extension, mime) = when (kind) {
+                "schedule_ics" -> ".ics" to "text/calendar"
+                "schedule_csv" -> ".csv" to "text/csv"
+                "schedule_xls" -> ".xls" to "application/vnd.ms-excel"
+                else -> throw HaRelayIntegrityException("Invalid schedule kind")
+            }
+            val filename = claim.getString("filename")
+            if (!filename.endsWith(extension, true) || filename.length <= extension.length ||
+                '/' in filename || '\\' in filename || filename.any { it.isISOControl() })
+                throw HaRelayIntegrityException("Invalid schedule filename")
             val artifact = ScheduleArtifact.read(claim.getString("filename"), body.byteStream(),
                 mime, "ha_relay", "ha_relay:$transferId")
             if (artifact.bytes().size != size || !digest(artifact.bytes()).equals(claim.getString("sha256"), true))
@@ -133,7 +142,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         recoveredInFlight = null
         inFlightId?.let { queued.addFirst(it); inFlightId = null; downloading = false }
             val request = message("register").put("display_name", identity.displayName).put("app_version", appVersion())
-            .put("capabilities", org.json.JSONArray().put("schedule_relay_v1").put("schedule_csv_v1").apply {
+            .put("capabilities", org.json.JSONArray().put("schedule_relay_v1").put("schedule_csv_v1").put("schedule_xls_v1").apply {
                 if (apk != null) put("apk_install_v1")
             })
         if (!channel.request(request) { result ->
@@ -199,7 +208,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
                 }
                 return@request
             }
-            if (kind != "schedule_ics" && kind != "schedule_csv") { acknowledge(id, "rejected_invalid"); failed(id); return@request }
+            if (kind !in setOf("schedule_ics", "schedule_csv", "schedule_xls")) { acknowledge(id, "rejected_invalid"); failed(id); return@request }
             worker.execute {
                 val artifact = runCatching { downloader.download(origin, payload) }
                 val parsed = artifact.mapCatching { bytes -> importer.parseOutcome(bytes) }
@@ -223,7 +232,12 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
                             }
                         }
                     }.onFailure { error ->
-                        if (artifact.isSuccess && error is ScheduleImportException) acknowledge(id, "rejected_invalid")
+                        if (error is ScheduleImportException || error is HaRelayIntegrityException || error is IllegalArgumentException) {
+                            active = RelayPreview(id, null)
+                            resolve(id, "rejected_invalid")
+                            status("Relay delivery rejected")
+                            return@post
+                        }
                         if (artifact.isFailure && error is IOException && error !is HaRelayIntegrityException &&
                             retries.getOrDefault(id, 0) < 1 && channel.ready) {
                             retries[id] = 1
@@ -318,7 +332,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         val scheduleDelivery = active?.transferId == transferId
         val apkDelivery = activeApkId == transferId
         if ((!scheduleDelivery && !apkDelivery) || outcome !in
-            (if (apkDelivery) setOf("installed", "dismissed", "rejected_invalid", "install_failed") else setOf("imported", "dismissed"))) return
+            (if (apkDelivery) setOf("installed", "dismissed", "rejected_invalid", "install_failed") else setOf("imported", "dismissed", "rejected_invalid"))) return
         // Keep the ID known while acknowledgement is uncertain. HA remains the
         // source of truth and will offer it again through list_pending on reconnect.
         terminalAwaitingAck += transferId
