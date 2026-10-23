@@ -1,0 +1,9 @@
+V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug
+V2 Signer: certificate SHA-256 digest: 32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7
+V2 Signer: certificate SHA-1 digest: 770988832b105ce5f938475986d8b82299420083
+V2 Signer: certificate MD5 digest: c3e4627d824b04d9a8bcb9788ae042f5
+
+Algorithm : SHA256
+Hash      : 0DD9254260C31DF79D3B4CE643B1BFDFCFC7BC44EB5CCA81132517EBB7C13F36
+Path      : D:\Projects\DormPanel\artifacts\pr48-candidate\DormPanel-Phone-0.1.5.apk
+
