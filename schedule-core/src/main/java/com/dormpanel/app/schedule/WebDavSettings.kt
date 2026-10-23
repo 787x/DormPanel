@@ -13,7 +13,7 @@ import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
-enum class WebDavMode { FILE, FOLDER_LATEST_ICS, FOLDER_LATEST_CSV }
+enum class WebDavMode { FILE, FOLDER_LATEST_ICS, FOLDER_LATEST_CSV, FOLDER_LATEST_XLS }
 data class WebDavBinding(val sourceId: String, val mode: WebDavMode, val remote: String,
     val autoSync: Boolean = false, val etag: String? = null, val lastModified: String? = null,
     val currentFile: String? = null, val lastSuccess: Long = 0, val lastAttempt: Long = 0,

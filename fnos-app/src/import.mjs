@@ -1,3 +1,4 @@
+import { xlsSheets, oleSignature, XLS_ID } from "./xls.mjs";
 import ICAL from "ical.js";
 import { randomUUID } from "node:crypto";
 import { Temporal } from "@js-temporal/polyfill";
@@ -52,9 +53,8 @@ export function csvRows(text) {
   }
   return rows;
 }
-function csv(text, profiles) {
-  const rows = csvRows(text),
-    term = /学年学期\s*[:：]\s*([0-9]{4}-[0-9]{4}-[0-9])/.exec(text)?.[1];
+function csv(text, profiles, rows = csvRows(text)) {
+  const term = /学年学期\s*[:：]\s*([0-9]{4}-[0-9]{4}-[0-9])/.exec(text)?.[1];
   ensure(term && /个人课表/.test(text), "仅支持湖北大学个人课表 CSV");
   const p = profiles.find((p) => p.termKey === term);
   ensure(p, "请先配置学期 " + term);
@@ -422,16 +422,39 @@ export function previewImport(bytes, filename, state) {
       !/[\\/\x00]/.test(filename),
     "文件名无效",
   );
-  let text;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    ensure(filename.toLowerCase().endsWith(".csv"), "ICS 需要 UTF-8");
-    text = new TextDecoder("gb18030", { fatal: true }).decode(bytes);
+  const isXls = oleSignature(bytes) || /\.xls$/i.test(filename);
+  let parsed;
+  if (isXls) {
+    const candidates = xlsSheets(bytes).filter((rows) => {
+      const text = rows.flat().join("\n");
+      return (
+        /个人课表/.test(text) &&
+        /学年学期\s*[:：]/.test(text) &&
+        rows.some(
+          (row) =>
+            row.filter((x) => /^星期[一二三四五六天日]$/.test(x.trim()))
+              .length >= 5,
+        )
+      );
+    });
+    ensure(candidates.length === 1, "没有唯一的湖北大学个人课表工作表");
+    parsed = csv(
+      candidates[0].flat().join("\n"),
+      state.profiles,
+      candidates[0],
+    );
+  } else {
+    let text;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      ensure(filename.toLowerCase().endsWith(".csv"), "ICS 需要 UTF-8");
+      text = new TextDecoder("gb18030", { fatal: true }).decode(bytes);
+    }
+    parsed = filename.toLowerCase().endsWith(".csv")
+      ? csv(text, state.profiles)
+      : ics(text);
   }
-  const parsed = filename.toLowerCase().endsWith(".csv")
-    ? csv(text, state.profiles)
-    : ics(text);
   ensure(
     parsed.occurrences.length > 0 && parsed.occurrences.length <= 10000,
     "没有可导入课程或超限",
@@ -439,7 +462,9 @@ export function previewImport(bytes, filename, state) {
   const sha256 = parsed.profile
     ? digest(
         digest(bytes) +
-          "\0hubei-personal-csv-v1\0" +
+          "\0" +
+          (isXls ? XLS_ID : "hubei-personal-csv-v1") +
+          "\0" +
           profileMaterial(parsed.profile),
       )
     : digest(bytes);

@@ -176,7 +176,7 @@ class TimetableActivity : AppCompatActivity() {
         val adjustment = source.state.daysByDate[selected.toString()]
         list.addView(scheduleLabel("$selected${adjustment?.let { " · ${if (it.mode == "none") "无课" else "使用星期 ${it.weekday} 课表"}" }.orEmpty()}", 16f))
         val classes = projected.filter { it.start < selected.plusDays(1).atStartOfDay(source.clock.zone()).toInstant() && it.end > selected.atStartOfDay(source.clock.zone()).toInstant() }
-        if (classes.isEmpty()) list.addView(scheduleLabel(if (source.readOnly) "今天没有课程。当前显示已缓存的共享课表；请在 X08E 修改并发布。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV。", 18f))
+        if (classes.isEmpty()) list.addView(scheduleLabel(if (source.readOnly) "今天没有课程。当前显示已缓存的共享课表；请在 X08E 修改并发布。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV、XLS。", 18f))
         classes.forEach { item ->
             list.addView(scheduleButton(buildString {
                 append(item.entry.title).append("\n")
@@ -190,7 +190,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     private fun management() {
         if (source.applyingSnapshot) return
-        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）")) { _, i ->
+        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）")) { _, i ->
             when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) } }
         }.setNegativeButton("关闭", null).show()
     }

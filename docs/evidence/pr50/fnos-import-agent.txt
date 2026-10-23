@@ -1,0 +1,190 @@
+TAP version 13
+# Subtest: CLI help/schema/version、JSON、退出码、参数和分页边界
+ok 1 - CLI help/schema/version、JSON、退出码、参数和分页边界
+  ---
+  duration_ms: 3112.112862
+  type: 'test'
+  ...
+# Subtest: 服务端默认只读、CSRF 隔离、伪造 header/身份和无权限写入不改变数据
+ok 2 - 服务端默认只读、CSRF 隔离、伪造 header/身份和无权限写入不改变数据
+  ---
+  duration_ms: 348.760724
+  type: 'test'
+  ...
+# Subtest: 网页与 Agent 共用 applyEdit；并发过期请求拒绝，重复 ID 与重启回执不重复新增
+ok 3 - 网页与 Agent 共用 applyEdit；并发过期请求拒绝，重复 ID 与重启回执不重复新增
+  ---
+  duration_ms: 290.201175
+  type: 'test'
+  ...
+# Subtest: 已落盘意图但响应未知或进程中断时不重新执行业务
+ok 4 - 已落盘意图但响应未知或进程中断时不重新执行业务
+  ---
+  duration_ms: 170.230516
+  type: 'test'
+  ...
+# Subtest: 恢复/回退/精简/迁移必须独立管理员批准，批准绑定参数且不能由两次工具调用伪造
+ok 5 - 恢复/回退/精简/迁移必须独立管理员批准，批准绑定参数且不能由两次工具调用伪造
+  ---
+  duration_ms: 325.944516
+  type: 'test'
+  ...
+# Subtest: 课程/覆盖/来源/学期/日期/事件/导入共用领域校验，读取与输出不泄露凭据
+ok 6 - 课程/覆盖/来源/学期/日期/事件/导入共用领域校验，读取与输出不泄露凭据
+  ---
+  duration_ms: 993.389451
+  type: 'test'
+  ...
+# Subtest: 官方 MCP SDK stdio auto 发现 Tools/Resources/Prompts 并与 CLI 一致
+ok 7 - 官方 MCP SDK stdio auto 发现 Tools/Resources/Prompts 并与 CLI 一致
+  ---
+  duration_ms: 2497.061547
+  type: 'test'
+  ...
+# Subtest: 官方 MCP SDK stdio legacy 发现 Tools/Resources/Prompts 并与 CLI 一致
+ok 8 - 官方 MCP SDK stdio legacy 发现 Tools/Resources/Prompts 并与 CLI 一致
+  ---
+  duration_ms: 1821.128122
+  type: 'test'
+  ...
+# Subtest: 操作 schema 完整确定，拒绝任意 SQL/shell/路径与错误工作区或数据集
+ok 9 - 操作 schema 完整确定，拒绝任意 SQL/shell/路径与错误工作区或数据集
+  ---
+  duration_ms: 281.541086
+  type: 'test'
+  ...
+# Subtest: Agent 实际本地连接、工作区、共享数据集、同步回执、历史快照/比较/回退/归档/精简闭环
+ok 10 - Agent 实际本地连接、工作区、共享数据集、同步回执、历史快照/比较/回退/归档/精简闭环
+  ---
+  duration_ms: 4650.298694
+  type: 'test'
+  ...
+# Subtest: Agent 加密备份回读、预览、取消和独立批准恢复；Catalog 重开、权限及幂等账本不被恢复覆盖
+ok 11 - Agent 加密备份回读、预览、取消和独立批准恢复；Catalog 重开、权限及幂等账本不被恢复覆盖
+  ---
+  duration_ms: 1721.502795
+  type: 'test'
+  ...
+# Subtest: XLS Agent 预览、取消、确认和 CSV 来源替换保留身份
+ok 12 - XLS Agent 预览、取消、确认和 CSV 来源替换保留身份
+  ---
+  duration_ms: 3291.363388
+  type: 'test'
+  ...
+# Subtest: 离线编辑重启保留；版本检查与部分文件不被采纳
+ok 13 - 离线编辑重启保留；版本检查与部分文件不被采纳
+  ---
+  duration_ms: 280.386402
+  type: 'test'
+  ...
+# Subtest: 三个 Writer 独立记录离线编辑收敛；等价 tips 不产生无限纯合并
+ok 14 - 三个 Writer 独立记录离线编辑收敛；等价 tips 不产生无限纯合并
+  ---
+  duration_ms: 5239.871754
+  type: 'test'
+  ...
+# Subtest: 真正并发分支逐对冲突，保留本地不采纳任意远端；决策 token 拒绝新分支
+ok 15 - 真正并发分支逐对冲突，保留本地不采纳任意远端；决策 token 拒绝新分支
+  ---
+  duration_ms: 2955.104567
+  type: 'test'
+  ...
+# Subtest: 上传中编辑继续保留；回执丢失后同路径只 GET 恢复
+ok 16 - 上传中编辑继续保留；回执丢失后同路径只 GET 恢复
+  ---
+  duration_ms: 739.722504
+  type: 'test'
+  ...
+# Subtest: 已尝试但404改用新 UUID；中断路径持久回查且恢复为不同有效内容停止
+ok 17 - 已尝试但404改用新 UUID；中断路径持久回查且恢复为不同有效内容停止
+  ---
+  duration_ms: 643.033445
+  type: 'test'
+  ...
+# Subtest: 缺失/篡改已确认历史和目录漏列不能成功；未知损坏孤立文件持续标记
+ok 18 - 缺失/篡改已确认历史和目录漏列不能成功；未知损坏孤立文件持续标记
+  ---
+  duration_ms: 693.174601
+  type: 'test'
+  ...
+# Subtest: 跨语言固定左右分支合并与 multi-parent 完全相同
+ok 19 - 跨语言固定左右分支合并与 multi-parent 完全相同
+  ---
+  duration_ms: 30.308011
+  type: 'test'
+  ...
+# Subtest: 来源删除、课程删除、学期、日期组合与重置遵守关联冲突
+ok 20 - 来源删除、课程删除、学期、日期组合与重置遵守关联冲突
+  ---
+  duration_ms: 9.794575
+  type: 'test'
+  ...
+# Subtest: 全周和指定周覆盖 null/清空/重置及课程/来源级删除
+ok 21 - 全周和指定周覆盖 null/清空/重置及课程/来源级删除
+  ---
+  duration_ms: 1.038987
+  type: 'test'
+  ...
+# Subtest: ICS 既有 WakeUp 文件和 CSV 预览、确认替换保留 sourceId 及旧覆盖
+ok 22 - ICS 既有 WakeUp 文件和 CSV 预览、确认替换保留 sourceId 及旧覆盖
+  ---
+  duration_ms: 248.060515
+  type: 'test'
+  ...
+# Subtest: 拒绝不支持 ICS、恶意文件名、超限、浮动与无界循环
+ok 23 - 拒绝不支持 ICS、恶意文件名、超限、浮动与无界循环
+  ---
+  duration_ms: 1.174585
+  type: 'test'
+  ...
+# Subtest: 远端成功但本地回执事务失败，重启精确回读恢复且后续编辑保留
+ok 24 - 远端成功但本地回执事务失败，重启精确回读恢复且后续编辑保留
+  ---
+  duration_ms: 686.231289
+  type: 'test'
+  ...
+# Subtest: 预检 GET 失败不产生 PUT 标记；进程重建仍保留同一候选
+ok 25 - 预检 GET 失败不产生 PUT 标记；进程重建仍保留同一候选
+  ---
+  duration_ms: 138.63982
+  type: 'test'
+  ...
+# Subtest: 未开始下载的观察路径也在首次检查点保存；漏列仍逐个回查
+ok 26 - 未开始下载的观察路径也在首次检查点保存；漏列仍逐个回查
+  ---
+  duration_ms: 2.660166
+  type: 'test'
+  ...
+# Subtest: 不能证明等价的多重共同基线安全停止
+ok 27 - 不能证明等价的多重共同基线安全停止
+  ---
+  duration_ms: 3.90185
+  type: 'test'
+  ...
+# Subtest: 同一数据集迁移端点必须证明全部历史，保留离线编辑和精确待发布输入
+ok 28 - 同一数据集迁移端点必须证明全部历史，保留离线编辑和精确待发布输入
+  ---
+  duration_ms: 431.586659
+  type: 'test'
+  ...
+# Subtest: BIFF8 非首表、Unicode、多行课程与 CSV 全字段身份一致
+ok 29 - BIFF8 非首表、Unicode、多行课程与 CSV 全字段身份一致
+  ---
+  duration_ms: 1934.454776
+  type: 'test'
+  ...
+# Subtest: 伪造 XLS、损坏 OLE、大小与链边界拒绝
+ok 30 - 伪造 XLS、损坏 OLE、大小与链边界拒绝
+  ---
+  duration_ms: 6.152121
+  type: 'test'
+  ...
+1..30
+# tests 30
+# suites 0
+# pass 30
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 20156.191527

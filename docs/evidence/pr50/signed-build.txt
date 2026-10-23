@@ -1,0 +1,176 @@
+Calculating task graph as no cached configuration is available for tasks: :schedule-core:testDebugUnitTest :app:assembleRelease :phone-app:assembleRelease
+> Task :schedule-core:preBuild UP-TO-DATE
+> Task :schedule-core:generateReleaseAssets UP-TO-DATE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :schedule-core:preDebugBuild UP-TO-DATE
+> Task :phone-app:generateReleaseAssets UP-TO-DATE
+> Task :phone-app:preBuild UP-TO-DATE
+> Task :phone-app:preReleaseBuild UP-TO-DATE
+> Task :schedule-core:preReleaseBuild UP-TO-DATE
+> Task :schedule-core:preDebugUnitTestBuild UP-TO-DATE
+> Task :schedule-core:prepareLintJarForPublish UP-TO-DATE
+> Task :app:extractProguardFiles UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :phone-app:generateReleaseResources UP-TO-DATE
+> Task :schedule-core:extractProguardFiles UP-TO-DATE
+> Task :phone-app:desugarReleaseFileDependencies UP-TO-DATE
+> Task :phone-app:writeReleaseAppMetadata UP-TO-DATE
+> Task :phone-app:writeReleaseSigningConfigVersions UP-TO-DATE
+> Task :phone-app:extractProguardFiles UP-TO-DATE
+> Task :phone-app:validateSigningRelease UP-TO-DATE
+> Task :schedule-core:writeReleaseAarMetadata UP-TO-DATE
+> Task :schedule-core:processReleaseNavigationResources UP-TO-DATE
+> Task :schedule-core:extractDeepLinksForAarRelease UP-TO-DATE
+> Task :schedule-core:generateDebugResources UP-TO-DATE
+> Task :schedule-core:processDebugNavigationResources UP-TO-DATE
+> Task :app:generateReleaseResources UP-TO-DATE
+> Task :app:extractDeepLinksRelease UP-TO-DATE
+> Task :schedule-core:javaPreCompileDebug UP-TO-DATE
+> Task :app:createReleaseCompatibleScreenManifests UP-TO-DATE
+> Task :app:javaPreCompileRelease UP-TO-DATE
+> Task :schedule-core:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :schedule-core:mergeReleaseAssets UP-TO-DATE
+> Task :schedule-core:generateReleaseResources UP-TO-DATE
+> Task :schedule-core:processReleaseManifest UP-TO-DATE
+> Task :schedule-core:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :schedule-core:extractDeepLinksRelease UP-TO-DATE
+> Task :schedule-core:writeReleaseLintModelMetadata UP-TO-DATE
+> Task :app:writeReleaseSigningConfigVersions UP-TO-DATE
+> Task :schedule-core:prepareReleaseArtProfile UP-TO-DATE
+> Task :app:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :app:extractReleaseVersionControlInfo UP-TO-DATE
+> Task :phone-app:collectReleaseDependencies UP-TO-DATE
+> Task :schedule-core:javaPreCompileRelease UP-TO-DATE
+> Task :schedule-core:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :app:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :app:writeReleaseAppMetadata UP-TO-DATE
+> Task :app:desugarReleaseFileDependencies UP-TO-DATE
+> Task :app:mergeReleaseStartupProfile UP-TO-DATE
+> Task :app:validateSigningRelease UP-TO-DATE
+> Task :phone-app:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :phone-app:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :phone-app:javaPreCompileRelease UP-TO-DATE
+> Task :phone-app:extractDeepLinksRelease UP-TO-DATE
+> Task :phone-app:createReleaseCompatibleScreenManifests UP-TO-DATE
+> Task :phone-app:mergeReleaseStartupProfile UP-TO-DATE
+> Task :app:packageReleaseResources UP-TO-DATE
+> Task :schedule-core:packageDebugResources UP-TO-DATE
+> Task :phone-app:extractReleaseVersionControlInfo UP-TO-DATE
+> Task :phone-app:sdkReleaseDependencyData UP-TO-DATE
+> Task :phone-app:packageReleaseResources UP-TO-DATE
+> Task :schedule-core:packageReleaseResources UP-TO-DATE
+> Task :schedule-core:mergeReleaseNativeLibs NO-SOURCE
+> Task :schedule-core:copyReleaseJniLibsProjectOnly UP-TO-DATE
+> Task :schedule-core:parseDebugLocalResources UP-TO-DATE
+> Task :schedule-core:compileReleaseLibraryResources UP-TO-DATE
+> Task :app:collectReleaseDependencies UP-TO-DATE
+> Task :schedule-core:parseReleaseLocalResources UP-TO-DATE
+> Task :schedule-core:generateDebugRFile UP-TO-DATE
+> Task :app:sdkReleaseDependencyData UP-TO-DATE
+> Task :schedule-core:generateReleaseRFile UP-TO-DATE
+> Task :schedule-core:checkReleaseAarMetadata UP-TO-DATE
+> Task :schedule-core:generateDebugUnitTestStubRFile UP-TO-DATE
+> Task :phone-app:checkReleaseDuplicateClasses UP-TO-DATE
+> Task :app:checkReleaseDuplicateClasses UP-TO-DATE
+> Task :phone-app:mergeReleaseArtProfile UP-TO-DATE
+> Task :phone-app:mergeReleaseResources UP-TO-DATE
+> Task :app:mergeReleaseArtProfile UP-TO-DATE
+> Task :app:mergeReleaseAssets UP-TO-DATE
+> Task :phone-app:mergeReleaseAssets UP-TO-DATE
+> Task :phone-app:checkReleaseAarMetadata UP-TO-DATE
+> Task :app:processReleaseNavigationResources UP-TO-DATE
+> Task :phone-app:processReleaseNavigationResources UP-TO-DATE
+> Task :phone-app:mergeReleaseNativeLibs NO-SOURCE
+> Task :app:compileReleaseNavigationResources UP-TO-DATE
+> Task :app:parseReleaseLocalResources UP-TO-DATE
+> Task :app:mergeReleaseNativeLibs NO-SOURCE
+> Task :phone-app:stripReleaseDebugSymbols NO-SOURCE
+> Task :phone-app:compileReleaseNavigationResources UP-TO-DATE
+> Task :phone-app:compressReleaseAssets UP-TO-DATE
+> Task :app:compressReleaseAssets UP-TO-DATE
+> Task :app:checkReleaseAarMetadata UP-TO-DATE
+> Task :phone-app:extractReleaseNativeSymbolTables NO-SOURCE
+> Task :app:mergeReleaseResources UP-TO-DATE
+> Task :phone-app:parseReleaseLocalResources UP-TO-DATE
+> Task :phone-app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:generateReleaseRFile UP-TO-DATE
+> Task :app:stripReleaseDebugSymbols NO-SOURCE
+> Task :app:extractReleaseNativeSymbolTables NO-SOURCE
+> Task :phone-app:generateReleaseRFile UP-TO-DATE
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :phone-app:mergeExtDexRelease UP-TO-DATE
+> Task :phone-app:processReleaseMainManifest UP-TO-DATE
+> Task :phone-app:processReleaseManifest UP-TO-DATE
+> Task :phone-app:processReleaseManifestForPackage UP-TO-DATE
+> Task :app:mergeExtDexRelease UP-TO-DATE
+> Task :app:processReleaseMainManifest UP-TO-DATE
+> Task :app:processReleaseManifest UP-TO-DATE
+> Task :app:processReleaseManifestForPackage UP-TO-DATE
+> Task :phone-app:processReleaseResources UP-TO-DATE
+> Task :phone-app:optimizeReleaseResources UP-TO-DATE
+> Task :app:processReleaseResources UP-TO-DATE
+> Task :app:optimizeReleaseResources UP-TO-DATE
+> Task :schedule-core:kspDebugKotlin
+> Task :schedule-core:kspReleaseKotlin
+> Task :schedule-core:extractReleaseAnnotations
+> Task :schedule-core:compileReleaseKotlin
+> Task :schedule-core:compileReleaseJavaWithJavac NO-SOURCE
+> Task :schedule-core:processReleaseJavaRes UP-TO-DATE
+> Task :schedule-core:mergeReleaseGeneratedProguardFiles UP-TO-DATE
+> Task :schedule-core:mergeReleaseJavaResource UP-TO-DATE
+> Task :schedule-core:mergeReleaseConsumerProguardFiles UP-TO-DATE
+> Task :schedule-core:compileDebugKotlin
+> Task :schedule-core:compileDebugJavaWithJavac NO-SOURCE
+> Task :schedule-core:processDebugJavaRes UP-TO-DATE
+> Task :schedule-core:bundleLibRuntimeToDirRelease
+> Task :schedule-core:generateReleaseLintModel
+> Task :schedule-core:generateReleaseLintVitalModel
+> Task :schedule-core:bundleLibRuntimeToJarRelease
+> Task :schedule-core:bundleLibCompileToJarRelease
+> Task :schedule-core:bundleLibRuntimeToJarDebug
+> Task :schedule-core:bundleLibCompileToJarDebug
+> Task :schedule-core:kspDebugUnitTestKotlin SKIPPED
+> Task :schedule-core:createFullJarRelease
+> Task :schedule-core:syncReleaseLibJars
+> Task :schedule-core:bundleReleaseLocalLintAar
+> Task :phone-app:compileReleaseKotlin UP-TO-DATE
+> Task :phone-app:compileReleaseJavaWithJavac NO-SOURCE
+> Task :phone-app:processReleaseJavaRes UP-TO-DATE
+> Task :phone-app:dexBuilderRelease UP-TO-DATE
+> Task :phone-app:mergeReleaseJavaResource UP-TO-DATE
+> Task :phone-app:generateReleaseLintVitalReportModel
+> Task :app:kspReleaseKotlin
+> Task :app:compileReleaseKotlin UP-TO-DATE
+> Task :app:compileReleaseJavaWithJavac NO-SOURCE
+> Task :app:processReleaseJavaRes UP-TO-DATE
+> Task :app:dexBuilderRelease UP-TO-DATE
+> Task :app:mergeReleaseJavaResource UP-TO-DATE
+> Task :app:generateReleaseLintVitalReportModel
+> Task :schedule-core:compileDebugUnitTestKotlin
+> Task :schedule-core:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :schedule-core:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :app:mergeReleaseGlobalSynthetics UP-TO-DATE
+> Task :phone-app:mergeReleaseGlobalSynthetics UP-TO-DATE
+> Task :phone-app:mergeDexRelease
+> Task :phone-app:compileReleaseArtProfile
+> Task :app:mergeDexRelease
+> Task :app:compileReleaseArtProfile
+> Task :schedule-core:testDebugUnitTest
+> Task :schedule-core:lintVitalAnalyzeRelease
+> Task :phone-app:lintVitalAnalyzeRelease
+> Task :phone-app:lintVitalReportRelease UP-TO-DATE
+> Task :phone-app:lintVitalRelease
+> Task :phone-app:packageRelease
+> Task :phone-app:assembleRelease
+> Task :phone-app:createReleaseApkListingFileRedirect UP-TO-DATE
+> Task :app:lintVitalAnalyzeRelease
+> Task :app:lintVitalReportRelease UP-TO-DATE
+> Task :app:lintVitalRelease
+> Task :app:packageRelease
+> Task :app:assembleRelease
+> Task :app:createReleaseApkListingFileRedirect UP-TO-DATE
+
+BUILD SUCCESSFUL in 1m 15s
+143 actionable tasks: 31 executed, 112 up-to-date
+Configuration cache entry stored.

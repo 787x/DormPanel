@@ -116,7 +116,8 @@ data class CsvCourseSeries(
 data class HubeiCsvStructure(
     val termKey: String,
     val series: List<CsvCourseSeries>,
-    val warnings: List<String>
+    val warnings: List<String>,
+    val parserId: String = HubeiCsvTimetableParser.PARSER_ID
 )
 
 /**
@@ -148,7 +149,10 @@ object HubeiCsvTimetableParser {
      * Personal header fields are never returned or logged.
      */
     fun parse(text: String): HubeiCsvStructure {
-        val rows = CsvReader.parse(text)
+        return parseRows(CsvReader.parse(text))
+    }
+
+    fun parseRows(rows: List<List<String>>): HubeiCsvStructure {
         importCheck(rows.isNotEmpty(), "This CSV is empty.")
         val termKey = rows.asSequence().flatten().firstNotNullOfOrNull { TERM.find(it)?.groupValues?.get(1) }
             ?: throw ScheduleImportException("Missing 学年学期 term information in this CSV.")

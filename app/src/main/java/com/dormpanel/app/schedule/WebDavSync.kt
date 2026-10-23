@@ -81,6 +81,7 @@ class WebDavSyncController(private val context: Context, private val source: Sch
         callback: (Result<Pair<TimetableImporter.ParseOutcome, WebDavItem>>) -> Unit) = background({
             val item = when (mode) {
                 WebDavMode.FILE -> WebDavItem(remote, client.filename(client.url(remote)), false, null, null, null, null, null)
+                WebDavMode.FOLDER_LATEST_XLS -> WebDavSelection.latest(client.list(account, remote), "xls")
                 WebDavMode.FOLDER_LATEST_CSV -> WebDavSelection.latest(client.list(account, remote), "csv")
                 else -> WebDavSelection.latest(client.list(account, remote), "ics")
             }
@@ -105,6 +106,7 @@ class WebDavSyncController(private val context: Context, private val source: Sch
             val result = runCatching {
                 val selected = when (binding.mode) {
                     WebDavMode.FILE -> WebDavItem(binding.remote, client.filename(client.url(binding.remote)), false, null, null, null, null, null)
+                    WebDavMode.FOLDER_LATEST_XLS -> WebDavSelection.latest(client.list(account, binding.remote), "xls")
                     WebDavMode.FOLDER_LATEST_CSV -> WebDavSelection.latest(client.list(account, binding.remote), "csv")
                     else -> WebDavSelection.latest(client.list(account, binding.remote), "ics")
                 }
@@ -116,9 +118,9 @@ class WebDavSyncController(private val context: Context, private val source: Sch
                 val currentProfileFingerprint = binding.termKey?.let { term ->
                     profileStore.get(term)?.let { TimetableImporter.profileFingerprint(it) }
                 }
-                val profileChanged = binding.format == "csv" &&
+                val profileChanged = binding.format in listOf("csv", "xls") &&
                     (binding.profileFingerprint == null || binding.profileFingerprint != currentProfileFingerprint)
-                val folderLatestUnchanged = (binding.mode == WebDavMode.FOLDER_LATEST_ICS || binding.mode == WebDavMode.FOLDER_LATEST_CSV) &&
+                val folderLatestUnchanged = (binding.mode != WebDavMode.FILE) &&
                     sameFile && !profileChanged &&
                     (selected.etag != null && !selected.etag.orEmpty().startsWith("W/") && selected.etag == binding.etag)
                 if (folderLatestUnchanged)
@@ -153,7 +155,7 @@ class WebDavSyncController(private val context: Context, private val source: Sch
                                 profiles.get(term)?.let { TimetableImporter.profileFingerprint(it) }
                             }
                             binding(id)?.let { current ->
-                                update(current.copy(format = if (isCsv) "csv" else "ics",
+                                update(current.copy(format = if (preview.formatLabel?.endsWith("XLS") == true) "xls" else if (isCsv) "csv" else "ics",
                                     termKey = preview.termKey, profileFingerprint = profilePrint))
                             }
                             success(id, attempt, selected.url, validators, callback, !it.unchanged)

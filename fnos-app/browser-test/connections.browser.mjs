@@ -186,6 +186,25 @@ test('首页初始化失败也不会让本地按钮静默；显示工作区错�
 });
 
 const csvPath = fileURLToPath(new URL('../../schedule-core/src/test/resources/schedule/hubei_2026-2027-1.csv', import.meta.url));
+test('XLS 网页预览确认与 CSV 来源替换保留身份', async t => {
+  const f = await fixture(t); await configureTerm(f);
+  await openImport(f);
+  await f.page.locator('#fields input[type=file]').setInputFiles(csvPath);
+  await expect(f.save).toBeEnabled(); await f.save.click(); await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#editor')).not.toBeVisible();
+  const before = structuredClone(f.app.db.frame.local.imported), id = f.app.db.frame.local.sources[0].id;
+  await openImport(f); await f.page.locator('#fields select').selectOption(id);
+  await f.page.locator('#fields input[type=file]').setInputFiles(csvPath.replace(/\.csv$/, '.xls'));
+  await expect(f.save).toBeEnabled(); await f.save.click();
+  await expect(f.page.locator('#feedbackMessage')).toContainText('替换 131 个原实例 → 131 个新实例');
+  await expect(f.page.locator('#feedbackMessage')).toContainText('可能不再匹配的课程：无');
+  await f.page.locator('#feedbackCancel').click();
+  assert.deepEqual(f.app.db.frame.local.imported, before);
+  await f.save.click(); await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#editor')).not.toBeVisible();
+  assert.equal(f.app.db.frame.local.sources[0].id, id);
+  assert.deepEqual(f.app.db.frame.local.imported, before); assert.deepEqual(f.errors, []);
+});
 async function openImport(f) {
   await f.open(); await f.page.locator('#sourcesPage').click();
   await f.page.locator('#manage').click(); await f.page.locator('#importFile').click();

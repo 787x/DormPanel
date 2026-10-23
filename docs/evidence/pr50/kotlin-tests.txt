@@ -1,0 +1,27 @@
+Calculating task graph as configuration cache cannot be reused because file 'app\build.gradle.kts' has changed.
+> Task :schedule-core:preBuild UP-TO-DATE
+> Task :schedule-core:preDebugUnitTestBuild UP-TO-DATE
+> Task :schedule-core:preDebugBuild UP-TO-DATE
+> Task :schedule-core:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :schedule-core:generateDebugResources UP-TO-DATE
+> Task :schedule-core:processDebugNavigationResources UP-TO-DATE
+> Task :schedule-core:javaPreCompileDebug UP-TO-DATE
+> Task :schedule-core:packageDebugResources UP-TO-DATE
+> Task :schedule-core:parseDebugLocalResources UP-TO-DATE
+> Task :schedule-core:generateDebugRFile UP-TO-DATE
+> Task :schedule-core:kspDebugKotlin UP-TO-DATE
+> Task :schedule-core:generateDebugUnitTestStubRFile UP-TO-DATE
+> Task :schedule-core:compileDebugKotlin UP-TO-DATE
+> Task :schedule-core:compileDebugJavaWithJavac NO-SOURCE
+> Task :schedule-core:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :schedule-core:processDebugJavaRes UP-TO-DATE
+> Task :schedule-core:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :schedule-core:kspDebugUnitTestKotlin SKIPPED
+> Task :schedule-core:compileDebugUnitTestKotlin
+> Task :schedule-core:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :schedule-core:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :schedule-core:testDebugUnitTest
+
+BUILD SUCCESSFUL in 4s
+16 actionable tasks: 2 executed, 14 up-to-date
+Configuration cache entry stored.
