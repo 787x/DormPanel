@@ -21,10 +21,7 @@ main 已由 PR51 更新 X08E 至 0.1.7 / 10，因此本次使用 0.1.8 / 11，�
 
 ## 候选与验收边界
 
-本地候选位于 `artifacts/pr52/`：HA 0.1.2 zip、X08E 0.1.8 unsigned APK 和各自 SHA-256；二进制不提交 Git。当前环境没有注入 release 签名参数，因此不能把未签名 APK 当作可直接原位升级的正式签名包；发布前须使用现有证书重建并验证签名。
-
-尚未进行真实 HAOS 面板上传 → X08E 可视预览 → 用户确认 → HA imported 的全链路验收，亦未验证正式签名日用包原位升级、历史数据保留与最终 1280×800 可视布局。设备测试使用 MockWebServer / Fake channel，不是 LIVE PASS。没有发布 Release、tag 或自动合并。
-
+本地候选位于 `artifacts/pr52/`。正式发布复用已真实验收的签名 APK 与 HA ZIP，不重建；unsigned APK 仅为早期构建记录，不发布。二进制、截图与凭据不提交 Git。
 
 ## 真实环境补充验收（2026-10-24）
 
@@ -37,3 +34,20 @@ main 已由 PR51 更新 X08E 至 0.1.7 / 10，因此本次使用 0.1.8 / 11，�
 本地证据：artifacts/pr52/live/x08e-preview.png、ha-imported.jpg、device-ui.xml。截图不提交到公共仓库。此次以新来源添加脱敏测试课表，没有替换已有课表来源；测试来源保留在设备，便于复核。没有执行清数据、卸载日用包或系统服务调整。
 
 剩余边界：日用包所有历史数据的逐项对照、真实 HA 断线/超时/坏文件组合与未知学期交互未全部重演；这些边界由前述定向测试覆盖，不能表述为所有真实场景均已验收。
+
+## v0.1.8 发布复核（2026-10-24）
+
+PR52 已于北京时间 00:14 合并，merge SHA 为 `5fdd06e9e779c38e118d4651d25a9959cd08efc3`；合并 head 为审查版本 `499e48aecd8fb2af2046f05e03e75de362a56ae5`，无未解决 Review Thread。验收补充提交此前因网络重置未推送，故本次在合并后的 main 补齐文档，tag 指向包含合并与文档的 main 提交。未改变功能代码或安全保护。
+
+复核历史执行日志中对正式候选路径的签名、`adb install -r` 成功及随后真实预览/导入记录，并查看两张本地截图；复用同一受验收候选，不重复安装和导入。本次独立重算 SHA-256，使用 apksigner verify 验证单一签名，aapt 检查包名 com.dormpanel.app、0.1.8 / 11、minSdk 28、非 debuggable。
+
+批准证书 SHA-256 为 `32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7`。证书 DN 实际标为 `CN=Android Debug, O=Android, C=US`，与历史批准证书指纹一致；本次没有使用默认 debug 签名重建或替换候选。
+
+HA ZIP 共 10 个文件，与 main 中集成源码逐字节一致，包含 frontend/panel.js，manifest 为 0.1.2；无凭据、数据库、缓存或额外条目。仅复制候选并生成 ASCII sidecar，不运行旧版本双 APK 发布脚本。
+
+| 资产 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| DormPanel-X08E-0.1.8.apk | 16208512 | 33d60f9e6a86733f56342b7f2b0cab96be5934b8af8a8b139042c6e369156e1e |
+| DormPanel-HA-0.1.2.zip | 12001 | 69488cf3555f2f7fa2708e09bbec294d32c061985dfc9a5d2fae8b5cd78c0cff |
+
+本次不做完整回归或 soak；未重新验证所有历史数据及真实坏文件/超时/未知学期组合。Phone 0.1.7、FPK 0.7.2 及其既有资产不变。
