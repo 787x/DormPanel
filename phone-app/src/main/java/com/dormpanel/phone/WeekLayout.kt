@@ -25,7 +25,7 @@ internal object WeekLayout {
         segments.forEach { segment ->
             if (groups.isEmpty() || segment.start >= bottom) { groups.add(mutableListOf()); bottom = -1 }
             groups.last().add(segment)
-            bottom = maxOf(bottom, segment.end, segment.start + 24)
+            bottom = maxOf(bottom, segment.end, segment.end)
         }
         return groups
     }

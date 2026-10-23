@@ -1,0 +1,248 @@
+Performing Streamed Install
+Success
+Performing Streamed Install
+Success
+Row: 0 _display_name=wakeup.ics
+
+com.dormpanel.phone.PhoneTimetableTest:.......
+Error in missingCsvProfileCanBeConfiguredBeforeConfirmation(com.dormpanel.phone.PhoneTimetableTest):
+androidx.test.espresso.NoMatchingViewException: No views in hierarchy found matching: an instance of android.widget.TextView and view.getText() with or without transformation to match: is "确认导入"
+
+View Hierarchy:
++>DecorView{id=-1, visibility=VISIBLE, width=1024, height=2027, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params={(0,0)(wrapxwrap) gr=CENTER sim={adjust=pan} disableCutout=false ty=APPLICATION fmt=TRANSLUCENT wanim=0x7f0d0002
+  fl=DIM_BEHIND SPLIT_TOUCH HARDWARE_ACCELERATED
+  bhv=DEFAULT
+  fitTypes=STATUS_BARS NAVIGATION_BARS CAPTION_BAR}, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++->LinearLayout{id=-1, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=44.0, y=44.0, child-count=2} 
+|
++-->ViewStub{id=16908742, res-name=action_mode_bar_stub, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++-->FrameLayout{id=-1, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++--->FitWindowsFrameLayout{id=2131230762, res-name=action_bar_root, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=2} 
+|
++---->ContentFrameLayout{id=16908290, res-name=content, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++----->AlertDialogLayout{id=2131230831, res-name=parentPanel, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=4} 
+|
++------>LinearLayout{id=2131230890, res-name=topPanel, visibility=VISIBLE, width=936, height=143, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=androidx.appcompat.widget.LinearLayoutCompat$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=2} 
+|
++------->LinearLayout{id=2131230888, res-name=title_template, visibility=VISIBLE, width=936, height=143, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=2} 
+|
++-------->AppCompatImageView{id=16908294, res-name=icon, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++-------->DialogTitle{id=2131230779, res-name=alertTitle, visibility=VISIBLE, width=804, height=93, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=66.0, y=50.0, text=学期与节次, input-type=0, ime-target=false, has-links=false} 
+|
++------->Space{id=2131230887, res-name=titleDividerNoCustom, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++------>FrameLayout{id=2131230792, res-name=contentPanel, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=androidx.appcompat.widget.LinearLayoutCompat$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=3} 
+|
++------->AppCompatImageView{id=2131230840, res-name=scrollIndicatorUp, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++------->NestedScrollView{id=2131230841, res-name=scrollView, visibility=VISIBLE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++-------->LinearLayout{id=-1, visibility=VISIBLE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=3} 
+|
++--------->Space{id=2131230884, res-name=textSpacerNoTitle, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++--------->AppCompatTextView{id=16908299, res-name=message, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, text=, input-type=0, ime-target=false, has-links=false} 
+|
++--------->Space{id=2131230883, res-name=textSpacerNoButtons, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++------->AppCompatImageView{id=2131230839, res-name=scrollIndicatorDown, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++------>FrameLayout{id=2131230794, res-name=customPanel, visibility=VISIBLE, width=936, height=1625, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=androidx.appcompat.widget.LinearLayoutCompat$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=143.0, child-count=1} 
+|
++------->FrameLayout{id=2131230793, res-name=custom, visibility=VISIBLE, width=936, height=1625, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++-------->ScrollView{id=-1, visibility=VISIBLE, width=936, height=1625, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++--------->LinearLayout{id=-1, visibility=VISIBLE, width=936, height=2959, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=6} 
+|
++---------->TextView{id=-1, visibility=VISIBLE, width=936, height=325, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, text=填写学期、时区和第一周周一。阶段格式：日期一行，随后每行填写“节次 开始时间 结束时间”，可添加多个日期阶段。, input-type=0, ime-target=false, has-links=false} 
+|
++---------->EditText{id=-1, desc=学期（如 2026-2027-1）, visibility=VISIBLE, width=936, height=140, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=true, is-enabled=false, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=325.0, text=2027-2028-1, hint=学期（如 2026-2027-1）, input-type=131073, ime-target=false, has-links=false} 
+|
++---------->EditText{id=-1, desc=时区, visibility=VISIBLE, width=936, height=140, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=true, editor-info=[inputType=0x20001 imeOptions=0x48000005 privateImeOptions=null actionLabel=null actionId=0 initialSelStart=0 initialSelEnd=0 initialCapsMode=0x0 hintText=时区 label=null packageName=null autofillId=null fieldId=0 fieldName=null extras=null hintLocales=null contentMimeTypes=null ], x=0.0, y=465.0, text=Asia/Shanghai, hint=时区, input-type=131073, ime-target=false, has-links=false} 
+|
++---------->EditText{id=-1, desc=第一周周一 yyyy-MM-dd, visibility=VISIBLE, width=936, height=140, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=true, editor-info=[inputType=0x20001 imeOptions=0x4c000005 privateImeOptions=null actionLabel=null actionId=0 initialSelStart=0 initialSelEnd=0 initialCapsMode=0x0 hintText=第一周周一 yyyy-MM-dd label=null packageName=null autofillId=null fieldId=0 fieldName=null extras=null hintLocales=null contentMimeTypes=null ], x=0.0, y=605.0, text=2027-08-30, hint=第一周周一 yyyy-MM-dd, input-type=131073, ime-target=false, has-links=false} 
+|
++---------->EditText{id=-1, desc=分阶段节次, visibility=VISIBLE, width=936, height=2108, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=true, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=true, editor-info=[inputType=0x20001 imeOptions=0x44000006 privateImeOptions=null actionLabel=null actionId=0 initialSelStart=151 initialSelEnd=151 initialCapsMode=0x0 hintText=分阶段节次 label=null packageName=null autofillId=null fieldId=0 fieldName=null extras=null hintLocales=null contentMimeTypes=null ], x=0.0, y=745.0, text=2026-08-31
+1 08:00 08:45
+2 08:55 09:40
+3 09:55 10:40
+4 10:50 11:35
+5 14:30 15:15
+6 15:25 16:10
+7 16:25 17:10
+8 17:20 18:05
+9 19:00 19:45
+10 19:55 20:40
+11 20:50 21:35
+
+2026-10-08
+1 08:00 08:45
+2 08:55 09:40
+3 09:55 10:40
+4 10:50 11:35
+5 14:00 14:45
+6 14:55 15:40
+7 15:55 16:40
+8 16:50 17:35
+9 19:00 19:45
+10 19:55 20:40
+11 20:50 21:35, hint=分阶段节次, input-type=131073, ime-target=true, has-links=false} 
+|
++---------->TextView{id=-1, visibility=VISIBLE, width=936, height=106, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=2853.0, text=, input-type=0, ime-target=false, has-links=false} 
+|
++------>ScrollView{id=2131230785, res-name=buttonPanel, visibility=VISIBLE, width=936, height=171, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=androidx.appcompat.widget.LinearLayoutCompat$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=1768.0, child-count=1} 
+|
++------->ButtonBarLayout{id=-1, visibility=VISIBLE, width=936, height=171, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=4} 
+|
++-------->AppCompatButton{id=16908315, res-name=button3, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, text=, input-type=0, ime-target=false, has-links=false} 
+|
++-------->Space{id=2131230857, res-name=spacer, visibility=INVISIBLE, width=518, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=33.0, y=160.0} 
+|
++-------->AppCompatButton{id=16908314, res-name=button2, visibility=VISIBLE, width=176, height=149, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=551.0, y=11.0, text=取消, input-type=0, ime-target=false, has-links=false} 
+|
++-------->AppCompatButton{id=16908313, res-name=button1, visibility=VISIBLE, width=176, height=149, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=727.0, y=11.0, text=保存, input-type=0, ime-target=false, has-links=false} 
+|
++---->ViewStubCompat{id=2131230773, res-name=action_mode_bar_stub, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+The complete view hierarchy is available in artifact file 'view-hierarchy-7.txt'.
+	at androidx.test.espresso.NoMatchingViewException$Builder.build(NoMatchingViewException.java:185)
+	at androidx.test.espresso.base.DefaultFailureHandler.lambda$getNoMatchingViewExceptionTruncater$0(DefaultFailureHandler.java:93)
+	at androidx.test.espresso.base.DefaultFailureHandler$$ExternalSyntheticLambda1.truncateExceptionMessage(D8$$SyntheticClass:0)
+	at androidx.test.espresso.base.ViewHierarchyExceptionHandler.handleSafely(ViewHierarchyExceptionHandler.java:72)
+	at androidx.test.espresso.base.ViewHierarchyExceptionHandler.handleSafely(ViewHierarchyExceptionHandler.java:38)
+	at androidx.test.espresso.base.DefaultFailureHandler$TypedFailureHandler.handle(DefaultFailureHandler.java:158)
+	at androidx.test.espresso.base.DefaultFailureHandler.handle(DefaultFailureHandler.java:120)
+	at androidx.test.espresso.ViewInteraction.waitForAndHandleInteractionResults(ViewInteraction.java:385)
+	at androidx.test.espresso.ViewInteraction.check(ViewInteraction.java:366)
+	at com.dormpanel.phone.PhoneTimetableTest.preview(PhoneTimetableTest.kt:61)
+	at com.dormpanel.phone.PhoneTimetableTest.missingCsvProfileCanBeConfiguredBeforeConfirmation(PhoneTimetableTest.kt:352)
+
+
+Time: 101.077
+There was 1 failure:
+1) missingCsvProfileCanBeConfiguredBeforeConfirmation(com.dormpanel.phone.PhoneTimetableTest)
+androidx.test.espresso.NoMatchingViewException: No views in hierarchy found matching: an instance of android.widget.TextView and view.getText() with or without transformation to match: is "确认导入"
+
+View Hierarchy:
++>DecorView{id=-1, visibility=VISIBLE, width=1024, height=2027, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params={(0,0)(wrapxwrap) gr=CENTER sim={adjust=pan} disableCutout=false ty=APPLICATION fmt=TRANSLUCENT wanim=0x7f0d0002
+  fl=DIM_BEHIND SPLIT_TOUCH HARDWARE_ACCELERATED
+  bhv=DEFAULT
+  fitTypes=STATUS_BARS NAVIGATION_BARS CAPTION_BAR}, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++->LinearLayout{id=-1, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=44.0, y=44.0, child-count=2} 
+|
++-->ViewStub{id=16908742, res-name=action_mode_bar_stub, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++-->FrameLayout{id=-1, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++--->FitWindowsFrameLayout{id=2131230762, res-name=action_bar_root, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=2} 
+|
++---->ContentFrameLayout{id=16908290, res-name=content, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++----->AlertDialogLayout{id=2131230831, res-name=parentPanel, visibility=VISIBLE, width=936, height=1939, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=4} 
+|
++------>LinearLayout{id=2131230890, res-name=topPanel, visibility=VISIBLE, width=936, height=143, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=androidx.appcompat.widget.LinearLayoutCompat$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=2} 
+|
++------->LinearLayout{id=2131230888, res-name=title_template, visibility=VISIBLE, width=936, height=143, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=2} 
+|
++-------->AppCompatImageView{id=16908294, res-name=icon, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++-------->DialogTitle{id=2131230779, res-name=alertTitle, visibility=VISIBLE, width=804, height=93, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=66.0, y=50.0, text=学期与节次, input-type=0, ime-target=false, has-links=false} 
+|
++------->Space{id=2131230887, res-name=titleDividerNoCustom, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++------>FrameLayout{id=2131230792, res-name=contentPanel, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=androidx.appcompat.widget.LinearLayoutCompat$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=3} 
+|
++------->AppCompatImageView{id=2131230840, res-name=scrollIndicatorUp, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++------->NestedScrollView{id=2131230841, res-name=scrollView, visibility=VISIBLE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++-------->LinearLayout{id=-1, visibility=VISIBLE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=3} 
+|
++--------->Space{id=2131230884, res-name=textSpacerNoTitle, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++--------->AppCompatTextView{id=16908299, res-name=message, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, text=, input-type=0, ime-target=false, has-links=false} 
+|
++--------->Space{id=2131230883, res-name=textSpacerNoButtons, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++------->AppCompatImageView{id=2131230839, res-name=scrollIndicatorDown, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+|
++------>FrameLayout{id=2131230794, res-name=customPanel, visibility=VISIBLE, width=936, height=1625, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=androidx.appcompat.widget.LinearLayoutCompat$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=143.0, child-count=1} 
+|
++------->FrameLayout{id=2131230793, res-name=custom, visibility=VISIBLE, width=936, height=1625, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++-------->ScrollView{id=-1, visibility=VISIBLE, width=936, height=1625, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=1} 
+|
++--------->LinearLayout{id=-1, visibility=VISIBLE, width=936, height=2959, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=6} 
+|
++---------->TextView{id=-1, visibility=VISIBLE, width=936, height=325, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, text=填写学期、时区和第一周周一。阶段格式：日期一行，随后每行填写“节次 开始时间 结束时间”，可添加多个日期阶段。, input-type=0, ime-target=false, has-links=false} 
+|
++---------->EditText{id=-1, desc=学期（如 2026-2027-1）, visibility=VISIBLE, width=936, height=140, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=true, is-enabled=false, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=325.0, text=2027-2028-1, hint=学期（如 2026-2027-1）, input-type=131073, ime-target=false, has-links=false} 
+|
++---------->EditText{id=-1, desc=时区, visibility=VISIBLE, width=936, height=140, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=true, editor-info=[inputType=0x20001 imeOptions=0x48000005 privateImeOptions=null actionLabel=null actionId=0 initialSelStart=0 initialSelEnd=0 initialCapsMode=0x0 hintText=时区 label=null packageName=null autofillId=null fieldId=0 fieldName=null extras=null hintLocales=null contentMimeTypes=null ], x=0.0, y=465.0, text=Asia/Shanghai, hint=时区, input-type=131073, ime-target=false, has-links=false} 
+|
++---------->EditText{id=-1, desc=第一周周一 yyyy-MM-dd, visibility=VISIBLE, width=936, height=140, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=true, editor-info=[inputType=0x20001 imeOptions=0x4c000005 privateImeOptions=null actionLabel=null actionId=0 initialSelStart=0 initialSelEnd=0 initialCapsMode=0x0 hintText=第一周周一 yyyy-MM-dd label=null packageName=null autofillId=null fieldId=0 fieldName=null extras=null hintLocales=null contentMimeTypes=null ], x=0.0, y=605.0, text=2027-08-30, hint=第一周周一 yyyy-MM-dd, input-type=131073, ime-target=false, has-links=false} 
+|
++---------->EditText{id=-1, desc=分阶段节次, visibility=VISIBLE, width=936, height=2108, has-focus=true, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=true, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=true, editor-info=[inputType=0x20001 imeOptions=0x44000006 privateImeOptions=null actionLabel=null actionId=0 initialSelStart=151 initialSelEnd=151 initialCapsMode=0x0 hintText=分阶段节次 label=null packageName=null autofillId=null fieldId=0 fieldName=null extras=null hintLocales=null contentMimeTypes=null ], x=0.0, y=745.0, text=2026-08-31
+1 08:00 08:45
+2 08:55 09:40
+3 09:55 10:40
+4 10:50 11:35
+5 14:30 15:15
+6 15:25 16:10
+7 16:25 17:10
+8 17:20 18:05
+9 19:00 19:45
+10 19:55 20:40
+11 20:50 21:35
+
+2026-10-08
+1 08:00 08:45
+2 08:55 09:40
+3 09:55 10:40
+4 10:50 11:35
+5 14:00 14:45
+6 14:55 15:40
+7 15:55 16:40
+8 16:50 17:35
+9 19:00 19:45
+10 19:55 20:40
+11 20:50 21:35, hint=分阶段节次, input-type=131073, ime-target=true, has-links=false} 
+|
++---------->TextView{id=-1, visibility=VISIBLE, width=936, height=106, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=2853.0, text=, input-type=0, ime-target=false, has-links=false} 
+|
++------>ScrollView{id=2131230785, res-name=buttonPanel, visibility=VISIBLE, width=936, height=171, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=androidx.appcompat.widget.LinearLayoutCompat$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=1768.0, child-count=1} 
+|
++------->ButtonBarLayout{id=-1, visibility=VISIBLE, width=936, height=171, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=4} 
+|
++-------->AppCompatButton{id=16908315, res-name=button3, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=true, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, text=, input-type=0, ime-target=false, has-links=false} 
+|
++-------->Space{id=2131230857, res-name=spacer, visibility=INVISIBLE, width=518, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=33.0, y=160.0} 
+|
++-------->AppCompatButton{id=16908314, res-name=button2, visibility=VISIBLE, width=176, height=149, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=551.0, y=11.0, text=取消, input-type=0, ime-target=false, has-links=false} 
+|
++-------->AppCompatButton{id=16908313, res-name=button1, visibility=VISIBLE, width=176, height=149, has-focus=false, has-focusable=true, has-window-focus=true, is-clickable=true, is-enabled=true, is-focused=false, is-focusable=true, is-layout-requested=false, is-selected=false, layout-params=android.widget.LinearLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=727.0, y=11.0, text=保存, input-type=0, ime-target=false, has-links=false} 
+|
++---->ViewStubCompat{id=2131230773, res-name=action_mode_bar_stub, visibility=GONE, width=0, height=0, has-focus=false, has-focusable=false, has-window-focus=true, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=true, is-selected=false, layout-params=android.widget.FrameLayout$LayoutParams@YYYYYY, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0} 
+The complete view hierarchy is available in artifact file 'view-hierarchy-7.txt'.
+	at androidx.test.espresso.NoMatchingViewException$Builder.build(NoMatchingViewException.java:185)
+	at androidx.test.espresso.base.DefaultFailureHandler.lambda$getNoMatchingViewExceptionTruncater$0(DefaultFailureHandler.java:93)
+	at androidx.test.espresso.base.DefaultFailureHandler$$ExternalSyntheticLambda1.truncateExceptionMessage(D8$$SyntheticClass:0)
+	at androidx.test.espresso.base.ViewHierarchyExceptionHandler.handleSafely(ViewHierarchyExceptionHandler.java:72)
+	at androidx.test.espresso.base.ViewHierarchyExceptionHandler.handleSafely(ViewHierarchyExceptionHandler.java:38)
+	at androidx.test.espresso.base.DefaultFailureHandler$TypedFailureHandler.handle(DefaultFailureHandler.java:158)
+	at androidx.test.espresso.base.DefaultFailureHandler.handle(DefaultFailureHandler.java:120)
+	at androidx.test.espresso.ViewInteraction.waitForAndHandleInteractionResults(ViewInteraction.java:385)
+	at androidx.test.espresso.ViewInteraction.check(ViewInteraction.java:366)
+	at com.dormpanel.phone.PhoneTimetableTest.preview(PhoneTimetableTest.kt:61)
+	at com.dormpanel.phone.PhoneTimetableTest.missingCsvProfileCanBeConfiguredBeforeConfirmation(PhoneTimetableTest.kt:352)
+
+FAILURES!!!
+Tests run: 8,  Failures: 1
+
+

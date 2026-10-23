@@ -27,7 +27,7 @@ class WeekLayoutTest {
         val c = occurrence("c", "2026-12-28T09:00", "2026-12-28T10:30")
         val result = WeekLayout.segments(listOf(c,b,a), monday, zone)
         assertEquals(result, WeekLayout.segments(listOf(a,c,b), monday, zone))
-        assertEquals(listOf(2,1), WeekLayout.groups(result).map { it.size })
+        assertEquals(listOf(1,1,1), WeekLayout.groups(result).map { it.size })
         assertEquals(90, result.last().end-result.last().start)
     }
     @Test fun emptyWeekIsEmpty() { assertTrue(WeekLayout.segments(emptyList(), monday, zone).isEmpty()) }

@@ -36,6 +36,7 @@ internal fun launchPhoneTestActivity(): ActivityScenario<TimetableActivity> {
     completed.set(true)
     assist.join(15_000)
     failure.get()?.let { scenario.close(); throw it }
+    scenario.onActivity { it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     return scenario
 }
 

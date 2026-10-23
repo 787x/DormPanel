@@ -111,13 +111,17 @@ class TimetableActivity : AppCompatActivity() {
         root.removeAllViews()
         if (source.state.sync != null && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
         val profile = activeTerm?.let(profiles::get)
-        if (resources.configuration.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE) root.addView(scheduleLabel(if (source.state.sync != null) "课程表 · 双向共享" else "课程表 · 离线", 24f))
-        if (::sharedSync.isInitialized) {
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        if (::sharedSync.isInitialized && (!landscape || source.state.sync != null)) {
             val stale = sharedSync.settings.lastSuccess.let { it > 0 && System.currentTimeMillis() - it > 86_400_000L }
-            root.addView(scheduleLabel(sharedSync.status + if (stale) " · 数据过期，显示缓存" else "", 14f))
+            root.addView(scheduleLabel(sharedSync.status + if (stale) " · 数据过期，显示缓存" else "", 12f).apply {
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(4), 0, dp(4), 0)
+                setOnClickListener { AlertDialog.Builder(this@TimetableActivity).setMessage(sharedSync.status).setPositiveButton("关闭", null).show() }
+            })
         }
         val week = profile?.let { ChronoUnit.WEEKS.between(it.week1Monday, monday()) + 1 }
-        root.addView(scheduleLabel("${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f).apply { tag = "week-range"
+        root.addView(scheduleLabel("${if (source.state.sync == null) "离线 · " else ""}${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f).apply { tag = "week-range"
             if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
                 textSize = 12f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(8), 0, dp(8), 0)
@@ -128,6 +132,11 @@ class TimetableActivity : AppCompatActivity() {
             action(bar, "下周 ›") { selected = selected.plusWeeks(1); render() }
             action(bar, "周视图") { weekView = true; render() }
             action(bar, "日视图") { weekView = false; render() }
+            if (landscape) {
+                if (!source.readOnly) action(bar, "＋ 课程") { editors.entry() }
+                if (!source.readOnly) action(bar, "日期调整") { editors.dayAdjustment(selected) }
+                action(bar, "管理") { management() }
+            }
         }
         val days = row().apply { if (weekView) setPadding(dp(32), 0, 0, 0) }
         val labels = listOf("一", "二", "三", "四", "五", "六", "日")
@@ -142,10 +151,11 @@ class TimetableActivity : AppCompatActivity() {
                     setTextColor(android.graphics.Color.WHITE)
                 }
                 if (date == source.clock.today()) text = "●${labels[i]}\n${date.dayOfMonth}"
+                if (source.state.daysByDate.containsKey(date.toString())) text = "$text *"
                 contentDescription = "$date${if (date == source.clock.today()) " 今天" else ""}${if (date == selected) " 已选择" else ""}"
-            }, LinearLayout.LayoutParams(0, dp(48), 1f))
+            }, LinearLayout.LayoutParams(0, dp(if (landscape) 40 else 48), 1f))
         }
-        row().also { bar ->
+        if (!landscape) row().also { bar ->
             if (!source.readOnly) action(bar, "＋ 课程") { editors.entry() }
             if (!source.readOnly) action(bar, "日期调整") { editors.dayAdjustment(selected) }
             action(bar, "管理") { management() }

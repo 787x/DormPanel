@@ -1,3 +1,5 @@
+> 最新状态：新一轮 UX / WebDAV 改动尚未完成验收，见 [ux/README.md](ux/README.md)。以下仅为 0.1.5 历史验收，不适用于当前代码。
+
 # PR48 合并前验收
 
 本页以 `final/` 下日志为最终结果；此前根目录的 build / regression / week-ui 等日志和截图属于首轮过程证据，其中失败不代表最终状态。Phone UI 不修改投影、Sync v2、Room、课程编辑算法、X08E 或 FPK。

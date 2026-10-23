@@ -48,7 +48,7 @@ class PhoneTimetableTest {
         assertTrue("Timed out waiting for phone state", ready)
         instrumentation.waitForIdleSync()
     }
-    private fun open() = launchPhoneTestActivity().also { waitFor(it) { a -> a.source.ready }; onView(withText("日视图")).perform(click()) }
+    private fun open() = launchPhoneTestActivity().also { scenario -> scenario.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }; Thread.sleep(700); waitFor(scenario) { a -> a.source.ready }; onView(withText("日视图")).perform(click()) }
     private fun pick(filename: String) {
         Intents.intending(hasAction(Intent.ACTION_OPEN_DOCUMENT)).respondWith(ActivityResult(Activity.RESULT_OK,
             Intent().setData(Uri.parse("content://${instrumentation.context.packageName}.fixtures/$filename"))))
@@ -171,6 +171,30 @@ class PhoneTimetableTest {
             s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
         }
     }
+    @Test fun browseFolderSelectAndCancelAreDraftOnly() {
+        val server = okhttp3.mockwebserver.MockWebServer()
+        fun xml(path: String, child: String = "") = "<d:multistatus xmlns:d=\"DAV:\">" +
+            listOf(path, child).filter { it.isNotEmpty() }.joinToString("") { "<d:response><d:href>$it</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>" } + "</d:multistatus>"
+        server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(207).setBody(xml("/dav/", "/dav/room/")))
+        server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(207).setBody(xml("/dav/room/")))
+        server.start()
+        val serverRoot = server.url("/dav/").toString()
+        try { open().use { s ->
+            var selected: String? = null
+            s.onActivity { WebDavFolderDialog.show(it, WebDavAccount(serverRoot, "user", "secret")) { value -> selected = value } }
+            val deadline = System.currentTimeMillis() + 10000
+            while (true) {
+                try { onView(withText("▸ room")).perform(click()); break }
+                catch (e: androidx.test.espresso.NoMatchingViewException) { if (System.currentTimeMillis() > deadline) throw e; Thread.sleep(50) }
+            }
+            Thread.sleep(500); instrumentation.waitForIdleSync()
+            onView(withText("选择此文件夹")).perform(click())
+            assertEquals(server.url("/dav/room/").toString(), selected)
+            s.onActivity { assertNull(it.source.state.sync); assertTrue(it.source.state.entries.isEmpty()) }
+            assertEquals("PROPFIND", server.takeRequest().method)
+            assertEquals("PROPFIND", server.takeRequest().method)
+        } } finally { server.shutdown() }
+    }
     @Test fun emptyLocalEditorAndRestartPersistence() {
         open().use { s ->
             onView(withText(startsWith("今天没有课程"))).check(matches(isDisplayed()))
@@ -205,7 +229,34 @@ class PhoneTimetableTest {
             onView(withText("确认导入")).perform(click())
             waitFor(s) { it.source.state.imported.size == 131 }
             s.onActivity { assertEquals(13, it.source.state.imported.map { c -> c.seriesId }.distinct().size) }
+            onView(withText("周视图")).perform(click())
+            repeat(4) { onView(withText("下周 ›")).perform(click()) }
+            repeat(8) {
+                var hasCard = false
+                s.onActivity { a ->
+                    fun contains(v: android.view.View): Boolean = v is CourseCard || (v is android.view.ViewGroup && (0 until v.childCount).any { contains(v.getChildAt(it)) })
+                    hasCard = contains(a.window.decorView)
+                }
+                if (!hasCard) onView(withText("下周 ›")).perform(click())
+            }
+            s.onActivity { a ->
+                fun first(v: android.view.View): CourseCard? {
+                    if (v is CourseCard) return v
+                    if (v is android.view.ViewGroup) for (i in 0 until v.childCount) first(v.getChildAt(i))?.let { return it }
+                    return null
+                }
+                first(a.window.decorView)?.let { it.requestRectangleOnScreen(android.graphics.Rect(0,0,it.width,it.height), true) }
+            }
             screenshot("csv-week")
+            s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            Thread.sleep(1000); instrumentation.waitForIdleSync(); screenshot("csv-landscape")
+            s.onActivity { a ->
+                val scroll = a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll")
+                assertTrue("Landscape timetable should occupy most of the window", scroll.height >= ((scroll.parent as android.view.View).height - (scroll.parent as android.view.View).paddingTop - (scroll.parent as android.view.View).paddingBottom) * .60)
+            }
+            s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+            Thread.sleep(1000); instrumentation.waitForIdleSync()
+            onView(withText("日视图")).perform(click())
             onView(withText("日期调整")).perform(click())
             onView(withText("Cancel")).perform(click())
         }
@@ -298,7 +349,11 @@ class PhoneTimetableTest {
             pick("future.csv"); waitFor(s) { !it.busy }
             onView(withContentDescription("第一周周一 yyyy-MM-dd")).perform(scrollTo(), replaceText("2027-08-30"), closeSoftKeyboard())
             onView(withContentDescription("分阶段节次")).perform(scrollTo(), replaceText(TermProfileForm.phasesToText(BuiltInProfiles.term2026)), closeSoftKeyboard())
-            onView(withText("保存")).perform(click())
+            onView(withText("保存")).perform(object : androidx.test.espresso.ViewAction {
+                override fun getConstraints() = isAssignableFrom(android.widget.Button::class.java)
+                override fun getDescription() = "Confirm profile with native button action"
+                override fun perform(controller: androidx.test.espresso.UiController, view: android.view.View) { view.performClick(); controller.loopMainThreadUntilIdle() }
+            })
             preview(s)
             s.onActivity { assertTrue(it.source.state.imported.isEmpty()) }
             onView(withText("确认导入")).perform(click())

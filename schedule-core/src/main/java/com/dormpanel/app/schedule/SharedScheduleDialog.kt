@@ -95,6 +95,14 @@ object SharedScheduleDialog {
                 previewDialog = preview.show()
             }
         }
+        if (!publisher) button("浏览共享目录", false) {
+            if (bound()) { status.text = "已绑定，请使用安全换库入口" }
+            else runCatching {
+                val old = sync.accounts.account()
+                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), password!!.text.toString().ifBlank { old?.password.orEmpty() })
+                WebDavFolderDialog.show(context, account) { if (active && !bound()) folder.setText(it) }
+            }.onFailure { status.text = "请检查服务器地址与凭据" }
+        }
         if (publisher) {
             publishButton = button("创建新的共享课表") { sync.publish() }
             bindButton = button("绑定已有共享课表（预览）") { inspectAndConfirm() }
@@ -142,6 +150,12 @@ object SharedScheduleDialog {
                         form.addView(TextView(context).apply { text = "上次本机结果：${if (r.getString("phase") == "cancelled") "已取消准备" else "已验证完成换库"}\n检查时间：${r.getString("checkedAt")}\n旧库：${r.getString("sourceDatasetId")}（${r.getInt("sourceCount")} 个提交）\n新库：${r.getString("targetDatasetId")}\nWriter：${r.getString("writerId")}\n新根：${r.getString("targetRoot")}\nSHA-256：${r.getString("targetSha256")}\n原本地数据和恢复清单仍保留；可向 FPK 管理员登记此结果。"; textSize = 16f; setTextIsSelectable(true) })
                     }
                     val target = EditText(context).apply { hint = "新共享目录完整 URL（使用当前 WebDAV 账号）"; setSingleLine(); form.addView(this) }
+                    if (!publisher) form.addView(Button(context).apply {
+                        text = "浏览新共享目录"
+                        setOnClickListener { sync.accounts.account()?.let { account ->
+                            WebDavFolderDialog.show(context, account) { if (active) target.setText(it) }
+                        } }
+                    })
                     val dataset = EditText(context).apply { hint = "FPK 显示的目标 datasetId"; setSingleLine(); form.addView(this) }
                     form.addView(TextView(context).apply { text = "当前旧库目录：${sync.settings.folder}\n先在 FPK 停写并验证完整归档及候选。准备成功即持久暂停同步，关闭界面或重启后可从此入口继续。" })
                     AlertDialog.Builder(context).setTitle("更换共享课表数据集")

@@ -1,5 +1,6 @@
 param([string]$Serial = '210b601e', [string]$Classes = 'com.dormpanel.phone.PhoneTimetableTest')
 $ErrorActionPreference = 'Stop'
+& adb -s $Serial shell input keyevent 224
 # Isolated testbed only. Never installs, clears or modifies the daily package.
 & adb -s $Serial install -r phone-app/build/outputs/apk/x08eTest/phone-app-x08eTest.apk
 if ($LASTEXITCODE) { throw 'Testbed installation failed' }
