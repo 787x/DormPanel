@@ -1,0 +1,136 @@
+Performing Streamed Install
+Success
+Performing Streamed Install
+Success
+Row: 0 _display_name=wakeup.ics
+
+com.dormpanel.phone.PhoneTimetableTest:..
+Error in browseFolderSelectAndCancelAreDraftOnly(com.dormpanel.phone.PhoneTimetableTest):
+androidx.test.espresso.base.RootViewPicker$RootViewWithoutFocusException: Waited for the root of the view hierarchy to have window focus and not request layout for 10 seconds. If you specified a non default root matcher, it may be picking a root that never takes focus. Root:
+Root{application-window-token=android.view.ViewRootImpl$W@c372fcc, window-token=android.view.ViewRootImpl$W@c372fcc, has-window-focus=false, layout-params-type=1, layout-params-string={(0,0)(fillxfill) disableCutout=false ty=BASE_APPLICATION wanim=0x1030300
+  fl=KEEP_SCREEN_ON LAYOUT_IN_SCREEN LAYOUT_INSET_DECOR SPLIT_TOUCH HARDWARE_ACCELERATED DRAWS_SYSTEM_BAR_BACKGROUNDS
+  pfl=NO_MOVE_ANIMATION FORCE_DRAW_STATUS_BAR_BACKGROUND FIT_INSETS_CONTROLLED
+  bhv=DEFAULT
+  fitSides=}, decor-view-string=DecorView{id=-1, visibility=VISIBLE, width=1080, height=2160, has-focus=false, has-focusable=true, has-window-focus=false, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params={(0,0)(fillxfill) disableCutout=false ty=BASE_APPLICATION wanim=0x1030300
+  fl=KEEP_SCREEN_ON LAYOUT_IN_SCREEN LAYOUT_INSET_DECOR SPLIT_TOUCH HARDWARE_ACCELERATED DRAWS_SYSTEM_BAR_BACKGROUNDS
+  pfl=NO_MOVE_ANIMATION FORCE_DRAW_STATUS_BAR_BACKGROUND FIT_INSETS_CONTROLLED
+  bhv=DEFAULT
+  fitSides=}, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=3}}
+	at dalvik.system.VMStack.getThreadStackTrace(Native Method)
+	at java.lang.Thread.getStackTrace(Thread.java:1841)
+	at androidx.test.espresso.base.EspressoExceptionHandler.handleSafely(EspressoExceptionHandler.java:34)
+	at androidx.test.espresso.base.EspressoExceptionHandler.handleSafely(EspressoExceptionHandler.java:26)
+	at androidx.test.espresso.base.DefaultFailureHandler$TypedFailureHandler.handle(DefaultFailureHandler.java:158)
+	at androidx.test.espresso.base.DefaultFailureHandler.handle(DefaultFailureHandler.java:120)
+	at androidx.test.espresso.ViewInteraction.waitForAndHandleInteractionResults(ViewInteraction.java:385)
+	at androidx.test.espresso.ViewInteraction.desugaredPerform(ViewInteraction.java:212)
+	at androidx.test.espresso.ViewInteraction.perform(ViewInteraction.java:140)
+	at com.dormpanel.phone.PhoneTimetableTest.browseFolderSelectAndCancelAreDraftOnly(PhoneTimetableTest.kt:199)
+.......
+Error in missingCsvProfileCanBeConfiguredBeforeConfirmation(com.dormpanel.phone.PhoneTimetableTest):
+androidx.test.espresso.base.AssertionErrorHandler$AssertionFailedWithCauseError: 
+	at dalvik.system.VMStack.getThreadStackTrace(Native Method)
+	at java.lang.Thread.getStackTrace(Thread.java:1841)
+	at androidx.test.espresso.base.AssertionErrorHandler.handleSafely(AssertionErrorHandler.java:35)
+	at androidx.test.espresso.base.AssertionErrorHandler.handleSafely(AssertionErrorHandler.java:26)
+	at androidx.test.espresso.base.DefaultFailureHandler$TypedFailureHandler.handle(DefaultFailureHandler.java:158)
+	at androidx.test.espresso.base.DefaultFailureHandler.handle(DefaultFailureHandler.java:120)
+	at androidx.test.espresso.ViewInteraction.waitForAndHandleInteractionResults(ViewInteraction.java:387)
+	at androidx.test.espresso.ViewInteraction.check(ViewInteraction.java:366)
+	at com.dormpanel.phone.PhoneTimetableTest.missingCsvProfileCanBeConfiguredBeforeConfirmation(PhoneTimetableTest.kt:454)
+	... 33 trimmed
+Caused by: java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.dormpanel.phone.PhoneTimetableTest.missingCsvProfileCanBeConfiguredBeforeConfirmation$lambda$104$lambda$98(PhoneTimetableTest.kt:458)
+	at com.dormpanel.phone.PhoneTimetableTest$$ExternalSyntheticLambda67.check(D8$$SyntheticClass:0)
+	at androidx.test.espresso.ViewInteraction$SingleExecutionViewAssertion.check(ViewInteraction.java:488)
+	at androidx.test.espresso.ViewInteraction$2.call(ViewInteraction.java:346)
+	at androidx.test.espresso.ViewInteraction$2.call(ViewInteraction.java:319)
+	at java.util.concurrent.FutureTask.run(FutureTask.java:264)
+	at android.os.Handler.handleCallback(Handler.java:942)
+	at android.os.Handler.dispatchMessage(Handler.java:99)
+	at android.os.Looper.loopOnce(Looper.java:210)
+	at android.os.Looper.loop(Looper.java:299)
+	at android.app.ActivityThread.main(ActivityThread.java:8252)
+	at java.lang.reflect.Method.invoke(Native Method)
+	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:559)
+	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:954)
+
+com.dormpanel.phone.PhoneSharedScheduleTest:.
+com.dormpanel.phone.PhoneSharedScheduleInspectionTest:...
+com.dormpanel.phone.PhoneBidirectionalUiTest:PR35 UI: save encrypted account
+PR35 UI: account saved
+PR35 UI: seed mock commit
+PR35 UI: commit seeded
+PR35 UI: launch activity
+PR35 UI: activity launched
+PR35 UI: bind v2
+PR35 UI: save encrypted account
+PR35 UI: account saved
+PR35 UI: seed mock commit
+PR35 UI: commit seeded
+PR35 UI: launch activity
+PR35 UI: activity launched
+PR35 UI: bind v2
+.
+
+Time: 193.185
+There were 2 failures:
+1) browseFolderSelectAndCancelAreDraftOnly(com.dormpanel.phone.PhoneTimetableTest)
+androidx.test.espresso.base.RootViewPicker$RootViewWithoutFocusException: Waited for the root of the view hierarchy to have window focus and not request layout for 10 seconds. If you specified a non default root matcher, it may be picking a root that never takes focus. Root:
+Root{application-window-token=android.view.ViewRootImpl$W@c372fcc, window-token=android.view.ViewRootImpl$W@c372fcc, has-window-focus=false, layout-params-type=1, layout-params-string={(0,0)(fillxfill) disableCutout=false ty=BASE_APPLICATION wanim=0x1030300
+  fl=KEEP_SCREEN_ON LAYOUT_IN_SCREEN LAYOUT_INSET_DECOR SPLIT_TOUCH HARDWARE_ACCELERATED DRAWS_SYSTEM_BAR_BACKGROUNDS
+  pfl=NO_MOVE_ANIMATION FORCE_DRAW_STATUS_BAR_BACKGROUND FIT_INSETS_CONTROLLED
+  bhv=DEFAULT
+  fitSides=}, decor-view-string=DecorView{id=-1, visibility=VISIBLE, width=1080, height=2160, has-focus=false, has-focusable=true, has-window-focus=false, is-clickable=false, is-enabled=true, is-focused=false, is-focusable=false, is-layout-requested=false, is-selected=false, layout-params={(0,0)(fillxfill) disableCutout=false ty=BASE_APPLICATION wanim=0x1030300
+  fl=KEEP_SCREEN_ON LAYOUT_IN_SCREEN LAYOUT_INSET_DECOR SPLIT_TOUCH HARDWARE_ACCELERATED DRAWS_SYSTEM_BAR_BACKGROUNDS
+  pfl=NO_MOVE_ANIMATION FORCE_DRAW_STATUS_BAR_BACKGROUND FIT_INSETS_CONTROLLED
+  bhv=DEFAULT
+  fitSides=}, tag=null, root-is-layout-requested=false, has-input-connection=false, x=0.0, y=0.0, child-count=3}}
+	at dalvik.system.VMStack.getThreadStackTrace(Native Method)
+	at java.lang.Thread.getStackTrace(Thread.java:1841)
+	at androidx.test.espresso.base.EspressoExceptionHandler.handleSafely(EspressoExceptionHandler.java:34)
+	at androidx.test.espresso.base.EspressoExceptionHandler.handleSafely(EspressoExceptionHandler.java:26)
+	at androidx.test.espresso.base.DefaultFailureHandler$TypedFailureHandler.handle(DefaultFailureHandler.java:158)
+	at androidx.test.espresso.base.DefaultFailureHandler.handle(DefaultFailureHandler.java:120)
+	at androidx.test.espresso.ViewInteraction.waitForAndHandleInteractionResults(ViewInteraction.java:385)
+	at androidx.test.espresso.ViewInteraction.desugaredPerform(ViewInteraction.java:212)
+	at androidx.test.espresso.ViewInteraction.perform(ViewInteraction.java:140)
+	at com.dormpanel.phone.PhoneTimetableTest.browseFolderSelectAndCancelAreDraftOnly(PhoneTimetableTest.kt:199)
+2) missingCsvProfileCanBeConfiguredBeforeConfirmation(com.dormpanel.phone.PhoneTimetableTest)
+androidx.test.espresso.base.AssertionErrorHandler$AssertionFailedWithCauseError: 
+	at dalvik.system.VMStack.getThreadStackTrace(Native Method)
+	at java.lang.Thread.getStackTrace(Thread.java:1841)
+	at androidx.test.espresso.base.AssertionErrorHandler.handleSafely(AssertionErrorHandler.java:35)
+	at androidx.test.espresso.base.AssertionErrorHandler.handleSafely(AssertionErrorHandler.java:26)
+	at androidx.test.espresso.base.DefaultFailureHandler$TypedFailureHandler.handle(DefaultFailureHandler.java:158)
+	at androidx.test.espresso.base.DefaultFailureHandler.handle(DefaultFailureHandler.java:120)
+	at androidx.test.espresso.ViewInteraction.waitForAndHandleInteractionResults(ViewInteraction.java:387)
+	at androidx.test.espresso.ViewInteraction.check(ViewInteraction.java:366)
+	at com.dormpanel.phone.PhoneTimetableTest.missingCsvProfileCanBeConfiguredBeforeConfirmation(PhoneTimetableTest.kt:454)
+	... 33 trimmed
+Caused by: java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.dormpanel.phone.PhoneTimetableTest.missingCsvProfileCanBeConfiguredBeforeConfirmation$lambda$104$lambda$98(PhoneTimetableTest.kt:458)
+	at com.dormpanel.phone.PhoneTimetableTest$$ExternalSyntheticLambda67.check(D8$$SyntheticClass:0)
+	at androidx.test.espresso.ViewInteraction$SingleExecutionViewAssertion.check(ViewInteraction.java:488)
+	at androidx.test.espresso.ViewInteraction$2.call(ViewInteraction.java:346)
+	at androidx.test.espresso.ViewInteraction$2.call(ViewInteraction.java:319)
+	at java.util.concurrent.FutureTask.run(FutureTask.java:264)
+	at android.os.Handler.handleCallback(Handler.java:942)
+	at android.os.Handler.dispatchMessage(Handler.java:99)
+	at android.os.Looper.loopOnce(Looper.java:210)
+	at android.os.Looper.loop(Looper.java:299)
+	at android.app.ActivityThread.main(ActivityThread.java:8252)
+	at java.lang.reflect.Method.invoke(Native Method)
+	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:559)
+	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:954)
+
+FAILURES!!!
+Tests run: 16,  Failures: 2
+
+

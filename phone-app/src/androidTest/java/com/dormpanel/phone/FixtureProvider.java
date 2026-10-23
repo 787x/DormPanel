@@ -21,7 +21,7 @@ public class FixtureProvider extends ContentProvider {
     }
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         String name = uri.getLastPathSegment();
-        if (!Arrays.asList("wakeup.ics", "hubei_2026-2027-1.csv", "bad.ics", "future.csv").contains(name)) throw new FileNotFoundException();
+        if (!Arrays.asList("wakeup.ics", "hubei_2026-2027-1.csv", "bad.ics", "future.csv", "night.ics").contains(name)) throw new FileNotFoundException();
         File file = new File(getContext().getCacheDir(), name);
         try (OutputStream out = new FileOutputStream(file)) {
             if (name.equals("bad.ics")) out.write("not a calendar".getBytes("UTF-8"));

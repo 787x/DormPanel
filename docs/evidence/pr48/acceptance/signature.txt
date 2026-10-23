@@ -1,0 +1,13 @@
+V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug
+V2 Signer: certificate SHA-256 digest: 32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7
+V2 Signer: certificate SHA-1 digest: 770988832b105ce5f938475986d8b82299420083
+V2 Signer: certificate MD5 digest: c3e4627d824b04d9a8bcb9788ae042f5
+
+Algorithm : SHA256
+Hash      : F21DFC679D267A94DBA0DE1BA4ADE52BC1AD47C0B77603F18D5BD93ADC912812
+Path      : D:\Projects\DormPanel\artifacts\pr48-final-016\DormPanel-Phone-0.1.6.apk
+
+package: name='com.dormpanel.timetable' versionCode='8' versionName='0.1.6' platformBuildVersionName='17' platformBuildVersionCode='37' compileSdkVersion='37' compileSdkVersionCodename='17'
+minSdkVersion:'28'
+targetSdkVersion:'37'
+uses-permission: name='android.permission.INTERNET'

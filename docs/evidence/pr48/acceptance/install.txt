@@ -1,0 +1,26 @@
+正式包已停止；备份保存于用户私有 .dormpanel 目录，未纳入 Git。tar 目录包含 schedule.db；同时保留旧 APK。
+
+Algorithm : SHA256
+Hash      : D57295177E892DA6EFB3D9FF9EF5C756A15D3FB6A309BAE8208D5EA5D2AE71B6
+Path      : C:\Users\34530\.dormpanel\pr48-before-016-7930cb2654b34b80b1466fe267a5f191\app-data.tar
+
+
+    versionCode=7 minSdk=28 targetSdk=37
+    versionName=0.1.5
+
+Performing Streamed Install
+Success
+0.1.5（7）→0.1.6（8）原位安装成功。安装前后 databases/ 与 shared_prefs/ 所有文件哈希一致；正式包未启动，未触发日用库同步或写入。
+
+    versionCode=8 minSdk=28 targetSdk=37
+    versionName=0.1.6
+
+设备取回 APK SHA-256 与候选完全一致：f21dfc679d267a94dba0de1ba4ade52bc1ad47c0b77603f18d5bd93adc912812
+
+Algorithm : SHA256
+Hash      : 562E0258BE3D77DD58E102D2949529ABC4D3325C1FC7739C48AA8CEA39315446
+Path      : D:\Projects\DormPanel\artifacts\pr48-postupgrade-hashes.txt
+
+
+V2 Signer: certificate SHA-256 digest: 32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7
+

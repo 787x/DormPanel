@@ -1,0 +1,8 @@
+
+com.dormpanel.phone.PhoneTimetableTest:.......
+
+Time: 74.555
+
+OK (7 tests)
+
+

@@ -25,6 +25,7 @@ class PhoneSharedScheduleTest {
     private fun waitFor(scenario: ActivityScenario<TimetableActivity>, predicate: (TimetableActivity) -> Boolean) {
         val deadline = System.currentTimeMillis() + 20000
         while (System.currentTimeMillis() < deadline) {
+            dismissTestPasswordPrompt()
             var done = false; scenario.onActivity { done = predicate(it) }
             if (done) return
             Thread.sleep(40)
@@ -37,6 +38,11 @@ class PhoneSharedScheduleTest {
         override fun dispatch(request: RecordedRequest): MockResponse {
             if (offline) return MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)
             if (request.getHeader("Authorization") != "Basic dXNlcjpzZWNyZXQ=") return MockResponse().setResponseCode(401)
+            if (request.method == "PROPFIND" && request.path in listOf("/", "/share/")) {
+                val paths = if (request.path == "/") listOf("/", "/share/") else listOf("/share/")
+                val rows = paths.joinToString("") { "<d:response><d:href>$it</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>" }
+                return MockResponse().setResponseCode(207).setBody("<d:multistatus xmlns:d=\"DAV:\">$rows</d:multistatus>")
+            }
             v2Listing(files, request)?.let { return it }
             val key = request.path!!; val old = files[key]; val etag = old?.let { "\"${digest(it)}\"" }
             if (request.method == "GET") return if (old == null) MockResponse().setResponseCode(404)
@@ -96,6 +102,7 @@ class PhoneSharedScheduleTest {
                     assertNotNull(writerStore.v2Frame().baseline?.commitId)
                     onView(withText("关闭")).perform(click())
                     waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
+                    waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
                     instrumentation.waitForIdleSync()
                     Thread.sleep(350) // Native window dismissal is not tracked by Espresso idleness.
 
@@ -104,18 +111,40 @@ class PhoneSharedScheduleTest {
                     onView(withHint("WebDAV 服务地址")).perform(scrollTo(), replaceText(account.baseUrl), closeSoftKeyboard())
                     onView(withHint("用户名")).perform(scrollTo(), replaceText("user"), closeSoftKeyboard())
                     onView(withHint("密码（留空保留已保存密码）")).perform(scrollTo(), replaceText("secret"), closeSoftKeyboard())
-                    onView(withHint("共享目录完整 URL")).perform(scrollTo(), replaceText(publisherSettings.folder), closeSoftKeyboard())
-                    onView(withText("测试连接 / 检查远端快照")).perform(scrollTo(), click())
+                    onView(withText("浏览共享目录")).perform(scrollTo(), click())
+                    val folderDeadline = System.currentTimeMillis() + 10000
+                    while (true) { try { onView(withText("▸ share")).perform(click()); break }
+                        catch (e: androidx.test.espresso.NoMatchingViewException) { if (System.currentTimeMillis() > folderDeadline) throw e; Thread.sleep(40) } }
+                    Thread.sleep(300); instrumentation.waitForIdleSync()
+                    onView(withText("选择此文件夹")).perform(click())
+                    onView(withHint("共享目录完整 URL")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check(matches(withText(publisherSettings.folder)))
+                    onView(withText("测试连接 / 检查远端快照")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(scrollTo(), click())
                     // Transport finishes asynchronously; wait for its confirmation dialog without accepting it early.
                     val deadline = System.currentTimeMillis() + 20000
                     while (System.currentTimeMillis() < deadline) {
-                        try { onView(withText("确认下载并绑定")).check(matches(isDisplayed())); break } catch (_: AssertionError) { Thread.sleep(40) }
+            dismissTestPasswordPrompt()
+                        try { onView(withText("确认下载并绑定")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check(matches(isDisplayed())); break } catch (_: AssertionError) { Thread.sleep(40) }
                         catch (_: androidx.test.espresso.NoMatchingViewException) { Thread.sleep(40) }
                     }
                     scenario.onActivity { assertFalse(it.source.readOnly); assertTrue(it.source.state.entries.isEmpty()) }
-                    onView(withText("确认下载并绑定")).perform(click())
-                    waitFor(scenario) { it.source.state.sync != null && !it.source.applyingSnapshot }
+                    onView(withText("确认下载并绑定")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
+                    waitFor(scenario) { it.source.state.sync != null && !it.source.applyingSnapshot && !it.sharedSync.busy }
+                    onView(withText("浏览共享目录")).perform(scrollTo(), click())
+                    onView(withText("已绑定，请使用安全换库入口")).check(matches(isDisplayed()))
+                    onView(withText("更换共享课表数据集 / 恢复换库")).perform(scrollTo(), click())
+                    val switchDeadline = System.currentTimeMillis() + 10000
+                    while (true) { try { onView(withText("浏览新共享目录")).perform(click()); break }
+                        catch (e: androidx.test.espresso.NoMatchingViewException) { if (System.currentTimeMillis() > switchDeadline) throw e; Thread.sleep(40) } }
+                    val navigationDeadline = System.currentTimeMillis() + 10000
+                    while (true) { try { onView(withText("▸ share")).perform(click()); break }
+                        catch (e: androidx.test.espresso.NoMatchingViewException) { if (System.currentTimeMillis() > navigationDeadline) throw e; Thread.sleep(40) } }
+                    Thread.sleep(300); instrumentation.waitForIdleSync()
+                    onView(withText("选择此文件夹")).perform(click())
+                    onView(withHint("新共享目录完整 URL（使用当前 WebDAV 账号）")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check(matches(withText(publisherSettings.folder)))
+                    onView(withHint("FPK 显示的目标 datasetId")).check(matches(withText("")))
+                    onView(withText("取消")).perform(click())
                     onView(withText("关闭")).perform(click())
+                    waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
                     onView(withText("＋ 课程")).check(matches(isDisplayed()))
                     onView(withText("日期调整")).check(matches(isDisplayed()))
                     scenario.onActivity {
@@ -160,6 +189,7 @@ class PhoneSharedScheduleTest {
                     waitFor(scenario) { it.source.state.entries.singleOrNull()?.title == "New revision" && !it.source.applyingSnapshot }
                     scenario.onActivity { assertEquals("Asia/Tokyo", it.source.state.profiles["custom-term"]!!.timezone) }
                     onView(withText("关闭")).perform(click())
+                    waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
                     // Bad remote bytes must leave the successful revision intact.
                     dav.files["/share/dormpanel-sync-v2/commit-${writerStore.v2Frame().baseline?.commitId}.dpc"] = byteArrayOf(1, 2)
                     onView(withText("管理")).perform(click())
@@ -168,6 +198,7 @@ class PhoneSharedScheduleTest {
                     waitFor(scenario) { !it.sharedSync.busy }
                     scenario.onActivity { assertEquals("New revision", it.source.state.entries.single().title); assertTrue(it.sharedSync.status.contains("同步失败")) }
                     onView(withText("关闭")).perform(click())
+                    waitFor(scenario) { it.hasWindowFocus() && !it.sharedSync.busy }
                     dav.offline = true
                 }
                 launchPhoneTestActivity().use { scenario ->

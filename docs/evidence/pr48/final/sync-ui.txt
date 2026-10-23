@@ -1,0 +1,24 @@
+
+com.dormpanel.phone.PhoneSharedScheduleInspectionTest:...
+com.dormpanel.phone.PhoneSharedScheduleTest:.
+com.dormpanel.phone.PhoneBidirectionalUiTest:PR35 UI: save encrypted account
+PR35 UI: account saved
+PR35 UI: seed mock commit
+PR35 UI: commit seeded
+PR35 UI: launch activity
+PR35 UI: activity launched
+PR35 UI: bind v2
+PR35 UI: save encrypted account
+PR35 UI: account saved
+PR35 UI: seed mock commit
+PR35 UI: commit seeded
+PR35 UI: launch activity
+PR35 UI: activity launched
+PR35 UI: bind v2
+.
+
+Time: 63.43
+
+OK (5 tests)
+
+
