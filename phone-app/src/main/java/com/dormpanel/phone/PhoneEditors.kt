@@ -30,6 +30,10 @@ internal fun Context.scheduleColumn() = LinearLayout(this).apply { orientation =
 internal class PhoneEditors(private val context: Context, private val source: ScheduleSource,
     private val enabled: () -> Boolean = { true }) {
     private val dialogs = mutableListOf<android.content.DialogInterface>()
+    private fun blocked(): Boolean {
+        val reason = source.editBlockReason ?: return false
+        Toast.makeText(context, reason, Toast.LENGTH_LONG).show(); return true
+    }
     fun close() { dialogs.toList().forEach { it.dismiss() }; dialogs.clear() }
     private fun track(dialog: android.app.Dialog) {
         dialogs += dialog
@@ -55,12 +59,16 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         dialog.window?.setLayout(minOf(context.dp(900), context.resources.displayMetrics.widthPixels - context.dp(24)), ViewGroup.LayoutParams.WRAP_CONTENT)
         listOf(-1, -2, -3).forEach { dialog.getButton(it)?.minHeight = context.dp(48) }
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            source.editBlockReason?.let { error.text = it; return@setOnClickListener }
             if (enabled() && !source.readOnly && !source.applyingSnapshot) { val message = save(); if (message == null) dialog.dismiss() else error.text = message }
         }
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { if (enabled() && !source.readOnly && !source.applyingSnapshot) { delete?.invoke(); dialog.dismiss() } }
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+            source.editBlockReason?.let { error.text = it; return@setOnClickListener }
+            if (enabled() && !source.applyingSnapshot) { delete?.invoke(); dialog.dismiss() }
+        }
     }
     fun dayAdjustment(date: LocalDate) {
-        if (!enabled() || !source.ready || source.readOnly || source.applyingSnapshot) return
+        if (!enabled() || !source.ready || blocked() || source.applyingSnapshot) return
         val current = source.state.daysByDate[date.toString()]
         val choices = listOf("Normal", "No classes", "Use another weekday")
         val fields = context.scheduleColumn()
@@ -138,7 +146,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
     }
 
     private fun classEditor(item: ClassOccurrence, allWeeks: Boolean) {
-        if (!enabled() || !source.ready || source.readOnly || source.applyingSnapshot) return
+        if (!enabled() || !source.ready || blocked() || source.applyingSnapshot) return
         val session = ClassEditSession(source.state, item, allWeeks, source.clock.zone())
         val date = session.date
         val draft = session.draft
@@ -251,7 +259,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         }
     }
     fun entry(existing: TimetableEntry? = null) {
-        if (!enabled() || !source.ready || source.readOnly || source.applyingSnapshot) return
+        if (!enabled() || !source.ready || blocked() || source.applyingSnapshot) return
         val title = input("Class title", existing?.title.orEmpty())
         val location = input("Location (optional)", existing?.location.orEmpty())
         val days = ScheduleProjection.weekDays(source.clock.locale())

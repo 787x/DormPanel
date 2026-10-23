@@ -58,7 +58,7 @@ async function equalOriginal(f, before) {
 }
 linux('多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复', async t => {
   const f = await fixture(t), before = await original(f), created = await f.manager.create(f.location);
-  assert(created.verified); assert.equal(created.workspaceCount, 4); assert.equal(created.appVersion, '0.6.0');
+  assert(created.verified); assert.equal(created.workspaceCount, 4); assert.equal(created.appVersion, '0.6.1');
   assert(created.dependencies.some(d => d.included)); assert(created.dependencies.some(d => !d.included && d.type === 'webdav'));
   const newerLocal = await f.catalog.load(f.local.id);
   await newerLocal.edit(operation('备份后新增私有提交'));

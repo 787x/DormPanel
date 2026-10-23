@@ -242,6 +242,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         }
         val dialog = show(builder.setPositiveButton("Save", null).create())
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            source.editBlockReason?.let { error.text = it; return@setOnClickListener }
             val parsed = runCatching {
                 TermProfileForm.parseProfileForm(termInput.text.toString(), tzInput.text.toString(),
                     week1Input.text.toString(), phaseInput.text.toString())
@@ -257,10 +258,11 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
                 if (!missing.isNullOrEmpty()) {
                     error.text = "Profile is missing periods: ${missing.sorted().joinToString(", ")}"; return@setOnClickListener
                 }
-                profileStore.put(profile)
-                source.refreshProfiles()
-                dialog.dismiss()
-                onDone?.invoke(profile)
+                runCatching { profileStore.put(profile) }.onSuccess {
+                    source.refreshProfiles()
+                    dialog.dismiss()
+                    onDone?.invoke(profile)
+                }.onFailure { error.text = errorText(it) }
             }.onFailure { error.text = errorText(it) }
         }
     }

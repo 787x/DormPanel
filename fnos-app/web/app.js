@@ -1197,7 +1197,13 @@ async function migrationRead() {
   const connection = el('select'); connection.id = 'migrationConnection'; connection.setAttribute('aria-label', 'Android 实际使用的目标 WebDAV 连接');
   const management = await get('/api/manage');
   connection.append(...management.connections.filter(c => c.type === 'webdav').map(c => { const o = el('option', `${c.name} · ${c.url}`); o.value = c.id; return o; }));
-  const job = async data => { await post('/api/migration', data); await load(); await migrationRead(); };
+  const job = async data => {
+    await post('/api/migration', data);
+    // 切换会由后端改变活动工作区；重新读取它，避免继续携带旧工作区身份。
+    if (data.action === 'switch') workspaceId = undefined;
+    await load();
+    await historyRead();
+  };
   form.append(el('p', '1. 先用上方功能归档并准备候选，再添加指向该候选的独立 WebDAV 连接。选择 Android 实际使用的地址，后端将通过它读取全图。准备成功即保护新旧工作区；重启后从本页继续。'), candidate, connection,
     button('检查归档与候选，准备换库', () => historyJob(() => job({ action: 'prepare', rootId: $('historyRoot').value, candidateRelative: candidate.value, targetConnectionId: connection.value }))));
   panel.append(form);

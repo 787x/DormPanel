@@ -1,5 +1,7 @@
 # PR47 验收记录
 
+**最终候选为 FPK 0.6.1 / Android 0.1.4。正式应用原位升级和 UI 验收的最终结论见 [合并前验收](pr47-final-acceptance.md)；下文保留较早阶段的执行范围，不代表最终状态。**
+
 日期：2026-10-23（Asia/Shanghai）。基线 main / PR46 `d2f983e`；候选 FPK 0.6.0、Android 0.1.4。不合并、不创建 tag、不发布 Release。
 
 ## 已执行

@@ -95,9 +95,13 @@ internal class ScheduleEditors(private val context: Context, private val source:
         dialog.matchActivityBrightness()
         listOf(-1, -2, -3).forEach { dialog.getButton(it)?.minHeight = context.dp(48) }
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            source.editBlockReason?.let { error.text = it; return@setOnClickListener }
             if (enabled()) { val message = save(); if (message == null) dialog.dismiss() else error.text = message }
         }
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { if (enabled()) { delete?.invoke(); dialog.dismiss() } }
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+            source.editBlockReason?.let { error.text = it; return@setOnClickListener }
+            if (enabled()) { delete?.invoke(); dialog.dismiss() }
+        }
     }
     fun event(date: LocalDate, existing: CalendarEvent? = null) {
         if (!enabled() || !source.ready) return

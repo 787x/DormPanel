@@ -1,6 +1,6 @@
 # PR47：Sync v2 安全换库与旧库退役
 
-基线为已合并 PR46 的 main `d2f983e`。候选版本为 FPK **0.6.0**、Android **0.1.4**（X08E code 8，Phone code 6）。不修改 applicationId、Room schema 4、DPC2 / DPSS/1 字节格式或 256 提交上限；没有自动删除、原地压缩、Root 或 ADB 运行时依赖。
+基线为已合并 PR46 的 main `d2f983e`。候选版本为 FPK **0.6.1**、Android **0.1.4**（X08E code 8，Phone code 6）。不修改 applicationId、Room schema 4、DPC2 / DPSS/1 字节格式或 256 提交上限；没有自动删除、原地压缩、Root 或 ADB 运行时依赖。
 
 ## 管理员操作
 

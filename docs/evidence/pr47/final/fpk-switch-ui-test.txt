@@ -1,0 +1,9 @@
+✔ 换库向导显示真实来源、人工设备清单与零物理回收；失败保留可恢复入口 (3827.3622ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4542.8857

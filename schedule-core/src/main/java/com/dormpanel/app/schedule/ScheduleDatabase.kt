@@ -335,7 +335,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     private fun v2Commit(id: Int) = database.dao().syncRecord(id)?.payload?.let(ScheduleCommitCodec::decode)
     // 200 active journal, 202 observed paths, 203 inspection pause; >=1000 immutable recovery blobs/manifests.
     private fun datasetMigration() = database.dao().syncRecord(200)?.payload?.let(ScheduleDatasetMigration::decode)
-    private fun requireNoDatasetMigration() { check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "换库期间课程及同步检查点受保护；请继续或取消换库" } }
+    private fun requireNoDatasetMigration() { if (database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203)) throw ScheduleDatasetWriteProtected() }
     override fun v2DatasetPaused() = blocking { database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) }
     override fun v2DatasetResult() = blocking { database.dao().syncRecord(204)?.payload?.toString(Charsets.UTF_8) }
     override fun v2RequireSyncAllowed() = blocking { requireNoDatasetMigration() }

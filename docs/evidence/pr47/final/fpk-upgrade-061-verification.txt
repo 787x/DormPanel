@@ -1,0 +1,1 @@
+{"installedVersion": "0.6.1", "protectedFilesUnchanged": 20, "workspacesPreserved": 7, "connectionsPreserved": 7, "identityAndCredentialsExact": true, "backupReadVerified": true}

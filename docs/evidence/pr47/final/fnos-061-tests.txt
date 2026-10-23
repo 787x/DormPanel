@@ -1,0 +1,328 @@
+TAP version 13
+# Subtest: 多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复
+ok 1 - 多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复
+  ---
+  duration_ms: 5021.679652
+  type: 'test'
+  ...
+# Subtest: 拒绝 password，有效数据完全不变
+ok 2 - 拒绝 password，有效数据完全不变
+  ---
+  duration_ms: 2687.423308
+  type: 'test'
+  ...
+# Subtest: 拒绝 truncated，有效数据完全不变
+ok 3 - 拒绝 truncated，有效数据完全不变
+  ---
+  duration_ms: 2598.093603
+  type: 'test'
+  ...
+# Subtest: 拒绝 ciphertext，有效数据完全不变
+ok 4 - 拒绝 ciphertext，有效数据完全不变
+  ---
+  duration_ms: 2584.067128
+  type: 'test'
+  ...
+# Subtest: 拒绝 identity，有效数据完全不变
+ok 5 - 拒绝 identity，有效数据完全不变
+  ---
+  duration_ms: 2681.926588
+  type: 'test'
+  ...
+# Subtest: 私有提交 UUID 已有不同字节时恢复在决策前拒绝，不覆盖不可变历史
+ok 6 - 私有提交 UUID 已有不同字节时恢复在决策前拒绝，不覆盖不可变历史
+  ---
+  duration_ms: 2875.601349
+  type: 'test'
+  ...
+# Subtest: 回执已保存而 observe 尚未完成的合法帧也能完整备份和恢复
+ok 7 - 回执已保存而 observe 尚未完成的合法帧也能完整备份和恢复
+  ---
+  duration_ms: 4640.105009
+  type: 'test'
+  ...
+# Subtest: 授权 NAS 历史仅记录为外部依赖，撤销授权后恢复本地视图但拒绝发布
+ok 8 - 授权 NAS 历史仅记录为外部依赖，撤销授权后恢复本地视图但拒绝发布
+  ---
+  duration_ms: 4166.558324
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-precommit 注入故障，重启确定选择完整旧状态或新状态
+ok 9 - 恢复在 restore-precommit 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 3509.558013
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-committed 注入故障，重启确定选择完整旧状态或新状态
+ok 10 - 恢复在 restore-committed 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 4116.785396
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-file 注入故障，重启确定选择完整旧状态或新状态
+ok 11 - 恢复在 restore-file 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 4268.864707
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-complete 注入故障，重启确定选择完整旧状态或新状态
+ok 12 - 恢复在 restore-complete 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 4475.271368
+  type: 'test'
+  ...
+# Subtest: 备份失败没有有效半成品；只使用授权目录，拒绝遍历/链接/私有目录
+ok 13 - 备份失败没有有效半成品；只使用授权目录，拒绝遍历/链接/私有目录
+  ---
+  duration_ms: 2167.641528
+  type: 'test'
+  ...
+# Subtest: 恢复确认绑定管理员和预览，预览后编辑/切换拒绝；并发操作相互隔离
+ok 14 - 恢复确认绑定管理员和预览，预览后编辑/切换拒绝；并发操作相互隔离
+  ---
+  duration_ms: 3456.279131
+  type: 'test'
+  ...
+# Subtest: 实际 Socket 备份 API：管理员、CSRF、版本、口令、敏感响应与确认恢复
+ok 15 - 实际 Socket 备份 API：管理员、CSRF、版本、口令、敏感响应与确认恢复
+  ---
+  duration_ms: 3974.22071
+  type: 'test'
+  ...
+# Subtest: 0.5.0 兼容 0.4.1 版本元数据并精确恢复，备份格式保持不变
+ok 16 - 0.5.0 兼容 0.4.1 版本元数据并精确恢复，备份格式保持不变
+  ---
+  duration_ms: 3498.444163
+  type: 'test'
+  ...
+# Subtest: 0.5.0 兼容 0.4.2 版本元数据并精确恢复，备份格式保持不变
+ok 17 - 0.5.0 兼容 0.4.2 版本元数据并精确恢复，备份格式保持不变
+  ---
+  duration_ms: 3502.070703
+  type: 'test'
+  ...
+# Subtest: 0.5.0 兼容 0.4.3 版本元数据并精确恢复，备份格式保持不变
+ok 18 - 0.5.0 兼容 0.4.3 版本元数据并精确恢复，备份格式保持不变
+  ---
+  duration_ms: 3642.763995
+  type: 'test'
+  ...
+# Subtest: 0.5.0 兼容 0.4.4 版本元数据并精确恢复，备份格式保持不变
+ok 19 - 0.5.0 兼容 0.4.4 版本元数据并精确恢复，备份格式保持不变
+  ---
+  duration_ms: 3641.290014
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 traversal
+ok 20 - 认证归档仍拒绝恶意 traversal
+  ---
+  duration_ms: 1718.693553
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 duplicate
+ok 21 - 认证归档仍拒绝恶意 duplicate
+  ---
+  duration_ms: 1837.268995
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 size
+ok 22 - 认证归档仍拒绝恶意 size
+  ---
+  duration_ms: 1751.276342
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 count
+ok 23 - 认证归档仍拒绝恶意 count
+  ---
+  duration_ms: 1860.140935
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 missing
+ok 24 - 认证归档仍拒绝恶意 missing
+  ---
+  duration_ms: 1820.964647
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 checksum
+ok 25 - 认证归档仍拒绝恶意 checksum
+  ---
+  duration_ms: 1705.921652
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 version
+ok 26 - 认证归档仍拒绝恶意 version
+  ---
+  duration_ms: 1792.728488
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 appVersion
+ok 27 - 认证归档仍拒绝恶意 appVersion
+  ---
+  duration_ms: 1895.23078
+  type: 'test'
+  ...
+# Subtest: 0.4.0 旧源码生成的真实加密归档在 0.5.0 验证并精确恢复，安装身份边界不变
+ok 28 - 0.4.0 旧源码生成的真实加密归档在 0.5.0 验证并精确恢复，安装身份边界不变
+  ---
+  duration_ms: 3158.733366
+  type: 'test'
+  ...
+# Subtest: 预览无后续 API 或重启也按到期定时器释放，且空闲时无清理定时器
+ok 29 - 预览无后续 API 或重启也按到期定时器释放，且空闲时无清理定时器
+  ---
+  duration_ms: 3104.340516
+  type: 'test'
+  ...
+# Subtest: 取消只释放当前管理员选定的预览，不影响其他仍有效预览
+ok 30 - 取消只释放当前管理员选定的预览，不影响其他仍有效预览
+  ---
+  duration_ms: 3209.202068
+  type: 'test'
+  ...
+# Subtest: 认证后注册预览失败及认证失败均交回明文目录，不留无主暂存
+ok 31 - 认证后注册预览失败及认证失败均交回明文目录，不留无主暂存
+  ---
+  duration_ms: 2818.77659
+  type: 'test'
+  ...
+# Subtest: 清理失败撤销令牌但保留待清理所有权，自动重试成功后停止定时器
+ok 32 - 清理失败撤销令牌但保留待清理所有权，自动重试成功后停止定时器
+  ---
+  duration_ms: 2988.538924
+  type: 'test'
+  ...
+# Subtest: 保护引用读取失败时不猜测删除，后续定时重试安全释放
+ok 33 - 保护引用读取失败时不猜测删除，后续定时重试安全释放
+  ---
+  duration_ms: 3040.296612
+  type: 'test'
+  ...
+# Subtest: 清理持续失败后关服，启动重试仅清理无主预览并保留恢复前快照
+ok 34 - 清理持续失败后关服，启动重试仅清理无主预览并保留恢复前快照
+  ---
+  duration_ms: 2970.399105
+  type: 'test'
+  ...
+# Subtest: 恢复使用中越过预览到期点也不清理输入；成功后释放预览并保留旧快照
+ok 35 - 恢复使用中越过预览到期点也不清理输入；成功后释放预览并保留旧快照
+  ---
+  duration_ms: 3434.462924
+  type: 'test'
+  ...
+# Subtest: 已提交恢复中断后到期和关服不删除日志输入，启动清理也保留新旧状态
+ok 36 - 已提交恢复中断后到期和关服不删除日志输入，启动清理也保留新旧状态
+  ---
+  duration_ms: 3462.486981
+  type: 'test'
+  ...
+# Subtest: 历史 check 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+ok 37 - 历史 check 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+  ---
+  duration_ms: 1142.409877
+  type: 'test'
+  ...
+# Subtest: 历史 preview 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+ok 38 - 历史 preview 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+  ---
+  duration_ms: 1208.903733
+  type: 'test'
+  ...
+# Subtest: 历史 rollback 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+ok 39 - 历史 rollback 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+  ---
+  duration_ms: 1241.653921
+  type: 'test'
+  ...
+# Subtest: 历史 archive 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+ok 40 - 历史 archive 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+  ---
+  duration_ms: 1219.152572
+  type: 'test'
+  ...
+# Subtest: 历史 compact 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+ok 41 - 历史 compact 保留异常观察，漏列、缓存读取和重启均不能遗忘，修复后核对已确认哈希
+  ---
+  duration_ms: 1232.460862
+  type: 'test'
+  ...
+# Subtest: 失败观察也保存已经验证的新哈希和未开始读取的路径，重启后遗漏列举仍拒绝篡改
+ok 42 - 失败观察也保存已经验证的新哈希和未开始读取的路径，重启后遗漏列举仍拒绝篡改
+  ---
+  duration_ms: 423.505155
+  type: 'test'
+  ...
+# Subtest: 观察增量不使正常确认自失效；入口旧版本和业务编辑后复原仍拒绝，身份验证回调保留
+ok 43 - 观察增量不使正常确认自失效；入口旧版本和业务编辑后复原仍拒绝，身份验证回调保留
+  ---
+  duration_ms: 1082.836509
+  type: 'test'
+  ...
+# Subtest: 多父合并逐父比较，仅两门变更课程不会成为整份课程新增；根和单父语义保持
+ok 44 - 多父合并逐父比较，仅两门变更课程不会成为整份课程新增；根和单父语义保持
+  ---
+  duration_ms: 67.321044
+  type: 'test'
+  ...
+# Subtest: 观察中业务编辑后复原仍拒绝，拒绝前保存列举所得的新路径
+ok 45 - 观察中业务编辑后复原仍拒绝，拒绝前保存列举所得的新路径
+  ---
+  duration_ms: 557.830447
+  type: 'test'
+  ...
+# Subtest: 归档最终复查也持久化新异常，不能签发完成标记；后续漏列仍阻止精简
+ok 46 - 归档最终复查也持久化新异常，不能签发完成标记；后续漏列仍阻止精简
+  ---
+  duration_ms: 1755.496855
+  type: 'test'
+  ...
+# Subtest: 图身份不依赖检查点与归档清单的哈希枚举顺序
+ok 47 - 图身份不依赖检查点与归档清单的哈希枚举顺序
+  ---
+  duration_ms: 4.413931
+  type: 'test'
+  ...
+# Subtest: 完整归档→单根→独立工作区，重启保持停写和安装 Writer；旧字节全保留
+ok 48 - 完整归档→单根→独立工作区，重启保持停写和安装 Writer；旧字节全保留
+  ---
+  duration_ms: 8594.249641
+  type: 'test'
+  ...
+# Subtest: 源晚到提交拒绝候选，观察证据跨重启且漏列不能绕过
+ok 49 - 源晚到提交拒绝候选，观察证据跨重启且漏列不能绕过
+  ---
+  duration_ms: 4314.973784
+  type: 'test'
+  ...
+# Subtest: 归档字节 / 完成标记 / 候选字段 / WebDAV 不可达或指错都不签发迁移
+ok 50 - 归档字节 / 完成标记 / 候选字段 / WebDAV 不可达或指错都不签发迁移
+  ---
+  duration_ms: 9682.176341
+  type: 'test'
+  ...
+# Subtest: 切换 catalog 提交后中断可恢复，取消保留两库；独立目标编辑阻止反向覆盖
+ok 51 - 切换 catalog 提交后中断可恢复，取消保留两库；独立目标编辑阻止反向覆盖
+  ---
+  duration_ms: 6025.628318
+  type: 'test'
+  ...
+# Subtest: 目标新增提交、漏列与重启不能把人工确认变成完成
+ok 52 - 目标新增提交、漏列与重启不能把人工确认变成完成
+  ---
+  duration_ms: 4724.457036
+  type: 'test'
+  ...
+# Subtest: 未发布修改、pending/attempt、冲突、异常观察及未完成恢复全部拒绝准备
+ok 53 - 未发布修改、pending/attempt、冲突、异常观察及未完成恢复全部拒绝准备
+  ---
+  duration_ms: 16247.798712
+  type: 'test'
+  ...
+1..53
+# tests 53
+# suites 0
+# pass 53
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 170427.788782

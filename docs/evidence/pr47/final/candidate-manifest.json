@@ -1,0 +1,17 @@
+[
+  {
+    "file": "release-candidate/DormPanel-X08E-0.1.4.apk",
+    "sha256": "5f792f3126e1586c84368c0caa598fefc7a2c31b52f1f7870d128b260dc326c4",
+    "bytes": 16179720
+  },
+  {
+    "file": "release-candidate/DormPanel-Phone-0.1.4.apk",
+    "sha256": "d7c90487dcfbb01fa2373e5a8a62b86c196c597cad86744d6bbb8275a6ee4475",
+    "bytes": 9880775
+  },
+  {
+    "file": "dormpanel-schedule-manager-0.6.1.fpk",
+    "sha256": "32c9ed1d208516461bac1e2ff3bd4d873878186103a47a984b6834bab82d1077",
+    "bytes": 1775031
+  }
+]

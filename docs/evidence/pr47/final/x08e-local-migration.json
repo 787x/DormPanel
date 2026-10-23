@@ -1,0 +1,26 @@
+{
+  "origin": "正式应用 UI 迁移后，直接回读同一 Room 持久日志（仅导出身份与哈希，不导出课表内容）",
+  "phase": "committed",
+  "writerId": "4b989e44-983b-4cd8-a6f9-b4bb8863f9a4",
+  "sourceDatasetId": "67953cce-399b-4f10-aa54-40a2ff5cd375",
+  "sourceCount": 5,
+  "targetDatasetId": "3d30dfcf-32e5-4bff-8817-65ce82a2c81b",
+  "targetRoot": "55339c08-2fdc-4158-a1ca-5af9e505a024",
+  "targetSha256": "1df666fc5517a32007bfc84113cf171237c0f8184cf7f8586c845ae79b72eba9",
+  "targetWitnessCount": 1,
+  "immutableRecoveryRows": 9,
+  "completedLocalResult": {
+    "id": "752df324-f57a-4c3e-bf63-0d64e21e74f3",
+    "phase": "completed-local-verified",
+    "sourceDatasetId": "67953cce-399b-4f10-aa54-40a2ff5cd375",
+    "targetDatasetId": "3d30dfcf-32e5-4bff-8817-65ce82a2c81b",
+    "writerId": "4b989e44-983b-4cd8-a6f9-b4bb8863f9a4",
+    "origin": "Android 本机实际验证结果",
+    "checkedAt": "2026-10-23T05:07:58.472Z",
+    "oldFolder": "http://127.0.0.1:15005/dormpanel/pr47-final-ui-2aa5ac80-026a-49c6-88c3-d3c1d9217b62/old/",
+    "newFolder": "http://127.0.0.1:15005/dormpanel/pr47-final-ui-2aa5ac80-026a-49c6-88c3-d3c1d9217b62/target/",
+    "sourceCount": 5,
+    "targetRoot": "55339c08-2fdc-4158-a1ca-5af9e505a024",
+    "targetSha256": "1df666fc5517a32007bfc84113cf171237c0f8184cf7f8586c845ae79b72eba9"
+  }
+}

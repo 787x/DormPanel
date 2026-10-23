@@ -12,6 +12,7 @@ import { createApp, PREFIX } from '../src/server.mjs';
 import { encode, decode } from '../src/protocol.mjs';
 import { loadGraph } from '../src/graph.mjs';
 import { emptyState } from '../src/merge.mjs';
+import { Workspace } from '../src/workspace.mjs';
 
 let browser;
 before(async () => { browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chromium') }); });
@@ -435,5 +436,24 @@ test('换库向导显示真实来源、人工设备清单与零物理回收；�
   await expect(f.page.locator('#datasetMigration')).toContainText('尚未执行本机迁移');
   await expect(f.page.getByRole('button', { name: '5. 切换 FPK（仍保持新旧停写）', exact: true })).toBeVisible();
   await f.page.screenshot({ path: new URL('../../docs/evidence/pr47/migration-1280x800.png', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
+  // 仅模拟后端已经成功切换；验证页面不再携带旧工作区身份请求历史。
+  await f.page.route('**/api/migration', async route => {
+    const data = route.request().postDataJSON();
+    if (data.action !== 'switch') return route.continue();
+    const next = structuredClone(f.app.catalog.manifest);
+    const db = await Workspace.open(f.app.catalog.workspaceStore(m.targetId), graph);
+    next.workspaces.push({ id: m.targetId, name: '已切换的新工作区', connectionId });
+    next.activeId = m.targetId; next.revision++;
+    await f.app.catalog.commit(next); f.app.catalog.attach(m.targetId, db);
+    m.phase = 'switched';
+    await route.fulfill({ json: { records: [m] } });
+  });
+  await f.page.getByRole('button', { name: '5. 切换 FPK（仍保持新旧停写）', exact: true }).click();
+  await f.page.locator('#feedbackInput').fill(m.targetDatasetId);
+  await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#workspaceSelect')).toHaveValue(m.targetId);
+  await expect(f.page.locator('#datasetMigration')).toContainText('阶段：switched');
+  await expect(f.page.locator('#historyStatus')).toContainText('1 / 256');
+  await expect(f.page.locator('#historyStatus')).not.toContainText('迁移只可访问当前工作区');
   assert.deepEqual(f.errors, []);
 });
