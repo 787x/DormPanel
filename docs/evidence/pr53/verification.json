@@ -1,0 +1,86 @@
+{
+  "date": "2026-10-24",
+  "base": "8625606dee15bd0e2499723b6a499beb5f39385d",
+  "jvm": {
+    "schedule-core": {
+      "tests": 160,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "app": {
+      "tests": 200,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "phone-app": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "windowsNode": {
+    "tests": 226,
+    "pass": 160,
+    "fail": 0,
+    "skipped": 66
+  },
+  "nasNodeFull": {
+    "tests": 226,
+    "pass": 225,
+    "fail": 0,
+    "skipped": 1
+  },
+  "nasNodeFinalFocused": {
+    "tests": 43,
+    "pass": 42,
+    "fail": 0,
+    "skipped": 1
+  },
+  "deviceRunner": {
+    "X08E_Android9": {
+      "focusedAndV2RoomRegression": 20,
+      "finalCache": 1
+    },
+    "Phone_Android13": {
+      "focusedAndV2RoomRegression": 20,
+      "finalCache": 1
+    }
+  },
+  "gradleConnectedAggregate": "FAILED (XML reports zero test failures); direct AndroidJUnitRunner PASS, cause unverified",
+  "webdav": {
+    "result": "PASS",
+    "isolatedPath": "/dormpanel/pr53-b351ed1e-6edc-42ee-825f-872ecade3855/",
+    "objects": 7,
+    "cacheReopened": 7,
+    "remoteReadsOnCacheHit": 0
+  },
+  "fpk": {
+    "version": "0.7.2",
+    "noInstallWizard": true,
+    "folderAuthorizationPreserved": true,
+    "sourceFilesVerified": 31,
+    "sha256": "a5ed46f74f98c994e5736ca9950356d023dadc3899963bd2408f0aa696dd66e0"
+  },
+  "releaseApks": {
+    "x08e": {
+      "sha256": "14a5eeb6b1b6280077f085b93810fb6a6f2b92df432809df474a5a75d0045a79",
+      "signerSha256": "32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7"
+    },
+    "phone": {
+      "sha256": "2a481b4b21de47e28a7cd6f0c9ec2a3ce92236ab20545f02755ad4cf68f13c0a",
+      "signerSha256": "32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7"
+    }
+  },
+  "productionActivation": false,
+  "physicalPowerLossTest": false,
+  "fpkInstallOrUpgrade": false,
+  "windowsNodeFinalFocused": {
+    "tests": 34,
+    "pass": 33,
+    "fail": 0,
+    "skipped": 1
+  }
+}

@@ -1,0 +1,2 @@
+schedule-core/src/test/resources/sync-v3/*.dpv binary
+schedule-core/src/test/resources/sync-v3/manifest.properties text eol=lf
