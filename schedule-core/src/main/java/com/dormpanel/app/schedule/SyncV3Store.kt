@@ -70,7 +70,7 @@ interface V3ObjectStore {
 }
 
 class V3WebDavStore(private val account: WebDavAccount, folder: String,
-    private val budget: V3Budget, private val client: WebDavClient = WebDavClient()) : V3ObjectStore {
+    private val budget: V3Budget, private val client: WebDavClient = WebDavClient()) : V3ObjectStore, V3PublicationStore {
     private val base = client.url(folder).also {
         require(it.encodedPath.endsWith('/') && it.pathSegments.none { s -> s in listOf("dormpanel-sync-v2", "dormpanel-sync-v3") || '/' in s || '\\' in s || '\u0000' in s })
         require(it.scheme == client.url(account.baseUrl).scheme && it.host == client.url(account.baseUrl).host && it.port == client.url(account.baseUrl).port)
@@ -99,12 +99,14 @@ class V3WebDavStore(private val account: WebDavAccount, folder: String,
         .retryOnConnectionFailure(false).connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS).callTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
     private fun listing(directory: String): ByteArray {
-        val body = "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>"
+        // Collection getcontentlength is optional on ordinary WebDAV (often propstat 404).
+        // Only request the type needed for strict path validation; GET enforces byte limits.
+        val body = "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>"
         val request = okhttp3.Request.Builder().url(directory).header("Depth", "1")
             .header("Authorization", okhttp3.Credentials.basic(account.username, account.password))
             .method("PROPFIND", with(okhttp3.RequestBody.Companion) { body.toRequestBody(with(okhttp3.MediaType.Companion) { "application/xml".toMediaType() }) }).build()
         val raw = listingHttp.newCall(request).execute().use { response ->
-            require(response.code == 207)
+            require(response.code == 207) { "v3 PROPFIND failed (HTTP ${response.code})" }
             val out = java.io.ByteArrayOutputStream()
             requireNotNull(response.body).byteStream().use { input ->
                 val b = ByteArray(8192)
@@ -130,8 +132,14 @@ class V3WebDavStore(private val account: WebDavAccount, folder: String,
         return raw
     }
     fun prepareForIsolatedTest(scope: String) {
+        prepare(scope)
+    }
+    override fun prepare(scope: String) {
         V3Paths.scope(scope); budget.charge(); client.makeCollection(account, base)
         var p = ""; scope.split('/').filter { it.isNotEmpty() }.forEach { part -> p += "$part/"; budget.charge(); client.makeCollection(account, url(p)) }
+    }
+    override fun putOnce(path: String, raw: ByteArray) {
+        V3Paths.match(path, raw); budget.charge(raw.size.toLong()); client.ordinaryPut(account, url(path), raw)
     }
     override fun createForIsolatedTest(path: String, bytes: ByteArray, beforeWriteIntent: () -> Unit) {
         V3Paths.match(path, bytes)

@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-24",
+  "base": "ebddee920823e5d668fc415f3a24b45d9f812bca",
+  "taskAcceptanceComplete": false,
+  "productionV3Enabled": false,
+  "protocolBytesChanged": false,
+  "implementationStageChecks": {
+    "kotlinV3": { "passed": 13, "includes1024Publications": true },
+    "nodeWindows1024Publications": { "passed": true, "durationSeconds": 162.733 },
+    "nasNode22PackageUser": { "uid": 993, "heapMiB": 192, "passed": 46, "skipped": 0, "includes1024Publications": true },
+    "phoneInstrumentation": { "passed": 2, "durationSeconds": 24.368 },
+    "x08eInstrumentation": { "passed": 2, "durationSeconds": 127.243 }
+  },
+  "targetedChecksAfterRevisions": {
+    "kotlin": { "passed": 4, "includesPersistentDeepValidationStack": true },
+    "nodeWindows": { "passed": 11, "skipped": 0, "excludes1024Repetition": true },
+    "nasNode22": { "passed": 10, "skipped": 0 },
+    "phoneHttps": { "passed": 1, "durationSeconds": 9.581 },
+    "x08eHttpsRecheck": { "passed": 1, "durationSeconds": 34.641, "priorNon207FailurePreserved": true }
+  },
+  "httpsInterop": {
+    "isolatedPath": "/dormpanel/pr54-engine-9adb190d-c550-4fb2-988d-358bbd124e88/",
+    "observedEpochs": 2,
+    "observedRecordIds": ["android-phone", "android-x08e", "fnos", "kotlin", "node"],
+    "nasLostResponseRecoveryPutCount": 1
+  },
+  "v2Regression": {
+    "kotlinPassed": 41,
+    "nodePassed": 70,
+    "nodePlatformSkipped": 1
+  },
+  "builds": {
+    "appDebugApk": true,
+    "phoneDebugApk": true,
+    "coreInstrumentationApk": true,
+    "fpkProject": true,
+    "officialFnpackArtifactVerified": false
+  },
+  "blockingGaps": [
+    "Discovery and historical metadata still use a bounded single journal; paging is incomplete.",
+    "The complete persistence/network fault and adversarial graph matrix is incomplete.",
+    "Production Room/Workspace integration and cross-process ownership validation are incomplete.",
+    "Real HTTPS has not exercised every offline and concurrent rotation combination."
+  ]
+}

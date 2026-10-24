@@ -86,7 +86,10 @@ export class V3WebDavStore {
     ensure(raw !== null, 'v3 missing collection'); return parseListing(new TextDecoder('utf8', { fatal: true }).decode(raw), new URL(parent, this.base), parent);
   }
   async read(path) { file(path); const raw = await this.request('GET', path, MAX_OBJECT); if (raw) match(path, raw); return raw; }
-  async prepareForIsolatedTest(parent) {
+  /** One transport PUT only. A durable V3Publisher owns attempted/readback/receipt. */
+  async putOnce(path, raw) { match(path, raw); await this.request('PUT', path, 65536, raw); }
+  async prepareForIsolatedTest(parent) { return this.prepare(parent); }
+  async prepare(parent) {
     scope(parent);
     for (const p of ['', ...parent.split('/').filter(Boolean).map((_, i, a) => a.slice(0, i + 1).join('/') + '/')]) {
       // Existing directories are verified by a bounded listing, not inferred from MKCOL 405.
