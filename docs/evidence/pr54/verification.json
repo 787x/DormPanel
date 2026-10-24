@@ -1,0 +1,183 @@
+{
+  "date": "2026-10-24",
+  "reviewBase": "c5ebc339f3f9084a50adabcafc5935049af3395c",
+  "taskAcceptanceComplete": true,
+  "productionV3Enabled": false,
+  "protocolBytesChanged": false,
+  "privateFormat": {
+    "version": 2,
+    "store": "v3-state-v2.sqlite",
+    "legacyV1": "explicitly rejected and preserved",
+    "snapshotStorage": "immutable RAW references in same SQLite transaction",
+    "historicalScopesLimitRemoved": 16384,
+    "historicalObservedLimitRemoved": 65536,
+    "historicalJournalMiBLimitRemoved": 48,
+    "localControlLimitMiB": 48
+  },
+  "kotlinJvm": {
+    "AppendOnlyScheduleSyncTest": {
+      "tests": 16,
+      "failures": 0
+    },
+    "ScheduleMergeTest": {
+      "tests": 12,
+      "failures": 0
+    },
+    "ScheduleV2BindingTest": {
+      "tests": 5,
+      "failures": 0
+    },
+    "SyncV3EngineTest": {
+      "tests": 10,
+      "failures": 0
+    },
+    "SyncV3MetadataTest": {
+      "tests": 7,
+      "failures": 0
+    },
+    "SyncV3OwnerProcessTest": {
+      "tests": 1,
+      "failures": 0
+    },
+    "SyncV3Test": {
+      "tests": 9,
+      "failures": 0
+    },
+    "WebDavCommitStoreTest": {
+      "tests": 8,
+      "failures": 0
+    }
+  },
+  "kotlinTotalPassed": 68,
+  "nasNode22": {
+    "version": "22.18.0",
+    "uid": 993,
+    "heapMiB": 192,
+    "testsPassed": 78,
+    "skipped": 0,
+    "includes1024Publications": true,
+    "includesSignalKillBoundaries": 8,
+    "includesIndexRotationFaultBoundaries": 6,
+    "performance": [
+      {
+        "publications": 32,
+        "nodeReads": 2,
+        "metadataReads": 106,
+        "metadataBytes": 15266,
+        "GETs": 0,
+        "snapshotReads": 0,
+        "heapUsed": 16567544,
+        "maxRSSKiB": 97616
+      },
+      {
+        "publications": 1024,
+        "nodeReads": 2,
+        "metadataReads": 113,
+        "metadataBytes": 16926,
+        "GETs": 0,
+        "snapshotReads": 0,
+        "heapUsed": 30139056,
+        "maxRSSKiB": 140452
+      }
+    ]
+  },
+  "scaleFixture": {
+    "scopes": 70400,
+    "observed": 70400,
+    "paddingBytesPerEntry": 768,
+    "pageSize": 64,
+    "syntheticMetadata": true
+  },
+  "sharedOracle": "schedule-core/src/test/resources/sync-v3/recovery-scenarios.json",
+  "android": {
+    "X08E_Android9": {
+      "passed": 3,
+      "seconds": 48.93
+    },
+    "Phone_Android13": {
+      "passed": 3,
+      "seconds": 15.161
+    }
+  },
+  "httpsInterop": {
+    "mode": "receive-publish",
+    "result": "PASS",
+    "isolatedPath": "/dormpanel/pr54-engine-62e7a15b-f16f-4c21-824a-4d46bde3fcb3/",
+    "entries": [
+      "android-phone",
+      "android-x08e",
+      "fnos",
+      "kotlin",
+      "late",
+      "node"
+    ],
+    "epochs": 2,
+    "recoveryPuts": 1,
+    "lateCausallyCovered": true,
+    "incrementalGETs": 0
+  },
+  "v2Regression": {
+    "kotlinPassed": 41,
+    "nodePassed": 70,
+    "nodePlatformSkipped": 1
+  },
+  "fixedVectors": {
+    "files": 28,
+    "byteIdentical": true
+  },
+  "builds": {
+    "appDebug": true,
+    "phoneDebug": true,
+    "coreInstrumentation": true,
+    "officialFnpack": {
+      "version": "0.7.2",
+      "noInstallWizard": true,
+      "folderAuthorizationPreserved": true,
+      "sourceFilesVerified": 37,
+      "sha256": "eb94d9f33e734025d864226b9313a08aee65b67152e8fceb9246e85fa62c38a7"
+    },
+    "fpkInstalled": false
+  },
+  "historicalEvidence": "Initial c5ebc339 evidence remains in Git history; these results are for the paged implementation.",
+  "notClaimed": [
+    "Physical power-loss testing",
+    "Every WebDAV server and all unknown offline writers",
+    "All maximum-size business snapshot combinations and every hardware memory peak",
+    "Production v3 binding, UI, migration, archive or GC"
+  ],
+  "baselineEvidenceHead": "b649d18c1e8fe68c780364a1befee55432700391",
+  "workspaceTransactionRevision": {
+    "reviewBase": "b649d18c1e8fe68c780364a1befee55432700391",
+    "testedCodeHead": "1c2dab35eb779316f6615faad5b3076152006179",
+    "windowsWorkspaceTargeted": {
+      "passed": 9,
+      "failed": 0
+    },
+    "windowsAffectedV3": {
+      "passed": 23,
+      "failed": 0
+    },
+    "windowsV2WorkspacePermissions": {
+      "passed": 50,
+      "platformSkipped": 45,
+      "failed": 0
+    },
+    "nasNode22PackageUser": {
+      "uid": 993,
+      "heapMiB": 192,
+      "passed": 114,
+      "skipped": 0,
+      "failed": 0,
+      "durationSeconds": 60.244
+    },
+    "projectCheck": true,
+    "projectBuild": true,
+    "reranAndroid": false,
+    "reran1024": false,
+    "reranFullHttpsInterop": false,
+    "reranOfficialFnpack": false,
+    "readyForReview": true,
+    "merged": false,
+    "details": "docs/pr54-workspace-transaction-fix.md"
+  }
+}

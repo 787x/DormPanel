@@ -1,0 +1,10 @@
+[
+  {"phase":"STAGED","puts":1,"applied":1},
+  {"phase":"ATTEMPTED","puts":0,"applied":0},
+  {"phase":"PUT_DONE","puts":1,"applied":1},
+  {"phase":"READBACK_BEFORE","puts":1,"applied":1},
+  {"phase":"READBACK_AFTER","puts":1,"applied":1},
+  {"phase":"READBACK_CONFIRMED","puts":1,"applied":1},
+  {"phase":"UNCERTAIN","puts":1,"applied":1},
+  {"phase":"RECEIPTED","puts":1,"applied":1}
+]

@@ -81,24 +81,37 @@ export class Workspace {
   snapshot() {
     return structuredClone(this.frame);
   }
-  tx(change, expected) {
+  tx(change, expected, transactionContext) {
     try { this.guard?.(); } catch (e) { return Promise.reject(e); }
     this.writing++;
     const task = this.queue.then(async () => {
-      const next = structuredClone(this.frame);
-      ensure(
-        expected === undefined || expected === next.revision,
-        "请求版本过期，请重新读取",
-      );
-      const value = change(next);
-      ensure(!(value instanceof Promise), "本地事务不得执行异步操作");
-      this.mutationGuard?.(this.frame, next);
-      next.local = canonical(next.local);
-      next.revision++;
-      await this.store.save("workspace.json", next);
-      this.frame = next;
+      const prepare = () => {
+        this.guard?.();
+        const next = structuredClone(this.frame);
+        ensure(
+          expected === undefined || expected === next.revision,
+          "请求版本过期，请重新读取",
+        );
+        const value = change(next);
+        ensure(!(value instanceof Promise), "本地事务不得执行异步操作");
+        this.mutationGuard?.(this.frame, next);
+        next.local = canonical(next.local);
+        next.revision++;
+        return { next, value };
+      };
+      let committed;
+      if (this.store.commitWorkspace) {
+        // SQLite adapters execute preparation and persistence in ONE synchronous
+        // transaction. Publish the in-memory frame only after COMMIT succeeds.
+        committed = this.store.commitWorkspace(prepare, transactionContext);
+        ensure(!(committed instanceof Promise), "Workspace 提交钩子不得执行异步操作");
+      } else {
+        committed = prepare();
+        await this.store.save("workspace.json", committed.next);
+      }
+      this.frame = committed.next;
       await this.saveSummary();
-      return value;
+      return committed.value;
     });
     this.queue = task.finally(() => { this.writing--; }).catch(() => {});
     return task;
