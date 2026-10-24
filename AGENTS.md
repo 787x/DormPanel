@@ -1,82 +1,54 @@
-# DormPanel Development Guide
+# DormPanel 开发指南
 
-- Primary hardware is the Xiaomi Redmi XiaoAI Touchscreen Speaker Pro 8 (X08E): Android 9 / API 28, about 2 GB RAM, and a 1280x800 landscape display.
-- Prefer long-running stability, low memory use, and near-zero idle CPU work over decorative animation.
-- Keep the app native Kotlin using Android Views/XML unless the project deliberately changes direction.
-- DormPanel coexists with Xiaomi's software. Do not replace or interfere with XiaoAI, MIUI Home, alarms, Bluetooth Mesh gateway features, or other original services.
-- Home Assistant belongs behind a separate network/state layer when it is added; UI code must not own connection or protocol state.
-- Normal dashboard and device controls must remain deterministic and must not depend on an LLM.
-- Avoid unnecessary heavy dependencies, frameworks, background work, and device-specific Root/ADB behavior.
-- Preserve Android 9 compatibility and verify changes against the 1280x800 landscape form factor.
-- 文档、pr body等使用中文
-# DormPanel 项目
+## 项目定位与兼容性
 
-DormPanel 是面向 Xiaomi Redmi 小爱触屏音箱 Pro 8（X08E）的轻量 Android 常驻桌面与智能家居控制应用。
+DormPanel 是面向 Xiaomi Redmi 小爱触屏音箱 Pro 8（X08E）的轻量 Android 常驻桌面、智能家居控制与课表/效率工具，并包含 Android Phone 客户端、可选的 fnOS 课程表管理 FPK 及其 CLI/MCP 接口。
 
-## 产品定位
+- X08E 是首要目标：Android 9 / API 28、约 2 GB RAM、1280×800 固定横屏。以长期稳定、低内存、低空闲 CPU 占用和触控可用性优先；不要为了视觉效果引入持续动画或频繁轮询。
+- Android 端沿用仓库既有 Kotlin、Views/XML、Room 等技术方向；不要无明确收益地替换 UI 框架或引入重依赖。Phone 与 X08E 共用的业务逻辑应尽量放在现有共享模块中，但无上述性能限制。
+- DormPanel 默认是普通 Activity/App，不擅自变成唯一 Launcher；保留回到 MIUI Home 的能力。小爱、Bluetooth Mesh 网关、原生闹钟及小米服务应继续共存，不因功能开发默认要求 Root、官改、卸载系统组件或破坏性 ADB 操作。
+- 首页是可添加、删除、拖拽、按预设尺寸调整的卡片式信息中心；时间、天气、家居控制、传感器、场景、Todo、计时器、备忘、日历与课表遵循同一卡片扩展机制。上/下/左/右手势可进入可配置的功能页，复杂操作留在二级页面。考虑深色/夜间体验、离线状态与状态过期的可辨识性。断网或 Home Assistant 不可用不应影响本地时间、课表和其他本地功能。
+- Home Assistant 的 WebSocket/REST、状态与重连由网络/数据层管理；普通设备操作必须确定性，不依赖 LLM/MCP。UI 不维护竞争性的第二份远端状态。使用 Mock/Fake 数据源支持脱离实机开发。
 
-DormPanel 不是完整平板桌面、Home Assistant 客户端复刻或米家替代品，而是一套针对固定横屏智能终端优化的「桌面信息中心 + 快捷控制 + 轻量效率工具」。
+## 仓库与现有能力
 
-目标设备当前为 X08E，主要环境为 Android 9、约 2GB RAM、8 英寸 1280×800 横屏，并需要长期常驻运行。
+- 根据任务按需阅读根目录 `AGENTS.md`、相关文档和测试；实际目录、构建命令、版本及发布状态以当前仓库为准，不沿用旧 PR 的假设。
+- 课程业务与同步主要涉及 `schedule-core/`、Android App/Phone、`fnos-app/`。fnOS FPK 是独立、可选的课程编辑 Writer；不安装 FPK 时，Android 客户端也应能通过普通 WebDAV 共享课表。
+- fnOS 的网页、CLI/MCP 必须复用后端业务规则、同一 Writer/事务保护和现有管理员权限边界；不得新建绕过 revision、鉴权、目录授权、迁移保护或冲突决策的写入通道。
+- 本地课表包含事件、本地课程、导入来源与实例、课程覆盖、日期调整及学期配置。稳定业务身份、`null` 与空字符串的差别、原始导入和人工覆盖的分层语义必须保留；不按课程名称、时间戳或文件名猜测是否为同一记录。
+- Sync v2 已投入使用。`docs/sync-v2-protocol.md`、`ScheduleCommit.kt`、`AppendOnlyScheduleSync.kt`、`ScheduleMerge.kt`、fnOS `protocol.mjs` / `graph.mjs` / `sync.mjs` 及历史、迁移文档是核对现有行为的主要入口。Sync v3 在明确实施和验收前均是规划中的独立新协议，不能写成已发布能力。
 
-应用应与小米原生系统共存，而不是依赖删除或替换小米服务。小爱同学、Bluetooth Mesh 网关、原生闹钟、MIUI Home 和其他原厂能力原则上继续由小米系统负责。
+## 同步、数据安全与恢复不变量
 
-## 核心目标
+涉及课表存储、WebDAV、Sync v2/v3、fnOS 工作区、备份或迁移时，优先维护以下性质：
 
-首页采用类似新版米家的可编辑卡片式布局。卡片可以添加、删除、拖动排列，并在卡片支持的预设尺寸之间调整大小。
+1. **本地优先**：用户编辑先可靠持久化；网络失败、断电、重启、强停及服务器异常不能静默丢弃本地已保存的修改。
+2. **身份与因果关系**：区分 `datasetId`、`writerId`、提交身份、业务记录身份和访问端点身份。共享历史通过已验证的父关系/共同基线合并，不按 mtime、Writer、UUID 顺序或“最后写入者”决定业务胜负。
+3. **不可变对象**：同一提交路径不得被当作可变最新版文件。发布前记录持久化意图，上传后回读并核验精确内容；PUT 结果不确定时先恢复或隔离，不能盲目覆盖重试。
+4. **合并与冲突**：保留三方合并和来源、课程、日期、学期之间的关联冲突规则。无法验证共同基线、祖先闭包或业务有效性时安全停止，保留本地修改和异常证据；不得静默采用任意分支。
+5. **回执与并发编辑**：持久化待发布候选及其精确 capture；上传期间的新本地编辑必须在回执后继续保留。不能把“已上传”误报为“所有设备已接收”。
+6. **旧数据保护**：真实 v1/v2 目录、日用 Room/Workspace、凭据、备份与历史不得作为开发测试输入进行破坏性操作。协议升级应使用隔离目录、可恢复日志及明确的原位迁移；不得要求卸载重装来修复签名或数据库问题。
+7. **WebDAV 边界**：普通 WebDAV 可提供文件列举/读取/创建，但不能默认可靠支持条件覆盖、LOCK、全局一致目录视图或客户端成员协调。未验证的服务器能力不能提升为同步正确性的前提。
+8. **历史回收**：不得仅按数量或时间删除已有父提交。Sync v3 的 Epoch/Checkpoint 可用于有界活跃历史，但纯 WebDAV 不意味着旧分代已停止接收迟到提交；没有可验证的停写与归档条件，不自动物理删除旧历史。
+9. **证据分级**：区分本机已保存、远端回读确认、已观察的活跃历史同步、旧历史审计完成、已知设备确认及服务器实际禁止写入，UI、API 和报告都不能混称为“全部同步完成”。
 
-计划支持的卡片包括但不限于：
+## Sync v3 的长期方向
 
-时间与日期、天气、Home Assistant 灯光控制、传感器、场景、Todo、计时器、备忘、日历和课表。
+Sync v3 计划使用独立协议目录、不可变对象、按 Epoch 划分的有界 DAG、跨代继承证明、长期离线重放、迟到提交整合和持久化对象缓存，以突破 v2 的**全数据集累计 256 提交限制**。这不等于取消每轮资源预算，也不意味着可以无条件清除旧历史。
 
-首页之外提供可通过上、下、左、右手势进入的功能页。各方向目标应可配置，页面可包括：
+- 保留成熟的课程模型与现有 `ScheduleMerge` 作为第一版业务合并基础。字段组合并、压缩、内容寻址分片及签名只能在协议语义、兼容性和相关测试具备后启用。
+- 将协议编解码、历史验证、对象缓存、持久事务、网络/文件存储和 UI 解耦。跨语言 Kotlin/Node 对同一协议输入必须得到一致的合法性和业务结果。
+- v2 与 v3 使用独立协议身份和目录；未完成明确、可恢复的迁移，不得自动切换现有绑定或将 v2/v3 提交混写。
+- 详细对象格式、发现与合并算法应以经实施的 `docs/sync-v3-protocol.md` 为准；如果规范与实现发生偏差，应一起修正并补充可区分正误的测试，而不是只改变文案。
 
-应用列表、控制中心、完整日历/课表、完整家居控制等等。
+## 开发方式与 PR 范围
 
-Home Assistant 是主要智能家居数据与控制后端之一。优先使用 WebSocket 维护实时状态和执行常规控制，REST 仅作为必要补充。
+- 每个 PR 保持代码可构建，修改范围与该 PR 的目的匹配；不要顺手大改 UI、HA、课程业务规则或发布版本。探索代码可以广泛，修改应聚焦。
+- 重要协议、数据库或迁移改动必须先有能区分正确/错误实现的测试；优先复用已有测试、固定向量、Fake Store 和隔离工作区。风险匹配验证强度，不为普通修改机械安排数小时 soak 或重复整套测试。
+- 仓库文档、PR 标题/正文、验收记录和面向用户的说明以中文为主；代码风格、标识符及现有协议字段沿用所在模块的约定。
 
-普通设备控制应是确定性的，不依赖 LLM。AI/MCP 可以作为未来的高级自然语言入口，但不能成为开灯、关灯等基础功能的唯一链路。
+## 验证与最终报告
 
-## UX 原则
+选择直接覆盖 Done Criteria 的检查：协议固定字节向量、三方合并/冲突 oracle、Room/FPK 持久恢复、Fake/WebDAV 故障注入、Android 构建与相关端测试；涉及 UI 再验证 1280×800 与适用设备。不要把静态代码推断报告成实测。
 
-界面针对 1280×800 横屏和固定桌面/床头距离设计，不照搬手机 UI。
-
-优先保证信息可以快速扫视、按钮容易触控、状态清晰、夜间不过亮，夜间/深色模式建议使用全黑背景。
-
-首页保持低信息噪声。复杂历史数据、完整设置和低频操作放到二级页面或详情页。
-
-设备离线、HA 断线和数据过期必须与正常状态有明显但不过度干扰的区别。
-
-应用断网或 HA 不可用时，本地时间、日期和本地功能仍应工作。
-
-## 技术方向
-
-项目使用 Kotlin 原生 Android 开发，并优先选择适合 Android 9 和长期常驻场景的轻量实现。
-
-首页卡片布局需要支持逻辑网格、不同尺寸卡片、拖拽、Resize、碰撞处理和持久化。
-
-卡片系统应具备扩展能力，使新增卡片类型不需要不断修改首页核心布局逻辑。
-
-Home Assistant 网络层与 UI 解耦。UI 不应直接管理 WebSocket 消息或维护第二份互相竞争的状态。
-
-应用应支持 Mock/Fake 数据源，使 UI 和卡片引擎开发不依赖真实 HA 或 X08E。
-
-## 性能与可靠性
-
-目标设备性能有限，因此避免没有实际价值的持续动画、频繁轮询和过重依赖。
-
-空闲时 CPU 占用应接近零。HA 状态主要依靠 WebSocket 推送而非轮询。
-
-常驻运行稳定性优先于视觉特效。
-
-对卡片布局、状态同步、WebSocket 重连等核心逻辑，应使用能够验证正确性的测试。
-
-## 与 X08E 原系统的关系
-
-DormPanel 默认作为普通常驻 Activity/App 运行，不应在没有明确需要时成为唯一 Launcher。
-
-后续实机阶段计划支持开机后自动进入 DormPanel，同时保留返回 MIUI Home 和原生系统的入口。
-
-任何与 Root、官改、ADB、自启有关的实现都不能默认牺牲小爱、Bluetooth Mesh 网关或其他原生能力。
-
-设备侧行为在没有实机验证前不得视为已确认。
+最终简洁报告：实际完成的修改、实际执行的测试及结果、未执行/被阻塞的验证、关键风险与 PR 链接。只有存在可验证事实时才声称 PASS；不需要复述整个任务或内部推理。
