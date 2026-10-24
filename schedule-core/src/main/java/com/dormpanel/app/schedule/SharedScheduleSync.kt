@@ -266,6 +266,34 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     }) { source.reload { complete(if (cancel) "已取消准备；原数据与证据保留" else "Android 本机换库验收完成；恢复新库正常同步，其他设备由管理员验收", false); sync() } }
     fun sync() { settings.resetRetries(); synchronize(false) }
     fun publish() { settings.resetRetries(); synchronize(true) }
+    fun createV3() = activateV3(null)
+    fun cancelUnpublishedV3Migration() = run({ synchronized(SharedScheduleRunLock) { source.syncStore!!.cancelUnpublishedV3Migration() } }) {
+        source.reload { complete("已取消未创建目标的迁移；原 v2 本地修改和基线已恢复，证据保留", false) }
+    }
+    fun auditV3MigrationSource() = run({ source.syncStore!!.auditV3MigrationSource(account()) }) { complete(it, false) }
+    fun previewV3Migration(done: (ScheduleV3MigrationPreview) -> Unit) = run({
+        synchronized(SharedScheduleRunLock) { requireNotNull(source.syncStore).previewV3Migration(v2Remote(), v2Folder()) }
+    }) { busy = false; status = "v2 源历史及完整本地快照已验证；尚未切换"; notifyChanged(); done(it) }
+    fun migrateV3(preview: ScheduleV3MigrationPreview) = run({
+        synchronized(SharedScheduleRunLock) { requireNotNull(source.syncStore).prepareV3Migration(preview, v2Remote(), transport.folder(account(), settings.folder)) }
+    }) { source.reload { complete("源 Writer 已持久暂停；v3 迁移等待精确回读及源重检", false); sync() } }
+    fun joinV3(descriptor: ByteArray) = activateV3(descriptor)
+    private fun activateV3(descriptor: ByteArray?) = run({
+        synchronized(SharedScheduleRunLock) {
+            check(settings.publishedRevision == null && settings.pendingRevision == null) { "已有 v1 绑定，禁止隐式切换" }
+            requireNotNull(source.syncStore).prepareV3(transport.folder(account(), settings.folder), descriptor)
+        }
+    }) { source.reload { complete("v3 本地绑定意图已保存；等待远端验证", false); sync() } }
+    data class V3Candidate(val descriptor: V3Object, val bytes: ByteArray, val hash: String)
+    fun discoverV3(done: (List<V3Candidate>) -> Unit) = run({
+        val remote = V3WebDavStore(account(), transport.folder(account(), settings.folder), V3Budget())
+        remote.list("").flatMap { scope ->
+            if (!scope.matches(Regex("dataset-[0-9a-f-]{36}/"))) emptyList() else remote.list(scope).filter { it.substringAfterLast('/').startsWith("descriptor-") }.map { path ->
+                val raw = requireNotNull(remote.read(path)); val d = V3Paths.match(path, raw); require(d.type == 1)
+                V3Candidate(d, raw, SyncV3Codec.hash(raw))
+            }
+        }
+    }) { busy = false; status = "v3 Descriptor 已验证；完整历史仍需验证，尚未绑定"; notifyChanged(); done(it) }
     /** Explicit UI switch, after all old clients have been stopped. Read v1 only. */
     fun migrate() = run({
         synchronized(SharedScheduleRunLock) {
@@ -287,6 +315,17 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     }) { (outcome, baseline) -> finishV2(outcome, baseline) }
     private fun synchronize(create: Boolean) {
         if (!source.ready || settings.folder.isBlank() || source.syncStore == null) return
+        if (source.syncStore!!.isV3()) {
+            run({ synchronized(SharedScheduleRunLock) { source.syncStore!!.synchronizeV3(account()) } }) { result ->
+                SharedScheduleViews.reloaded()
+                savedConflict = result == "CONFLICT"
+                source.reload { loaded -> loaded.onSuccess {
+                    complete(v3StatusMessage(result), false)
+                    if (result in listOf("BUDGET", "DISCOVERING", "ROTATED") && settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
+                }.onFailure(::failure) }
+            }
+            return
+        }
         run({ synchronized(SharedScheduleRunLock) {
             v2Local().v2RequireSyncAllowed()
             val frame = v2Local().v2Frame()
@@ -317,6 +356,13 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         }.onFailure(::failure) }
     }
     fun loadConflicts(done: (List<ScheduleMerge.Conflict>) -> Unit) = run({
+        if (source.syncStore?.isV3() == true) {
+            val conflict = source.syncStore!!.v3Information()?.optJSONObject("conflict")
+            val rows = conflict?.getJSONArray("conflicts")
+            return@run (if (rows == null) emptyList() else (0 until rows.length()).map { index -> rows.getJSONObject(index).let {
+                ScheduleMerge.Conflict(it.getString("key"), it.getString("description"))
+            } }) to conflict?.getString("id")
+        }
         val frame = v2Local().v2Frame()
         if (frame.conflict != null) frame.conflict.merge(frame.local).conflicts to frame.conflict.token() else {
             val old = requireNotNull(source.syncStore).syncFrame()
@@ -328,7 +374,8 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     }) { (items, token) -> viewedV2Conflict = token; conflicts = items; busy = false; status = settings.lastResult; notifyChanged(); done(items) }
     fun resolve(choice: ScheduleMerge.Choice) = run({
         synchronized(SharedScheduleRunLock) { SharedScheduleViews.changing {
-            if (v2Local().v2Frame().conflict != null) v2Local().v2Resolve(choice, requireNotNull(viewedV2Conflict) { "请先查看当前冲突" })
+            if (source.syncStore?.isV3() == true) source.syncStore!!.resolveV3(requireNotNull(viewedV2Conflict) { "请先查看当前冲突" }, choice)
+            else if (v2Local().v2Frame().conflict != null) v2Local().v2Resolve(choice, requireNotNull(viewedV2Conflict) { "请先查看当前冲突" })
             else requireNotNull(source.syncStore).resolveConflict(choice)
         } }
     }) {

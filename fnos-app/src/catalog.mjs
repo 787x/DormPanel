@@ -8,6 +8,7 @@ import { LocalGrants, LocalCommitStore, segments } from './local.mjs';
 import { ensure, uuid, decode } from './protocol.mjs';
 import { loadGraph } from './graph.mjs';
 import { SyncEngine, verifyEndpointMove, verifyRestoredHistory } from './sync.mjs';
+import { openActiveV3 } from './active-v3.mjs';
 
 const DEFAULT = '00000000-0000-4000-8000-000000000001';
 const label = value => {
@@ -15,13 +16,15 @@ const label = value => {
   return value.trim();
 };
 export class Catalog {
-  static async open({ store, configPath, remoteFactory = c => new WebDav(c), authorizedRoots = [] }) {
+  static async open({ store, configPath, remoteFactory = c => new WebDav(c), v3RemoteFactory, authorizedRoots = [] }) {
     const privateRoot = join(store.dir, 'local-data');
     await mkdir(privateRoot, { recursive: true, mode: 0o700 });
     const self = new Catalog();
     Object.assign(self, { store, remoteFactory, grants: new LocalGrants([{ id: 'private', name: 'FPK 私有本地数据', path: privateRoot }, ...authorizedRoots]), guardQueue: Promise.resolve(), workspaces: new Map(), loading: new Map(), busy: new Set(), configuring: false });
     self.restoreGuards = (await store.read('restore-guards.json')) ?? {};
+    self.v3RemoteFactory = v3RemoteFactory;
     self.migrations = (await store.read('dataset-migrations.json')) ?? [];
+    self.v3Migrations = (await store.read('v3-migrations.json')) ?? [];
     self.manifest = await store.read('catalog.json');
     if (!self.manifest) {
       // 固定迁移 ID + 最后提交 manifest；中断时复用完整副本，原始文件从不删除或改写。
@@ -51,7 +54,7 @@ export class Catalog {
     ensure(self.manifest.schema === 1, '不支持管理目录版本');
     ensure(self.manifest.workspaces.length > 0 && self.manifest.workspaces.length <= 64, '工作区数量无效');
     ensure(new Set(self.manifest.workspaces.map(w => w.id)).size === self.manifest.workspaces.length, '工作区身份重复');
-    for (const row of self.manifest.workspaces) uuid(row.id);
+    for (const row of self.manifest.workspaces) { uuid(row.id); ensure(row.protocol === undefined || ['v2', 'v3'].includes(row.protocol), '不支持的工作区同步协议'); }
     await self.load(self.manifest.activeId);
     // 已验证端点更新的恢复日志：先持久化意图，再修改帧，最后提交连接配置。
     if (self.manifest.transition) await self.finishTransition();
@@ -59,9 +62,11 @@ export class Catalog {
     return self;
   }
   attach(id, db) {
+    const mutationGuard = db.mutationGuard;
     db.guard = () => ensure(!this.maintenance && !this.invalidated && this.workspaces.get(id) === db, '正在备份恢复或工作区引用已失效');
     db.assertWritable = () => ensure(!this.protection(id), '换库保护 / 退役工作区只读；请在历史与版本继续或取消迁移');
     db.mutationGuard = (before, after) => {
+      mutationGuard?.(before, after);
       if (this.protection(id)) ensure(['local', 'baseline', 'frontier', 'datasetId', 'pending', 'conflict', 'receipt', 'abandoned'].every(k => json(before[k]) === json(after[k])), '换库保护禁止课程编辑、发布与冲突决策');
     };
     this.workspaces.set(id, db); return db;
@@ -71,7 +76,8 @@ export class Catalog {
     child.identity = this.store.identity; return child;
   }
   protection(id) {
-    return this.migrations.find(m => m.sourceId === id && m.phase !== 'cancelled' || m.targetId === id && m.phase !== 'retired');
+    return this.migrations.find(m => m.sourceId === id && m.phase !== 'cancelled' || m.targetId === id && m.phase !== 'retired')
+      ?? this.v3Migrations.find(m => m.sourceId === id && m.phase !== 'CANCELLED' || m.targetId === id && !['ACTIVE', 'CANCELLED'].includes(m.phase));
   }
   row(id) { uuid(id); const row = this.manifest.workspaces.find(x => x.id === id); ensure(row, '工作区不存在'); return row; }
   db(id) { this.row(id); const db = this.workspaces.get(id); ensure(db, '工作区不可用'); return db; }
@@ -81,6 +87,10 @@ export class Catalog {
     if (this.workspaces.has(id)) return this.workspaces.get(id);
     if (!this.loading.has(id)) this.loading.set(id, (async () => {
       const store = this.workspaceStore(id);
+      if (this.row(id).protocol === 'v3') {
+        ensure((await stat(join(store.dir, 'v3', 'v3-state-v2.sqlite')).catch(() => null))?.isFile(), 'v3 工作区文件缺失；拒绝重建覆盖');
+        return this.attach(id, await openActiveV3(this, id));
+      }
       // 已注册状态绝不进入 Workspace 的新建分支。
       const info = await stat(join(store.dir, 'workspace.json')).catch(() => null);
       ensure(info?.isFile(), '工作区文件缺失；拒绝重建覆盖，请从备份恢复');
@@ -108,7 +118,13 @@ export class Catalog {
   }
   prune() {
     if (this.configuring || this.maintenance || this.loading.size) return;
-    for (const [id, db] of this.workspaces) if (id !== this.manifest.activeId && !this.busy.has(id) && !db.writing) this.workspaces.delete(id);
+    for (const [id, db] of this.workspaces) if (!db.activeV3 && id !== this.manifest.activeId && !this.busy.has(id) && !db.writing) this.workspaces.delete(id);
+  }
+  async close() {
+    ensure(!this.busy.size && !this.loading.size, '工作区仍在运行');
+    for (const db of this.workspaces.values()) await db.queue;
+    for (const db of this.workspaces.values()) if (db.activeV3) await db.activeV3.close();
+    this.invalidated = true; this.workspaces.clear();
   }
   connection(id) { uuid(id); const c = this.manifest.connections.find(x => x.id === id); ensure(c, '连接不存在'); return c; }
   async commit(next) { await this.store.save('catalog.json', next); this.manifest = next; }
@@ -196,6 +212,7 @@ export class Catalog {
           next.connections = next.connections.map(x => x.id === c.id ? c : x);
           next.revision++; await this.commit(next); return { connectionId: c.id };
         }
+        ensure(!affected.some(w => w.protocol === 'v3'), 'v3 连接变更尚不支持；保留原连接');
         for (const w of affected) {
           const db = await this.load(w.id); await db.queue;
           if (db.frame.datasetId) await verifyEndpointMove(db, this.remote(c));
@@ -212,9 +229,15 @@ export class Catalog {
         ensure(next.workspaces.length < 64, '工作区数量超限');
         const c = this.connection(input.connectionId);
         ensure(!next.workspaces.some(w => w.connectionId === c.id), '连接已有工作区，请切换或验证端点迁移');
-        const id = randomUUID(), db = await Workspace.open(this.workspaceStore(id));
+        ensure(input.protocol === undefined || ['v2', 'v3'].includes(input.protocol), '不支持的同步协议');
+        const id = randomUUID();
+        // Publish the row only after the private store is durable. Interrupted creation leaves
+        // an unregistered private store, never an active second Writer for an existing workspace.
+        next.workspaces.push({ id, name: label(input.name), connectionId: c.id, ...(input.protocol === 'v3' ? { protocol: 'v3' } : {}) });
+        let db;
+        if (input.protocol === 'v3') db = await openActiveV3(this, id);
+        else db = await Workspace.open(this.workspaceStore(id));
         this.attach(id, db);
-        next.workspaces.push({ id, name: label(input.name), connectionId: c.id });
         next.revision++; await this.commit(next); return { workspaceId: id };
       } else if (input.action === 'workspace.switch') {
         await this.load(input.targetId); next.activeId = input.targetId;
@@ -222,6 +245,7 @@ export class Catalog {
         next.workspaces.find(w => w.id === this.row(input.targetId).id).name = label(input.name);
       } else if (input.action === 'workspace.endpoint') {
         const row = this.row(input.targetId), db = await this.load(row.id), c = this.connection(input.connectionId);
+        ensure(!db.activeV3, 'v3 端点变更尚不支持；保留原连接');
         ensure(!this.busy.has(row.id), '工作区正在同步');
         ensure(!next.workspaces.some(w => w.id !== row.id && w.connectionId === c.id), '连接已被其他工作区使用');
         await db.queue;
@@ -232,6 +256,7 @@ export class Catalog {
         next.workspaces.find(w => w.id === row.id).connectionId = c.id;
       } else if (input.action === 'workspace.remove') {
         const row = this.row(input.targetId), db = await this.load(row.id); await db.queue;
+        ensure(!db.activeV3, 'v3 工作区保留恢复证据，暂不支持移除');
         ensure(next.workspaces.length > 1 && row.id !== next.activeId && !this.busy.has(row.id), '不能移除当前、唯一或正在同步的工作区');
         const f = db.frame;
         const neverObserved = !f.datasetId && !f.baseline && !f.graph && !f.bindingKey && !Object.keys(f.checkpoint).length;
@@ -267,6 +292,12 @@ export class Catalog {
     if (binding) this.bindingBusy = true;
     this.busy.add(id);
     try {
+      if (db.activeV3) {
+        ensure(!this.restoreGuards[id] && !this.protection(id), '恢复或换库保护禁止 v3 发布');
+        const result = await action(db.activeV3);
+        await db.tx(f => { f.error = null; });
+        return result;
+      }
       ensure(row.connectionId, '请先添加连接并创建工作区');
       const remote = this.remote(this.connection(row.connectionId));
       const identities = await this.identities();

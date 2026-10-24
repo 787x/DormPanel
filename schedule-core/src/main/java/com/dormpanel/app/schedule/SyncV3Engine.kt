@@ -27,19 +27,37 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
     private fun state(s: ScheduleState): String = raw(V3Object(2, STATE_ID, STATE_ID, STATE_ID, STATE_ID, 1, STATE_HASH, state = s))
     private fun state(s: JSONObject, key: String) = requireNotNull(obj(s.getString(key)).state)
     fun local(): ScheduleState = journal.snapshot().let { if (it.has("local")) state(it, "local") else ScheduleState() }
-    fun bind(descriptor: V3Object, hash: String, local: ScheduleState? = null) {
+    fun bind(descriptor: V3Object, hash: String, local: ScheduleState? = null) = bindWithCandidates(descriptor, hash, local, null)
+    private fun bindWithCandidates(descriptor: V3Object, hash: String, local: ScheduleState?, initialization: JSONArray?) {
         require(descriptor.type == 1 && SyncV3Codec.hash(SyncV3Codec.encode(descriptor)) == hash)
         journal.localTransaction { s -> require(!s.has("binding") && (!s.has("writerId") || s.getString("writerId") == writerId)); val existing = if (s.has("local")) state(s, "local") else ScheduleState(); val seed = local ?: existing
             require(ScheduleMerge.same(existing, ScheduleState()) || ScheduleMerge.same(existing, seed)) { "v3 binding must preserve unbound local edits" }
-            s.put("writerId", writerId).put("binding", JSONObject().put("datasetId", descriptor.datasetId).put("descriptorPath", V3Paths.path(descriptor)).put("descriptorHash", hash)); s.put("local", state(seed)).put("unbasedLocal", !ScheduleMerge.same(seed, ScheduleState())).put("revision", s.optLong("revision")) }
+            s.put("writerId", writerId).put("binding", JSONObject().put("datasetId", descriptor.datasetId).put("descriptorPath", V3Paths.path(descriptor)).put("descriptorHash", hash)); s.put("local", state(seed)).put("unbasedLocal", !ScheduleMerge.same(seed, ScheduleState())).put("revision", s.optLong("revision"))
+            if (initialization != null) s.put("initialization", initialization)
+        }
     }
-    fun edit(local: ScheduleState) { val encoded = state(local); journal.localTransaction { require(!it.has("writerId") || it.getString("writerId") == writerId); it.put("writerId", writerId).put("local", encoded).put("revision", it.optLong("revision") + 1); it.remove("decision") } }
+    fun edit(local: ScheduleState) = edit { local }
+    /** Host DAO edits run inside the journal's own transaction, before encoding/commit.
+     * Do not wrap this in an outer transaction: the journal publishes memory after COMMIT. */
+    fun edit(change: (ScheduleState) -> ScheduleState) {
+        journal.localTransaction { s ->
+            require(!s.has("writerId") || s.getString("writerId") == writerId)
+            val before = if (s.has("local")) state(s, "local") else ScheduleState()
+            val encoded = state(change(before))
+            s.put("writerId", writerId).put("local", encoded).put("revision", s.optLong("revision") + 1); s.remove("decision")
+        }
+    }
     fun initialize(remote: V3PublicationStore, initial: ScheduleState = local()): JSONObject = synchronized(network) {
+        require(remote is V3ObjectStore)
+        if (journal.snapshot().optJSONArray("initialization")?.length()?.let { it > 0 } == true) {
+            val budget = (remote as? V3WebDavStore)?.budget ?: V3Budget(); configure(remote, V3IndexedCache(journal.directory, budget), budget)
+            resumeInitialization(remote); return@synchronized journal.snapshot().getJSONObject("binding")
+        }
         val descriptor = V3Object(1, id(), id(), writerId)
         val genesis = V3Object(2, descriptor.datasetId, id(), writerId, id(), 1, SyncV3Codec.hash(SyncV3Codec.encode(descriptor)), state = initial)
-        bind(descriptor, genesis.descriptorHash, initial)
-        require(remote is V3ObjectStore); val budget = (remote as? V3WebDavStore)?.budget ?: V3Budget(); configure(remote, V3IndexedCache(journal.directory, budget), budget)
-        journal.transaction { it.put("initialization", JSONArray(listOf(raw(descriptor), raw(genesis)))) }
+        // A crash can expose neither a binding without candidates nor candidates without binding.
+        bindWithCandidates(descriptor, genesis.descriptorHash, initial, JSONArray(listOf(raw(descriptor), raw(genesis))))
+        val budget = (remote as? V3WebDavStore)?.budget ?: V3Budget(); configure(remote, V3IndexedCache(journal.directory, budget), budget)
         resumeInitialization(remote); journal.snapshot().getJSONObject("binding")
     }
     private fun publish(remote: V3PublicationStore, o: V3Object, capture: JSONObject) {

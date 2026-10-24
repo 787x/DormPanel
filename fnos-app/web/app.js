@@ -22,6 +22,7 @@ function el(tag, text, cls) {
 function paragraphs(id, rows) {
   $(id).replaceChildren(...rows.map((s) => el("p", s)));
 }
+let activeProtocol = 'v2';
 let workspaceId, catalogVersion, management, switching = false, loadEpoch = 0;
 let token,
   version,
@@ -37,10 +38,17 @@ async function load() {
     if (!r.ok) throw Error(s.error);
     if (epoch !== loadEpoch) return;
     workspaceId = s.workspaceId;
+    activeProtocol = s.protocol ?? 'v2';
     catalogVersion = s.catalogVersion;
     token = s.csrf;
     version = s.version;
     const statuses = {
+      OBSERVED: '本轮观察到的 v3 DAG 已合并。',
+      PUBLISHED: 'v3 对象已由指定远端回读确认。',
+      CONFLICT: '存在 v3 冲突，双方内容已保留。',
+      DISCOVERING: 'v3 历史发现与验证尚未完成，请继续同步。',
+      BUDGET: '本轮资源预算已用完，进度已保存，请继续同步。',
+      ROTATED: 'v3 Epoch 已换代；旧 Epoch 巡检仍需继续。',
       unbound: "未关联连接；可以离线编辑。请在数据源管理中配置。",
       unchecked: "尚未检查远端。",
       empty: "指定目录未发现 v2 课程数据。",
@@ -51,7 +59,7 @@ async function load() {
       error: "连接或同步检查失败；请在数据源管理查看详情。",
     };
     $("status").textContent =
-      statuses[s.status] +
+      (statuses[s.status] ?? '同步状态待检查') +
       "\n本地已保存" +
       (s.pending
         ? " · 提交待回读确认"
@@ -59,6 +67,7 @@ async function load() {
           ? " · 有待发布修改"
           : " · 无待发布本地修改") +
       (s.published ? "\n本机发布已回读确认；其他设备接收情况未知" : "");
+    if (activeProtocol === 'v3') $('status').textContent += '\nSync v3 · ' + (s.datasetId ?? '未绑定') + '\n旧 Epoch 巡检未完成；未知旧客户端与服务端停写情况未确认。';
     if (s.writeProtection) $('status').textContent += '\n' + s.writeProtection;
     $('managerStatus').textContent = $('status').textContent;
     $('welcome').dataset.unbound = String(s.status === 'unbound');
@@ -148,7 +157,7 @@ async function load() {
       `数据集：${s.datasetId ?? "未绑定"}`,
       `Writer：${s.writerId}`,
       ...(s.published ? [`已发布提交：${s.published.commitId}`] : []),
-      `历史：${s.historyCount} · 分支：${s.tips.length} · 异常：${s.deferred.length}`,
+      `历史：${s.historyCount ?? 'v3 分页查看'} · 分支：${s.tips.length} · 异常：${s.deferred.length}`,
       `检查时间：${s.checkedAt ? new Intl.DateTimeFormat("zh-CN", { timeZone: s.zone, dateStyle: "short", timeStyle: "medium" }).format(new Date(s.checkedAt)) : "尚未检查"}`,
       ...(s.error ? [`错误：${s.error}`] : []),
       ...s.tips.map((id) => `tip ${id}`),
@@ -814,6 +823,21 @@ $("importFile").onclick = importFile;
 $("config").onclick = () => showSources(true);
 $("conflicts").onclick = showConflicts;
 $("bind").onclick = async () => {
+  if (activeProtocol === 'v3') {
+    try {
+      const discovery = await post('/api/sync', { workspaceId, version, discover:true });
+      await load();
+      const candidates = discovery.candidates.filter(c => c.state === 'DESCRIPTOR_VERIFIED');
+      if (!candidates.length) return notifyUser('未发现可验证的 Descriptor；未绑定，原数据保留。');
+      const selected = await requestText('请选择数据集序号（仅 Descriptor 已验证，完整历史在加入后继续验证）：\n' + candidates.map((c, i) => `${i+1}. ${c.datasetId}\nDescriptor SHA-256: ${c.descriptorHash}`).join('\n'), '1');
+      if (selected === null) return;
+      const candidate = candidates[Number(selected) - 1];
+      if (!candidate) return notifyUser('请选择有效序号');
+      if (await confirmAction(`确认加入 ${candidate.datasetId}？本地必须为空；未知设备情况无法由普通 WebDAV 自动证明。`))
+        await runSync({ workspaceId, version, bind:true, descriptorPath:candidate.descriptorPath, descriptorHash:candidate.descriptorHash });
+    } catch (e) { await notifyUser(e.message); }
+    return;
+  }
   const context = { workspaceId, version };
   if (await confirmAction("确认接收此目录已有数据集？本地未发布数据会阻止绑定。"))
     runSync({ ...context, bind: true });
@@ -866,6 +890,8 @@ async function loadManagement(epoch = loadEpoch) {
     if (w.id === workspaceId) {
       if (c) more.append(el('p', '此存储位置中有课表时接收已有数据集；空目录则可创建独立数据集。'), button('接收已有课表…', () => $('bind').click()), button('在空目录创建共享课表…', () => $('create').click()));
       more.append(button('查看冲突', showConflicts));
+      if (c && w.protocol !== 'v3') more.append(button('v2→v3 安全迁移…', migrateToV3));
+      more.append(button('恢复 v3 迁移 / 查看证据', recoverV3Migration));
     }
     if (w.unknown) for (const b of more.querySelectorAll('button')) b.disabled = true;
     const diagnostics = el('details'); diagnostics.append(el('summary', '高级诊断'), el('pre', JSON.stringify(w, null, 2)));
@@ -878,7 +904,9 @@ async function loadManagement(epoch = loadEpoch) {
     row.append(el('p', owners.length ? '用于：' + owners.map(w => w.name).join('、') : '尚未关联课程表；可新建工作区后接收或创建共享课表。'));
     row.append(button('新建工作区', async () => {
       const name = await requestText('新课程表名称（独立工作区，不会迁移或合并已有课程）', c.name); if (!name) return;
-      await manageAction({ ...context, action: 'workspace.add', connectionId: c.id, name });
+      const protocol = await requestText('同步协议：输入 v2 或 v3。现有 v2 用户无需切换；创建 v3 工作区不迁移已有工作区。', 'v2');
+      if (!['v2','v3'].includes(protocol)) return;
+      await manageAction({ ...context, action: 'workspace.add', connectionId: c.id, name, protocol });
     }));
     const more = el('details'); more.append(el('summary', '连接操作'));
     more.append(button('编辑连接', () => connectionDialog(c.type, c)), button('测试权限与历史', async () => {
@@ -891,6 +919,31 @@ async function loadManagement(epoch = loadEpoch) {
   if (!m.connections.length) $('connectionRows').append(el('p', '尚未添加存储位置。可以继续本地编辑，或添加下面任一种连接。'));
 
   return m;
+}
+async function migrateToV3() {
+  try {
+    const p = await post('/api/migration', { action:'v3.preview' });
+    const message = `源 ${p.sourceDatasetId}\n已验证 ${p.commits} 个提交，${p.tips.length} 个前沿。\n八类 RAW: ${JSON.stringify(p.counts)}\nRAW SHA-256: ${p.rawHash}\n\n保留未发布本地修改及原 v2 基线，不新增 v2 提交。确认后本机源 Writer 持久暂停；精确回读新 Genesis 并再次验证源后才激活 v3。原远端历史仍保留，这不是独立验证的备份。\n\n请先停止其他已知旧客户端。普通 WebDAV 无法证明未知设备已经停写，旧目录没有被服务端禁止写入。后续设备须加入此目标，不要各自再次迁移。`;
+    if (!await confirmAction(message, '已停止已知旧客户端，准备迁移')) return;
+    const m = await post('/api/migration', { action:'v3.prepare', token:p.token, confirm:p.sourceDatasetId, writersStopped:true });
+    await load();
+    await resumeV3Migration(m.id);
+  } catch (e) { await notifyUser(e.message + '。本地、源历史与目标候选已保留，请从恢复入口继续。'); await load(); }
+}
+async function resumeV3Migration(id) {
+  const m = await post('/api/migration', { action:'v3.resume', migrationId:id });
+  if (m.phase === 'ACTIVE') workspaceId=m.targetId;
+  await load(); await notifyUser(`迁移 ${m.phase} · ${m.targetDescriptor?.datasetId ?? '目标待验证'}。其他设备接收情况未知；旧目录仍可能接收旧客户端写入。`);
+}
+async function recoverV3Migration() {
+  try {
+    const status = await get('/api/migration');
+    if (!status.v3Records.length) return notifyUser('当前工作区没有 v3 迁移记录。');
+    const m = status.v3Records.at(-1);
+    if (m.phase === 'ACTIVE' || m.phase === 'CANCELLED') return notifyUser(JSON.stringify(m,null,2));
+    if (await confirmAction(JSON.stringify(m,null,2) + '\n继续恢复同一事务和目标？')) await resumeV3Migration(m.id);
+    else if (await confirmAction('仅在尚无目标候选时可取消准备并恢复源 Writer；已有候选会拒绝。检查并取消？')) { await post('/api/migration', { action:'v3.cancel', migrationId:m.id }); await load(); }
+  } catch (e) { await notifyUser(e.message + '。保留两端数据，禁止清库或简单切回旧协议。'); }
 }
 async function manageAction(input) {
   try { const result = await post('/api/manage', input); await load(); return result; }
@@ -1122,6 +1175,13 @@ function renderHistoryDiff(d, append = false, more = null) {
   if (d.next !== null && more) output.append(button('继续查看下 40 条', e => { e.currentTarget.remove(); return historyJob(() => more(d.next)); }));
 }
 async function historyRead() {
+  for (const id of ['historyDiff','historyPreview','historyConfirm','historyArchive','historyCompact']) $(id).disabled = activeProtocol === 'v3';
+  if (activeProtocol === 'v3') {
+    const summary = await get('/api/history?workspaceId=' + encodeURIComponent(workspaceId));
+    $('historyStatus').textContent = 'Sync v3 只读历史摘要；回退、v2 归档和精简不适用。旧 Epoch 巡检未完成，不代表全部设备已同步。';
+    $('historyRows').replaceChildren(historyJSON(summary));
+    return;
+  }
   await migrationRead();
   historyPreview = null; historyEligible = false; historyScope = workspaceId; $('historyOutput').replaceChildren();
   const h = await get('/api/history'); if (historyScope !== workspaceId) return;

@@ -108,31 +108,64 @@ abstract class ScheduleDatabase : RoomDatabase() {
 }
 object ScheduleStores {
     @Volatile var overrideFactory: ((Context) -> ScheduleStore)? = null
-    fun create(context: Context, profiles: TermScheduleProfileStore = TermScheduleProfileStore(context)): ScheduleStore = (overrideFactory?.invoke(context) ?: RoomScheduleStore(
-        Room.databaseBuilder(context.applicationContext, ScheduleDatabase::class.java, "schedule.db")
-            .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3, ScheduleDatabase.MIGRATION_3_4).build(), profiles = profiles, onCommitted = { ScheduleSyncJobs.schedule(context.applicationContext) })).also { (it as? RoomScheduleStore)?.attachProfileStore(profiles) }
+    private var production: RoomScheduleStore? = null
+    @Synchronized fun create(context: Context, profiles: TermScheduleProfileStore = TermScheduleProfileStore(context)): ScheduleStore {
+        overrideFactory?.let { return it(context).also { store -> (store as? RoomScheduleStore)?.attachProfileStore(profiles) } }
+        val store = production ?: RoomScheduleStore(
+            Room.databaseBuilder(context.applicationContext, ScheduleDatabase::class.java, "schedule.db")
+                .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3, ScheduleDatabase.MIGRATION_3_4).build(),
+            profiles = profiles, onCommitted = { ScheduleSyncJobs.schedule(context.applicationContext) }, keepOpen = true).also { production = it }
+        store.attachProfileStore(profiles); return store
+    }
 }
 /** Admission/close share a lock. Accepted writes drain; neither close nor Activity teardown waits. */
 class RoomScheduleStore(private val database: ScheduleDatabase,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor(),
     private val closeDatabase: Boolean = true, private var profiles: TermScheduleProfileStore? = null,
-    private val afterSnapshotRows: (() -> Unit)? = null, private val onCommitted: (() -> Unit)? = null) : ScheduleStore, ScheduleSyncStore, ScheduleV2Store {
+    private val afterSnapshotRows: (() -> Unit)? = null, private val onCommitted: (() -> Unit)? = null,
+    private val keepOpen: Boolean = false) : ScheduleStore, ScheduleSyncStore, ScheduleV2Store {
     init { profiles?.sharedStore = this }
     fun attachProfileStore(store: TermScheduleProfileStore) { profiles = store; store.sharedStore = this }
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var closed = false
+    private var activeV3: ActiveScheduleV3? = null
+    private fun v3(): ActiveScheduleV3 = activeV3 ?: ActiveScheduleV3(database, ::mirrorV3, closeDatabase).also { activeV3 = it }
+    private fun mirrorV3(state: ScheduleState) {
+        val dao = database.dao()
+        dao.clearOverrides(); dao.clearDays(); dao.clearSources(); dao.clearEvents(); dao.clearEntries()
+        state.events.forEach { dao.put(EventRow(it.id, it.title, it.start, it.end, it.note)) }
+        state.entries.forEach { dao.put(TimetableRow(it.id, it.title, it.day, it.startMinute, it.endMinute, it.location)) }
+        state.sources.forEach(dao::insertSource); dao.insertOccurrences(state.imported)
+        state.dayAdjustments.forEach(dao::put); state.classOverrides.forEach(dao::put)
+        afterSnapshotRows?.invoke()
+    }
     @Synchronized private fun <T> submit(callback: (Result<T>) -> Unit, operation: () -> T) {
         if (closed) return
         executor.execute { val result = runCatching(operation); handler.post { if (!closed) callback(result) } }
     }
     private fun <T> write(callback: (Result<T>) -> Unit, operation: () -> T) = submit(callback) {
+        if (ActiveScheduleV3.active(database)) {
+            var result: Result<T>? = null
+            v3().engine.edit { before ->
+                if (!v3().localWritesAllowed()) throw ScheduleDatasetWriteProtected()
+                check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "迁移保护禁止编辑" }
+                result = Result.success(operation())
+                readRows().copy(profiles = before.profiles, customProfileKeys = before.customProfileKeys)
+            }
+            onCommitted?.invoke(); return@submit requireNotNull(result).getOrThrow()
+        }
         database.runInTransaction<T> {
             requireNoDatasetMigration()
             operation()
         }.also { onCommitted?.invoke() }
     }
-    private fun readState(): ScheduleState =
-        database.runInTransaction<ScheduleState> {
+    private fun readRows() = ScheduleState(database.dao().events().map { CalendarEvent(it.id, it.title, it.start, it.end, it.note) },
+        database.dao().entries().map { TimetableEntry(it.id, it.title, it.day, it.startMinute, it.endMinute, it.location) },
+        sources = database.dao().sources(), imported = database.dao().imported(),
+        dayAdjustments = database.dao().dayAdjustments(), classOverrides = database.dao().classOverrides())
+    private fun readState(): ScheduleState {
+        if (ActiveScheduleV3.active(database)) return v3().state()
+        return database.runInTransaction<ScheduleState> {
             check(database.dao().dayAdjustmentCount() <= 1000 && database.dao().classOverrideCount() <= 5000 &&
                 database.dao().classOverrideTextCharacters() <= 2_000_000L) { "Stored override limit exceeded" }
             val state = ScheduleState(database.dao().events().map { CalendarEvent(it.id, it.title, it.start, it.end, it.note) },
@@ -150,6 +183,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
                 current.copy(sync = SnapshotIdentity(saved.datasetId, saved.revision, pending))
             }
         }
+    }
     override fun load(callback: (Result<ScheduleState>) -> Unit) = submit(callback) { readState() }
     override fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) = submit(callback) {
         database.runInTransaction<ByteArray> {
@@ -199,6 +233,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         snapshot.copy(state = ScheduleState(profiles = state.profiles, customProfileKeys = state.customProfileKeys)))
     private fun decoded(id: Int) = database.dao().syncRecord(id)?.let { ScheduleSnapshotCodec.decode(it.payload) }
     private fun fullState(): ScheduleState {
+        if (ActiveScheduleV3.active(database)) return v3().state().copy(sync = null)
         val state = readState().copy(sync = null)
         return if (database.dao().checkpoint() != null || (v2Commit(21) != null || v2Commit(23) != null)) state else {
             val catalog = requireNotNull(profiles).preferenceCatalog()
@@ -207,19 +242,111 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     }
     private fun <T> blocking(operation: () -> T): T {
         check(!closed) { "Schedule store closed" }
-        try { return executor.submit<T> { database.runInTransaction<T> { operation() } }.get() }
+        try { return executor.submit<T> {
+            if (ActiveScheduleV3.active(database) && activeV3 == null) v3()
+            database.runInTransaction<T> { operation() }
+        }.get() }
         catch (error: java.util.concurrent.ExecutionException) { throw (error.cause ?: error) }
     }
+    private fun <T> workerCall(operation: () -> T): T {
+        check(!closed) { "Schedule store closed" }
+        try { return executor.submit<T> { operation() }.get() }
+        catch (error: java.util.concurrent.ExecutionException) { throw (error.cause ?: error) }
+    }
+    fun isV3(): Boolean = workerCall { ActiveScheduleV3.active(database) }
+    fun businessPaused(): Boolean = workerCall {
+        database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) ||
+            ActiveScheduleV3.active(database) && !v3().localWritesAllowed()
+    }
+    fun previewV3Migration(remote: CommitStore, sourceFolder: String): ScheduleV3MigrationPreview {
+        v2RequireSyncAllowed()
+        val expectedKey = blocking { database.dao().syncRecord(102)?.payload?.toString(Charsets.US_ASCII) }
+        check(expectedKey == null || expectedKey == remote.bindingKey) { "源访问身份变化" }
+        return ScheduleV3Migration.inspect(v2Frame(), v2Witness(), remote, sourceFolder)
+    }
+    fun prepareV3Migration(preview: ScheduleV3MigrationPreview, remote: CommitStore, targetFolder: String) {
+        val current = previewV3Migration(remote, preview.sourceFolder)
+        ScheduleV3Migration.unchanged(preview, current)
+        workerCall {
+            requireNoDatasetMigration()
+            v3().prepare(preview.merged, targetFolder, migration = preview) {
+                requireNoDatasetMigration()
+                check(SyncV3Codec.stateBytes(fullState()).contentEquals(SyncV3Codec.stateBytes(preview.frame.local)) && v2Commit(21) == preview.frame.baseline && v2Ids(22) == preview.frame.frontier &&
+                    !database.dao().hasSyncRecord(23) && v2Plan() == null && v2Hashes(97).isEmpty() && v2Problems().isEmpty()) { "本地状态已变化，迁移预览过期" }
+            }
+        }
+    }
+    fun cancelUnpublishedV3Migration() = workerCall {
+        check(ActiveScheduleV3.active(database))
+        val runtime = v3(); val mode = runtime.binding()
+        check(mode.optString("phase") == "MIGRATING" && !runtime.journal.snapshot().has("binding")) { "目标已有候选或已接受 v3 编辑；禁止简单切回 v2，请保护两端并恢复迁移" }
+        val original = ScheduleSnapshotCodec.decode(requireNotNull(database.dao().syncRecord(ActiveScheduleV3.ORIGINAL_LOCAL)).payload).state
+        runtime.engine.edit {
+            runtime.journal.meta.put("migrationRecovery", mode.getJSONObject("migration").getString("transactionId"), mode.put("phase", "CANCELLED"))
+            database.dao().deleteSyncRecord(ActiveScheduleV3.MODE)
+            original
+        }
+    }
+    fun auditV3MigrationSource(account: WebDavAccount): String {
+        val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
+        val mode = runtime.binding(); check(mode.has("migration")) { "本机没有 v2→v3 迁移记录" }
+        val proof = ScheduleV3MigrationPreview.restore(mode.getJSONObject("migration"))
+        val graph = ScheduleCommitGraph(WebDavCommitStore(account, proof.sourceFolder), proof.frame.baseline!!.datasetId).load(proof.hashes.keys.toList())
+        check(graph.deferred.isEmpty()) { "旧源存在不可验证路径，不能声明未变化" }
+        val hashes = graph.commits.mapValues { digest(ScheduleCommitCodec.encode(it.value)) }
+        check(proof.hashes.all { (id, hash) -> hashes[id] == hash }) { "旧源已知提交内容变化；保留两端并停止自动处理" }
+        val unchanged = proof.hashes == hashes && proof.tips == graph.tips
+        runtime.journal.localTransaction {
+            val next = runtime.binding(); next.put("sourceAudit", org.json.JSONObject().put("checkedAt", System.currentTimeMillis()).put("status", if (unchanged) "OBSERVED_UNCHANGED" else "CROSS_PROTOCOL_FORK")
+                .put("hashes", org.json.JSONObject(hashes)).put("tips", org.json.JSONArray(graph.tips)))
+            database.dao().checkpoint(ScheduleSyncCheckpoint(ActiveScheduleV3.MODE, next.toString().toByteArray(Charsets.UTF_8)))
+        }
+        return if (unchanged) "本次观察到的 v2 源未变化；不能证明未知 Writer 已停写" else "发现跨协议分叉；v2 新历史仅保留证据，未当作 v3 LATE 整合。请保留两端数据并人工恢复。"
+    }
+    fun v3Information(): org.json.JSONObject? = workerCall {
+        if (!ActiveScheduleV3.active(database)) null else v3().journal.snapshot()
+    }
+    fun prepareV3(folder: String, descriptor: ByteArray? = null) = workerCall {
+        requireNoDatasetMigration()
+        check(v2Commit(21) == null && v2Commit(23) == null && decoded(1) == null && decoded(4) == null) { "已有绑定或待发布；请使用 v2→v3 迁移" }
+        val original = fullState()
+        if (descriptor != null) check(original.events.isEmpty() && original.entries.isEmpty() && original.sources.isEmpty() && original.imported.isEmpty() &&
+            original.classOverrides.isEmpty() && original.dayAdjustments.isEmpty() && original.customProfileKeys.isEmpty()) { "本地非空，禁止覆盖加入；请先保留现有数据" }
+        v3().prepare(if (descriptor == null) original else ScheduleState(), folder, descriptor)
+    }
+    fun synchronizeV3(account: WebDavAccount): String {
+        val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
+        return runtime.synchronize(account)
+    }
+    internal fun synchronizeV3(remote: V3ObjectStore, publication: V3PublicationStore, budget: V3Budget, source: CommitStore? = null): String {
+        val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
+        val proof = runtime.binding().optJSONObject("migration")?.let(ScheduleV3MigrationPreview::restore)
+        return runtime.synchronize(remote, publication, budget, if (source == null || proof == null) null else ({
+            ScheduleV3Migration.unchanged(proof, ScheduleV3Migration.inspect(proof.frame, proof.hashes, source, proof.sourceFolder, proof.transactionId))
+        }))
+    }
+    fun resolveV3(token: String, choice: ScheduleMerge.Choice) = workerCall { check(ActiveScheduleV3.active(database)); v3().engine.resolve(token, choice) }
     override fun syncFrame(): ScheduleSyncFrame = blocking {
         ScheduleSyncFrame(decoded(1), fullState(), decoded(4), decoded(3), decoded(5)?.state)
     }
     internal fun sharedCatalog(): Pair<Map<String, TermScheduleProfile>, Set<String>>? = blocking {
+        if (ActiveScheduleV3.active(database)) return@blocking v3().engine.local().let { it.profiles to it.customProfileKeys }
         val catalog = decoded(2) ?: ((v2Commit(21) ?: v2Commit(23))?.snapshot() ?: decoded(1))?.also {
             database.dao().checkpoint(ScheduleSyncCheckpoint(2, catalogBytes(it, it.state)))
         }
         catalog?.state?.let { it.profiles to it.customProfileKeys }
     }
-    internal fun changeProfile(profile: TermScheduleProfile?, key: String): Boolean = blocking {
+    internal fun changeProfile(profile: TermScheduleProfile?, key: String): Boolean {
+        if (isV3()) return workerCall {
+            if (!v3().localWritesAllowed()) throw ScheduleDatasetWriteProtected()
+            v3().engine.edit { before ->
+                val catalog = before.profiles.toMutableMap()
+                if (profile != null) catalog[key] = profile else BuiltInProfiles.builtIn(key)?.let { catalog[key] = it } ?: catalog.remove(key)
+                check(before.sources.none { it.resolvedTermKey() == key } || key in catalog) { "学期仍有关联来源；请先删除来源" }
+                before.copy(profiles = catalog, customProfileKeys = if (profile == null) before.customProfileKeys - key else before.customProfileKeys + key)
+            }; onCommitted?.invoke(); true
+        }
+        return blocking {
         requireNoDatasetMigration()
         val base = (v2Commit(21) ?: v2Commit(23))?.snapshot() ?: decoded(1)
         if (base == null) {
@@ -239,7 +366,8 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         val bytes = catalogBytes(base, state.copy(profiles = catalog, customProfileKeys = custom))
         database.dao().checkpoint(ScheduleSyncCheckpoint(2, bytes))
         true
-    }.also { if (it) onCommitted?.invoke() }
+        }.also { if (it) onCommitted?.invoke() }
+    }
     override fun establishBaseline(bytes: ByteArray) = blocking {
         requireNoDatasetMigration()
         val base = ScheduleSnapshotCodec.decode(bytes)
@@ -335,7 +463,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     private fun v2Commit(id: Int) = database.dao().syncRecord(id)?.payload?.let(ScheduleCommitCodec::decode)
     // 200 active journal, 202 observed paths, 203 inspection pause; >=1000 immutable recovery blobs/manifests.
     private fun datasetMigration() = database.dao().syncRecord(200)?.payload?.let(ScheduleDatasetMigration::decode)
-    private fun requireNoDatasetMigration() { if (database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203)) throw ScheduleDatasetWriteProtected() }
+    private fun requireNoDatasetMigration() { if (database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) || ActiveScheduleV3.active(database)) throw ScheduleDatasetWriteProtected() }
     override fun v2DatasetPaused() = blocking { database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) }
     override fun v2DatasetResult() = blocking { database.dao().syncRecord(204)?.payload?.toString(Charsets.UTF_8) }
     override fun v2RequireSyncAllowed() = blocking { requireNoDatasetMigration() }
@@ -605,7 +733,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         callback: (Result<ImportCommit>) -> Unit) = write(callback) {
         database.runInTransaction<ImportCommit> {
             val dao = database.dao()
-            if (dao.checkpoint() != null || v2Commit(21) != null || v2Commit(23) != null) check(source.resolvedTermKey()?.let { it in fullState().profiles } != false) { "Missing term profile" }
+            if (ActiveScheduleV3.active(database) || dao.checkpoint() != null || v2Commit(21) != null || v2Commit(23) != null) check(source.resolvedTermKey()?.let { it in fullState().profiles } != false) { "Missing term profile" }
             val existing = dao.source(source.id)
             check(if (replace) existing != null else existing == null) { "Import source changed; reopen the preview" }
             if (existing?.sha256 == source.sha256) ImportCommit(existing, emptyList(), true)
@@ -626,8 +754,9 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         database.runInTransaction { database.dao().deleteSourceOverrides(id); database.dao().deleteSource(id) }
     }
     @Synchronized override fun close() {
+        if (keepOpen) return // One process-owned Room/Writer shared by Activities and JobService.
         if (closed) return
         closed = true
-        executor.execute { if (closeDatabase) database.close() }; executor.shutdown()
+        executor.execute { if (activeV3 != null) activeV3?.close() else if (closeDatabase) database.close() }; executor.shutdown()
     }
 }

@@ -12,6 +12,7 @@ internal object SharedScheduleViews {
     fun add(source: ScheduleSource) { sources += source }
     fun remove(source: ScheduleSource) { sources -= source }
     fun updated() { main.post { sources.toList().forEach { it.refresh() } } }
+    fun reloaded() { main.post { sources.toList().filter { it.ready }.forEach { it.reload() } } }
     private fun <T> onMain(action: () -> T): T {
         val result = CompletableFuture<T>()
         main.post { runCatching(action).onSuccess { result.complete(it) }.onFailure { result.completeExceptionally(it) } }

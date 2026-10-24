@@ -8,13 +8,14 @@ import { Budget } from './v3-store.mjs';
 /** Opt-in PR55 transaction adapter. Reuses Workspace edit/revision/guard rules; local
  * courses and V3 control live in ONE SQLite-backed Workspace row. No v2 import/binding.
  * Caller supplies the catalog/administrator/directory guard; no routes invoke this yet. */
-export async function openV3Workspace(directory, writable) {
+export async function openV3Workspace(directory, writable, installationIdentity = null) {
   ensure(typeof writable === 'function', 'v3 Workspace requires permission guard'); writable();
   const meta = new V3Metadata(directory); meta.guard = writable;
   try {
     ensure(!meta.get('state', 'frame'), 'v3 standalone state cannot silently become a Workspace');
     let identity = meta.get('installation', 'identity');
-    if (!identity) { identity = { writerId: randomUUID(), installationId: randomUUID() }; meta.atomic(() => meta.put('installation', 'identity', identity)); }
+    if (!identity) { identity = installationIdentity ?? { writerId: randomUUID(), installationId: randomUUID() }; meta.atomic(() => meta.put('installation', 'identity', identity)); }
+    ensure(!installationIdentity || identity.writerId === installationIdentity.writerId && identity.installationId === installationIdentity.installationId, 'v3 安装身份变化');
     const store = { dir: directory, identity,
       read: async name => meta.get('workspace', name),
       save: async (name, value) => meta.atomic(() => meta.put('workspace', name, value)),
@@ -31,6 +32,7 @@ export async function openV3Workspace(directory, writable) {
     workspace.guard = writable; const engineFrames = new WeakSet();
     workspace.mutationGuard = (previous, next) => {
       writable(); const internal = engineFrames.delete(next);
+      ensure(internal || previous.v3?.hostIntent !== 'JOIN' || previous.v3?.baselinePath || same(previous.local,next.local), '首次加入历史验证未完成；暂停编辑，请继续同步');
       if (!internal && previous.v3 && !same(previous.local, next.local)) next.v3 = { ...previous.v3, revision: previous.v3.revision + 1, decision: null };
     };
     const journal = { directory, meta, networkQueue: Promise.resolve(), prepareReceipt: null,
