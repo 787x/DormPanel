@@ -17,7 +17,7 @@ class SyncV3WebDavEngineTest {
         val account = WebDavAccount(url, config.getString("username"), config.getString("password"))
         val root = Files.createTempDirectory("dp-pr54-https-").toFile(); val journal = V3Journal(root); val engine = V3Engine(journal, UUID.randomUUID().toString())
         engine.bind(SyncV3Codec.decode(requireNotNull(V3WebDavStore(account, url, V3Budget()).read(binding.getString("descriptorPath")))), binding.getString("descriptorHash"))
-        repeat(5) { val budget = V3Budget(); val remote = V3WebDavStore(account, url, budget); try { engine.round(remote, remote, V3IndexedCache(root, budget), budget, 8) } catch (e: IllegalStateException) { if (!e.message.orEmpty().contains("initial discovery incomplete")) throw e } }
+        repeat(5) { val budget = V3Budget(); val remote = V3WebDavStore(account, url, budget); try { engine.round(remote, remote, V3IndexedCache(root, budget), budget, 8) } catch (e: IllegalStateException) { if (!e.message.orEmpty().contains("initial discovery/validation incomplete")) throw e } }
         assertTrue(engine.local().entries.any { it.id == "node" })
         run {
             val budget = V3Budget(); val remote = V3WebDavStore(account, url, budget); val cache = V3IndexedCache(root, budget)

@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { ensure } from './protocol.mjs';
 import { encode, decode, sha, ZERO, ZERO_HASH } from './v3-protocol.mjs';
-import { objectPath, epochScope } from './v3-store.mjs';
+import { objectPath, epochScope, Budget } from './v3-store.mjs';
+import { IndexedV3Cache } from './v3-index.mjs';
 import { V3Publisher } from './v3-transaction.mjs';
 import { V3History, V3Discovery, reference, refPath } from './v3-history.mjs';
 import { emptyState, merge, same, mergePlan } from './merge.mjs';
@@ -11,21 +12,34 @@ import { emptyState, merge, same, mergePlan } from './merge.mjs';
  * No production binding, server route or v2 workspace ever invokes this class. */
 export class V3Engine {
   constructor(journal, writerId) { ensure(!journal.value.writerId || journal.value.writerId === writerId, 'v3 writer identity changed'); Object.assign(this, { journal, writerId }); }
-  serial(fn) { const p = this.journal.networkQueue.then(fn); this.journal.networkQueue = p.catch(() => {}); return p; }
+  serial(fn) { const p = this.journal.networkQueue.then(() => { this.journal.meta.assertWritable(); return fn(); }); this.journal.networkQueue = p.catch(() => {}); return p; }
+  configure(remote, cache, budget) {
+    ensure(cache.budget === budget && (!remote.budget || remote.budget === budget), 'v3 round must share one budget');
+    this.journal.roundId = budget.roundId;
+    this.journal.meta.budget = budget;
+    this.journal.prepareReceipt = async p => {
+      const b = this.journal.value.binding, witness = await cache.witness(p.path); ensure(!witness || witness.hash === p.hash, 'v3 pending cache identity changed');
+      if (!witness || !await cache.hasBlob(p.path)) await cache.put(p.path, Buffer.from(p.bytes, 'base64'));
+      const h = await new V3History(this.journal, cache, remote, b.descriptorPath, b.descriptorHash, budget).open();
+      await h.verify(p.path, p.hash); h.drainActivation();
+    };
+  }
   async edit(state) {
     // Domain validation before committing; immutable private envelope never reaches a server.
-    encode({ type: 2, datasetId: this.journal.value.binding.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: this.journal.value.binding.descriptorHash, refs: [], state });
-    return this.journal.transaction(s => { s.local = structuredClone(state); s.revision = (s.revision ?? 0) + 1; s.decision = null; });
+    encode({ type: 2, datasetId: this.journal.value.binding?.datasetId ?? '00000000-0000-0000-0000-000000000001', objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: this.journal.value.binding?.descriptorHash ?? '1'.repeat(64), refs: [], state });
+    return this.journal.transaction(s => { ensure(!s.writerId || s.writerId === this.writerId); s.writerId = this.writerId; s.local = structuredClone(state); s.revision = (s.revision ?? 0) + 1; s.decision = null; }, true);
   }
-  async bind(descriptor, hash, local = emptyState()) {
+  async bind(descriptor, hash, local = undefined) {
     ensure(descriptor.type === 1 && sha(encode(descriptor)) === hash);
-    await this.journal.transaction(s => { ensure(!s.binding); s.writerId = this.writerId; s.binding = { datasetId: descriptor.datasetId, descriptorPath: objectPath(descriptor), descriptorHash: hash }; s.local = local; s.unbasedLocal = !same(local, emptyState()); s.baseline = null; s.baselinePath = null; s.revision = 0; });
+    await this.journal.transaction(s => { ensure(!s.binding && (!s.writerId || s.writerId === this.writerId)); const existing = s.local ?? emptyState(), seed = local ?? existing; ensure(same(existing, emptyState()) || same(existing, seed), 'v3 binding must preserve unbound local edits'); s.writerId = this.writerId; s.binding = { datasetId: descriptor.datasetId, descriptorPath: objectPath(descriptor), descriptorHash: hash }; s.local = seed; s.unbasedLocal = !same(seed, emptyState()); s.baseline = null; s.baselinePath = null; s.revision ??= 0; }, true);
   }
-  async initialize(remote, state = emptyState()) {
+  async initialize(remote, state = undefined) {
     return this.serial(async () => {
+      state ??= this.journal.value.local ?? emptyState();
       const descriptor = { type: 1, datasetId: randomUUID(), objectId: randomUUID(), writerId: this.writerId, epochId: ZERO, epochNumber: 0, descriptorHash: ZERO_HASH, refs: [], state: null };
       const genesis = { type: 2, datasetId: descriptor.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: sha(encode(descriptor)), refs: [], state };
       await this.bind(descriptor, genesis.descriptorHash, state);
+      const budget = remote.budget ?? new Budget(); this.configure(remote, new IndexedV3Cache(this.journal.directory, budget), budget);
       await this.journal.transaction(s => { s.initialization = [encode(descriptor).toString('base64'), encode(genesis).toString('base64')]; });
       await this.resumeInitialization(remote); return structuredClone(this.journal.value.binding);
     });
@@ -45,12 +59,13 @@ export class V3Engine {
         const replay = merge(c.local, s.local, o.state);
         if (replay.conflicts.length) s.conflict = { id: sha(Buffer.from(JSON.stringify({ path: s.pending.path, revision: s.revision }))), revision: s.revision, base: c.local, local: s.local, remote: o.state, capturedLocal: s.local, conflicts: replay.conflicts, paths: [s.pending.path], receipt: true };
         else s.local = replay.state;
-        s.baseline = o.state; s.baselinePath = s.pending.path; s.decision = null;
+        s.baseline = o.state; s.baselinePath = s.pending.path; s.baselineHash = s.pending.hash; s.decision = null;
         s.convergenceRotations = 0;
+        if (!replay.conflicts.length && c.revision === s.revision) s.settled = { tips: this.journal.meta.page('frontier', 0, 65).map(r => r.key).sort(), revision: s.revision };
       }
-      if (c.kind === 'initial-genesis') { s.baseline = o.state; s.baselinePath = s.pending.path; s.activeEpoch = o.epochId; }
+      if (c.kind === 'initial-genesis') { s.baseline = o.state; s.baselinePath = s.pending.path; s.baselineHash = s.pending.hash; s.activeEpoch = o.epochId; }
       if (c.kind === 'transition') s.activeEpoch = c.targetEpoch;
-      s.receipt = { path: s.pending.path, hash: s.pending.hash };
+      s.receipt = { path: s.pending.path, hash: s.pending.hash, confirmation: s.pending.confirmation };
     });
   }
   async resumeInitialization(remote) {
@@ -63,6 +78,8 @@ export class V3Engine {
   }
   rotate(history, remote, sourceEpoch, tips) { return this.serial(() => this.rotateInternal(history, remote, sourceEpoch, tips)); }
   async rotateInternal(history, remote, sourceEpoch, tips) {
+    this.configure(remote, history.cache, history.budget);
+    ensure(history.activeEpochs().includes(sourceEpoch) && JSON.stringify([...tips].sort()) === JSON.stringify(history.epochTips(sourceEpoch)), 'v3 stale/incomplete rotation frontier');
     const source = history.nodes[tips[0]], state = await history.merged(tips), refs = tips.map(p => reference(history.nodes[p], history.nodes[p].hash, 2));
     const genesis = { type: 2, datasetId: source.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: source.epochNumber + 1, descriptorHash: source.descriptorHash, refs, state };
     const transition = { type: 4, datasetId: source.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: sourceEpoch, epochNumber: source.epochNumber, descriptorHash: source.descriptorHash, refs: [...refs, reference(genesis, sha(encode(genesis)), 5)], state: null };
@@ -88,36 +105,43 @@ export class V3Engine {
       const resolved = merge(c.base, c.local, c.remote, choice, keys);
       const replay = merge(c.base, c.capturedLocal, resolved.state, 'remote', keys);
       ensure(replay.conflicts.every(v => v.keys.every(k => keys.has(k))), 'v3 new local conflict requires separate decision');
+      this.journal.meta.put('decision', id, { choice, input: c });
       s.local = replay.state; s.revision++; s.conflict = null; s.decision = { id, choice, remotePaths: c.paths, input: c };
-    });
+    }, true);
   }
-  round(remote, cache, budget, { discoverySteps = 8 } = {}) {
+  round(remote, cache, budget, { discoverySteps = 8, auditObjects = 0 } = {}) {
     return this.serial(async () => {
       try {
         await cache.open();
+        this.configure(remote, cache, budget);
         if (this.journal.value.initialization?.length) await this.resumeInitialization(remote);
         if (this.journal.value.pending && this.journal.value.pending.phase !== 'RECEIPTED') await this.resumePublication(remote);
         if (this.journal.value.rotation) await this.resumeRotation(remote);
         const s = this.journal.value, b = s.binding; ensure(b);
         const discovery = new V3Discovery(this.journal, remote, b.datasetId); await discovery.scan(discoverySteps);
         const history = await new V3History(this.journal, cache, remote, b.descriptorPath, b.descriptorHash, budget).open();
-        if (this.journal.value.receipt) await history.verify(this.journal.value.receipt.path);
-        if (this.journal.value.baselinePath) await history.verify(this.journal.value.baselinePath);
+        await history.auditObjects(auditObjects);
+        if (this.journal.value.receipt) { const r = this.journal.value.receipt; await history.verify(r.path); ensure(history.node(r.path).hash === r.hash, 'v3 receipt identity changed'); }
+        if (this.journal.value.baselinePath) { const s = this.journal.value; await history.verify(s.baselinePath); ensure(!s.baselineHash || history.node(s.baselinePath).hash === s.baselineHash, 'v3 baseline identity changed'); }
         for (const epoch of history.activeEpochs().slice(-8)) {
           const listed = await remote.list(epochScope(b.datasetId, epoch));
-          await this.journal.transaction(next => { for (const p of listed) if (!next.discovery.observed.includes(p)) next.discovery.observed.push(p); });
+          discovery.observe(epochScope(b.datasetId, epoch), listed);
         }
-        const observed = this.journal.value.discovery.observed;
-        if (observed.length) {
-          const cursor = this.journal.value.objectAudit ?? 0, path = observed[cursor % observed.length];
-          const raw = await remote.read(path); ensure(raw, 'v3 observed object missing'); await cache.put(path, raw);
-          await this.journal.transaction(next => { next.objectAudit = (cursor + 1) % observed.length; });
-        }
-        for (const p of observed) if (p !== b.descriptorPath) await history.verify(p);
-        ensure(this.journal.value.discovery.initialComplete, 'v3 initial discovery incomplete');
+        for (let n = 0; n < 32; n++) { const task = this.journal.meta.page('todo', 0, 1)[0]; if (!task) break; await history.verify(task.key); }
+        history.drainActivation();
+        ensure(this.journal.meta.get('control', 'initialComplete') && !this.journal.meta.page('todo', 0, 1).length, 'v3 initial discovery/validation incomplete');
+        ensure(!this.journal.meta.page('error', 0, 1).length, 'v3 unresolved observed history error');
         const epochs = history.activeEpochs(); ensure(epochs.length, 'v3 no activated epoch');
-        const all = Object.entries(history.nodes).filter(([, o]) => [2, 3].includes(o.type) && epochs.includes(o.epochId)).map(([p]) => p);
-        const tips = history.frontier(all); const current = this.journal.value;
+        const tips = history.tips(), current = this.journal.value;
+        if (current.conflict?.receipt) {
+          if (current.conflict.revision !== current.revision) await this.journal.transaction(s => {
+            const c = s.conflict; if (!c?.receipt) return; const forced = new Set(c.conflicts.flatMap(v => v.keys));
+            const result = merge(c.base, s.local, c.remote, null, forced); this.journal.meta.put('conflictHistory', c.id, c);
+            s.conflict = { ...c, id: sha(Buffer.from(c.paths.join('\n') + '\n' + s.revision)), revision: s.revision, local: s.local, capturedLocal: s.local, conflicts: result.conflicts };
+          });
+          return { status: 'CONFLICT', publicationConfirmed: true, oldHistoryAuditComplete: false };
+        }
+        if (current.settled?.revision === current.revision && JSON.stringify(current.settled.tips) === JSON.stringify(tips)) return { status: 'OBSERVED', oldHistoryAuditComplete: false };
         // Technical carrier only; all other branches remain in tips and must be causally covered.
         let carrier = current.activeEpoch; if (!epochs.includes(carrier)) carrier = history.nodes[tips[0]].epochId;
         const highest = Math.max(...tips.map(p => history.nodes[p].epochNumber));
@@ -125,14 +149,14 @@ export class V3Engine {
         const parents = tips.filter(p => history.nodes[p].epochId === carrier), other = tips.filter(p => history.nodes[p].epochId !== carrier);
         ensure(parents.length, 'v3 carrier has no frontier');
         const decisionPaths = current.decision?.remotePaths;
-        const decisionMatches = decisionPaths?.length && tips.every(p => decisionPaths.some(old => history.nodes[old]?.businessHash === history.nodes[p].businessHash && history.ancestors(p).has(old))) && decisionPaths.every(old => tips.some(p => history.nodes[old]?.businessHash === history.nodes[p].businessHash && history.ancestors(p).has(old)));
+        const decisionMatches = decisionPaths?.length && tips.every(p => decisionPaths.some(old => history.nodes[old]?.businessHash === history.nodes[p].businessHash && history.isAncestor(old, p))) && decisionPaths.every(old => tips.some(p => history.nodes[old]?.businessHash === history.nodes[p].businessHash && history.isAncestor(old, p)));
         let remoteState;
         try { remoteState = await history.merged(tips); }
         catch (e) {
           if (!String(e.message).includes('conflict')) throw e;
           if (decisionMatches) remoteState = current.local;
           else {
-            budget.charge(tips.reduce((n, p) => n + history.nodes[p].size, 0) * tips.length, 0);
+            budget.work('merge bytes', 64 * 1024 * 1024, tips.reduce((n, p) => n + history.nodes[p].size, 0) * tips.length);
             const base = (await history.value(history.common(tips))).state;
             const localBase = (await history.value(history.common([...tips, ...(current.baselinePath ? [current.baselinePath] : [])]))).state;
             const branches = [];
@@ -146,36 +170,38 @@ export class V3Engine {
         const local = current.baselinePath ? current.local : remoteState;
         const base = (await history.value(basePath)).state, result = decisionMatches ? { state: local, conflicts: [] } : merge(base, local, remoteState);
         if (result.conflicts.length) { await this.saveConflict(base, current.local, remoteState, result.conflicts, tips, current.revision); return { status: 'CONFLICT' }; }
-        const count = Object.values(history.nodes).filter(o => o.epochId === carrier).length;
+        if (current.conflict) await this.journal.transaction(s => { if (s.revision === current.revision && s.conflict?.id === current.conflict.id) { this.journal.meta.put('conflictHistory', s.conflict.id, s.conflict); s.conflict = null; } });
+        const count = history.epochCount(carrier);
         ensure(count < 256, 'v3 epoch capacity');
+        const resolveSourceFirst = !!decisionMatches && parents.length > 1;
         const equivalent = tips.every(p => history.nodes[p].businessHash === history.nodes[tips[0]].businessHash);
         if (other.length && equivalent && same(result.state, remoteState)) {
-          await this.journal.transaction(next => { if (next.revision === current.revision) { next.local = result.state; next.baseline = remoteState; next.baselinePath = parents[0]; next.equivalentFrontiers = tips; } });
+          await this.journal.transaction(next => { if (next.revision === current.revision) { next.local = result.state; next.baseline = remoteState; next.baselinePath = parents[0]; next.baselineHash = history.node(parents[0]).hash; next.equivalentFrontiers = tips; } });
           return { status: 'EQUIVALENT_FRONTIERS', pendingCausalFrontiers: tips, oldHistoryAuditComplete: false };
         }
         // Equal-generation candidates require a legal higher carrier before LATE can represent them.
-        if (other.some(p => history.nodes[p].epochNumber >= history.nodes[parents[0]].epochNumber) || count >= 160) {
+        if (!resolveSourceFirst && (other.some(p => history.nodes[p].epochNumber >= history.nodes[parents[0]].epochNumber) || count >= 160)) {
           ensure(count < 255, 'v3 transition capacity');
           if (other.length) await this.journal.transaction(next => { ensure((next.convergenceRotations ?? 0) < 4, 'v3 convergence retry budget; candidates retained'); next.convergenceRotations = (next.convergenceRotations ?? 0) + 1; });
           await this.rotateInternal(history, remote, carrier, parents); return { status: 'ROTATED' };
         }
         if (same(result.state, remoteState) && equivalent && !other.length) {
-          await this.journal.transaction(next => { if (next.revision === current.revision) { next.local = result.state; next.baseline = remoteState; next.baselinePath = tips[0]; } });
+          await this.journal.transaction(next => { if (next.revision === current.revision) { next.local = result.state; next.baseline = remoteState; next.baselinePath = tips[0]; next.baselineHash = history.node(tips[0]).hash; next.settled = { tips, revision: next.revision }; } });
           return { status: 'OBSERVED', oldHistoryAuditComplete: false };
         }
-        ensure(count < 192, 'v3 rotation must precede publication');
+        ensure(count < 192 || resolveSourceFirst && count < 255, 'v3 resolved source needs room for commit and transition');
         const refs = parents.map(p => reference(history.nodes[p], history.nodes[p].hash, 1));
-        if (other.length) {
-          const common = history.common(tips); ensure(history.nodes[common].epochNumber < history.nodes[parents[0]].epochNumber, 'v3 bridge baseline generation');
-          refs.push(...other.map(p => reference(history.nodes[p], history.nodes[p].hash, 3)), reference(history.nodes[common], history.nodes[common].hash, 4));
+        const eligibleLate = other.filter(p => history.nodes[p].epochNumber < history.nodes[parents[0]].epochNumber);
+        if (eligibleLate.length) {
+          const common = history.common([...parents, ...eligibleLate]); ensure(history.nodes[common].epochNumber < history.nodes[parents[0]].epochNumber, 'v3 bridge baseline generation');
+          refs.push(...eligibleLate.map(p => reference(history.nodes[p], history.nodes[p].hash, 3)), reference(history.nodes[common], history.nodes[common].hash, 4));
         }
         const source = history.nodes[parents[0]], o = { type: 3, datasetId: b.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: carrier, epochNumber: source.epochNumber, descriptorHash: b.descriptorHash, refs, state: result.state };
-        const raw = encode(o); await cache.put(objectPath(o), raw); await cache.pin(objectPath(o), 'pending');
-        await this.publish(remote, o, { kind: 'commit', local: current.local, revision: current.revision, decision: current.decision }); return { status: 'PUBLISHED', oldHistoryAuditComplete: false };
+        await this.publish(remote, o, { kind: 'commit', local: current.local, revision: current.revision, decision: current.decision }); return { status: this.journal.value.conflict?.receipt ? 'CONFLICT' : 'PUBLISHED', publicationConfirmed: true, oldHistoryAuditComplete: false };
       } catch (e) { await this.journal.transaction(s => { s.error = String(e.message).slice(0, 1024); }); throw e; }
     });
   }
   async saveConflict(base, local, remote, conflicts, paths, revision, plan = null) {
-    await this.journal.transaction(s => { ensure(s.revision === revision, 'v3 local edit changed; replan conflict'); s.conflict = { id: sha(Buffer.from(paths.join('\n') + '\n' + s.revision)), revision: s.revision, base, local, remote, capturedLocal: s.local, conflicts, paths, plan }; });
+    await this.journal.transaction(s => { ensure(s.revision === revision, 'v3 local edit changed; replan conflict'); const id = sha(Buffer.from(paths.join('\n') + '\n' + s.revision)); if (s.conflict && s.conflict.id !== id) this.journal.meta.put('conflictHistory', s.conflict.id, s.conflict); s.conflict = { id, revision: s.revision, base, local, remote, capturedLocal: s.local, conflicts, paths, plan }; });
   }
 }

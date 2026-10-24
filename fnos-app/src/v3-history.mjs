@@ -1,167 +1,202 @@
 import { ensure } from './protocol.mjs';
-import { sha, businessHash } from './v3-protocol.mjs';
-import { objectPath, datasetScope, scopeInfo, file } from './v3-store.mjs';
+import { sha, businessHash, encode } from './v3-protocol.mjs';
+import { objectPath, datasetScope, scopeInfo, file, match } from './v3-store.mjs';
 import { merge, same } from './merge.mjs';
+import { randomUUID } from 'node:crypto';
 
 export const reference = (o, hash, role) => ({ role, type: o.type, epochId: o.epochId, epochNumber: o.epochNumber, objectId: o.objectId, hash });
 export const refPath = (datasetId, r) => objectPath({ ...r, datasetId });
 const causal = o => o.refs.filter(r => [1, 2, 3].includes(r.role));
-const keyRefs = refs => JSON.stringify(refs.map(r => ({ ...r, role: 2 })).sort((a, b) => a.objectId.localeCompare(b.objectId)));
-const certificate = m => sha(Buffer.from([m.type, m.datasetId, m.objectId, m.writerId, m.epochId, m.epochNumber, m.descriptorHash, m.hash, m.size, m.businessHash ?? '-', ...m.refs.map(r => [r.role, r.type, r.epochId, r.epochNumber, r.objectId, r.hash].join('|'))].join('\n'), 'ascii'));
+const keyRefs = refs => JSON.stringify(refs.map(r => ({ ...r, role: 2 })).sort((a, b) => a.objectId < b.objectId ? -1 : 1));
+const signature = m => sha(Buffer.from(JSON.stringify(m)));
 
-/** Persistent observations are monotonic; a later incomplete listing cannot erase them.
- * Directory result + newly queued children + cursor are one atomic journal replacement.
- * Audit rotates over ALL prefixes, including root, even after initial discovery finishes. */
+/** One indexed row per known path, independent scan and audit queues. Listing children and
+ * acknowledgement commit together. Neither a missing child nor a failed list deletes a witness. */
 export class V3Discovery {
-  constructor(journal, remote, datasetId) { Object.assign(this, { journal, remote, datasetId }); }
+  constructor(journal, remote, datasetId) { Object.assign(this, { journal, remote, datasetId }); this.meta = journal.meta; }
+  advance(progress) { if (progress) { this.meta.put('control', 'discoveryLane', { value: progress.lane }); if (progress.audit) this.meta.put('control', 'scopeAudit', progress.audit); } }
+  observe(scope, children, progress = null) {
+    const m = this.meta; ensure(children.length <= 256 && new Set(children).size === children.length);
+    for (const child of children) { ensure(child.startsWith(scope) && !child.slice(scope.length).replace(/\/$/, '').includes('/')); if (child.endsWith('/')) ensure(scopeInfo(child).datasetId === this.datasetId); else file(child); }
+    m.atomic(() => {
+      for (const child of children) if (child.endsWith('/')) {
+        if (!m.get('scope', child)) { m.put('scope', child, { path: child }); m.put('scan', child, { path: child }); }
+      } else if (!m.get('observed', child)) { m.put('observed', child, { path: child }); m.put('todo', child, { path: child }); }
+      m.put('listing', scope, { children, round: this.journal.roundId ?? null, endpoint: this.remote.base?.href ?? null }); m.remove('scan', scope); m.remove('error', scope);
+      if (!m.page('scan', 0, 1).length) m.put('control', 'initialComplete', { value: true });
+      this.advance(progress);
+    });
+  }
   async scan(limit = 8) {
-    ensure(limit >= 0 && limit <= 32);
-    await this.journal.transaction(s => { s.discovery ??= { scopes: [datasetScope(this.datasetId)], queue: [datasetScope(this.datasetId)], observed: [], audit: 0, failures: {} }; });
-    let working = structuredClone(this.journal.value.discovery);
-    try { for (let n = 0; n < limit; n++) {
-      const d = working, initial = d.queue.length > 0;
-      const scope = initial ? d.queue[0] : d.scopes[d.audit % d.scopes.length];
-      let children;
-      try { children = await this.remote.list(scope); }
-      catch (e) { working.failures[scope] = String(e.message).slice(0, 512); throw e; }
-      ensure(children.length <= 256 && new Set(children).size === children.length);
-      {
-        const next = structuredClone(working);
-        for (const child of children) {
-          ensure(child.startsWith(scope) && !child.slice(scope.length).replace(/\/$/, '').includes('/'));
-          if (child.endsWith('/')) {
-            const info = scopeInfo(child); ensure(info.datasetId === this.datasetId);
-            if (!next.scopes.includes(child)) { next.scopes.push(child); next.queue.push(child); }
-          } else { file(child); if (!next.observed.includes(child)) next.observed.push(child); }
-        }
-        // Finite memory/work cap is an explicit incomplete state, never a success claim.
-        ensure(next.scopes.length <= 16384 && next.observed.length <= 65536, 'v3 discovery metadata budget');
-        delete next.failures[scope]; if (initial) next.queue.shift(); else next.audit = (next.audit + 1) % next.scopes.length;
-        if (!next.queue.length) next.initialComplete = true;
-        working = next;
-      }
-    } } finally { await this.journal.transaction(s => { s.discovery = working; }); }
-    return structuredClone(this.journal.value.discovery);
+    ensure(limit >= 0 && limit <= 32); const m = this.meta, root = datasetScope(this.datasetId);
+    if (!m.get('scope', root)) m.atomic(() => { m.put('scope', root, { path: root }); m.put('scan', root, { path: root }); });
+    for (let n = 0; n < limit; n++) {
+      const pending = m.page('scan', 0, 1); let cursor = m.get('control', 'scopeAudit') ?? { seq: 0, ceiling: m.lastSeq('scope') };
+      let audit = m.page('scope', cursor.seq, 1, cursor.ceiling)[0];
+      if (!audit) { cursor = { seq: 0, ceiling: m.lastSeq('scope') }; audit = m.page('scope', 0, 1, cursor.ceiling)[0]; }
+      const lane = m.get('control', 'discoveryLane')?.value ?? 0;
+      const task = pending.length && lane === 0 ? pending[0] : audit;
+      if (!task) break;
+      const progress = { lane: 1 - lane, audit: task === audit ? { seq: task.seq, ceiling: cursor.ceiling } : null };
+      try { this.observe(task.key, await this.remote.list(task.key), progress); }
+      catch (e) { if (!/budget/i.test(e.message)) m.atomic(() => { m.put('error', task.key, { reason: String(e.message) }); this.advance(progress); }); throw e; }
+    }
+    return { initialComplete: !!m.get('control', 'initialComplete'), pending: !!m.page('scan', 0, 1).length, oldHistoryAuditComplete: false };
   }
 }
 
-/** Only metadata certificates persist. Full snapshots are loaded on demand from raw cache.
- * Certificates certify previously checked immutable closure, not remote availability this round.
- * A round verifies at most 256 new objects and limits ancestry and merge work independently. */
+/** Indexed immutable certificates, incremental frontier and persistent proof work queues.
+ * SQLite checksums are verified only for rows actually used. No startup table enumeration. */
 export class V3History {
   constructor(journal, cache, remote, descriptorPath, descriptorHash, budget) {
-    Object.assign(this, { journal, cache, remote, descriptorPath, descriptorHash, budget }); this.visiting = new Set(); this.newObjects = 0; this.expanded = 0; this.work = 0;
+    Object.assign(this, { journal, cache, remote, descriptorPath, descriptorHash, budget }); this.meta = journal.meta;
+    this.meta.budget = budget; this.loaded = new Map(); this.newObjects = 0; this.expanded = 0; this.work = 0; this.proofWork = 256;
+    this.nodes = new Proxy({}, { get: (_, path) => typeof path === 'string' ? this.node(path) : undefined, ownKeys: () => { throw Error('v3 use paged metadata queries'); } });
   }
-  get nodes() { return this.journal.value.history?.nodes ?? {}; }
+  node(path) {
+    if (this.loaded.has(path)) return this.loaded.get(path);
+    const node = this.meta.get('node', path); if (!node) return undefined;
+    ensure(this.meta.get('identity', node.objectId)?.path === path, 'v3 metadata identity index corrupt');
+    if (this.loaded.size >= 128) this.loaded.delete(this.loaded.keys().next().value); this.loaded.set(path, node); return node;
+  }
   async open() {
-    await this.journal.transaction(s => { s.history ??= { nodes: {}, ids: {}, roots: {}, anomalies: {} }; });
-    this.budget.charge(Buffer.byteLength(JSON.stringify(this.nodes)), 0);
-    for (const [path, node] of Object.entries(this.nodes)) { ensure(node.certificate === certificate(node), 'v3 metadata certificate corrupt'); ensure(this.journal.value.history.ids[node.objectId] === path, 'v3 metadata identity index corrupt'); }
-    const bytes = await this.cache.load(this.descriptorPath, this.remote); ensure(bytes && sha(bytes) === this.descriptorHash, 'v3 descriptor');
-    const o = (await import('./v3-store.mjs')).match(this.descriptorPath, bytes); ensure(o.type === 1); this.datasetId = o.datasetId;
-    await this.record(this.descriptorPath, bytes, o); return this;
+    this.datasetId = scopeInfo(this.descriptorPath.slice(0, this.descriptorPath.lastIndexOf('/') + 1)).datasetId;
+    const old = this.node(this.descriptorPath);
+    if (old) ensure(old.type === 1 && old.hash === this.descriptorHash, 'v3 descriptor identity');
+    else { const bytes = await this.cache.load(this.descriptorPath, this.remote, this.descriptorHash); ensure(bytes && sha(bytes) === this.descriptorHash, 'v3 descriptor'); const o = match(this.descriptorPath, bytes); ensure(o.type === 1); await this.record(this.descriptorPath, bytes, o); }
+    return this;
   }
   async record(path, bytes, o) {
-    const hash = sha(bytes); const { state, ...metadata } = o;
-    await this.journal.transaction(s => {
-      const h = s.history, previous = h.ids[o.objectId]; ensure(!previous || previous === path, 'v3 duplicate objectId');
-      ensure(!h.nodes[path] || h.nodes[path].hash === hash, 'v3 identity changed');
-      if (o.type !== 1 && !h.nodes[path]) ensure(Object.values(h.nodes).filter(v => v.epochId === o.epochId).length < 256, 'v3 epoch capacity');
-      if (o.type === 2) { ensure(!h.roots[o.epochId] || h.roots[o.epochId] === path, 'v3 multiple genesis'); h.roots[o.epochId] = path; }
-      if (o.type === 2 && o.epochNumber === 1) ensure(!Object.values(h.nodes).some(v => v.type === 2 && v.epochNumber === 1 && v.objectId !== o.objectId), 'v3 multiple initial genesis');
-      h.ids[o.objectId] = path; const node = { ...metadata, hash, size: bytes.length, businessHash: state ? businessHash(state) : null }; node.certificate = certificate(node); h.nodes[path] = node; delete h.anomalies[path];
-    });
+    await this.cache.pin(path, 'referenced-history');
+    const { state, ...metadata } = o, m = this.meta, hash = sha(bytes), refs = causal(o), primary = refs[0] ? this.node(refPath(this.datasetId, refs[0])) : null;
+    const jumps = primary ? [refPath(this.datasetId, refs[0])] : [];
+    for (let n = 1; jumps[n - 1]; n++) { const next = this.node(jumps[n - 1]).jumps[n - 1]; if (!next) break; jumps.push(next); }
+    const node = { ...metadata, hash, size: bytes.length, businessHash: state ? businessHash(state) : null, root: o.type === 2 ? path : primary?.root ?? null, depth: primary ? primary.depth + 1 : 0, jumps };
+    m.atomic(() => {
+      const identity = m.get('identity', o.objectId), old = m.get('node', path); ensure(!identity || identity.path === path, 'v3 duplicate objectId'); ensure(!old || old.hash === hash, 'v3 identity changed');
+      if (!old && o.type !== 1) ensure(m.count('members:' + o.epochId) < 256, 'v3 epoch capacity');
+      if (o.type === 2) {
+        const epoch = m.get('epoch', o.epochId); ensure(!epoch || epoch.root === path, 'v3 multiple genesis');
+        if (o.epochNumber === 1) { const initial = m.get('control', 'initial'); ensure(!initial || initial.path === path, 'v3 multiple initial genesis'); m.put('control', 'initial', { path }); }
+        m.put('epoch', o.epochId, epoch ?? { root: path, number: o.epochNumber, active: o.epochNumber === 1, frontierIndexed: true });
+      }
+      m.put('identity', o.objectId, { path, hash }); m.put('node', path, node); m.remove('todo', path); m.remove('error', path);
+      if (o.type !== 1) { m.put('members:' + o.epochId, path, { path }); if (m.get('epoch', o.epochId)?.active) m.put('activate', path, { path }); }
+      if ([2, 3].includes(o.type) && m.get('epoch', o.epochId)?.frontierIndexed) {
+        const ns = 'epochFrontier:' + o.epochId; if (!m.get(ns + ':covered', path)) m.put(ns, path, { path });
+        for (const r of o.refs.filter(r => r.role === 1)) { const p = refPath(this.datasetId, r); m.put(ns + ':covered', p, { by: path }); m.remove(ns, p); }
+      }
+    }); this.loaded.delete(path);
   }
-  async value(path) { const raw = await this.cache.load(path, this.remote); ensure(raw, 'v3 missing ancestor'); const { match } = await import('./v3-store.mjs'); const o = match(path, raw); ensure(!this.nodes[path] || this.nodes[path].hash === sha(raw), 'v3 identity changed'); return o; }
-  tick() { this.budget.charge(0, 0); ensure(++this.work <= 32768, 'v3 ancestry budget'); }
-  ancestors(path) {
-    const seen = new Set(), queue = [path];
-    while (queue.length) { this.tick(); const p = queue.pop(); if (seen.has(p)) continue; const node = this.nodes[p]; ensure(node, 'v3 unverified ancestor'); seen.add(p); queue.push(...causal(node).map(r => refPath(this.datasetId, r))); }
-    return seen;
-  }
-  frontier(paths) {
-    const unique = new Set(paths), covered = new Set();
-    for (const p of unique) {
-      const queue = causal(this.nodes[p]).map(r => refPath(this.datasetId, r)), visited = new Set();
-      while (queue.length) { this.tick(); const a = queue.pop(); if (visited.has(a)) continue; visited.add(a); if (unique.has(a)) covered.add(a); else { ensure(this.nodes[a]); queue.push(...causal(this.nodes[a]).map(r => refPath(this.datasetId, r))); } }
+  drainActivation() {
+    for (let n = 0; n < 256; n++) {
+      const task = this.meta.page('activate', 0, 1)[0]; if (!task) return;
+      this.budget.work('activation', 256); this.tick(); const node = this.node(task.key), m = this.meta;
+      m.atomic(() => {
+        if ([2, 3].includes(node.type)) {
+          if (!m.get('covered', task.key)) m.put('frontier', task.key, { path: task.key });
+          for (const r of causal(node)) { const p = refPath(this.datasetId, r); m.put('covered', p, { by: task.key }); m.remove('frontier', p); }
+        } else if (node.type === 4) {
+          const target = node.refs.find(r => r.role === 5), epoch = m.get('epoch', target.epochId); ensure(epoch, 'v3 missing target epoch');
+          if (!epoch.active) { epoch.active = true; m.put('epoch', target.epochId, epoch); for (const row of m.page('members:' + target.epochId, 0, 256)) m.put('activate', row.key, { path: row.key }); }
+        }
+        m.remove('activate', task.key);
+      });
     }
-    const tips = [...unique].filter(p => !covered.has(p)); ensure(tips.length <= 64, 'v3 tips budget'); return tips.sort();
+    ensure(!this.meta.page('activate', 0, 1).length, 'v3 activation budget; progress saved');
   }
+  tips() { this.drainActivation(); const rows = this.meta.page('frontier', 0, 65); ensure(rows.length <= 64, 'v3 tips budget'); return rows.map(r => r.key).sort(); }
+  activeEpochs() { return [...new Set(this.tips().map(p => this.node(p).epochId))]; }
+  epochCount(epoch) { return this.meta.count('members:' + epoch); }
+  epochTips(epoch) {
+    const m = this.meta, e = m.get('epoch', epoch); ensure(e, 'v3 missing epoch'); const ns = 'epochFrontier:' + epoch;
+    if (!e.frontierIndexed) m.atomic(() => {
+      for (const row of m.page('members:' + epoch, 0, 256)) { const node = this.node(row.key); this.tick(); if ([2, 3].includes(node.type)) { if (!m.get(ns + ':covered', row.key)) m.put(ns, row.key, { path: row.key }); for (const r of node.refs.filter(r => r.role === 1)) { const p = refPath(this.datasetId, r); m.put(ns + ':covered', p, { by: row.key }); m.remove(ns, p); } } }
+      e.frontierIndexed = true; m.put('epoch', epoch, e);
+    });
+    const tips = m.page(ns, 0, 65).map(r => r.key).sort(); ensure(tips.length && tips.length <= 64, 'v3 source frontier budget'); return tips;
+  }
+  async auditObjects(limit = 1) {
+    ensure(Number.isInteger(limit) && limit >= 0 && limit <= 32);
+    for (let n = 0; n < limit; n++) {
+      this.budget.work('object audit', 32); const m = this.meta; let cursor = m.get('control', 'objectAudit') ?? { seq: 0, ceiling: m.lastSeq('node') };
+      let row = m.page('node', cursor.seq, 1, cursor.ceiling)[0]; if (!row) { cursor = { seq: 0, ceiling: m.lastSeq('node') }; row = m.page('node', 0, 1, cursor.ceiling)[0]; } if (!row) return;
+      const progress = { seq: row.seq, ceiling: cursor.ceiling };
+      try { const raw = await this.remote.read(row.key); ensure(raw && sha(raw) === row.value.hash, 'v3 observed object missing or changed'); await this.cache.put(row.key, raw); m.atomic(() => { m.remove('error', row.key); m.put('evidence', row.key, { hash: row.value.hash, round: this.budget.roundId, endpoint: this.remote.base?.href ?? null }); m.put('control', 'objectAudit', progress); }); }
+      catch (e) { if (!/budget/i.test(e.message)) m.atomic(() => { m.put('error', row.key, { reason: String(e.message), expectedHash: row.value.hash }); m.put('control', 'objectAudit', progress); }); throw e; }
+    }
+  }
+  async value(path, expectedHash = null) { const raw = await this.cache.load(path, this.remote, expectedHash ?? this.node(path)?.hash); ensure(raw, 'v3 missing ancestor'); const o = match(path, raw); ensure(!this.node(path) || this.node(path).hash === sha(raw), 'v3 identity changed'); return o; }
+  tick() { this.budget.work('ancestry', 32768); }
+  primaryAncestor(a, b) {
+    const left = this.node(a); let right = this.node(b); ensure(left && right, 'v3 unverified ancestor'); if (left.depth > right.depth) return false;
+    let distance = right.depth - left.depth, path = b, bit = 0;
+    while (distance) { this.tick(); if (distance % 2) { path = this.node(path).jumps[bit]; if (!path) return false; } distance = Math.floor(distance / 2); bit++; }
+    return path === a;
+  }
+  isAncestor(a, b) { return this.primaryAncestor(a, b) || this.commonCandidates([a, b]).includes(a); }
+  frontier(paths) { const unique = [...new Set(paths)]; if (unique.length <= 1) return unique; return unique.filter(p => !unique.some(other => p !== other && this.isAncestor(p, other))).sort(); }
   common(paths) { return this.commonCandidates(paths)[0]; }
   commonCandidates(paths) {
-    ensure(paths.length > 0 && paths.length <= 64); const sets = paths.map(p => this.ancestors(p));
-    const shared = new Set([...sets[0]].filter(p => sets.every(s => s.has(p)))), covered = new Set();
-    for (const p of shared) for (const r of causal(this.nodes[p])) { this.tick(); const a = refPath(this.datasetId, r); if (shared.has(a)) covered.add(a); }
-    const maximal = [...shared].filter(p => !covered.has(p)).sort();
-    ensure(maximal.length && new Set(maximal.map(p => this.nodes[p].businessHash)).size === 1, 'v3 unknown/ambiguous common baseline'); return maximal;
+    paths = [...new Set(paths)].sort(); ensure(paths.length && paths.length <= 128);
+    for (const p of paths) if (paths.every(other => this.primaryAncestor(p, other))) return [p];
+    const token = signature(paths), m = this.meta, ns = 'proof:' + token, queue = ns + ':queue', seen = ns + ':seen', tips = ns + ':tips', covered = ns + ':covered';
+    let control = m.get('proof', token);
+    if (!control) m.atomic(() => { control = { paths, done: false }; m.put('proof', token, control); paths.forEach((path, bit) => m.put(queue, bit + ':' + path, { path, bit })); });
+    if (control.done) return control.result;
+    while (true) {
+      const task = m.page(queue, 0, 1)[0]; if (!task) break;
+      this.budget.work('proof', 256); this.tick(); const { path, bit } = task.value, node = this.node(path); ensure(node, 'v3 unverified ancestor');
+      m.atomic(() => {
+        const bits = m.get(seen, path)?.bits ?? [];
+        if (!bits.includes(bit)) {
+          bits.push(bit); m.put(seen, path, { bits });
+          if (bits.length === paths.length) {
+            if (!m.get(covered, path)) m.put(tips, path, { path });
+            for (const r of causal(node)) { const parent = refPath(this.datasetId, r); m.put(covered, parent, { value: true }); m.remove(tips, parent); }
+          }
+          for (const r of causal(node)) { const parent = refPath(this.datasetId, r); if (!(m.get(seen, parent)?.bits ?? []).includes(bit)) m.put(queue, bit + ':' + parent, { path: parent, bit }); }
+        }
+        m.remove(queue, task.key);
+      });
+    }
+    const result = m.page(tips, 0, 65).map(r => r.key).sort(); ensure(result.length && result.length <= 64 && new Set(result.map(p => this.node(p).businessHash)).size === 1, 'v3 unknown/ambiguous common baseline');
+    m.atomic(() => m.put('proof', token, { paths, done: true, result })); return result;
   }
   async merged(paths) {
-    paths = this.frontier(paths).sort((a, b) => this.nodes[a].objectId < this.nodes[b].objectId ? -1 : 1); ensure(paths.length); if (paths.length === 1) return (await this.value(paths[0])).state;
-    const base = (await this.value(this.common(paths))).state, branches = [];
-    const bytes = paths.reduce((n, p) => n + this.nodes[p].size, 0); ensure(bytes * paths.length <= 64 * 1024 * 1024, 'v3 merge budget');
-    this.budget.charge(bytes * paths.length, 0);
+    paths = this.frontier(paths).sort((a, b) => this.node(a).objectId < this.node(b).objectId ? -1 : 1); ensure(paths.length); if (paths.length === 1) return (await this.value(paths[0])).state;
+    const base = (await this.value(this.common(paths))).state, branches = [], bytes = paths.reduce((n, p) => n + this.node(p).size, 0);
+    this.budget.work('merge bytes', 64 * 1024 * 1024, bytes * paths.length);
     for (const p of paths) branches.push((await this.value(p)).state);
     for (let i = 0; i < branches.length; i++) for (let j = i + 1; j < branches.length; j++) ensure(!merge(base, branches[i], branches[j]).conflicts.length, 'v3 unresolved branch conflict');
-    let result = branches[0]; for (const b of branches.slice(1)) { const m = merge(base, result, b); ensure(!m.conflicts.length, 'v3 unresolved branch conflict'); result = m.state; } return result;
+    let result = branches[0]; for (const b of branches.slice(1)) { const next = merge(base, result, b); ensure(!next.conflicts.length, 'v3 unresolved branch conflict'); result = next.state; } return result;
   }
-  async verify(path) {
-    if (this.nodes[path]) return this.nodes[path];
-    const walk = structuredClone(this.journal.value.history.walk ?? { root: path, stack: [{ path }] });
+  async verify(path, expectedHash = null) {
+    if (this.node(path)) { ensure(!expectedHash || this.node(path).hash === expectedHash, 'v3 reference identity changed'); this.meta.atomic(() => this.meta.remove('todo', path)); return this.node(path); }
+    const m = this.meta; let control = m.get('control', 'walk');
+    if (!control) m.atomic(() => { control = { root: path, depth: 1, id: randomUUID() }; m.put('control', 'walk', control); m.put('stack:' + control.id, '0', { path, expectedHash }); });
+    ensure(control.id, 'v3 unsupported private validation cursor'); const stack = 'stack:' + control.id, visiting = 'visiting:' + control.id;
     try {
-      while (walk.stack.length) {
-        this.budget.charge(0, 0); const frame = walk.stack.at(-1);
-        if (this.nodes[frame.path]) { walk.stack.pop(); continue; }
-        if (!frame.refs) {
-          ensure(++this.expanded <= 256, 'v3 active graph expansion budget');
-          const o = await this.value(frame.path); frame.refs = o.refs;
-        }
-        const child = frame.refs.map(r => refPath(this.datasetId, r)).find(p => !this.nodes[p]);
-        if (child) { ensure(!walk.stack.some(f => f.path === child), 'v3 cycle'); walk.stack.push({ path: child }); }
-        else { await this.verifyReady(frame.path); walk.stack.pop(); }
+      while (control.depth) {
+        this.tick(); const key = String(control.depth - 1), frame = m.get(stack, key); ensure(frame, 'v3 missing validation frame');
+        if (this.node(frame.path)) { m.atomic(() => { m.remove(stack, key); control.depth--; m.put('control', 'walk', control); }); continue; }
+        let fresh = null;
+        if (!frame.refs) { this.budget.work('expansion', 256); fresh = await this.value(frame.path, frame.expectedHash); frame.refs = fresh.refs; m.atomic(() => { m.put(stack, key, frame); m.put(visiting, frame.path, { depth: control.depth }); }); }
+        const child = frame.refs.map(r => refPath(this.datasetId, r)).find(p => !this.node(p));
+        if (child) { ensure(!m.get(visiting, child), 'v3 cycle'); m.atomic(() => { m.put(stack, String(control.depth++), { path: child, expectedHash: frame.refs.find(r => refPath(this.datasetId, r) === child).hash }); m.put('control', 'walk', control); }); }
+        else { await this.verifyReady(frame.path, frame.expectedHash, fresh); m.atomic(() => { m.remove(visiting, frame.path); m.remove(stack, key); control.depth--; m.put('control', 'walk', control); }); }
       }
-    } catch (e) {
-      await this.journal.transaction(s => { s.history.anomalies[walk.root] = String(e.message).slice(0, 1024); });
-      if (!/budget|missing|unavailable|timed|Network|ENOENT/i.test(e.message)) walk.stack = [];
-      throw e;
-    } finally { await this.journal.transaction(s => { s.history.walk = walk.stack.length ? walk : null; }); }
-    if (!this.nodes[path]) return this.verify(path); return this.nodes[path];
+      m.atomic(() => m.remove('control', 'walk'));
+    } catch (e) { m.atomic(() => { m.put('error', control.root, { reason: String(e.message) }); if (!/budget|missing|unavailable|timed|Network|ENOENT/i.test(e.message)) { m.put('failedWalk', control.id, { ...control, reason: String(e.message) }); m.remove('control', 'walk'); } }); throw e; }
+    if (!this.node(path)) return this.verify(path, expectedHash); ensure(!expectedHash || this.node(path).hash === expectedHash, 'v3 reference identity changed'); return this.node(path);
   }
-  async verifyReady(path) {
-    if (this.nodes[path]) return this.nodes[path];
-    ensure(!this.visiting.has(path), 'v3 cycle'); ensure(++this.newObjects <= 256, 'v3 active graph budget'); this.visiting.add(path);
-    try {
-      const bytes = await this.cache.load(path, this.remote); ensure(bytes, 'v3 missing object'); const { match } = await import('./v3-store.mjs'); const o = match(path, bytes);
-      ensure(o.datasetId === this.datasetId && o.descriptorHash === this.descriptorHash && o.type !== 1, 'v3 descriptor identity');
-      for (const r of o.refs) {
-        const p = refPath(this.datasetId, r), target = this.nodes[p];
-        ensure(target && target.hash === r.hash && target.type === r.type && target.epochId === r.epochId && target.epochNumber === r.epochNumber && target.objectId === r.objectId && target.descriptorHash === this.descriptorHash, 'v3 reference identity');
-      }
-      if (o.type === 2 && o.epochNumber > 1) {
-        const source = o.refs.map(r => refPath(this.datasetId, r)); ensure(this.frontier(source).length === source.length, 'v3 checkpoint redundant frontier');
-        ensure(same(o.state, await this.merged(source)), 'v3 checkpoint extra edit');
-      }
-      if (o.type === 3) {
-        const parents = o.refs.filter(r => r.role === 1).map(r => refPath(this.datasetId, r));
-        const roots = parents.map(p => [...this.ancestors(p)].filter(a => this.nodes[a].type === 2 && this.nodes[a].epochId === o.epochId));
-        ensure(roots.every(r => r.length === 1 && r[0] === roots[0][0]), 'v3 parent common root');
-        const late = o.refs.filter(r => r.role === 3); if (late.length) {
-          const branches = [...parents, ...late.map(r => refPath(this.datasetId, r))], baseline = refPath(this.datasetId, o.refs.find(r => r.role === 4));
-          ensure(this.commonCandidates(branches).includes(baseline), 'v3 unproven BASELINE');
-        }
-      }
-      if (o.type === 4) {
-        const target = await this.value(refPath(this.datasetId, o.refs.find(r => r.role === 5)));
-        ensure(keyRefs(target.refs) === keyRefs(o.refs.filter(r => r.role === 2)), 'v3 transition frontier mismatch');
-      }
-      await this.record(path, bytes, o); return this.nodes[path];
-    } catch (e) {
-      await this.journal.transaction(s => { s.history.anomalies[path] = String(e.message).slice(0, 1024); }); throw e;
-    } finally { this.visiting.delete(path); }
-  }
-  activeEpochs() {
-    const activated = new Set(Object.values(this.nodes).filter(o => o.type === 2 && o.epochNumber === 1).map(o => o.epochId));
-    const transitions = Object.values(this.nodes).filter(o => o.type === 4), queue = [...activated];
-    while (queue.length) { const source = queue.shift(); for (const o of transitions.filter(t => t.epochId === source)) { const target = o.refs.find(r => r.role === 5).epochId; if (!activated.has(target)) { activated.add(target); queue.push(target); } } }
-    return [...activated];
+  async verifyReady(path, expectedHash, fresh = null) {
+    if (this.node(path)) return; this.budget.work('validation', 256);
+    const bytes = fresh ? encode(fresh) : await this.cache.load(path, this.remote, expectedHash); ensure(bytes, 'v3 missing object'); const o = fresh ?? match(path, bytes); ensure(o.datasetId === this.datasetId && o.descriptorHash === this.descriptorHash && o.type !== 1, 'v3 descriptor identity');
+    for (const r of o.refs) { const target = this.node(refPath(this.datasetId, r)); ensure(target && target.hash === r.hash && target.type === r.type && target.epochId === r.epochId && target.epochNumber === r.epochNumber && target.objectId === r.objectId && target.descriptorHash === this.descriptorHash, 'v3 reference identity'); }
+    if (o.type === 2 && o.epochNumber > 1) { const source = o.refs.map(r => refPath(this.datasetId, r)); ensure(this.frontier(source).length === source.length, 'v3 checkpoint redundant frontier'); ensure(same(o.state, await this.merged(source)), 'v3 checkpoint extra edit'); }
+    if (o.type === 3) { const parents = o.refs.filter(r => r.role === 1).map(r => this.node(refPath(this.datasetId, r))); ensure(parents.every(p => p.root && p.root === parents[0].root), 'v3 parent common root'); const late = o.refs.filter(r => r.role === 3); if (late.length) ensure(this.commonCandidates(o.refs.filter(r => [1, 3].includes(r.role)).map(r => refPath(this.datasetId, r))).includes(refPath(this.datasetId, o.refs.find(r => r.role === 4))), 'v3 unproven BASELINE'); }
+    if (o.type === 4) { const target = this.node(refPath(this.datasetId, o.refs.find(r => r.role === 5))); ensure(keyRefs(target.refs) === keyRefs(o.refs.filter(r => r.role === 2)), 'v3 transition frontier mismatch'); }
+    await this.record(path, bytes, o);
   }
 }

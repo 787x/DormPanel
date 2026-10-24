@@ -1,61 +1,73 @@
-# PR54 Draft：隔离引擎实施与验证
+# PR54：同步核心合并验收
 
-基线：`main` / PR53 merge `ebddee920823e5d668fc415f3a24b45d9f812bca`。
+审查基线为 `c5ebc339f3f9084a50adabcafc5935049af3395c`，继续更新原 PR54。初始阶段的证据和当时的阻塞项保留在 [c5ebc339 验收记录](https://github.com/787x/DormPanel/blob/c5ebc339f3f9084a50adabcafc5935049af3395c/docs/pr54-sync-v3-verification.md)，不能把该历史记录当成本轮复测。
 
-**本 Draft 尚未满足任务的全部 Done Criteria，不能作为 PR55 正式接入已验收的前提。** 以下区分已实现、实际运行的检查和阻塞项。不启用生产 v3，不修改正式绑定、v2、Room 业务表、签名、版本号或 applicationId，不迁移、合并、发布或 GC。
+本轮实现元数据分页、增量前沿、可恢复事务、Room/Workspace 适配和跨进程拥有者。生产 v3 创建/绑定、UI、v2→v3 迁移、归档与 GC 仍未启用。正式版本号、applicationId、签名、现有 ScheduleDatabase v4、v2 checkpoint 和正式生产工厂未修改。
 
-## 当前实现
+## 1. 私有格式与分页
 
-- Kotlin/Node 独立 `V3Engine`、历史验证器、前缀发现器、持久发布协调器及私有事务适配器。普通业务合并复用 `ScheduleMerge` / 既有 Node merge；多分支冲突复用现有 v2 的业务计划算法，不写入任何 v2 envelope。
-- 队列、已观察路径、前缀审计游标、对象审计游标、异常、基线、本地课程、精确 Pending/capture、冲突输入和选择均持久保存。目录的一批结果与进度原子提交；中断可重列，不持久化部分非法列表。已观察路径不因漏列删除。
-- 验证 descriptor、全局 objectId、每 Epoch 根及容量、引用身份/哈希、PARENT 闭包、Checkpoint 业务结果、Transition 的精确前沿、LATE 的最大共同基线。普通 Commit 不要求等于自动 merge 输出。只有从初始 Epoch 沿已验证 Transition 可达的 Epoch 才进入活动集合。
-- 验证栈保存路径及引用元数据；超过单轮展开/验证预算时保存栈，下一轮从未完成位置继续。原始快照只在需要时读缓存；历史证据元数据带独立校验摘要。该摘要检测本地元数据损坏，不是认证签名或远端存在证明。
-- 约 160 个已观察对象时换代；计数包含 Genesis、Commit、Transition。先 Genesis PUT/GET，再 Transition PUT/GET，最后活动代回执。并发同代候选通过更高代承载及严格低代 LATE 整合。业务等价的并发前沿保留为 `EQUIVALENT_FRONTIERS`，不反复自动换代；调和换代最多连续四次，无法收敛则保留候选并停止。
-- 迟到路径通过真实因果引用纳入，重复出现不再制造提交。本地离线编辑通过旧 baseline 与已验证远端状态重放。决策检查本地 revision，保留全部展示输入；提交期间的编辑在 receipt 中再次重放。
+新的私有状态为 `v3-state-v2.sqlite`：SQLite B-tree，WAL、FULL synchronous、2 MiB 页缓存、关闭 mmap、64 页自动 checkpoint。`v3_records` 使用 `(ns,k)` 唯一索引和 `(ns,seq)` 游标索引。每行 SHA-256 绑定 namespace、key 与精确 JSON；读取时按需验证，不启动扫描全部历史。固定查询的 prepared statement 缓存有界。
 
-## 持久发布状态机
+独立 namespace 保存节点、全局 objectId、Epoch、Epoch 成员与前沿、全局因果前沿、已观察路径、首次扫描队列、验证队列、失败证据、审计游标、验证栈和祖先证明任务。队列用稳定 sequence 作 keyset cursor，每批最多 256 项；没有累计 16384 scopes / 65536 observed 上限。
 
-```text
-STAGED → ATTEMPTED → READBACK_CONFIRMED → RECEIPTED
-              └──→ UNCERTAIN ──原路径只读回查──→ READBACK_CONFIRMED
-```
+本地完整业务快照另存为私有、不可变的 RAW 快照引用，同一快照不重复塞进 local/baseline/capture/冲突。此封装仅用于本地存储，不作为远端协议对象注册或发布。它不压缩、不分片、不改变 DPV3 字节。48 MiB 上限只约束小型控制记录及精确 Pending；未增加该常量。快照行与指向它的控制行在同一事务提交，禁止 snapshot 行 GC。
 
-`STAGED` 保存原身份、精确字节、哈希及 capture。写网络前，必须 await/完成 `ATTEMPTED` 的文件和目录 fsync；新的 `putOnce` 只执行一次普通 PUT，协调器不调用 `createForIsolatedTest`。重开后的 ATTEMPTED/UNCERTAIN 只 GET，404 保持不确定，不重新 PUT。内容不同保留异常。receipt 与本地状态重放在同一私有原子文档提交，网络不持有存储事务。
+`v3-engine-v1.json` 是旧 Draft 的隔离测试状态：发现它时明确报 `INCOMPATIBLE_V3_DRAFT_STATE`，原文件保持不变，选择新私有测试目录。不会自动迁移或删除它。发现生产 `workspace.json` / `identity.json` / `schedule.db` 等文件时也拒绝接管；元数据目录不得位于 v2/v3 协议目录中。Kotlin/Node 私有业务封装不是跨平台迁移格式；跨语言共享的是冻结的 DPV3 数据集。
 
-持久替换在 rename 后报错时，Journal 进入禁止写入状态，要求重开；不能用旧内存帧把磁盘上的 ATTEMPTED 覆盖回 STAGED。进程间单 Writer 仍是调用者契约；fnOS 验证使用既有包用户与 flock。此处不是正式 Workspace/Room 产品适配器。
+## 2. 增量和证明
 
-## 缓存结构
+普通轮次读取持久化前沿及新对象队列，最多处理有界批次，不枚举累计 nodes/observed，不重建全数据集前沿。新对象只更新自身、相关身份、Epoch 和直接因果覆盖。Epoch 激活按持久队列推进；没有源 Transition 的 Genesis 不进入正式活动集合。
 
-新 `sync-v3-index-v2/<pathSha前2位>/<后2位>/<剩余SHA>/` 按协议路径直接定位 `witness.json` 与 `object.dpv`。receipt 先于原始字节持久化，blob 经临时文件、fsync 和 rename 公开。正常打开不枚举历史、不解码历史快照；缺内容可按原路径 GET，预期哈希仍保留。pin 记录引用拥有者；本 PR 不删除任何对象。旧 PR53 平铺缓存不自动搬迁、覆盖或清理。
+普通 Commit 直接复用已验证父节点的共同根。单链祖先使用持久跳表；一般 DAG 的共同祖先查询使用按输入身份固定的持久证明队列、分源访问标记和最大共同祖先集合。预算不足保存有效队列/栈，下一轮继续，不提高单轮预算。普通 Commit 保留人工编辑语义；Checkpoint 仍要求源前沿无冲突且业务结果一致。阈值处有真实源冲突时，先普通决策 Commit，再换代，不能将选择塞进 Genesis。
 
-这修复了**新引擎对象缓存**的 4096 项启动阻塞；不等于发现器及历史元数据已经实现无限增长，见下方阻塞项。
+前缀审计冻结每轮 high-water mark，避免新尾部不断增长导致旧前缀永远无法重扫；扫描/审计 lane 跨调用持久化，单请求轮次也公平。有效列表、子任务、游标在同一短事务提交。漏列不删除已观察路径。预算不足不伪造远端错误，也不推进未检查范围。
 
-## 实际执行
+无变化轮次可以不 GET、不解码任何旧快照。对象字节巡检由独立、有界 `auditObjects` 执行；缓存有效、目录本轮观察、精确 GET 回读、闭包证书和旧历史审计是不同证据。receipt 保存实际确认轮次/端点，重开后的旧回读事实不会伪装成本轮重新 GET。普通 WebDAV 不能证明未知 Writer 全部出现，API 不返回“所有历史/设备全部同步”。
 
-| 检查 | 实际结果 |
+## 3. 原子事务与拥有者
+
+本地课程、baseline、Pending 精确字节/capture、决定输入、receipt、活动 Epoch 与索引控制使用同一 SQLite 事务边界。所有新引用先有持久对象/快照；发布回执要求精确候选已完成祖先索引验证。索引先提交而回执未完成时，重开重放索引与回执，不再 PUT。commit 已落盘但确认失败时禁止旧内存继续写，必须重开。
+
+`V3RoomAdapter` / `V3RoomDatabase` 是独立、显式的 Room 适配：复用既有课程实体与 DAO，课程行与 v3 状态在同一数据库事务更新，原 v2 checkpoint 行保持原样。网络始终在事务外。未改变正式 Room 工厂或数据库版本。
+
+`openV3Workspace` 复用 Workspace 的编辑、revision、guard、mutationGuard；课程和 v3 控制保存在同一 SQLite-backed Workspace 行。调用者必须传入现有 catalog/管理员/目录授权 guard，并保留宿主服务原有 flock 与 IPC 边界。CLI/MCP 不应自行打开服务已拥有的私有库，第二个拥有者会在接触 Journal/缓存之前失败。
+
+Node 在独立 `v3-owner.lock` 上持有 SQLite OS 字节范围锁；Kotlin 的整个文件 FileChannel 锁覆盖相同范围。锁文件不删除、不替换，不用 PID 文件冒充互斥。SIGKILL 由内核释放锁，新实例恢复 SQLite WAL。Node 使用 NAS 官方 22.18.0 的 `node:sqlite`；JDBC 仅为 JVM 测试依赖，不进入 APK。
+
+本地编辑/决定拥有独立的有界本地事务预算，不继承过期的网络轮次；同步轮次内 Store、cache、元数据、验证、换代共享同一个 Budget。上传字节额度在 ATTEMPTED 前检查；不足时保持 STAGED。UNCERTAIN / ATTEMPTED 的 404 仍不能触发重 PUT。损坏 blob 先保留到私有 damaged 文件，再按原身份/哈希补读，不覆盖远端或丢弃 witness。
+
+上传期间再次编辑造成的真实冲突会持久保存并阻止自动发布。重开不能将它当作相对新 baseline 的普通本地编辑而默认选择 LOCAL；再次编辑会更新展示 revision，旧选择失效。旧展示/决定输入保存在分页索引中。
+
+## 4. 验证与证据
+
+本轮结果见 [结构化记录](evidence/pr54/verification.json)。原始日志、私有连接配置和 FPK 均只在忽略提交的 `artifacts/pr54/`；文档不包含凭据。
+
+| 最终实现验收 | 实际结果 |
 | --- | --- |
-| Kotlin 大历史 | `SyncV3EngineTest.publishes1024AndRotatesWithoutGlobalCommitLimit` 在实施阶段通过；同一逻辑数据集 1024 次编辑发布、至少 6 个 Epoch，随后可继续读取；与另外 3 个引擎测试及 9 个 PR53 测试同轮通过，共 13 项，约 11 分钟 |
-| Node 大历史 | Windows 单项通过，约 163 秒；NAS 官方 Node 22.18.0 / 192 MiB heap 下同场景通过 |
-| NAS 完整 v3 阶段回归 | 包用户 UID 993、独立随机 `/tmp/dormpanel-pr54-*`、flock；38 项 PR53 + 当时 8 项引擎测试，共 46 项全部通过、无跳过，约 291 秒。后续修订另做针对性检查，不将此记录当作最终源码整套重跑 |
-| Kotlin 定向检查 | 多 Writer、可恢复冲突、并发候选更高代 Bridge、迟到分支去重、Checkpoint 夹带编辑拒绝、持久 Pending；已运行对应检查并通过 |
-| 深层闭包恢复 | Node 4 个 Epoch、524 个快照对象的末端闭包在多轮重开后完成，验证栈确有保存；Kotlin 2 个 Epoch、302 个快照对象对应场景通过。没有增加单轮 256 项预算 |
-| Node 故障与决策 | PUT 成功丢响应、404 不重 PUT、rename 后落盘失败、上传期间再编辑、Genesis/Transition 分别丢响应、过时决策拒绝、等价候选不产生换代风暴，通过定向测试 |
-| 后续定向回归 | Kotlin 最后定向 4 项通过（含持久验证栈）；NAS 后续 10 项引擎检查通过，包含新索引、深层恢复、并发/离线/故障；Windows 另验证目录中断、漏列不遗忘和损坏元数据拒绝 |
-| 新索引 >4096 项 | Kotlin/Node 及 Phone/X08E 实际创建 2100 对象、4200 个 receipt/blob 文件，冷打开按需读取、缺 blob 保留 witness、原身份变更拒绝；Android 测试按 21 轮写入 |
-| 真实 HTTPS WebDAV | 仅随机 `dormpanel/pr54-engine-9adb190d-c550-4fb2-988d-358bbd124e88/`。Node 初始化 → Kotlin JVM 接收、换到第二代并发布 → Node 接收；随后 Phone/X08E 测试客户端发布，NAS 包用户读取五端记录，并模拟 PUT 成功后丢响应，重开恢复且实际仅 PUT 一次 |
-| Android 实机 | 独立 `com.dormpanel.schedule.core.test` APK，Phone MIX 2S 与 X08E 均 2 项通过；Phone 约 24 秒、X08E 约 127 秒。只用测试私有随机目录和上述隔离远端，不覆盖日用 App |
-| v2 回归 | Kotlin `AppendOnlyScheduleSyncTest` 16、`ScheduleV2BindingTest` 5、`WebDavCommitStoreTest` 8、`ScheduleMergeTest` 12 项通过；Node protocol/graph/writer/store/history-observation 共 71 项：70 通过、1 项平台跳过 |
-| 构建 | App/Phone Debug APK、schedule-core 测试 APK 构建通过；`npm run build` 生成 FPK 工程通过。未据此声称完成官方 fnpack 最终 FPK 打包或安装升级 |
+| Kotlin/JVM | 68 项、0 失败；含 1024 次发布、分页尺度、同源冲突阈值、回执再编辑、索引/激活故障、实际第二 JVM 进程终止及 41 项 v2 回归 |
+| NAS 官方 Node 22.18.0 / 包用户 | 78 项、0 失败、0 跳过，192 MiB heap；含 1024 次发布、8 个 SIGKILL 边界、6 个索引/换代边界和官方授权本地目录生产协调器 |
+| 正常轮次，32 → 1024 次发布 | Node 历史节点行读取 2 → 2，元数据行读取 106 → 113，GET/旧快照解码 0 → 0；NAS 进程峰值 RSS 140452 KiB（约 137 MiB） |
+| Android 实机 | X08E Android 9：3 项通过，48.930 秒；Phone Android 13：3 项通过，15.161 秒；均使用 Room 和测试私有目录 |
+| 真实 HTTPS | 双向发布、第二代、迟到 Bridge、丢回执恢复仅 1 次 PUT、重开后增量 GET=0，实际记录及因果覆盖全部检查 |
+| 独立回归 | Node v2 70 项通过、1 项平台跳过；28 个 v3 冻结文件逐字节通过 |
+| 构建/最终包 | App/Phone Debug 和测试 APK 通过；官方 fnpack 及 37 份文件逐字节核验通过，版本 0.7.2 不变 |
 
-固定 DPV3 字节与 16 层远端路径格式未修改。原始日志及含凭据的连接配置只在忽略提交的 `artifacts/pr54/`；本文件不包含凭据。初次真实 Kotlin PROPFIND 暴露目录不支持可选 getcontentlength 的 404 propstat；现只请求必要 resourcetype，GET 仍限制字节。早期首次接收误把空本地当删除的隔离测试失败已修复；保留失败随机目录，不删除远端证据。一次测试筛选误启动大历史重复项，已停止，不计为通过。
+最终 FPK SHA-256：`eb94d9f33e734025d864226b9313a08aee65b67152e8fceb9246e85fa62c38a7`。没有安装、升级或发布此包。
 
-持久验证栈与元数据摘要修订后，Phone 的 HTTPS 单项再次通过（约 10 秒）；X08E 一次并发复测因非 207 响应停止，首次未保存状态码，不能推断具体原因。加入不含凭据的状态码诊断后，X08E 串行重查通过（约 35 秒）。先前成功不能替代失败记录；没有把不确定网络结果记成回执。
+- Kotlin/JVM：普通和并发编辑、跨代候选、多个旧 Epoch 的迟到分支及后继、幂等、持久冲突、换代阈值先决策、深层栈恢复、索引/Gen/Transition/激活/receipt 故障边界、缓存损坏补读和本地预算解耦。
+- Kotlin/Node 共享 `recovery-scenarios.json`：STAGED、ATTEMPTED、PUT 后、回读前后、READBACK_CONFIRMED、UNCERTAIN、RECEIPTED；检查本地数据、capture、实际 PUT 次数和只应用一次。
+- Node 实际子进程在 8 个上述边界被 SIGKILL，另一个进程开库失败且没有修改胜者锁/状态；杀死持有者后可恢复。JVM 也有实际第二进程争锁和强制终止恢复。另有双端 6 个索引/换代边界的确定性故障与业务结果检查。
+- 分页尺度使用 70400 scopes 与 70400 observed、每条含 768 字节填充，超过旧数量和 48 MiB 总量；冷打开、64 条分页、单项更新及回滚不全读/全写。此为索引尺度夹具，不宣称生成了同数量真实协议对象。
+- 全局身份使用真实、经验证的 130 个候选 Epoch，在冷打开后复用非首尾页面的 objectId；必须拒绝，旧对象及全局索引保持不变。前缀中断、漏列、坏元数据、缺失祖先、错误 GET 不污染缓存均有定向检查。
+- 同数据集 1024 次真实引擎 Fake Store 发布与多 Epoch 回归在新索引结构上运行。比较 32/1024 次发布后的正常轮次：历史节点行读取均为 2，旧快照 GET/解码为 0；元数据行读取有固定有界工作量，见 JSON 的实测数值与进程峰值 RSS。不能把小快照峰值外推为所有最大输入的上界。
+- Android 9 X08E / Android 13 Phone：独立测试 APK、独立 Room 数据库，实际验证课程/receipt/索引原子一致、上传期间编辑、回滚、commit 确认失败和重开；HTTPS 场景也使用 Room 适配。
+- 真实测试 HTTPS 仅随机 `dormpanel/pr54-engine-62e7a15b-f16f-4c21-824a-4d46bde3fcb3/`：Node 初始化 → Kotlin 换到第二代 → Phone/X08E 发布 → fnOS 包用户 Workspace 接收。随后旧第一代真实发布迟到提交，当前端通过合法 Bridge 整合；PUT 成功丢响应后重开，实际仅 PUT 一次，后续增量 GET 为 0。六个业务记录及迟到因果覆盖均检查。
+- v2 定向回归、28 个冻结 v3 文件字节 oracle、Android 构建及官方 fnpack 最终产物内容核验均记录。FPK 只构建核验，不安装升级，不创建 Release/tag。
 
-## 合并前阻塞项
+早期固定 8 轮冷发现的测试断言不足，改为在既有单轮预算内有界跨轮等待有效进度；没有把未完成发现当作接收成功。此前 c5 的成功记录不代替本轮测试。每个最终/阶段结果的准确计数、平台跳过和包 SHA 以 JSON 为准。
 
-1. **引擎元数据尚未分页。** 发现器仍以 16384 scopes / 65536 observed 上限保护单个文档，历史证据仍放在至多 48 MiB 的 Journal。达到上限会安全停止，但不能通过跨轮游标继续增长。这不是任务要求的长期、可分页元数据方案，不能将本 Draft 描述成完整可持续引擎。
-2. **故障矩阵未穷尽。** 尚无每个存储/网络边界的进程终止矩阵、真实掉电、所有缺失/漏列/篡改/并发路径变化与多协调者反复分叉组合 oracle；现有测试只能证明已覆盖场景。
-3. **平台事务接入仍隔离。** 测试中的私有课程/receipt 单文档适配器通过恢复验证，但没有正式 Room 与 Workspace 接口接入，也没有对新引擎跨进程同目录双拥有者的排他机制做完整验收；不能绕过既有管理员、单 Writer 或 Workspace 保护。
-4. **更广互操作待验收。** 实际 HTTPS 覆盖正常双向、多端、单次换代及不确定 PUT 恢复；1024 次、多代离线及复杂并发换代主要是 Fake Store。尚未在真实网络上逐项完成这些组合，也未验证大体积业务快照下的最大预算边界。
+## 5. PR55 接入与限制
 
-继续工作应先处理元数据分页及恢复日志索引，再补齐针对性的故障和权限验证。不得通过放大常量、跳过祖先证明、切生产绑定、清空数据库或删除旧历史来解除阻塞。
+PR55 应复用以上适配器与既有宿主 Writer/授权入口，使用持久安装 writerId，通过 Engine.edit 或 SQLite-backed Workspace 编辑。不要直接写课程 DAO、创建第二个 Writer、复用 v2 私有目录或把业务确认/迁移放进引擎。节点/快照和所有恢复日志仍保留；本 PR 没有压缩、物理 GC 或归档删除。
+
+本轮验证是可重复故障注入、进程终止与隔离 HTTPS，不是物理断电、所有 WebDAV 实现、网络文件系统锁或任意最大业务快照的硬件压力验收。私有索引应位于具有可靠 SQLite/WAL/文件锁语义的本地应用目录。服务器持续漏列、未出现的离线 Writer、永久缺失证明和容量耗尽仍只能保留证据并安全停止，不能宣称全局完整或自动删除历史。

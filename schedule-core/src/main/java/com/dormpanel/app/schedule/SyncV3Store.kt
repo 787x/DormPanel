@@ -4,6 +4,9 @@ package com.dormpanel.app.schedule
 class V3Budget(private val maxRequests: Int = 512, private val maxBytes: Long = 64L * 1024 * 1024,
     private val maxMillis: Long = 90_000, private val clock: () -> Long = { System.nanoTime() / 1_000_000 }) {
     private val started = clock(); private var requests = 0; private var bytes = 0L
+    val roundId = java.util.UUID.randomUUID().toString()
+    private val workUsed = mutableMapOf<String, Int>()
+    @Synchronized fun work(kind: String, limit: Int, units: Int = 1) { charge(0, 0); require(units >= 0); val next = workUsed.getOrDefault(kind, 0) + units; check(next <= limit) { "v3 $kind budget; progress saved" }; workUsed[kind] = next }
     init { require(maxRequests in 0..512 && maxBytes in 0..64L * 1024 * 1024 && maxMillis in 0..90_000) }
     @Synchronized fun charge(size: Long = 0, calls: Int = 1) {
         require(size >= 0 && calls >= 0)
@@ -11,6 +14,7 @@ class V3Budget(private val maxRequests: Int = 512, private val maxBytes: Long = 
         requests += calls; bytes += size
     }
     @Synchronized fun readLimit(max: Int): Int { charge(0, 0); return minOf(max.toLong(), maxBytes - bytes).toInt() }
+    @Synchronized fun checkPut(size: Int) { charge(0, 0); check(size <= maxBytes - bytes && requests < maxRequests) { "v3 budget exhausted before PUT intent" } }
 }
 
 data class V3Scope(val kind: String, val datasetId: String? = null, val epochPrefix: String = "", val epochId: String? = null)
@@ -70,12 +74,13 @@ interface V3ObjectStore {
 }
 
 class V3WebDavStore(private val account: WebDavAccount, folder: String,
-    private val budget: V3Budget, private val client: WebDavClient = WebDavClient()) : V3ObjectStore, V3PublicationStore {
+    val budget: V3Budget, private val client: WebDavClient = WebDavClient()) : V3ObjectStore, V3PublicationStore {
     private val base = client.url(folder).also {
         require(it.encodedPath.endsWith('/') && it.pathSegments.none { s -> s in listOf("dormpanel-sync-v2", "dormpanel-sync-v3") || '/' in s || '\\' in s || '\u0000' in s })
         require(it.scheme == client.url(account.baseUrl).scheme && it.host == client.url(account.baseUrl).host && it.port == client.url(account.baseUrl).port)
     }.newBuilder().addPathSegment("dormpanel-sync-v3").addPathSegment("").build().toString()
     private fun url(path: String) = base + path
+    fun endpointIdentity() = base
     override fun list(scope: String): List<String> {
         V3Paths.scope(scope); budget.charge(WebDavClient.MAX_XML.toLong())
         val directory = url(scope)
@@ -141,6 +146,7 @@ class V3WebDavStore(private val account: WebDavAccount, folder: String,
     override fun putOnce(path: String, raw: ByteArray) {
         V3Paths.match(path, raw); budget.charge(raw.size.toLong()); client.ordinaryPut(account, url(path), raw)
     }
+    fun checkPutBudget(size: Int) = budget.checkPut(size)
     override fun createForIsolatedTest(path: String, bytes: ByteArray, beforeWriteIntent: () -> Unit) {
         V3Paths.match(path, bytes)
         val existing = read(path)

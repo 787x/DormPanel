@@ -5,6 +5,7 @@ import { Store } from './store.mjs';
 import { ensure } from './protocol.mjs';
 import { sha, MAX_OBJECT, hashValue } from './v3-protocol.mjs';
 import { match, file } from './v3-store.mjs';
+export class V3CacheCorruptError extends Error {}
 
 /** v2 private index: two byte shards + full SHA leaf, direct lookup, no startup enumeration.
  * Receipts are authoritative immutable path witnesses, never an assertion about remote existence.
@@ -14,6 +15,7 @@ export class IndexedV3Cache {
   constructor(root, budget) { this.directory = join(root, 'sync-v3-index-v2'); this.budget = budget; this.queue = Promise.resolve(); }
   location(path) { file(path); const key = sha(Buffer.from(path, 'ascii')); return join(this.directory, key.slice(0, 2), key.slice(2, 4), key.slice(4)); }
   blob(path) { return join(this.location(path), 'object.dpv'); }
+  async hasBlob(path) { try { const s = await lstat(this.blob(path)); return s.isFile() && !s.isSymbolicLink(); } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
   async open() { await mkdir(this.directory, { recursive: true, mode: 0o700 }); ensure(!(await lstat(this.directory)).isSymbolicLink()); return this; }
   async witness(path) {
     const dir = this.location(path); let s;
@@ -54,10 +56,21 @@ export class IndexedV3Cache {
       const s = await lstat(this.blob(path)); ensure(s.isFile() && !s.isSymbolicLink() && s.size <= MAX_OBJECT); this.budget.charge(s.size, 0);
       f = await open(this.blob(path), 'r'); const bytes = Buffer.alloc(s.size + 1); let n = 0;
       while (n < bytes.length) { const r = await f.read(bytes, n, bytes.length - n, n); if (!r.bytesRead) break; n += r.bytesRead; }
-      ensure(n === s.size); const raw = bytes.subarray(0, n); ensure(sha(raw) === w.hash, 'v3 cache hash'); match(path, raw); return raw;
+      ensure(n === s.size); const raw = bytes.subarray(0, n); if (sha(raw) !== w.hash) throw new V3CacheCorruptError('v3 cache hash'); match(path, raw); return raw;
     } catch (e) { if (e.code === 'ENOENT') return null; throw e; } finally { await f?.close(); }
   }
-  async load(path, remote) { const hit = await this.get(path); if (hit) return hit; const raw = await remote.read(path); if (raw) await this.put(path, raw); return raw; }
+  async load(path, remote, expectedHash = null) {
+    let hit;
+    try { hit = await this.get(path); }
+    catch (e) {
+      if (!(e instanceof V3CacheCorruptError)) throw e;
+      const w = await this.witness(path); ensure(w && (!expectedHash || w.hash === expectedHash), 'v3 cache witness identity changed'); expectedHash ??= w.hash;
+      await rename(this.blob(path), join(this.location(path), 'damaged-' + randomUUID() + '.dpv'));
+      if (process.platform !== 'win32') { const d = await open(this.location(path), 'r'); try { await d.sync(); } finally { await d.close(); } }
+    }
+    if (hit) { ensure(!expectedHash || sha(hit) === expectedHash, 'v3 reference identity changed'); return hit; }
+    const raw = await remote.read(path); if (raw) { ensure(!expectedHash || sha(raw) === expectedHash, 'v3 reference identity changed'); await this.put(path, raw); } return raw;
+  }
   pin(path, owner) {
     return this.serial(async () => { ensure(typeof owner === 'string' && owner.length > 0 && owner.length <= 160); const w = await this.witness(path); ensure(w); w.pins = [...new Set([...w.pins, owner])]; ensure(w.pins.length <= 128); await new Store(this.location(path)).save('witness.json', w); });
   }

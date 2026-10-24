@@ -7,7 +7,9 @@ import { WebDav } from './webdav.mjs';
 import { decode, MAX_OBJECT, ZERO } from './v3-protocol.mjs';
 
 export class Budget {
+  work(kind, limit, units = 1) { this.charge(0, 0); this.workUsed ??= new Map(); const next = (this.workUsed.get(kind) ?? 0) + units; ensure(next <= limit, `v3 ${kind} budget; progress saved`); this.workUsed.set(kind, next); }
   constructor({ requests = 512, bytes = 64 * 1024 * 1024, millis = 90000, clock = () => performance.now() } = {}) {
+    this.roundId = randomUUID();
     ensure(Number.isInteger(requests) && requests >= 0 && requests <= 512 && Number.isInteger(bytes) && bytes >= 0 && bytes <= 64 * 1024 * 1024 && Number.isInteger(millis) && millis >= 0 && millis <= 90000);
     Object.assign(this, { requests, bytes, millis, clock }); this.start = clock();
   }
@@ -88,6 +90,7 @@ export class V3WebDavStore {
   async read(path) { file(path); const raw = await this.request('GET', path, MAX_OBJECT); if (raw) match(path, raw); return raw; }
   /** One transport PUT only. A durable V3Publisher owns attempted/readback/receipt. */
   async putOnce(path, raw) { match(path, raw); await this.request('PUT', path, 65536, raw); }
+  checkPutBudget(size) { this.budget.charge(0, 0); ensure(size <= this.budget.bytes && this.budget.requests >= 1, 'v3 budget exhausted before PUT intent'); }
   async prepareForIsolatedTest(parent) { return this.prepare(parent); }
   async prepare(parent) {
     scope(parent);
@@ -128,7 +131,9 @@ export class V3LocalStore {
       return fd;
     } catch (e) { await fd.close(); throw e; }
   }
-  async prepareForIsolatedTest(parent) { const fd = await this.directory(parent, true); await fd.close(); }
+  async prepareForIsolatedTest(parent) { return this.prepare(parent); }
+  async prepare(parent) { const fd = await this.directory(parent, true); await fd.close(); }
+  checkPutBudget(size) { this.budget.charge(0, 0); ensure(size <= this.budget.bytes && this.budget.requests >= 4, 'v3 budget exhausted before local publication intent'); }
   async list(parent) {
     const fd = await this.directory(parent);
     try {
@@ -151,7 +156,11 @@ export class V3LocalStore {
       const raw = b.subarray(0, n); match(path, raw); return raw;
     } catch (e) { if (e.code === 'ENOENT') return null; throw e; } finally { await f?.close(); await fd?.close(); }
   }
-  async createForIsolatedTest(path, raw, beforeWriteIntent) {
+  async createForIsolatedTest(path, raw, beforeWriteIntent) { return this.publishNew(path, raw, beforeWriteIntent); }
+  /** Transport only: the durable coordinator has already committed ATTEMPTED.
+   * Shares the hardened FD/link implementation, never invokes the test-only primitive. */
+  async putOnce(path, raw) { return this.publishNew(path, raw, async () => {}); }
+  async publishNew(path, raw, beforeWriteIntent) {
     raw = Buffer.from(raw);
     match(path, raw); const old = await this.read(path); if (old) { ensure(old.equals(raw), 'v3 occupied'); return; }
     let protocol, parent, stage, f, created = false;

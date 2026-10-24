@@ -10,170 +10,192 @@ internal fun ref(o: V3Object, hash: String, role: Int) = V3Ref(role, o.type, o.e
 internal fun refPath(dataset: String, r: V3Ref) = V3Paths.path(V3Object(r.type, dataset, r.objectId, r.objectId, r.epochId, r.epochNumber))
 internal fun JSONObject.refs(): List<V3Ref> = getJSONArray("refs").let { a -> (0 until a.length()).map { n -> a.getJSONObject(n).let { V3Ref(it.getInt("role"), it.getInt("type"), it.getString("epochId"), it.getInt("epochNumber"), it.getString("objectId"), it.getString("hash")) } } }
 
-/** Persistent prefix queue and fair audit cursor. A validated listing and its children commit together. */
+/** Indexed queues: a listing's child witnesses and acknowledgement share one short transaction. */
 class V3Discovery(private val journal: V3Journal, private val remote: V3ObjectStore, private val dataset: String) {
+    private val meta = journal.meta
+    private fun advance(progress: JSONObject?) { if (progress != null) { meta.put("control", "discoveryLane", JSONObject().put("value", progress.getInt("lane"))); progress.optJSONObject("audit")?.let { meta.put("control", "scopeAudit", it) } } }
+    fun observe(scope: String, children: List<String>, progress: JSONObject? = null) {
+        require(children.size <= 256 && children.distinct().size == children.size)
+        children.forEach { p -> require(p.startsWith(scope) && '/' !in p.removePrefix(scope).removeSuffix("/")); if (p.endsWith('/')) require(V3Paths.describe(p).datasetId == dataset) else V3Paths.file(p) }
+        meta.atomic {
+            children.forEach { p ->
+                if (p.endsWith('/')) { if (meta.get("scope", p) == null) { meta.put("scope", p, JSONObject().put("path", p)); meta.put("scan", p, JSONObject().put("path", p)) } }
+                else if (meta.get("observed", p) == null) { meta.put("observed", p, JSONObject().put("path", p)); meta.put("todo", p, JSONObject().put("path", p)) }
+            }
+            meta.put("listing", scope, JSONObject().put("children", JSONArray(children)).put("round", journal.roundId).put("endpoint", (remote as? V3WebDavStore)?.endpointIdentity())); meta.remove("scan", scope); meta.remove("error", scope)
+            if (meta.page("scan", 0, 1).isEmpty()) meta.put("control", "initialComplete", JSONObject().put("value", true))
+            advance(progress)
+        }
+    }
     fun scan(limit: Int = 8) {
-        require(limit in 0..32)
-        journal.transaction { s -> if (!s.has("discovery")) s.put("discovery", JSONObject().put("scopes", JSONArray(listOf(V3Paths.dataset(dataset))))
-            .put("queue", JSONArray(listOf(V3Paths.dataset(dataset)))).put("observed", JSONArray()).put("audit", 0).put("failures", JSONObject())) }
-        var working = journal.snapshot().getJSONObject("discovery")
-        try { repeat(limit) {
-            val d = working; val initial = d.getJSONArray("queue").length() > 0
-            val scope = if (initial) d.getJSONArray("queue").getString(0) else d.getJSONArray("scopes").getString(d.getInt("audit") % d.getJSONArray("scopes").length())
-            val children = try { remote.list(scope) } catch (e: Exception) {
-                working.getJSONObject("failures").put(scope, e.message.orEmpty().take(512)); throw e
-            }
-            require(children.size <= 256 && children.distinct().size == children.size)
-            run {
-                val next = JSONObject(working.toString()); val scopes = next.getJSONArray("scopes").strings().toMutableList()
-                val queue = next.getJSONArray("queue").strings().toMutableList(); val observed = next.getJSONArray("observed").strings().toMutableSet()
-                children.forEach { child ->
-                    require(child.startsWith(scope) && '/' !in child.removePrefix(scope).removeSuffix("/"))
-                    if (child.endsWith('/')) { require(V3Paths.describe(child).datasetId == dataset); if (child !in scopes) { scopes += child; queue += child } }
-                    else { V3Paths.file(child); observed += child }
-                }
-                require(scopes.size <= 16384 && observed.size <= 65536) { "v3 discovery metadata budget" }
-                if (initial) queue.removeAt(0) else next.put("audit", (next.getInt("audit") + 1) % scopes.size)
-                next.put("scopes", JSONArray(scopes)).put("queue", JSONArray(queue)).put("observed", JSONArray(observed)); next.getJSONObject("failures").remove(scope)
-                if (queue.isEmpty()) next.put("initialComplete", true)
-                working = next
-            }
-        } } finally { journal.transaction { it.put("discovery", working) } }
+        require(limit in 0..32); val root = V3Paths.dataset(dataset)
+        if (meta.get("scope", root) == null) meta.atomic { meta.put("scope", root, JSONObject().put("path", root)); meta.put("scan", root, JSONObject().put("path", root)) }
+        repeat(limit) {
+            val pending = meta.page("scan", 0, 1).firstOrNull(); var cursor = meta.get("control", "scopeAudit")?.optLong("seq") ?: 0
+            var ceiling = meta.get("control", "scopeAudit")?.optLong("ceiling", meta.lastSeq("scope")) ?: meta.lastSeq("scope")
+            var audit = meta.page("scope", cursor, 1, ceiling).firstOrNull()
+            if (audit == null) { cursor = 0; ceiling = meta.lastSeq("scope"); audit = meta.page("scope", cursor, 1, ceiling).firstOrNull() }
+            val lane = meta.get("control", "discoveryLane")?.getInt("value") ?: 0
+            val task = (if (pending != null && lane == 0) pending else audit) ?: return
+            val progress = JSONObject().put("lane", 1 - lane).put("audit", if (task === audit) JSONObject().put("seq", task.seq).put("ceiling", ceiling) else null)
+            try { observe(task.key, remote.list(task.key), progress) }
+            catch (e: Exception) { if (!e.message.orEmpty().contains("budget", true)) meta.atomic { meta.put("error", task.key, JSONObject().put("reason", e.message)); advance(progress) }; throw e }
+        }
     }
 }
 
-/** Previously validated metadata is distinct from endpoint/round observation evidence. */
-class V3History(private val journal: V3Journal, private val cache: V3IndexedCache, private val remote: V3ObjectStore,
-    private val descriptorPath: String, private val descriptorHash: String, private val budget: V3Budget) {
-    var dataset: String = ""; private set
-    private var metadata = JSONObject()
-    private val visiting = mutableSetOf<String>(); private var newObjects = 0; private var expanded = 0; private var work = 0
-    fun paths() = metadata.namesList()
-    fun node(path: String) = metadata.getJSONObject(path)
+/** Lazy certificates, incremental causal frontier and resumable paged ancestry proofs. */
+class V3History(private val journal: V3Journal, internal val cache: V3IndexedCache, private val remote: V3ObjectStore,
+    private val descriptorPath: String, private val descriptorHash: String, internal val budget: V3Budget) {
+    var dataset = ""; private set
+    private val meta = journal.meta
+    private val loaded = linkedMapOf<String, JSONObject>()
+    init { meta.budget = budget }
+    fun optionalNode(path: String): JSONObject? {
+        loaded[path]?.let { return it }; val row = meta.get("node", path) ?: return null
+        require(meta.get("identity", row.getString("objectId"))?.getString("path") == path) { "v3 metadata identity index corrupt" }
+        if (loaded.size >= 128) loaded.remove(loaded.keys.first()); loaded[path] = row; return row
+    }
+    fun node(path: String) = requireNotNull(optionalNode(path)) { "v3 unverified ancestor" }
     fun objectMetadata(path: String): V3Object = node(path).let { o -> V3Object(o.getInt("type"), dataset, o.getString("objectId"), o.getString("writerId"), o.getString("epochId"), o.getInt("epochNumber"), o.getString("descriptorHash"), o.refs()) }
     fun reference(path: String, role: Int) = ref(objectMetadata(path), node(path).getString("hash"), role)
-    private fun edges(path: String) = node(path).refs().filter { it.role in 1..3 }.map { refPath(dataset, it) }
-    private fun certificate(m: JSONObject): String {
-        val fields = listOf(m.getInt("type"), m.getString("datasetId"), m.getString("objectId"), m.getString("writerId"), m.getString("epochId"), m.getInt("epochNumber"), m.getString("descriptorHash"), m.getString("hash"), m.getInt("size"), m.optString("businessHash", "-"))
-        val refs = m.refs().map { listOf(it.role, it.type, it.epochId, it.epochNumber, it.objectId, it.hash).joinToString("|") }
-        return SyncV3Codec.hash((fields + refs).joinToString("\n").toByteArray(Charsets.US_ASCII))
-    }
+    private fun edges(o: JSONObject) = o.refs().filter { it.role in 1..3 }.map { refPath(dataset, it) }
     fun open(): V3History {
-        journal.transaction { if (!it.has("history")) it.put("history", JSONObject().put("nodes", JSONObject()).put("ids", JSONObject()).put("roots", JSONObject()).put("anomalies", JSONObject())) }
-        metadata = journal.snapshot().getJSONObject("history").getJSONObject("nodes")
-        budget.charge(metadata.toString().toByteArray(Charsets.UTF_8).size.toLong(), 0)
-        val ids = journal.snapshot().getJSONObject("history").getJSONObject("ids")
-        paths().forEach { p -> val m = node(p); require(m.getString("certificate") == certificate(m)) { "v3 metadata certificate corrupt" }; require(ids.getString(m.getString("objectId")) == p) { "v3 metadata identity index corrupt" } }
-        val bytes = requireNotNull(cache.load(descriptorPath, remote)) { "v3 descriptor missing" }; require(SyncV3Codec.hash(bytes) == descriptorHash)
-        val o = V3Paths.match(descriptorPath, bytes); require(o.type == 1); dataset = o.datasetId; record(descriptorPath, bytes, o); return this
+        dataset = requireNotNull(V3Paths.describe(descriptorPath.substringBeforeLast('/') + "/").datasetId)
+        val old = optionalNode(descriptorPath)
+        if (old != null) require(old.getInt("type") == 1 && old.getString("hash") == descriptorHash) { "v3 descriptor identity" }
+        else { val bytes = requireNotNull(cache.load(descriptorPath, remote, descriptorHash)); require(SyncV3Codec.hash(bytes) == descriptorHash); val o = V3Paths.match(descriptorPath, bytes); require(o.type == 1); record(descriptorPath, bytes, o) }; return this
     }
     private fun record(path: String, bytes: ByteArray, o: V3Object) {
-        val m = JSONObject().put("type", o.type).put("datasetId", o.datasetId).put("objectId", o.objectId).put("writerId", o.writerId)
-            .put("epochId", o.epochId).put("epochNumber", o.epochNumber).put("descriptorHash", o.descriptorHash)
+        cache.pin(path, "referenced-history")
+        val causal = o.refs.filter { it.role in 1..3 }; val primary = causal.firstOrNull()?.let { node(refPath(dataset, it)) }
+        val jumps = mutableListOf<String>(); if (primary != null) jumps += refPath(dataset, causal.first())
+        var n = 1
+        while (jumps.size >= n) { val a = node(jumps[n - 1]).getJSONArray("jumps"); if (a.length() < n) break; jumps += a.getString(n - 1); n++ }
+        val m = JSONObject().put("type", o.type).put("datasetId", o.datasetId).put("objectId", o.objectId).put("writerId", o.writerId).put("epochId", o.epochId).put("epochNumber", o.epochNumber).put("descriptorHash", o.descriptorHash)
             .put("refs", JSONArray(o.refs.map { it.json() })).put("hash", SyncV3Codec.hash(bytes)).put("size", bytes.size)
+            .put("root", if (o.type == 2) path else primary?.optString("root")).put("depth", if (primary == null) 0 else primary.getLong("depth") + 1).put("jumps", JSONArray(jumps))
         o.state?.let { m.put("businessHash", SyncV3Codec.businessHash(it)) }
-        m.put("certificate", certificate(m))
-        journal.transaction { s ->
-            val h = s.getJSONObject("history"); val ids = h.getJSONObject("ids"); val nodes = h.getJSONObject("nodes"); val roots = h.getJSONObject("roots")
-            require(!ids.has(o.objectId) || ids.getString(o.objectId) == path) { "v3 duplicate objectId" }
-            require(!nodes.has(path) || nodes.getJSONObject(path).getString("hash") == m.getString("hash")) { "v3 identity changed" }
-            if (o.type != 1 && !nodes.has(path)) require(nodes.namesList().count { nodes.getJSONObject(it).getString("epochId") == o.epochId } < 256) { "v3 epoch capacity" }
+        meta.atomic {
+            val identity = meta.get("identity", o.objectId); val old = meta.get("node", path)
+            require(identity == null || identity.getString("path") == path) { "v3 duplicate objectId" }; require(old == null || old.getString("hash") == m.getString("hash")) { "v3 identity changed" }
+            if (old == null && o.type != 1) require(epochCount(o.epochId) < 256) { "v3 epoch capacity" }
             if (o.type == 2) {
-                require(!roots.has(o.epochId) || roots.getString(o.epochId) == path) { "v3 multiple genesis" }
-                if (o.epochNumber == 1) require(nodes.namesList().none { p -> nodes.getJSONObject(p).let { it.getInt("type") == 2 && it.getInt("epochNumber") == 1 && it.getString("objectId") != o.objectId } }) { "v3 multiple initial genesis" }
-                roots.put(o.epochId, path)
+                val epoch = meta.get("epoch", o.epochId); require(epoch == null || epoch.getString("root") == path) { "v3 multiple genesis" }
+                if (o.epochNumber == 1) { val initial = meta.get("control", "initial"); require(initial == null || initial.getString("path") == path) { "v3 multiple initial genesis" }; meta.put("control", "initial", JSONObject().put("path", path)) }
+                meta.put("epoch", o.epochId, epoch ?: JSONObject().put("root", path).put("number", o.epochNumber).put("active", o.epochNumber == 1).put("frontierIndexed", true))
             }
-            ids.put(o.objectId, path); nodes.put(path, m); h.getJSONObject("anomalies").remove(path)
-        }; metadata.put(path, m)
+            meta.put("identity", o.objectId, JSONObject().put("path", path).put("hash", m.getString("hash"))); meta.put("node", path, m); meta.remove("todo", path); meta.remove("error", path)
+            if (o.type != 1) { meta.put("members:" + o.epochId, path, JSONObject().put("path", path)); if (meta.get("epoch", o.epochId)?.getBoolean("active") == true) meta.put("activate", path, JSONObject().put("path", path)) }
+            if (o.type in 2..3 && meta.get("epoch", o.epochId)?.optBoolean("frontierIndexed") == true) {
+                val ns = "epochFrontier:" + o.epochId; if (meta.get("$ns:covered", path) == null) meta.put(ns, path, JSONObject().put("path", path))
+                o.refs.filter { it.role == 1 }.forEach { r -> val p = refPath(dataset, r); meta.put("$ns:covered", p, JSONObject().put("by", path)); meta.remove(ns, p) }
+            }
+        }; loaded.remove(path)
     }
-    fun value(path: String): V3Object {
-        val raw = requireNotNull(cache.load(path, remote)) { "v3 missing ancestor" }; val o = V3Paths.match(path, raw)
-        require(!metadata.has(path) || node(path).getString("hash") == SyncV3Codec.hash(raw)) { "v3 identity changed" }; return o
+    fun drainActivation() {
+        repeat(256) {
+            val task = meta.page("activate", 0, 1).firstOrNull() ?: return; budget.work("activation", 256); tick(); val o = node(task.key)
+            meta.atomic {
+                if (o.getInt("type") in 2..3) {
+                    if (meta.get("covered", task.key) == null) meta.put("frontier", task.key, JSONObject().put("path", task.key))
+                    edges(o).forEach { p -> meta.put("covered", p, JSONObject().put("by", task.key)); meta.remove("frontier", p) }
+                } else if (o.getInt("type") == 4) {
+                    val target = o.refs().single { it.role == 5 }; val epoch = requireNotNull(meta.get("epoch", target.epochId))
+                    if (!epoch.getBoolean("active")) { epoch.put("active", true); meta.put("epoch", target.epochId, epoch); meta.page("members:" + target.epochId, 0, 256).forEach { meta.put("activate", it.key, JSONObject().put("path", it.key)) } }
+                }; meta.remove("activate", task.key)
+            }
+        }; check(meta.page("activate", 0, 1).isEmpty()) { "v3 activation budget; progress saved" }
     }
-    private fun tick() { budget.charge(0, 0); check(++work <= 32768) { "v3 ancestry budget" } }
-    fun ancestors(path: String): Set<String> {
-        val seen = mutableSetOf<String>(); val queue = java.util.ArrayDeque<String>(); queue.add(path)
-        while (!queue.isEmpty()) { tick(); val p = queue.removeLast(); if (seen.add(p)) { require(metadata.has(p)) { "v3 unverified ancestor" }; queue.addAll(edges(p)) } }; return seen
-    }
-    fun frontier(paths: List<String>): List<String> {
-        val unique = paths.toSet(); val covered = mutableSetOf<String>()
-        unique.forEach { p ->
-            val queue = java.util.ArrayDeque<String>(); queue.addAll(edges(p)); val seen = mutableSetOf<String>()
-            while (!queue.isEmpty()) { tick(); val a = queue.removeLast(); if (seen.add(a)) { if (a in unique) covered += a else { require(metadata.has(a)); queue.addAll(edges(a)) } } }
+    fun tips(): List<String> { drainActivation(); return meta.page("frontier", 0, 65).map { it.key }.sorted().also { require(it.size <= 64) { "v3 tips budget" } } }
+    fun activeEpochs() = tips().map { node(it).getString("epochId") }.distinct()
+    fun epochCount(epoch: String) = meta.count("members:$epoch")
+    fun epochTips(epoch: String): List<String> {
+        val e = requireNotNull(meta.get("epoch", epoch)); val ns = "epochFrontier:$epoch"
+        if (!e.optBoolean("frontierIndexed")) meta.atomic {
+            meta.page("members:$epoch", 0, 256).forEach { row -> val o = node(row.key); tick(); if (o.getInt("type") in 2..3) { if (meta.get("$ns:covered", row.key) == null) meta.put(ns, row.key, JSONObject().put("path", row.key)); o.refs().filter { it.role == 1 }.forEach { r -> val p = refPath(dataset, r); meta.put("$ns:covered", p, JSONObject().put("by", row.key)); meta.remove(ns, p) } } }
+            e.put("frontierIndexed", true); meta.put("epoch", epoch, e)
         }
-        return (unique - covered).sorted().also { require(it.size <= 64) { "v3 tips budget" } }
+        return meta.page(ns, 0, 65).map { it.key }.sorted().also { require(it.isNotEmpty() && it.size <= 64) { "v3 source frontier budget" } }
     }
+    fun auditObjects(limit: Int = 1) {
+        require(limit in 0..32)
+        repeat(limit) {
+            budget.work("object audit", 32); var cursor = meta.get("control", "objectAudit")?.optLong("seq") ?: 0
+            var ceiling = meta.get("control", "objectAudit")?.optLong("ceiling", meta.lastSeq("node")) ?: meta.lastSeq("node")
+            var candidate = meta.page("node", cursor, 1, ceiling).firstOrNull()
+            if (candidate == null) { cursor = 0; ceiling = meta.lastSeq("node"); candidate = meta.page("node", cursor, 1, ceiling).firstOrNull() }
+            val row = candidate ?: return
+            val progress = JSONObject().put("seq", row.seq).put("ceiling", ceiling)
+            try { val raw = requireNotNull(remote.read(row.key)) { "v3 observed object missing or changed" }; require(SyncV3Codec.hash(raw) == row.value.getString("hash")) { "v3 observed object missing or changed" }; cache.put(row.key, raw); meta.atomic { meta.remove("error", row.key); meta.put("evidence", row.key, JSONObject().put("hash", row.value.getString("hash")).put("round", budget.roundId).put("endpoint", (remote as? V3WebDavStore)?.endpointIdentity())); meta.put("control", "objectAudit", progress) } }
+            catch (e: Exception) { if (!e.message.orEmpty().contains("budget", true)) meta.atomic { meta.put("error", row.key, JSONObject().put("reason", e.message).put("expectedHash", row.value.getString("hash"))); meta.put("control", "objectAudit", progress) }; throw e }
+        }
+    }
+    fun value(path: String, expectedHash: String? = null): V3Object { val bytes = requireNotNull(cache.load(path, remote, expectedHash ?: optionalNode(path)?.getString("hash"))) { "v3 missing ancestor" }; val o = V3Paths.match(path, bytes); require(optionalNode(path)?.getString("hash")?.let { it == SyncV3Codec.hash(bytes) } != false) { "v3 identity changed" }; return o }
+    private fun tick() = budget.work("ancestry", 32768)
+    private fun primaryAncestor(a: String, b: String): Boolean {
+        val left = node(a); val right = node(b); if (left.getLong("depth") > right.getLong("depth")) return false
+        var distance = right.getLong("depth") - left.getLong("depth"); var path = b; var bit = 0
+        while (distance > 0) { tick(); if (distance % 2L == 1L) { val jumps = node(path).getJSONArray("jumps"); if (jumps.length() <= bit) return false; path = jumps.getString(bit) }; distance /= 2; bit++ }; return path == a
+    }
+    fun isAncestor(a: String, b: String) = primaryAncestor(a, b) || a in commonCandidates(listOf(a, b))
+    fun frontier(paths: List<String>): List<String> { val unique = paths.distinct(); return unique.filter { p -> unique.none { other -> p != other && isAncestor(p, other) } }.sorted() }
     fun common(paths: List<String>): String = commonCandidates(paths).first()
-    private fun commonCandidates(paths: List<String>): List<String> {
-        require(paths.isNotEmpty() && paths.size <= 64); val sets = paths.map(::ancestors); val shared = sets.first().filter { p -> sets.all { p in it } }.toSet()
-        val covered = mutableSetOf<String>(); shared.forEach { p -> edges(p).forEach { tick(); if (it in shared) covered += it } }
-        val maximal = (shared - covered).sorted()
-        require(maximal.isNotEmpty() && maximal.map { node(it).getString("businessHash") }.distinct().size == 1) { "v3 unknown/ambiguous common baseline" }; return maximal
+    private fun commonCandidates(input: List<String>): List<String> {
+        val paths = input.distinct().sorted(); require(paths.isNotEmpty() && paths.size <= 128)
+        paths.firstOrNull { p -> paths.all { primaryAncestor(p, it) } }?.let { return listOf(it) }
+        val token = SyncV3Codec.hash(JSONArray(paths).toString().toByteArray(Charsets.UTF_8)); val ns = "proof:$token"; val queue = "$ns:queue"; val seen = "$ns:seen"; val candidates = "$ns:tips"; val covered = "$ns:covered"
+        var control = meta.get("proof", token)
+        if (control == null) meta.atomic { control = JSONObject().put("paths", JSONArray(paths)).put("done", false); meta.put("proof", token, control!!); paths.forEachIndexed { bit, path -> meta.put(queue, "$bit:$path", JSONObject().put("path", path).put("bit", bit)) } }
+        if (control!!.getBoolean("done")) return control!!.getJSONArray("result").strings()
+        while (true) {
+            val task = meta.page(queue, 0, 1).firstOrNull() ?: break; budget.work("proof", 256); tick(); val path = task.value.getString("path"); val bit = task.value.getInt("bit"); val o = node(path)
+            meta.atomic {
+                val oldBits = meta.get(seen, path)?.getJSONArray("bits"); val bits = if (oldBits == null) mutableListOf() else (0 until oldBits.length()).map { oldBits.getInt(it) }.toMutableList()
+                if (bit !in bits) {
+                    bits += bit; meta.put(seen, path, JSONObject().put("bits", JSONArray(bits)))
+                    if (bits.size == paths.size) { if (meta.get(covered, path) == null) meta.put(candidates, path, JSONObject().put("path", path)); edges(o).forEach { parent -> meta.put(covered, parent, JSONObject().put("value", true)); meta.remove(candidates, parent) } }
+                    edges(o).forEach { parent -> val a = meta.get(seen, parent)?.getJSONArray("bits"); if (a == null || (0 until a.length()).none { a.getInt(it) == bit }) meta.put(queue, "$bit:$parent", JSONObject().put("path", parent).put("bit", bit)) }
+                }; meta.remove(queue, task.key)
+            }
+        }
+        val result = meta.page(candidates, 0, 65).map { it.key }.sorted(); require(result.isNotEmpty() && result.size <= 64 && result.map { node(it).getString("businessHash") }.distinct().size == 1) { "v3 unknown/ambiguous common baseline" }
+        meta.atomic { meta.put("proof", token, JSONObject().put("paths", JSONArray(paths)).put("done", true).put("result", JSONArray(result))) }; return result
     }
     fun merged(paths: List<String>): ScheduleState {
         val tips = frontier(paths).sortedBy { node(it).getString("objectId") }; require(tips.isNotEmpty()); if (tips.size == 1) return requireNotNull(value(tips.single()).state)
-        val base = requireNotNull(value(common(tips)).state); val bytes = tips.sumOf { node(it).getLong("size") } * tips.size
-        require(bytes <= 64L * 1024 * 1024) { "v3 merge budget" }; budget.charge(bytes, 0)
+        val base = requireNotNull(value(common(tips)).state); val bytes = tips.sumOf { node(it).getLong("size") } * tips.size; require(bytes <= 64L * 1024 * 1024) { "v3 merge budget" }; budget.work("merge bytes", 64 * 1024 * 1024, bytes.toInt())
         val states = tips.map { requireNotNull(value(it).state) }
         states.indices.forEach { i -> (i + 1 until states.size).forEach { j -> require(ScheduleMerge.merge(base, states[i], states[j]).conflicts.isEmpty()) { "v3 unresolved branch conflict" } } }
         return states.drop(1).fold(states.first()) { a, b -> val result = ScheduleMerge.merge(base, a, b); require(result.conflicts.isEmpty()) { "v3 unresolved branch conflict" }; result.state }
     }
-    fun verify(path: String) {
-        if (metadata.has(path)) return
-        val walk = journal.snapshot().getJSONObject("history").optJSONObject("walk") ?: JSONObject().put("root", path).put("stack", JSONArray(listOf(JSONObject().put("path", path))))
-        val stack = walk.getJSONArray("stack").let { a -> (0 until a.length()).map { a.getJSONObject(it) }.toMutableList() }
+    fun verify(path: String, expectedHash: String? = null) {
+        if (optionalNode(path) != null) { require(expectedHash == null || node(path).getString("hash") == expectedHash) { "v3 reference identity changed" }; meta.atomic { meta.remove("todo", path) }; return }
+        var control = meta.get("control", "walk")
+        if (control == null) meta.atomic { control = JSONObject().put("root", path).put("depth", 1).put("id", java.util.UUID.randomUUID().toString()); meta.put("control", "walk", control!!); meta.put("stack:" + control!!.getString("id"), "0", JSONObject().put("path", path).put("expectedHash", expectedHash)) }
+        val walk = control!!; require(walk.has("id")) { "v3 unsupported private validation cursor" }; val suffix = walk.getString("id"); val stack = "stack:$suffix"; val visiting = "visiting:$suffix"
         try {
-            while (stack.isNotEmpty()) {
-                budget.charge(0, 0); val frame = stack.last(); val p = frame.getString("path")
-                if (metadata.has(p)) { stack.removeAt(stack.lastIndex); continue }
-                if (!frame.has("refs")) { check(++expanded <= 256) { "v3 active graph expansion budget" }; frame.put("refs", JSONArray(value(p).refs.map { it.json() })) }
-                val child = frame.refs().map { refPath(dataset, it) }.firstOrNull { !metadata.has(it) }
-                if (child != null) { require(stack.none { it.getString("path") == child }) { "v3 cycle" }; stack += JSONObject().put("path", child) }
-                else { verifyReady(p); stack.removeAt(stack.lastIndex) }
-            }
-        } catch (e: Exception) {
-            journal.transaction { it.getJSONObject("history").getJSONObject("anomalies").put(walk.getString("root"), e.message.orEmpty().take(1024)) }
-            if (!Regex("budget|missing|unavailable|timed|Network|ENOENT", RegexOption.IGNORE_CASE).containsMatchIn(e.message.orEmpty())) stack.clear()
-            throw e
-        } finally { journal.transaction { s -> val h = s.getJSONObject("history"); if (stack.isEmpty()) h.remove("walk") else h.put("walk", walk.put("stack", JSONArray(stack))) } }
-        if (!metadata.has(path)) verify(path)
+            while (walk.getLong("depth") > 0) {
+                tick(); val key = (walk.getLong("depth") - 1).toString(); val frame = requireNotNull(meta.get(stack, key)) { "v3 missing validation frame" }; val p = frame.getString("path")
+                if (optionalNode(p) != null) { meta.atomic { meta.remove(stack, key); walk.put("depth", walk.getLong("depth") - 1); meta.put("control", "walk", walk) }; continue }
+                val expected = if (frame.has("expectedHash") && !frame.isNull("expectedHash")) frame.getString("expectedHash") else null
+                var fresh: V3Object? = null
+                if (!frame.has("refs")) { budget.work("expansion", 256); fresh = value(p, expected); frame.put("refs", JSONArray(fresh.refs.map { it.json() })); meta.atomic { meta.put(stack, key, frame); meta.put(visiting, p, JSONObject().put("depth", walk.getLong("depth"))) } }
+                val child = frame.refs().map { refPath(dataset, it) }.firstOrNull { optionalNode(it) == null }
+                if (child != null) { require(meta.get(visiting, child) == null) { "v3 cycle" }; meta.atomic { meta.put(stack, walk.getLong("depth").toString(), JSONObject().put("path", child).put("expectedHash", frame.refs().first { refPath(dataset, it) == child }.hash)); walk.put("depth", walk.getLong("depth") + 1); meta.put("control", "walk", walk) } }
+                else { verifyReady(p, expected, fresh); meta.atomic { meta.remove(visiting, p); meta.remove(stack, key); walk.put("depth", walk.getLong("depth") - 1); meta.put("control", "walk", walk) } }
+            }; meta.atomic { meta.remove("control", "walk") }
+        } catch (e: Exception) { meta.atomic { meta.put("error", walk.getString("root"), JSONObject().put("reason", e.message)); if (!Regex("budget|missing|unavailable|timed|Network|ENOENT", RegexOption.IGNORE_CASE).containsMatchIn(e.message.orEmpty())) { meta.put("failedWalk", walk.getString("id"), JSONObject(walk.toString()).put("reason", e.message)); meta.remove("control", "walk") } }; throw e }
+        if (optionalNode(path) == null) verify(path, expectedHash)
+        require(expectedHash == null || node(path).getString("hash") == expectedHash) { "v3 reference identity changed" }
     }
-    private fun verifyReady(path: String) {
-        if (metadata.has(path)) return
-        require(path !in visiting) { "v3 cycle" }; check(++newObjects <= 256) { "v3 active graph budget" }; visiting += path
-        try {
-            val bytes = requireNotNull(cache.load(path, remote)) { "v3 missing object" }; val o = V3Paths.match(path, bytes)
-            require(o.datasetId == dataset && o.descriptorHash == descriptorHash && o.type != 1) { "v3 descriptor identity" }
-            o.refs.forEach { r ->
-                val p = refPath(dataset, r); require(metadata.has(p)) { "v3 unverified reference" }; val target = objectMetadata(p)
-                require(node(p).getString("hash") == r.hash && target.type == r.type && target.epochId == r.epochId && target.epochNumber == r.epochNumber && target.objectId == r.objectId && target.descriptorHash == descriptorHash) { "v3 reference identity" }
-            }
-            if (o.type == 2 && o.epochNumber > 1) {
-                val source = o.refs.map { refPath(dataset, it) }; require(frontier(source).size == source.size) { "v3 checkpoint redundant frontier" }
-                require(ScheduleMerge.same(requireNotNull(o.state), merged(source))) { "v3 checkpoint extra edit" }
-            }
-            if (o.type == 3) {
-                val parents = o.refs.filter { it.role == 1 }.map { refPath(dataset, it) }
-                val roots = parents.map { p -> ancestors(p).filter { node(it).getInt("type") == 2 && node(it).getString("epochId") == o.epochId } }
-                require(roots.all { it.size == 1 && it.single() == roots.first().single() }) { "v3 parent common root" }
-                val late = o.refs.filter { it.role == 3 }
-                if (late.isNotEmpty()) {
-                    val branches = parents + late.map { refPath(dataset, it) }; val baseline = refPath(dataset, o.refs.single { it.role == 4 })
-                    require(baseline in commonCandidates(branches)) { "v3 unproven BASELINE" }
-                }
-            }
-            if (o.type == 4) {
-                val target = value(refPath(dataset, o.refs.single { it.role == 5 }))
-                require(target.refs.toSet() == o.refs.filter { it.role == 2 }.toSet()) { "v3 transition frontier mismatch" }
-            }
-            record(path, bytes, o)
-        } catch (e: Exception) { journal.transaction { it.getJSONObject("history").getJSONObject("anomalies").put(path, e.message.orEmpty().take(1024)) }; throw e }
-        finally { visiting -= path }
-    }
-    fun activeEpochs(): List<String> {
-        val objects = paths().map(::objectMetadata); val activated = objects.filter { it.type == 2 && it.epochNumber == 1 }.map { it.epochId }.toMutableSet()
-        val queue = java.util.ArrayDeque<String>(); queue.addAll(activated)
-        while (!queue.isEmpty()) { val source = queue.removeFirst(); objects.filter { it.type == 4 && it.epochId == source }.forEach { val target = it.refs.single { r -> r.role == 5 }.epochId; if (activated.add(target)) queue.add(target) } }
-        return activated.toList()
+    private fun verifyReady(path: String, expectedHash: String?, fresh: V3Object? = null) {
+        if (optionalNode(path) != null) return; budget.work("validation", 256)
+        val bytes = if (fresh != null) SyncV3Codec.encode(fresh) else requireNotNull(cache.load(path, remote, expectedHash)) { "v3 missing object" }; val o = fresh ?: V3Paths.match(path, bytes); require(o.datasetId == dataset && o.descriptorHash == descriptorHash && o.type != 1) { "v3 descriptor identity" }
+        o.refs.forEach { r -> val p = refPath(dataset, r); val target = objectMetadata(p); require(node(p).getString("hash") == r.hash && target.type == r.type && target.epochId == r.epochId && target.epochNumber == r.epochNumber && target.objectId == r.objectId && target.descriptorHash == descriptorHash) { "v3 reference identity" } }
+        if (o.type == 2 && o.epochNumber > 1) { val source = o.refs.map { refPath(dataset, it) }; require(frontier(source).size == source.size) { "v3 checkpoint redundant frontier" }; require(ScheduleMerge.same(requireNotNull(o.state), merged(source))) { "v3 checkpoint extra edit" } }
+        if (o.type == 3) { val parents = o.refs.filter { it.role == 1 }.map { node(refPath(dataset, it)) }; require(parents.all { it.optString("root").isNotEmpty() && it.getString("root") == parents.first().getString("root") }) { "v3 parent common root" }; if (o.refs.any { it.role == 3 }) require(refPath(dataset, o.refs.single { it.role == 4 }) in commonCandidates(o.refs.filter { it.role == 1 || it.role == 3 }.map { refPath(dataset, it) })) { "v3 unproven BASELINE" } }
+        if (o.type == 4) require(node(refPath(dataset, o.refs.single { it.role == 5 })).refs().toSet() == o.refs.filter { it.role == 2 }.toSet()) { "v3 transition frontier mismatch" }
+        record(path, bytes, o)
     }
 }

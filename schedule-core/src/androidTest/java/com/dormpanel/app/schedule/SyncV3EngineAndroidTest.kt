@@ -29,20 +29,25 @@ class SyncV3EngineAndroidTest {
             override fun putOnce(path: String, raw: ByteArray) { puts++; content = raw; error("injected lost response") }
         }
         val publisher = V3Publisher(journal, remote); publisher.stage(path, SyncV3Codec.encode(o), JSONObject().put("capture", "local-edit")); assertThrows(Exception::class.java) { publisher.resume() }
-        val reopened = V3Journal(root); assertEquals("READBACK_CONFIRMED", V3Publisher(reopened, remote).resume()); assertEquals(1, puts)
+        journal.close(); val reopened = V3Journal(root); assertEquals("READBACK_CONFIRMED", V3Publisher(reopened, remote).resume()); assertEquals(1, puts)
     }
     @Test fun isolatedHttpsReceivesAndPublishesWithRestart() {
         val arguments = InstrumentationRegistry.getArguments(); val encoded = arguments.getString("v3Probe"); assumeTrue("explicit isolated probe required", encoded != null)
         val probe = JSONObject(String(Base64.getDecoder().decode(encoded), Charsets.UTF_8)); val config = probe.getJSONObject("config"); val binding = probe.getJSONObject("binding")
         val url = config.getString("url"); require(Regex("/pr54-engine-[0-9a-f-]{36}/$").containsMatchIn(url)); val account = WebDavAccount(url, config.getString("username"), config.getString("password"))
-        val root = File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir, "pr54-https-${id()}"); val journal = V3Journal(root); val writer = id(); val engine = V3Engine(journal, writer)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = File(context.filesDir, "pr54-https-${id()}")
+        fun openRoom() = V3RoomAdapter(root, { androidx.room.Room.databaseBuilder(context, V3RoomDatabase::class.java, File(root, "v3-state-v2.sqlite").absolutePath).setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING).build() }, {})
+        var room = openRoom(); val journal = room.journal; val writer = id(); val engine = V3Engine(journal, writer)
         engine.bind(SyncV3Codec.decode(requireNotNull(V3WebDavStore(account, url, V3Budget()).read(binding.getString("descriptorPath")))), binding.getString("descriptorHash"))
-        repeat(8) { val budget = V3Budget(); val remote = V3WebDavStore(account, url, budget); try { engine.round(remote, remote, V3IndexedCache(root, budget), budget, 8) } catch (e: IllegalStateException) { if (!e.message.orEmpty().contains("initial discovery incomplete")) throw e } }
-        assertTrue(engine.local().entries.any { it.id == "kotlin" }); assertTrue(engine.local().entries.any { it.id == "node" })
+        var ready = false
+        repeat(24) { if (!ready) { val budget = V3Budget(); val remote = V3WebDavStore(account, url, budget); try { engine.round(remote, remote, V3IndexedCache(root, budget), budget, 8); ready = engine.local().entries.any { it.id == "kotlin" } && engine.local().entries.any { it.id == "node" } } catch (e: IllegalStateException) { if (!e.message.orEmpty().contains("initial discovery/validation incomplete")) throw e } } }
+        assertTrue("cold discovery must finish before adopting remote state", ready)
         val device = "android-" + arguments.getString("v3Device", "test")
         engine.edit(engine.local().copy(entries = engine.local().entries.filter { it.id != device } + TimetableEntry(device, "$device ${id()}", 4, 720, 780, "")))
-        val reopened = V3Engine(V3Journal(root), writer)
+        room.close(); room = openRoom(); val reopened = V3Engine(room.journal, writer)
         repeat(4) { val budget = V3Budget(); val remote = V3WebDavStore(account, url, budget); reopened.round(remote, remote, V3IndexedCache(root, budget), budget, 8) }
         assertTrue(reopened.local().entries.any { it.id == device })
+        assertTrue(room.database.dao().entries().any { it.id == device }); room.close()
     }
 }

@@ -3,10 +3,12 @@ package com.dormpanel.app.schedule
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+internal class V3CacheCorruptException : IllegalStateException("v3 cache hash")
 
 /** v2 direct-path persistent index. Opening never enumerates receipts or decodes old snapshots.
  * No cache deletion or GC exists. Missing content does not erase a durable identity witness. */
-class V3IndexedCache(root: File, private val budget: V3Budget) {
+class V3IndexedCache(root: File, internal val budget: V3Budget) {
+    var contentReads = 0L; private set
     private val directory = File(root, "sync-v3-index-v2")
     init { require(!java.nio.file.Files.isSymbolicLink(directory.toPath())) }
     private fun location(path: String): File {
@@ -31,9 +33,17 @@ class V3IndexedCache(root: File, private val budget: V3Budget) {
     }
     @Synchronized fun get(path: String): ByteArray? {
         val receipt = witness(path) ?: return null; val blob = blob(path); if (!blob.exists()) return null
-        return V3Atomic.read(blob, SyncV3Codec.MAX_BYTES, budget).also { require(SyncV3Codec.hash(it) == receipt.getString("hash")) { "v3 cache hash" }; V3Paths.match(path, it) }
+        return V3Atomic.read(blob, SyncV3Codec.MAX_BYTES, budget).also { contentReads++; if (SyncV3Codec.hash(it) != receipt.getString("hash")) throw V3CacheCorruptException(); V3Paths.match(path, it) }
     }
-    fun load(path: String, remote: V3ObjectStore): ByteArray? = get(path) ?: remote.read(path)?.also { put(path, it) }
+    fun load(path: String, remote: V3ObjectStore, expectedHash: String? = null): ByteArray? {
+        var expected = expectedHash
+        val hit = try { get(path) } catch (e: V3CacheCorruptException) {
+            val w = requireNotNull(witness(path)); require(expected == null || w.getString("hash") == expected) { "v3 cache witness identity changed" }; expected = w.getString("hash")
+            java.nio.file.Files.move(blob(path).toPath(), File(location(path), "damaged-${java.util.UUID.randomUUID()}.dpv").toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE); V3Atomic.sync(location(path)); null
+        }
+        if (hit != null) { require(expected == null || SyncV3Codec.hash(hit) == expected) { "v3 reference identity changed" }; return hit }
+        return remote.read(path)?.also { require(expected == null || SyncV3Codec.hash(it) == expected) { "v3 reference identity changed" }; put(path, it) }
+    }
     @Synchronized fun pin(path: String, owner: String) {
         require(owner.isNotEmpty() && owner.length <= 160); val w = requireNotNull(witness(path)); val pins = w.getJSONArray("pins")
         if ((0 until pins.length()).none { pins.getString(it) == owner }) pins.put(owner)

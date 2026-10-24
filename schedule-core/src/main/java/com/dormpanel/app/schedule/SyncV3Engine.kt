@@ -9,22 +9,36 @@ import java.util.UUID
 class V3Engine(private val journal: V3Journal, private val writerId: String) {
     init { require(!journal.snapshot().has("writerId") || journal.snapshot().getString("writerId") == writerId) { "v3 writer identity changed" } }
     private val network = journal.networkGate
+    private fun configure(remote: V3ObjectStore, cache: V3IndexedCache, budget: V3Budget) {
+        require(cache.budget === budget && (remote !is V3WebDavStore || remote.budget === budget)) { "v3 round must share one budget" }
+        journal.meta.assertWritable(); journal.roundId = budget.roundId
+        journal.meta.budget = budget
+        journal.prepareReceipt = { p ->
+            val b = journal.snapshot().getJSONObject("binding"); val path = p.getString("path"); val witness = cache.witness(path)
+            require(witness == null || witness.getString("hash") == p.getString("hash")) { "v3 pending cache identity changed" }
+            if (witness == null || !cache.blob(path).isFile) cache.put(path, Base64.getDecoder().decode(p.getString("bytes")))
+            val h = V3History(journal, cache, remote, b.getString("descriptorPath"), b.getString("descriptorHash"), budget).open(); h.verify(p.getString("path"), p.getString("hash")); h.drainActivation()
+        }
+    }
     private fun id() = UUID.randomUUID().toString()
     private fun raw(o: V3Object) = Base64.getEncoder().encodeToString(SyncV3Codec.encode(o))
     private fun obj(raw: String) = SyncV3Codec.decode(Base64.getDecoder().decode(raw))
     // Private state envelope, never a published object or an implicit v2 migration.
     private fun state(s: ScheduleState): String = raw(V3Object(2, STATE_ID, STATE_ID, STATE_ID, STATE_ID, 1, STATE_HASH, state = s))
     private fun state(s: JSONObject, key: String) = requireNotNull(obj(s.getString(key)).state)
-    fun local(): ScheduleState = state(journal.snapshot(), "local")
-    fun bind(descriptor: V3Object, hash: String, local: ScheduleState = ScheduleState()) {
+    fun local(): ScheduleState = journal.snapshot().let { if (it.has("local")) state(it, "local") else ScheduleState() }
+    fun bind(descriptor: V3Object, hash: String, local: ScheduleState? = null) {
         require(descriptor.type == 1 && SyncV3Codec.hash(SyncV3Codec.encode(descriptor)) == hash)
-        journal.transaction { s -> require(!s.has("binding")); s.put("writerId", writerId).put("binding", JSONObject().put("datasetId", descriptor.datasetId).put("descriptorPath", V3Paths.path(descriptor)).put("descriptorHash", hash)); s.put("local", state(local)).put("unbasedLocal", !ScheduleMerge.same(local, ScheduleState())).put("revision", 0) }
+        journal.localTransaction { s -> require(!s.has("binding") && (!s.has("writerId") || s.getString("writerId") == writerId)); val existing = if (s.has("local")) state(s, "local") else ScheduleState(); val seed = local ?: existing
+            require(ScheduleMerge.same(existing, ScheduleState()) || ScheduleMerge.same(existing, seed)) { "v3 binding must preserve unbound local edits" }
+            s.put("writerId", writerId).put("binding", JSONObject().put("datasetId", descriptor.datasetId).put("descriptorPath", V3Paths.path(descriptor)).put("descriptorHash", hash)); s.put("local", state(seed)).put("unbasedLocal", !ScheduleMerge.same(seed, ScheduleState())).put("revision", s.optLong("revision")) }
     }
-    fun edit(local: ScheduleState) { val encoded = state(local); journal.transaction { it.put("local", encoded).put("revision", it.getLong("revision") + 1); it.remove("decision") } }
-    fun initialize(remote: V3PublicationStore, initial: ScheduleState = ScheduleState()): JSONObject = synchronized(network) {
+    fun edit(local: ScheduleState) { val encoded = state(local); journal.localTransaction { require(!it.has("writerId") || it.getString("writerId") == writerId); it.put("writerId", writerId).put("local", encoded).put("revision", it.optLong("revision") + 1); it.remove("decision") } }
+    fun initialize(remote: V3PublicationStore, initial: ScheduleState = local()): JSONObject = synchronized(network) {
         val descriptor = V3Object(1, id(), id(), writerId)
         val genesis = V3Object(2, descriptor.datasetId, id(), writerId, id(), 1, SyncV3Codec.hash(SyncV3Codec.encode(descriptor)), state = initial)
         bind(descriptor, genesis.descriptorHash, initial)
+        require(remote is V3ObjectStore); val budget = (remote as? V3WebDavStore)?.budget ?: V3Budget(); configure(remote, V3IndexedCache(journal.directory, budget), budget)
         journal.transaction { it.put("initialization", JSONArray(listOf(raw(descriptor), raw(genesis)))) }
         resumeInitialization(remote); journal.snapshot().getJSONObject("binding")
     }
@@ -41,13 +55,14 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
                 "commit" -> {
                     val replay = ScheduleMerge.merge(state(c, "local"), state(s, "local"), requireNotNull(o.state))
                     if (replay.conflicts.isEmpty()) s.put("local", state(replay.state))
-                    else s.put("conflict", conflict(s, state(c, "local"), state(s, "local"), o.state, replay.conflicts, listOf(p.getString("path"))))
-                    s.put("baseline", state(o.state)).put("baselinePath", p.getString("path")).put("convergenceRotations", 0); s.remove("decision")
+                    else s.put("conflict", conflict(s, state(c, "local"), state(s, "local"), o.state, replay.conflicts, listOf(p.getString("path"))).put("receipt", true))
+                    s.put("baseline", state(o.state)).put("baselinePath", p.getString("path")).put("baselineHash", p.getString("hash")).put("convergenceRotations", 0); s.remove("decision")
+                    if (replay.conflicts.isEmpty() && c.getLong("revision") == s.getLong("revision")) s.put("settled", JSONObject().put("tips", JSONArray(journal.meta.page("frontier", 0, 65).map { it.key }.sorted())).put("revision", s.getLong("revision")))
                 }
-                "initial-genesis" -> s.put("baseline", state(requireNotNull(o.state))).put("baselinePath", p.getString("path")).put("activeEpoch", o.epochId)
+                "initial-genesis" -> s.put("baseline", state(requireNotNull(o.state))).put("baselinePath", p.getString("path")).put("baselineHash", p.getString("hash")).put("activeEpoch", o.epochId)
                 "transition" -> s.put("activeEpoch", c.getString("targetEpoch"))
             }
-            s.put("receipt", JSONObject().put("path", p.getString("path")).put("hash", p.getString("hash")))
+            s.put("receipt", JSONObject().put("path", p.getString("path")).put("hash", p.getString("hash")).put("confirmation", p.optJSONObject("confirmation")))
         }
     }
     private fun resumeInitialization(remote: V3PublicationStore) {
@@ -59,6 +74,8 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
         }
     }
     fun rotate(history: V3History, remote: V3PublicationStore, sourceEpoch: String, tips: List<String>) = synchronized(network) {
+        require(remote is V3ObjectStore); configure(remote, history.cache, history.budget)
+        require(sourceEpoch in history.activeEpochs() && tips.sorted() == history.epochTips(sourceEpoch)) { "v3 stale/incomplete rotation frontier" }
         val source = history.objectMetadata(tips.first()); val refs = tips.map { history.reference(it, 2) }
         val genesis = V3Object(2, source.datasetId, id(), writerId, id(), source.epochNumber + 1, source.descriptorHash, refs, history.merged(tips))
         val transition = V3Object(4, source.datasetId, id(), writerId, sourceEpoch, source.epochNumber, source.descriptorHash,
@@ -83,53 +100,63 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
             .put("conflicts", JSONArray(conflicts.map { JSONObject().put("key", it.key).put("keys", JSONArray(it.keys.toList())).put("description", it.description) }))
     private fun saveConflict(base: ScheduleState, local: ScheduleState, remote: ScheduleState, conflicts: List<ScheduleMerge.Conflict>, paths: List<String>, revision: Long, branches: List<ScheduleCommit> = emptyList()) {
         journal.transaction { s -> require(s.getLong("revision") == revision) { "v3 local edit changed; replan conflict" }
-            s.put("conflict", conflict(s, base, local, remote, conflicts, paths).put("branches", JSONArray(branches.map { JSONObject().put("objectId", it.commitId).put("state", state(it.state)) }))) }
+            val next = conflict(s, base, local, remote, conflicts, paths).put("branches", JSONArray(branches.map { JSONObject().put("objectId", it.commitId).put("state", state(it.state)) }))
+            s.optJSONObject("conflict")?.let { if (it.getString("id") != next.getString("id")) journal.meta.put("conflictHistory", it.getString("id"), it) }; s.put("conflict", next) }
     }
     fun resolve(id: String, choice: ScheduleMerge.Choice) {
-        journal.transaction { s ->
+        journal.localTransaction { s ->
             val c = s.getJSONObject("conflict"); require(c.getString("id") == id && c.getLong("revision") == s.getLong("revision")) { "v3 stale conflict decision" }
             val a = c.getJSONArray("conflicts"); val keys = (0 until a.length()).flatMap { a.getJSONObject(it).getJSONArray("keys").strings() }.toSet()
             val resolved = ScheduleMerge.merge(state(c, "base"), state(c, "local"), state(c, "remote"), choice, keys)
             val replay = ScheduleMerge.merge(state(c, "base"), state(c, "capturedLocal"), resolved.state, ScheduleMerge.Choice.REMOTE, keys)
             require(replay.conflicts.all { it.keys.all { key -> key in keys } }) { "v3 new local conflict requires separate decision" }
+            journal.meta.put("decision", id, JSONObject().put("choice", choice.name).put("input", c))
             s.put("local", state(replay.state)).put("revision", s.getLong("revision") + 1); s.remove("conflict")
             s.put("decision", JSONObject().put("id", id).put("choice", choice.name).put("remotePaths", c.getJSONArray("paths")).put("input", c))
         }
     }
     fun round(remote: V3ObjectStore, publication: V3PublicationStore, cache: V3IndexedCache, budget: V3Budget, discoverySteps: Int = 8): String = synchronized(network) {
         try {
+            configure(remote, cache, budget)
             resumeInitialization(publication)
             journal.snapshot().optJSONObject("pending")?.let { if (it.getString("phase") != "RECEIPTED") resumePublication(publication) }
             resumeRotation(publication)
             val binding = journal.snapshot().getJSONObject("binding"); val dataset = binding.getString("datasetId")
-            V3Discovery(journal, remote, dataset).scan(discoverySteps)
+            val discovery = V3Discovery(journal, remote, dataset); discovery.scan(discoverySteps)
             val history = V3History(journal, cache, remote, binding.getString("descriptorPath"), binding.getString("descriptorHash"), budget).open()
-            journal.snapshot().optJSONObject("receipt")?.let { history.verify(it.getString("path")) }
-            journal.snapshot().optString("baselinePath")?.takeIf { it.isNotEmpty() }?.let { history.verify(it) }
+            journal.snapshot().optJSONObject("receipt")?.let { history.verify(it.getString("path")); require(history.node(it.getString("path")).getString("hash") == it.getString("hash")) { "v3 receipt identity changed" } }
+            journal.snapshot().let { s -> s.optString("baselinePath").takeIf { it.isNotEmpty() }?.let { history.verify(it); require(!s.has("baselineHash") || history.node(it).getString("hash") == s.getString("baselineHash")) { "v3 baseline identity changed" } } }
             history.activeEpochs().takeLast(8).forEach { epoch ->
                 val listed = remote.list(V3Paths.epoch(dataset, epoch))
-                journal.transaction { s -> val d = s.getJSONObject("discovery"); d.put("observed", JSONArray((d.getJSONArray("observed").strings() + listed).distinct())) }
+                discovery.observe(V3Paths.epoch(dataset, epoch), listed)
             }
-            val observed = journal.snapshot().getJSONObject("discovery").getJSONArray("observed").strings()
-            if (observed.isNotEmpty()) {
-                val cursor = journal.snapshot().optInt("objectAudit"); val path = observed[cursor % observed.size]
-                cache.put(path, requireNotNull(remote.read(path)) { "v3 observed object missing" }); journal.transaction { it.put("objectAudit", (cursor + 1) % observed.size) }
-            }
-            observed.filter { it != binding.getString("descriptorPath") }.forEach(history::verify)
-            check(journal.snapshot().getJSONObject("discovery").optBoolean("initialComplete")) { "v3 initial discovery incomplete" }
+            repeat(32) { journal.meta.page("todo", 0, 1).firstOrNull()?.let { history.verify(it.key) } }
+            history.drainActivation()
+            check(journal.meta.get("control", "initialComplete") != null && journal.meta.page("todo", 0, 1).isEmpty()) { "v3 initial discovery/validation incomplete" }
+            check(journal.meta.page("error", 0, 1).isEmpty()) { "v3 unresolved observed history error" }
             val epochs = history.activeEpochs(); require(epochs.isNotEmpty()) { "v3 no activated epoch" }
-            val all = history.paths().filter { history.objectMetadata(it).let { o -> o.type in 2..3 && o.epochId in epochs } }
-            val tips = history.frontier(all); val current = journal.snapshot(); var carrier = current.optString("activeEpoch")
+            val tips = history.tips(); val current = journal.snapshot()
+            current.optJSONObject("conflict")?.takeIf { it.optBoolean("receipt") }?.let { old ->
+                if (old.getLong("revision") != current.getLong("revision")) journal.transaction { s ->
+                    s.optJSONObject("conflict")?.takeIf { it.optBoolean("receipt") }?.let { c ->
+                        val a = c.getJSONArray("conflicts"); val keys = (0 until a.length()).flatMap { a.getJSONObject(it).getJSONArray("keys").strings() }.toSet()
+                        val result = ScheduleMerge.merge(state(c, "base"), state(s, "local"), state(c, "remote"), forceConflicts = keys)
+                        journal.meta.put("conflictHistory", c.getString("id"), c); s.put("conflict", conflict(s, state(c, "base"), state(s, "local"), state(c, "remote"), result.conflicts, c.getJSONArray("paths").strings()).put("receipt", true))
+                    }
+                }; return@synchronized "CONFLICT"
+            }
+            current.optJSONObject("settled")?.let { if (it.getLong("revision") == current.getLong("revision") && it.getJSONArray("tips").strings() == tips) return@synchronized "OBSERVED" }
+            var carrier = current.optString("activeEpoch")
             if (carrier !in epochs) carrier = history.objectMetadata(tips.first()).epochId
             val highest = tips.maxOf { history.objectMetadata(it).epochNumber }
             if (tips.none { history.objectMetadata(it).let { o -> o.epochId == carrier && o.epochNumber == highest } }) carrier = history.objectMetadata(tips.first { history.objectMetadata(it).epochNumber == highest }).epochId
             val parents = tips.filter { history.objectMetadata(it).epochId == carrier }; val other = tips - parents.toSet(); require(parents.isNotEmpty())
             val decisionPaths = current.optJSONObject("decision")?.getJSONArray("remotePaths")?.strings()
-            val decision = !decisionPaths.isNullOrEmpty() && tips.all { p -> decisionPaths.any { old -> history.node(old).getString("businessHash") == history.node(p).getString("businessHash") && old in history.ancestors(p) } } && decisionPaths.all { old -> tips.any { p -> history.node(old).getString("businessHash") == history.node(p).getString("businessHash") && old in history.ancestors(p) } }
+            val decision = !decisionPaths.isNullOrEmpty() && tips.all { p -> decisionPaths.any { old -> history.node(old).getString("businessHash") == history.node(p).getString("businessHash") && history.isAncestor(old, p) } } && decisionPaths.all { old -> tips.any { p -> history.node(old).getString("businessHash") == history.node(p).getString("businessHash") && history.isAncestor(old, p) } }
             val remoteState = try { history.merged(tips) } catch (e: IllegalArgumentException) {
                 if (!e.message.orEmpty().contains("conflict")) throw e
                 if (decision) local() else {
-                    budget.charge(tips.sumOf { history.node(it).getLong("size") } * tips.size, 0)
+                    budget.work("merge bytes", 64 * 1024 * 1024, (tips.sumOf { history.node(it).getLong("size") } * tips.size).also { require(it <= 64L * 1024 * 1024) { "v3 merge budget" } }.toInt())
                     val baseObject = history.value(history.common(tips)); val localBaseObject = history.value(history.common(tips + listOfNotNull(current.optString("baselinePath").takeIf { it.isNotEmpty() })))
                     fun branch(o: V3Object) = ScheduleCommit(o.datasetId, o.objectId, o.writerId, emptyList(), requireNotNull(o.state))
                     val branches = tips.map { branch(history.value(it)) }.sortedBy { it.commitId }; val plan = ScheduleV2Plan(branch(baseObject), branch(localBaseObject), branches)
@@ -141,28 +168,30 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
             val local = if (current.has("baselinePath")) state(current, "local") else remoteState
             val base = requireNotNull(history.value(basePath).state); val result = if (decision) ScheduleMerge.Result(local, emptyList()) else ScheduleMerge.merge(base, local, remoteState)
             if (result.conflicts.isNotEmpty()) { saveConflict(base, state(current, "local"), remoteState, result.conflicts, tips, current.getLong("revision")); return@synchronized "CONFLICT" }
-            val count = history.paths().count { history.objectMetadata(it).epochId == carrier }; check(count < 256) { "v3 epoch capacity" }
+            current.optJSONObject("conflict")?.let { old -> journal.transaction { s -> if (s.getLong("revision") == current.getLong("revision") && s.optJSONObject("conflict")?.getString("id") == old.getString("id")) { journal.meta.put("conflictHistory", old.getString("id"), old); s.remove("conflict") } } }
+            val count = history.epochCount(carrier); check(count < 256) { "v3 epoch capacity" }
+            val resolveSourceFirst = decision && parents.size > 1
             val equivalent = tips.map { history.node(it).getString("businessHash") }.distinct().size == 1
             if (other.isNotEmpty() && equivalent && ScheduleMerge.same(result.state, remoteState)) {
-                journal.transaction { s -> if (s.getLong("revision") == current.getLong("revision")) s.put("local", state(result.state)).put("baseline", state(remoteState)).put("baselinePath", parents.first()).put("equivalentFrontiers", JSONArray(tips)) }
+                journal.transaction { s -> if (s.getLong("revision") == current.getLong("revision")) s.put("local", state(result.state)).put("baseline", state(remoteState)).put("baselinePath", parents.first()).put("baselineHash", history.node(parents.first()).getString("hash")).put("equivalentFrontiers", JSONArray(tips)) }
                 return@synchronized "EQUIVALENT_FRONTIERS"
             }
-            if (other.any { history.objectMetadata(it).epochNumber >= history.objectMetadata(parents.first()).epochNumber } || count >= 160) {
+            if (!resolveSourceFirst && (other.any { history.objectMetadata(it).epochNumber >= history.objectMetadata(parents.first()).epochNumber } || count >= 160)) {
                 check(count < 255) { "v3 transition capacity" }
                 if (other.isNotEmpty()) journal.transaction { s -> check(s.optInt("convergenceRotations") < 4) { "v3 convergence retry budget; candidates retained" }; s.put("convergenceRotations", s.optInt("convergenceRotations") + 1) }
                 rotate(history, publication, carrier, parents); return@synchronized "ROTATED"
             }
             if (ScheduleMerge.same(result.state, remoteState) && equivalent && other.isEmpty()) {
-                journal.transaction { s -> if (s.getLong("revision") == current.getLong("revision")) s.put("local", state(result.state)).put("baseline", state(remoteState)).put("baselinePath", tips.first()) }; return@synchronized "OBSERVED"
+                journal.transaction { s -> if (s.getLong("revision") == current.getLong("revision")) s.put("local", state(result.state)).put("baseline", state(remoteState)).put("baselinePath", tips.first()).put("baselineHash", history.node(tips.first()).getString("hash")).put("settled", JSONObject().put("tips", JSONArray(tips)).put("revision", s.getLong("revision"))) }; return@synchronized "OBSERVED"
             }
-            check(count < 192) { "v3 rotation must precede publication" }; val refs = parents.map { history.reference(it, 1) }.toMutableList()
-            if (other.isNotEmpty()) {
-                val common = history.common(tips); require(history.objectMetadata(common).epochNumber < history.objectMetadata(parents.first()).epochNumber) { "v3 bridge baseline generation" }
-                refs += other.map { history.reference(it, 3) }; refs += history.reference(common, 4)
+            check(count < 192 || resolveSourceFirst && count < 255) { "v3 resolved source needs room for commit and transition" }; val refs = parents.map { history.reference(it, 1) }.toMutableList()
+            val eligibleLate = other.filter { history.objectMetadata(it).epochNumber < history.objectMetadata(parents.first()).epochNumber }
+            if (eligibleLate.isNotEmpty()) {
+                val common = history.common(parents + eligibleLate); require(history.objectMetadata(common).epochNumber < history.objectMetadata(parents.first()).epochNumber) { "v3 bridge baseline generation" }
+                refs += eligibleLate.map { history.reference(it, 3) }; refs += history.reference(common, 4)
             }
             val source = history.objectMetadata(parents.first()); val o = V3Object(3, dataset, id(), writerId, carrier, source.epochNumber, binding.getString("descriptorHash"), refs, result.state)
-            cache.put(V3Paths.path(o), SyncV3Codec.encode(o)); cache.pin(V3Paths.path(o), "pending")
-            publish(publication, o, JSONObject().put("kind", "commit").put("local", current.getString("local")).put("revision", current.getLong("revision")).put("decision", current.optJSONObject("decision"))); "PUBLISHED"
+            publish(publication, o, JSONObject().put("kind", "commit").put("local", current.getString("local")).put("revision", current.getLong("revision")).put("decision", current.optJSONObject("decision"))); if (journal.snapshot().optJSONObject("conflict")?.optBoolean("receipt") == true) "CONFLICT" else "PUBLISHED"
         } catch (e: Exception) { journal.transaction { it.put("error", e.message.orEmpty().take(1024)) }; throw e }
     }
     companion object {

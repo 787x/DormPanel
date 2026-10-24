@@ -27,12 +27,14 @@ stdin, stdout, stderr = client.exec_command("tar -xzf " + remote + "/source.tar.
 assert stdout.channel.recv_exit_status() == 0, stderr.read().decode()
 # Reuse the package's OS flock + official Node runtime, under its non-root account.
 mode = config.get("mode", "tests")
-assert mode in ("tests", "interop", "targeted")
-entry = "--test fnos-app/test/v3.test.mjs fnos-app/test/v3-engine.test.mjs"
+assert mode in ("tests", "interop", "targeted", "critical")
+entry = "--test fnos-app/test/v3.test.mjs fnos-app/test/v3-engine.test.mjs fnos-app/test/v3-metadata.test.mjs fnos-app/test/v3-recovery.test.mjs fnos-app/test/v3-index-boundaries.test.mjs"
 if mode == "interop":
     entry = "fnos-app/scripts/verify-v3-engine.mjs"
 elif mode == "targeted":
-    entry = "--test --test-name-pattern='index:|publish:|journal:|merge:|candidates:|checkpoint:|offline:|receipt:|equivalent:|resume:|evidence:' fnos-app/test/v3-engine.test.mjs"
+    entry = "--test --test-name-pattern='index:|publish:|journal:|merge:|candidates:|checkpoint:|offline:|receipt:|equivalent:|resume:|evidence:|pages:|atomic:|owner:|kill:|workspace:|index-fault:|reference:|decision:|fair:' fnos-app/test/v3-engine.test.mjs fnos-app/test/v3-metadata.test.mjs fnos-app/test/v3-recovery.test.mjs fnos-app/test/v3-index-boundaries.test.mjs"
+elif mode == "critical":
+    entry = "--test --test-name-pattern='threshold:|identity:' fnos-app/test/v3-engine.test.mjs"
 command = "cd " + remote + "; run=$(mktemp -d /tmp/dormpanel-pr54-writer-XXXXXXXX); exec 9>\"$run/.writer.lock\"; flock -n 9; id; /var/apps/nodejs_v22/target/bin/node --max-old-space-size=192 " + entry
 # shlex keeps the inner test-name argument intact through sudo's shell.
 import shlex
@@ -40,7 +42,7 @@ stdin, stdout, stderr = client.exec_command("sudo -S -p '' -u dormpanel-schedule
 stdin.write(config["password"] + "\n")
 if mode == "interop":
     probe = json.loads(pathlib.Path(config["probePath"]).read_text(encoding="utf-8"))
-    stdin.write(json.dumps({"mode": "receive-publish", "config": probe["config"], "binding": probe["binding"]}) + "\n")
+    stdin.write(json.dumps({"mode": "receive-publish", "config": probe["config"], "binding": probe["binding"], "origin": probe["origin"]}) + "\n")
 stdin.flush()
 stdin.channel.shutdown_write()
 for line in stdout:
