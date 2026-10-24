@@ -288,6 +288,7 @@ export class BackupManager {
     return d;
   }
   async create(input) {
+    ensure(!this.catalog.manifest.workspaces.some(w => w.protocol === 'v3') && !this.catalog.v3Migrations?.length, '当前备份格式不支持 v3 SQLite、Pending 与身份的完整一致性备份；拒绝生成残缺备份');
     return this.isolated(async () => {
       // 口令先检查，不在无效请求中产生私有明文副本。
       ensure(typeof input.password === 'string' && input.password.length >= 12 && Buffer.byteLength(input.password) <= 1024, '备份口令须为 12–1024 字节');
@@ -408,6 +409,7 @@ export class BackupManager {
     });
   }
   async restore(input, user) {
+    ensure(!this.catalog.manifest.workspaces.some(w => w.protocol === 'v3') && !this.catalog.v3Migrations?.length, '当前恢复格式不支持活动 v3 工作区；禁止覆盖其课程与恢复证据');
     ensure(!this.catalog.migrations.some(m => m.phase !== 'cancelled'), '迁移或退役保护禁止用旧应用备份覆盖证据');
     return this.isolated(async () => {
       const p = this.previews.get(input.token), c = this.catalog;

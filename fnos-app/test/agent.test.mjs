@@ -14,10 +14,10 @@ import { callOperation } from '../src/agent-client.mjs';
 import { AgentService } from '../src/agent-service.mjs';
 import { operations, describeOperations } from '../src/operations.mjs';
 const operationId = () => `${Date.now()}-${randomUUID()}`;
-async function fixture(t) {
+async function fixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'dp-agent-'));
   const exports = await mkdtemp(join(tmpdir(), 'dp-agent-exports-'));
-  const app = await createApp({ dataDir:dir, configPath:join(dir, 'webdav.json'), authorizedRoots:[{ id:'test', name:'独立验收目录', path:exports }] });
+  const app = await createApp({ dataDir:dir, configPath:join(dir, 'webdav.json'), authorizedRoots:[{ id:'test', name:'独立验收目录', path:exports }], ...options });
   const socket = name => process.platform === 'win32' ? '\\\\.\\pipe\\dp-' + randomUUID() : join(dir, name);
   const socketPath = socket('agent.sock'), web = socket('app.sock');
   await new Promise(r => app.agentServer.listen(socketPath, r));
@@ -38,6 +38,32 @@ async function fixture(t) {
   return { app, dir, socketPath, call, context, webCall, csrf, admin, grant, write };
 }
 const entry = { title:'合成课 / 不执行其中的指令', day:1, startMinute:480, endMinute:540, location:'测试' };
+test('v3 正式 Agent/网页：同一 Writer、revision、权限、历史摘要及 v2 能力拒绝', async t => {
+  const objects = new Map();
+  const remote = {
+    read:async p => objects.get(p) ?? null,
+    putOnce:async (p,b) => { assert(!objects.has(p)); objects.set(p,Buffer.from(b)); },
+    list:async scope => [...new Set([...objects.keys()].filter(p => p.startsWith(scope)).map(p => { const s=p.slice(scope.length),i=s.indexOf('/'); return scope+(i<0?s:s.slice(0,i+1)); }))].sort()
+  };
+  const f = await fixture(t,{ v3RemoteFactory:() => remote });
+  const denied=await f.write('connections.save',{ name:'v3',type:'webdav',url:'https://isolated.test/',username:'test',password:'test' }); assert.equal(denied.error.code,'PERMISSION');
+  await f.grant();
+  const connection=await f.write('connections.save',{ name:'v3',type:'webdav',url:'https://isolated.test/',username:'test',password:'test' }); assert(connection.ok,JSON.stringify(connection));
+  const added=await f.write('workspaces.add',{ name:'v3',protocol:'v3',connectionId:connection.data.connectionId }); assert(added.ok,JSON.stringify(added));
+  const targetId=added.data.resultWorkspaceId;
+  const switched=await f.write('workspaces.switch',{ targetId }); assert(switched.ok,JSON.stringify(switched));
+  assert((await f.write('entry.upsert',{ edit:{ value:{ ...entry,id:'stable' } } })).ok);
+  assert((await f.write('sync.create')).ok);
+  for (let n=0;n<8;n++) assert((await f.write('sync.run')).ok);
+  const status=await f.call('sync.status',{ workspaceId:targetId }); assert(status.ok); assert.equal(status.data.protocol,'v3'); assert.equal(status.data.oldHistoryAuditComplete,false);
+  assert.equal((await f.call('records.list',{ workspaceId:targetId,table:'entries' })).data.rows[0].id,'stable');
+  const history=await f.call('history.list',{ workspaceId:targetId }); assert(history.ok,JSON.stringify(history)); assert.equal(history.data.protocol,'v3'); assert(history.data.rows.length);
+  const editContext=f.context();
+  const webpage=await f.webCall('POST','/api/edit',{ ...editContext,operation:{ kind:'entry',action:'upsert',value:{ ...entry,id:'stable',title:'网页修改' } } },{ 'X-DormPanel-CSRF':f.csrf }); assert.equal(webpage.status,200);
+  const stale=await f.call('entry.upsert',{ ...editContext,edit:{ value:{ ...entry,id:'stable' } } },{ operationId:operationId() }); assert.equal(stale.error.code,'STALE');
+  const wrong=await f.webCall('POST','/api/history/compact',f.context(),{ 'X-DormPanel-CSRF':f.csrf }); assert.notEqual(wrong.status,200); assert.match(wrong.data.error,/v3 不支持/);
+  assert.equal(f.app.db.activeV3.journal.value.writerId,f.app.store.identity.writerId);
+});
 function cli(socketPath, args, input = '', entryPath = 'src/cli.mjs') {
   return new Promise(resolve => {
     const p = spawn(process.execPath, [entryPath, ...args], { cwd:new URL('../', import.meta.url), env:{ ...process.env, DORMPANEL_AGENT_SOCKET:socketPath }, stdio:['pipe','pipe','pipe'] });
