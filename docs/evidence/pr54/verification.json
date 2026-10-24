@@ -144,5 +144,40 @@
     "Every WebDAV server and all unknown offline writers",
     "All maximum-size business snapshot combinations and every hardware memory peak",
     "Production v3 binding, UI, migration, archive or GC"
-  ]
+  ],
+  "baselineEvidenceHead": "b649d18c1e8fe68c780364a1befee55432700391",
+  "workspaceTransactionRevision": {
+    "reviewBase": "b649d18c1e8fe68c780364a1befee55432700391",
+    "testedCodeHead": "1c2dab35eb779316f6615faad5b3076152006179",
+    "windowsWorkspaceTargeted": {
+      "passed": 9,
+      "failed": 0
+    },
+    "windowsAffectedV3": {
+      "passed": 23,
+      "failed": 0
+    },
+    "windowsV2WorkspacePermissions": {
+      "passed": 50,
+      "platformSkipped": 45,
+      "failed": 0
+    },
+    "nasNode22PackageUser": {
+      "uid": 993,
+      "heapMiB": 192,
+      "passed": 114,
+      "skipped": 0,
+      "failed": 0,
+      "durationSeconds": 60.244
+    },
+    "projectCheck": true,
+    "projectBuild": true,
+    "reranAndroid": false,
+    "reran1024": false,
+    "reranFullHttpsInterop": false,
+    "reranOfficialFnpack": false,
+    "readyForReview": true,
+    "merged": false,
+    "details": "docs/pr54-workspace-transaction-fix.md"
+  }
 }

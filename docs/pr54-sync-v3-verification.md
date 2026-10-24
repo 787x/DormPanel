@@ -1,5 +1,7 @@
 # PR54：同步核心合并验收
 
+> 合并前最新定向修复见 [Workspace 事务与预算验收](pr54-workspace-transaction-fix.md)，代码 HEAD `1c2dab35eb779316f6615faad5b3076152006179`。下述 68/78 项、实机与最终包记录属于先前 `b649d18c` 阶段，不能当作此次修复 HEAD 的整套重跑。
+
 审查基线为 `c5ebc339f3f9084a50adabcafc5935049af3395c`，继续更新原 PR54。初始阶段的证据和当时的阻塞项保留在 [c5ebc339 验收记录](https://github.com/787x/DormPanel/blob/c5ebc339f3f9084a50adabcafc5935049af3395c/docs/pr54-sync-v3-verification.md)，不能把该历史记录当成本轮复测。
 
 本轮实现元数据分页、增量前沿、可恢复事务、Room/Workspace 适配和跨进程拥有者。生产 v3 创建/绑定、UI、v2→v3 迁移、归档与 GC 仍未启用。正式版本号、applicationId、签名、现有 ScheduleDatabase v4、v2 checkpoint 和正式生产工厂未修改。
