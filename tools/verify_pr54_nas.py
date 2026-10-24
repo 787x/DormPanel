@@ -10,8 +10,13 @@ import paramiko
 config = json.load(sys.stdin)
 repo = pathlib.Path(__file__).resolve().parent.parent
 payload = io.BytesIO()
+patterns = ["fnos-app/src/*.mjs", "fnos-app/test/v3*.mjs", "fnos-app/test/fixtures/v3*.mjs", "fnos-app/scripts/verify-v3-engine.mjs", "schedule-core/src/test/resources/sync-v3/*"]
+workspace_regressions = ["writer", "store", "catalog", "security", "write-api", "history-observation", "migration", "backup"]
+if config.get("mode") == "workspace":
+    patterns += ["fnos-app/test/" + name + ".test.mjs" for name in workspace_regressions]
+    patterns += ["fnos-app/test/fixtures/*", "fnos-app/test/fixtures/backup-0.4.0/*", "fnos-app/web/*", "schedule-core/src/test/resources/sync-v2/*", "schedule-core/src/test/resources/schedule/*"]
 with tarfile.open(fileobj=payload, mode="w:gz") as archive:
-    for pattern in ("fnos-app/src/*.mjs", "fnos-app/test/v3*.mjs", "fnos-app/test/fixtures/v3*.mjs", "fnos-app/scripts/verify-v3-engine.mjs", "schedule-core/src/test/resources/sync-v3/*"):
+    for pattern in patterns:
         for path in repo.glob(pattern):
             if path.is_file():
                 archive.add(path, arcname=path.relative_to(repo).as_posix())
@@ -27,7 +32,7 @@ stdin, stdout, stderr = client.exec_command("tar -xzf " + remote + "/source.tar.
 assert stdout.channel.recv_exit_status() == 0, stderr.read().decode()
 # Reuse the package's OS flock + official Node runtime, under its non-root account.
 mode = config.get("mode", "tests")
-assert mode in ("tests", "interop", "targeted", "critical")
+assert mode in ("tests", "interop", "targeted", "critical", "workspace")
 entry = "--test fnos-app/test/v3.test.mjs fnos-app/test/v3-engine.test.mjs fnos-app/test/v3-metadata.test.mjs fnos-app/test/v3-recovery.test.mjs fnos-app/test/v3-index-boundaries.test.mjs"
 if mode == "interop":
     entry = "fnos-app/scripts/verify-v3-engine.mjs"
@@ -35,6 +40,8 @@ elif mode == "targeted":
     entry = "--test --test-name-pattern='index:|publish:|journal:|merge:|candidates:|checkpoint:|offline:|receipt:|equivalent:|resume:|evidence:|pages:|atomic:|owner:|kill:|workspace:|index-fault:|reference:|decision:|fair:' fnos-app/test/v3-engine.test.mjs fnos-app/test/v3-metadata.test.mjs fnos-app/test/v3-recovery.test.mjs fnos-app/test/v3-index-boundaries.test.mjs"
 elif mode == "critical":
     entry = "--test --test-name-pattern='threshold:|identity:' fnos-app/test/v3-engine.test.mjs"
+elif mode == "workspace":
+    entry = "--test fnos-app/test/v3-workspace-transaction.test.mjs fnos-app/test/v3-recovery.test.mjs " + " ".join("fnos-app/test/" + name + ".test.mjs" for name in workspace_regressions)
 command = "cd " + remote + "; run=$(mktemp -d /tmp/dormpanel-pr54-writer-XXXXXXXX); exec 9>\"$run/.writer.lock\"; flock -n 9; id; /var/apps/nodejs_v22/target/bin/node --max-old-space-size=192 " + entry
 # shlex keeps the inner test-name argument intact through sudo's shell.
 import shlex

@@ -15,28 +15,35 @@ export async function openV3Workspace(directory, writable) {
     ensure(!meta.get('state', 'frame'), 'v3 standalone state cannot silently become a Workspace');
     let identity = meta.get('installation', 'identity');
     if (!identity) { identity = { writerId: randomUUID(), installationId: randomUUID() }; meta.atomic(() => meta.put('installation', 'identity', identity)); }
-    const localFrames = new WeakSet();
     const store = { dir: directory, identity,
       read: async name => meta.get('workspace', name),
-      save: async (name, value) => { const local = name === 'workspace.json' && localFrames.delete(value), previous = meta.budget; if (local) meta.budget = new Budget({ requests: 0 }); try { meta.atomic(() => meta.put('workspace', name, value)); } finally { if (local) meta.budget = previous; } } };
+      save: async (name, value) => meta.atomic(() => meta.put('workspace', name, value)),
+      commitWorkspace(prepare, context) {
+        // Direct Workspace edits are local; Engine supplies its explicit flag.
+        // Select the budget BEFORE change(), including nested metadata writes.
+        const isLocalTransaction = context?.local ?? true, previous = meta.budget;
+        ensure(typeof isLocalTransaction === 'boolean', 'v3 transaction kind must be boolean');
+        if (isLocalTransaction) meta.budget = new Budget({ requests: 0 });
+        try { return meta.atomic(() => { const result = prepare(); meta.put('workspace', 'workspace.json', result.next); return result; }); }
+        finally { if (isLocalTransaction) meta.budget = previous; }
+      } };
     const workspace = await Workspace.open(store, null); ensure(!workspace.frame.datasetId, 'v3 adapter refuses production v2 workspace');
     workspace.guard = writable; const engineFrames = new WeakSet();
     workspace.mutationGuard = (previous, next) => {
       writable(); const internal = engineFrames.delete(next);
-      if (!internal) localFrames.add(next);
       if (!internal && previous.v3 && !same(previous.local, next.local)) next.v3 = { ...previous.v3, revision: previous.v3.revision + 1, decision: null };
     };
     const journal = { directory, meta, networkQueue: Promise.resolve(), prepareReceipt: null,
       get value() { meta.assertOpen(); const frame = workspace.snapshot(); return { ...(frame.v3 ?? { version: 2, pending: null, revision: 0 }), local: frame.local }; },
-      async transaction(change, local = false) {
+      async transaction(change, isLocalTransaction = false) {
+        ensure(typeof isLocalTransaction === 'boolean', 'v3 transaction kind must be boolean');
         await workspace.tx(frame => {
           const next = { ...(frame.v3 ?? { version: 2, pending: null, revision: 0 }), local: frame.local };
           const result = change(next); ensure(!(result instanceof Promise), 'v3 transaction must be synchronous');
-          const { local, ...control } = next; frame.local = local; frame.v3 = control;
+          const { local: courseState, ...control } = next; frame.local = courseState; frame.v3 = control;
           // MutationGuard runs synchronously after change, before the same SQLite commit.
           engineFrames.add(frame);
-          if (local) localFrames.add(frame);
-        });
+        }, undefined, { local: isLocalTransaction });
         return this.value;
       },
       async close() { await workspace.queue; meta.close(); }
