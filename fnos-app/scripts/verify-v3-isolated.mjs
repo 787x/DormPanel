@@ -5,7 +5,7 @@ import { readFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebDav } from '../src/webdav.mjs';
-import { V3WebDavStore, Budget, objectPath, datasetScope, epochScope } from '../src/v3-store.mjs';
+import { V3WebDavStore, Budget, objectPath, datasetScope, epochScope, epochsScope, scopeInfo } from '../src/v3-store.mjs';
 import { decode, sha } from '../src/v3-protocol.mjs';
 import { V3Cache } from '../src/v3-cache.mjs';
 import { Store } from '../src/store.mjs';
@@ -31,4 +31,11 @@ const reopened = new V3Cache(join(privateRoot, 'sync-v3-cache-v1'), new Budget()
 let reads = 0; for (const entry of reopened.index()) await reopened.load(entry.path, { read: async () => { reads++; throw Error('cache miss'); } });
 assert.equal(reads, 0);
 assert.equal((await remote.list('')).length, 1);
-console.log(JSON.stringify({ result: 'PASS', isolatedPath: probe.pathname, objects: 7, cacheReopened: 7, remoteReadsOnCacheHit: reads }));
+const epochs = new Set(reopened.index().filter(e => e.type !== 1).map(e => epochScope(e.datasetId, e.epochId)));
+const queue = [epochsScope(reopened.index()[0].datasetId)], discovered = new Set(); let prefixListings = 0;
+while (queue.length) {
+  const children = await remote.list(queue.shift()); prefixListings++;
+  for (const child of children) { if (scopeInfo(child).kind === 'epoch') discovered.add(child); else queue.push(child); }
+}
+assert.deepEqual(discovered, epochs);
+console.log(JSON.stringify({ result: 'PASS', isolatedPath: probe.pathname, objects: 7, cacheReopened: 7, remoteReadsOnCacheHit: reads, discoveredEpochs: discovered.size, prefixListings }));

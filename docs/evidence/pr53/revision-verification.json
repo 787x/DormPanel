@@ -1,0 +1,85 @@
+{
+  "reviewBase": "8963efe298baf43c635dc5f21c9441c2b069721b",
+  "layout": "dataset-<UUID>/epochs/<16 two-digit raw UUID hex segments>/",
+  "kotlin": {
+    "tests": 9,
+    "failures": 0,
+    "includesCompilation": true,
+    "mockWebDavEpochs": 300,
+    "maxPrefixChildren": 256,
+    "listRequestsPerRound": 3
+  },
+  "windowsNode": {
+    "tests": 38,
+    "pass": 34,
+    "fail": 0,
+    "skipped": 4
+  },
+  "nasNode": {
+    "tests": 38,
+    "pass": 38,
+    "fail": 0,
+    "skipped": 0
+  },
+  "localFaultCases": [
+    "staged concurrent list",
+    "throw before publication",
+    "exclusive link EEXIST preserves different target",
+    "SIGKILL staged then reopen",
+    "SIGKILL published then reopen"
+  ],
+  "nasLocalEpochs": 300,
+  "nasMaxPrefixChildren": 256,
+  "retainedUnknownStages": true,
+  "webdav": {
+    "result": "PASS",
+    "isolatedPath": "/dormpanel/pr53-6093db1b-6e27-460c-b496-35a106fe141a/",
+    "objects": 7,
+    "cacheReopened": 7,
+    "remoteReadsOnCacheHit": 0,
+    "discoveredEpochs": 2,
+    "prefixListings": 16
+  },
+  "fixedV3ObjectsUnchanged": {
+    "bad-checksum.dpv": "a8174ff52eadeb1d624c6774419d475be1a5aef75011006d47329aed059a5576",
+    "bad-descriptor-fields.dpv": "452c608408ec234cb7bbe1398c8b1a17a2569a21b587632ae5d6feda580d1b50",
+    "bad-domain.dpv": "e629ab1ffff643591546b1725095e43eaea29297dce35a79640268edb88a87d9",
+    "bad-large-count.dpv": "fff7f80e2998cd2073b96566b317a95ce772d0d181f244c2928fe959d6d84f1d",
+    "bad-large-state-length.dpv": "36de3c670f9c8a706b8fcff2bd7929cff7a77a59d9a8c19bbd45cf77b798a2a6",
+    "bad-missing-parent.dpv": "3daf1071960547952f1f8f4d8c7e5be108e6731244431b225888206cb2b15295",
+    "bad-negative-count.dpv": "5a8be2884db54b97eff6a4e075f13a6639bdb1d9b2ac95881a97c4da044d7555",
+    "bad-negative-state-length.dpv": "87191ee1ebf120551a1d52a6e44163da3ba40e218a524c34f9a5505b8efc5c0b",
+    "bad-ref-order.dpv": "73c9d1b55eba86f9b88c3ed8f40de453031f45bbcb568fb7e079075dfa8cda53",
+    "bad-reference-role.dpv": "e5c0c1d73827b7acc354f45bf594c12f1913d35ed4b0319fc1177842718b1c79",
+    "bad-reference-type.dpv": "db0171e6b41f022eea079ca0695ea633579aea8c7838d01ea7e0d44fa3a840e7",
+    "bad-tail.dpv": "1132abe2173a5d928781596d0eb7f82ee3cf00aab832f525b21d351348335d4c",
+    "bad-truncated.dpv": "24b5fd30b7bc366147be91e4dab09ef33704431665ae79780935696c4b739271",
+    "bad-type.dpv": "0a6fc539a9a0a1a39d4c5465d3c56c34f586b4addef33f7bff2953b18763398b",
+    "bad-unknown-state-field.dpv": "3c8da50a0336348b1bf6178ae1a983bf20a4da8a5240983702526689f9b3dcce",
+    "bad-utf8.dpv": "c4e6dcf0e85bda846b689fc41bc821c1ddf3fcfd2677730873fff8454d6fdcf4",
+    "bad-uuid.dpv": "b36b9c9579115dc3866327edad63dd08edcb6753f205f63975fd44d2e11821ed",
+    "bad-version.dpv": "7b28af1030b9a4af90497ed6e9f6e0dc01a77117743617fbb36d104e84f602a9",
+    "bad-zero-reference-hash.dpv": "8fef8ca45f5cd0279bce47e802e1eb539d5e42adfd19e8500d76228ee98712e7",
+    "bridge.dpv": "fa47d0f178a91c5c314d3d996fa547f84df436c1e844d36fd0a62fc5a8fd4180",
+    "checkpoint.dpv": "7dedd60207180f185d451120a1bbfe0161147354c3809791cfa6bb65b9010605",
+    "commit-complex.dpv": "302b35b118eb89e76a0ac0569c28ca0546fae8369b2fe1bd211e4da01209fa1f",
+    "commit-multi.dpv": "78fa6076512a4309e045204533fe5cea7df913aba6f7464acded063bb9fcd0b8",
+    "descriptor.dpv": "e35df97196f9e7060abe30544f8895fa9c1686054d0be865e103c026c6133fb2",
+    "genesis-empty.dpv": "f3aca4fc3a929f9c1952ec79f69ea913868d75b05e197b9f402dd89e844767e2",
+    "manifest.properties": "ff427e0644dcee7cf6225310c6e05c0cc7ce9c51b42b64fb5bdd52d6c6724776",
+    "transition.dpv": "81d18d496f8b829ceab05cd3cf3d19619a0f7cd7fd7aa5af63808ad3de47c006"
+  },
+  "pathVectorSha256": "cf8098cacc78d5be08d015f1ca12c7238b015c1675249d07ed200b76e30c04ad",
+  "v3OracleFiles": 28,
+  "v2OracleFiles": 6,
+  "cache4096Limit": "unchanged; resumable versioned cache index is a PR54 prerequisite",
+  "notRepeated": [
+    "unrelated full JVM suites",
+    "Android physical-device suites",
+    "Release APK builds",
+    "FPK packaging/install/upgrade",
+    "long soak"
+  ],
+  "physicalPowerLossTest": false,
+  "productionV3Enabled": false
+}

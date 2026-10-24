@@ -9,11 +9,56 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
 import okio.Buffer
+import org.json.JSONObject
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.RecordedRequest
 
 class SyncV3Test {
     private val root = File("src/test/resources/sync-v3")
     private fun raw(name: String) = File(root, "$name.dpv").readBytes()
     private fun cacheDir() = File(Files.createTempDirectory("dp-v3-").toFile(), "sync-v3-cache-v1")
+    @Test fun independentPathVectors() {
+        val v = JSONObject(File(root, "paths.json").readText())
+        val epochs = v.getJSONObject("epochs")
+        epochs.keys().forEach { id -> val path = epochs.getString(id); assertEquals(path, V3Paths.epoch("00000000-0000-4000-8000-000000000001", id)); assertEquals(id, V3Paths.describe(path).epochId) }
+        val objects = v.getJSONObject("objects")
+        objects.keys().forEach { name -> val path = objects.getString(name); assertEquals(path, V3Paths.path(SyncV3Codec.decode(raw(name)))); V3Paths.file(path) }
+        val scopes = v.getJSONArray("scopes"); for (n in 0 until scopes.length()) V3Paths.scope(scopes.getString(n))
+        for (key in listOf("invalidScopes", "invalidFiles")) {
+            val paths = v.getJSONArray(key)
+            for (n in 0 until paths.length()) assertThrows(Exception::class.java) { if (key == "invalidScopes") V3Paths.scope(paths.getString(n)) else V3Paths.file(paths.getString(n)) }
+        }
+        val o = SyncV3Codec.decode(raw("genesis-empty"))
+        assertThrows(Exception::class.java) { V3Paths.match(V3Paths.path(o), SyncV3Codec.encode(o.copy(epochId = "ffffffff-ffff-ffff-ffff-ffffffffffff"))) }
+    }
+    @Test fun webdavDiscoversThreeHundredEpochsAcrossBoundedRounds() = MockWebServer().use { server ->
+        val dataset = SyncV3Codec.decode(raw("genesis-empty")).datasetId
+        val expected = (256L..555L).map { V3Paths.epoch(dataset, java.util.UUID(0, it).toString()) }.toSet()
+        val children = mutableMapOf<String, MutableSet<String>>()
+        expected.forEach { path ->
+            val parts = path.split('/').filter { it.isNotEmpty() }
+            for (n in parts.indices) children.getOrPut(parts.take(n).joinToString("/", postfix = if (n == 0) "" else "/")) { linkedSetOf() } += parts.take(n+1).joinToString("/", postfix = "/")
+        }
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                assertEquals("PROPFIND", request.method)
+                val parent = request.path!!.removePrefix("/isolated/dormpanel-sync-v3/")
+                val rows = children[parent].orEmpty().joinToString("") { "<d:response><d:href>/isolated/dormpanel-sync-v3/$it</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>" }
+                return MockResponse().setResponseCode(207).setBody("<d:multistatus xmlns:d=\"DAV:\">$rows</d:multistatus>")
+            }
+        }
+        val account = WebDavAccount(server.url("/isolated/").toString(), "u", "p")
+        var queue = listOf("dataset-$dataset/epochs/"); val found = mutableSetOf<String>(); var rounds = 0; var maxChildren = 0
+        while (queue.isNotEmpty()) {
+            val store = V3WebDavStore(account, account.baseUrl, V3Budget(maxRequests = 3)); val next = queue.toMutableList()
+            repeat(3) { if (next.isNotEmpty()) {
+                val listed = store.list(next.removeAt(0)); assertTrue(listed.size <= 256); maxChildren = maxOf(maxChildren, listed.size)
+                listed.forEach { if (it in expected) found += it else next += it }
+            } }
+            queue = next.toList(); rounds++
+        }
+        assertEquals(expected, found); assertTrue(rounds > 1); assertEquals(256, maxChildren)
+    }
     @Test fun independentVectorsAndIdentity() {
         val p = Properties().apply { File(root, "manifest.properties").inputStream().use(::load) }
         root.listFiles()!!.filter { it.extension == "dpv" }.forEach { f ->

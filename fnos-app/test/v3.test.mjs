@@ -1,16 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, readdir, mkdtemp, mkdir, writeFile, unlink, symlink } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, mkdir, writeFile, unlink, symlink, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { decode, encode, sha, businessHash, check, checkReference } from '../src/v3-protocol.mjs';
-import { Budget, objectPath, file, scope, epochScope, V3LocalStore, V3WebDavStore, parseListing } from '../src/v3-store.mjs';
+import { Budget, objectPath, file, scope, scopeInfo, epochScope, V3LocalStore, V3WebDavStore, parseListing, match } from '../src/v3-store.mjs';
 import { V3Cache, Observation } from '../src/v3-cache.mjs';
 import { LocalGrants } from '../src/local.mjs';
+import { fork } from 'node:child_process';
+import { once } from 'node:events';
 
 const root = new URL('../../schedule-core/src/test/resources/sync-v3/', import.meta.url);
 const vector = n => readFile(new URL(n + '.dpv', root));
 const manifest = Object.fromEntries((await readFile(new URL('manifest.properties', root), 'utf8')).trim().split('\n').map(s => s.split('=')));
+test('独立路径向量：16 级 UUID 前缀、严格叶子和旧平铺路径拒绝', async () => {
+  const paths = JSON.parse(await readFile(new URL('paths.json', root), 'utf8'));
+  for (const [id, expected] of Object.entries(paths.epochs)) { assert.equal(epochScope('00000000-0000-4000-8000-000000000001', id), expected); assert.equal(scopeInfo(expected).epochId, id); }
+  for (const [name, expected] of Object.entries(paths.objects)) { const raw = await vector(name); assert.equal(objectPath(decode(raw)), expected); file(expected); }
+  paths.scopes.forEach(scope); paths.invalidScopes.forEach(p => assert.throws(() => scope(p))); paths.invalidFiles.forEach(p => assert.throws(() => file(p)));
+  const o = decode(await vector('genesis-empty')); assert.throws(() => match(objectPath(o), encode({ ...o, epochId: 'ffffffff-ffff-ffff-ffff-ffffffffffff' })));
+});
 for (const name of await readdir(root)) if (name.endsWith('.dpv')) test(`v3 独立固定向量 ${name}`, async () => {
   const b = await readFile(new URL(name, root));
   if (name.startsWith('bad-')) { assert.throws(() => decode(b)); return; }
@@ -89,4 +98,65 @@ test('Linux 官方授权本地目录 list/read/create、拒绝覆盖与符号链
   await symlink(join(dir, 'dormpanel-sync-v3', path), join(dir, 'dormpanel-sync-v3', parent, 'commit-00000000-0000-4000-8000-000000000099.dpv'));
   await assert.rejects(store.list(parent));
   await assert.rejects(new V3LocalStore({ ...config, directoryIdentity: 'changed' }, grants, new Budget()).read(path));
+});
+
+async function localFixture() {
+  const dir = await mkdtemp(join(tmpdir(), 'dp-v3-revision-')), grants = new LocalGrants([{ id: 'test', path: dir }]);
+  const d = await grants.directory('test'); const config = { rootId: 'test', relative: '', directoryIdentity: d.stamp }; await d.fd.close();
+  return { dir, grants, config, store: new V3LocalStore(config, grants, new Budget()) };
+}
+test('Linux 暂存中列举、故障清理和排他公开竞态均不污染协议目录', { skip: process.platform !== 'linux' }, async () => {
+  const f = await localFixture(), raw = await vector('genesis-empty'), o = decode(raw), parent = epochScope(o.datasetId, o.epochId), path = objectPath(o);
+  await f.store.prepareForIsolatedTest(parent);
+  const failing = new V3LocalStore(f.config, f.grants, new Budget(), async name => {
+    assert.equal((await stat(join(f.dir, name))).mode & 0o777, 0o700);
+    assert.deepEqual(await f.store.list(parent), []); assert.deepEqual(await f.store.list(''), [path.split('/')[0]+'/']);
+    assert((await readdir(f.dir)).includes(name)); throw Error('fault before link');
+  });
+  await assert.rejects(failing.createForIsolatedTest(path, raw, async () => assert.fail('must not publish')), /fault before link/);
+  assert.deepEqual(await f.store.list(parent), []);
+  assert(!(await readdir(f.dir)).some(n => n.startsWith('.v3-stage-')));
+  const different = encode({ ...o, writerId: o.datasetId });
+  const raced = new V3LocalStore(f.config, f.grants, new Budget(), async () => { await writeFile(join(f.dir, 'dormpanel-sync-v3', path), different); });
+  await assert.rejects(raced.createForIsolatedTest(path, raw, async () => {}), { code: 'EEXIST' });
+  assert.deepEqual(await f.store.read(path), different); assert.deepEqual(await f.store.list(parent), [path]);
+});
+test('Linux 进程 SIGKILL 后暂存残留隔离，新实例仍可列举和创建', { skip: process.platform !== 'linux' }, async t => {
+  for (const phase of ['staged', 'published']) {
+  const f = await localFixture(), raw = await vector('genesis-empty'), o = decode(raw), parent = epochScope(o.datasetId, o.epochId), path = objectPath(o);
+  await f.store.prepareForIsolatedTest(parent);
+  const worker = fork(new URL('./fixtures/v3-stage-worker.mjs', import.meta.url), [f.dir, phase], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  t.after(() => worker.kill('SIGKILL'));
+  const [message] = await once(worker, 'message', { signal: AbortSignal.timeout(10000) }); assert(message.stage.startsWith('.v3-stage-'));
+  assert.equal(message.phase, phase); const expected = phase === 'staged' ? [] : [path];
+  assert.deepEqual(await f.store.list(parent), expected);
+  const exited = once(worker, 'exit'); worker.kill('SIGKILL'); const [, signal] = await exited; assert.equal(signal, 'SIGKILL');
+  assert((await readdir(f.dir)).includes(message.stage));
+  const recovered = new V3LocalStore(f.config, f.grants, new Budget()); assert.deepEqual(await recovered.list(parent), expected);
+  await recovered.createForIsolatedTest(path, raw, async () => {}); assert.deepEqual(await recovered.read(path), raw); assert.deepEqual(await recovered.list(parent), [path]);
+  assert((await readdir(f.dir)).includes(message.stage), 'unknown crash residue must not be deleted automatically');
+  }
+});
+test('Linux 300 Epoch 在同一数据集按前缀跨预算轮次发现，无平铺目录上限', { skip: process.platform !== 'linux' }, async () => {
+  const f = await localFixture(), template = decode(await vector('genesis-empty')), expected = new Set();
+  let previous = null;
+  for (let n = 1; n <= 300; n++) {
+    const suffix = (n-1).toString(16).padStart(12, '0');
+    const o = { ...template, epochId: `01000000-0000-0000-0000-${suffix}`, objectId: `10000000-0000-0000-0000-${suffix}`, epochNumber: n,
+      refs: previous ? [{ role: 2, type: 2, epochId: previous.value.epochId, epochNumber: previous.value.epochNumber, objectId: previous.value.objectId, hash: sha(previous.raw) }] : [] };
+    const parent = epochScope(o.datasetId, o.epochId), store = new V3LocalStore(f.config, f.grants, new Budget()), raw = encode(o);
+    if (previous) checkReference(previous.raw, o.datasetId, o.descriptorHash, o.refs[0]);
+    await store.prepareForIsolatedTest(parent); await store.createForIsolatedTest(objectPath(o), raw, async () => {}); expected.add(parent); previous = { value: o, raw };
+  }
+  let queue = [`dataset-${template.datasetId}/epochs/`], seen = [], rounds = 0, maxChildren = 0;
+  while (queue.length) {
+    const store = new V3LocalStore(f.config, f.grants, new Budget({ requests: 3 })); let next = [...queue];
+    for (let n = 0; n < 3 && next.length; n++) {
+      const current = next.shift(); const children = await store.list(current); assert(children.length <= 256); maxChildren = Math.max(maxChildren, children.length);
+      for (const child of children) { if (scopeInfo(child).kind === 'epoch') seen.push(child); else next.push(child); }
+    }
+    // The next PR can persist exactly these validated scope strings between rounds/restarts.
+    queue = JSON.parse(JSON.stringify(next)); rounds++;
+  }
+  assert.deepEqual(new Set(seen), expected); assert(rounds > 1); assert.equal(maxChildren, 256);
 });

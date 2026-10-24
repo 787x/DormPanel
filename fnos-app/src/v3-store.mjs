@@ -1,5 +1,5 @@
 import { constants as C } from 'node:fs';
-import { open, mkdir, opendir, link, unlink, statfs } from 'node:fs/promises';
+import { open, mkdir, opendir, link, unlink, statfs, rmdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { ensure, uuid } from './protocol.mjs';
@@ -18,21 +18,34 @@ export class Budget {
   }
 }
 export const datasetScope = id => { uuid(id); ensure(id !== ZERO); return `dataset-${id}/`; };
-export const epochScope = (dataset, epoch) => { uuid(epoch); ensure(epoch !== ZERO); return `${datasetScope(dataset)}epoch-${epoch}/`; };
-export function scope(s) {
-  ensure(typeof s === 'string' && (s === '' || /^dataset-[0-9a-f-]{36}\/(?:epoch-[0-9a-f-]{36}\/)?$/.test(s)));
-  if (s) { ensure(s.slice(0, 45) === datasetScope(s.slice(8, 44))); if (s.length > 45) ensure(s === epochScope(s.slice(8, 44), s.slice(51, 87))); }
+export const epochsScope = dataset => datasetScope(dataset) + 'epochs/';
+export const epochScope = (dataset, epoch) => { uuid(epoch); ensure(epoch !== ZERO); return epochsScope(dataset) + epoch.replaceAll('-', '').match(/../g).join('/') + '/'; };
+/** A validated prefix is a serializable discovery cursor; a full UUID resolves without listing. */
+export function scopeInfo(s) {
+  ensure(typeof s === 'string');
+  if (s === '') return { kind: 'root', datasetId: null, epochPrefix: '', epochId: null };
+  const m = /^dataset-([0-9a-f-]{36})\/(?:epochs\/((?:[0-9a-f]{2}\/){0,16}))?$/.exec(s); ensure(m);
+  const datasetId = m[1]; datasetScope(datasetId);
+  if (s === datasetScope(datasetId)) return { kind: 'dataset', datasetId, epochPrefix: '', epochId: null };
+  const epochPrefix = (m[2] ?? '').replaceAll('/', ''); ensure(epochPrefix.length <= 32);
+  let epochId = null;
+  if (epochPrefix.length === 32) { epochId = `${epochPrefix.slice(0,8)}-${epochPrefix.slice(8,12)}-${epochPrefix.slice(12,16)}-${epochPrefix.slice(16,20)}-${epochPrefix.slice(20)}`; ensure(s === epochScope(datasetId, epochId)); }
+  return { kind: epochId ? 'epoch' : 'prefix', datasetId, epochPrefix, epochId };
 }
+export function scope(s) { scopeInfo(s); }
 export function file(s) {
-  ensure(typeof s === 'string'); const split = s.lastIndexOf('/'), parent = s.slice(0, split + 1), name = s.slice(split + 1); scope(parent);
+  ensure(typeof s === 'string'); const split = s.lastIndexOf('/'), parent = s.slice(0, split + 1), name = s.slice(split + 1), info = scopeInfo(parent);
   const m = /^(descriptor|genesis|commit|transition)-([0-9a-f-]{36})\.dpv$/.exec(name); ensure(m); uuid(m[2]); ensure(m[2] !== ZERO);
-  ensure(parent.length >= 45 && (parent.length === 45) === (m[1] === 'descriptor'));
+  ensure(m[1] === 'descriptor' ? info.kind === 'dataset' : info.kind === 'epoch');
 }
 export const objectPath = o => `${o.type === 1 ? datasetScope(o.datasetId) : epochScope(o.datasetId, o.epochId)}${['', 'descriptor', 'genesis', 'commit', 'transition'][o.type]}-${o.objectId}.dpv`;
 export function match(path, bytes) { file(path); const o = decode(bytes); ensure(objectPath(o) === path, 'v3 path identity'); return o; }
 function child(parent, name, directory) {
-  scope(parent); const p = parent + name + (directory ? '/' : '');
-  if (directory) { scope(p); ensure(parent === '' ? p.length === 45 : parent.length === 45 && p.length === 88); } else file(p);
+  const info = scopeInfo(parent), p = parent + name + (directory ? '/' : '');
+  if (directory) {
+    const next = scopeInfo(p);
+    ensure(info.kind === 'root' ? next.kind === 'dataset' : info.kind === 'dataset' ? name === 'epochs' : info.kind === 'prefix' && /^[0-9a-f]{2}$/.test(name) && next.epochPrefix.length === info.epochPrefix.length + 2);
+  } else file(p);
   return p;
 }
 const array = x => x == null ? [] : Array.isArray(x) ? x : [x];
@@ -92,13 +105,19 @@ export class V3WebDavStore {
 const dirs = C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW, fdPath = (f, name = '') => `/proc/self/fd/${f.fd}${name ? '/' + name : ''}`;
 /** Only LocalGrants can open the selected official authorized directory. Linux fd-relative traversal. */
 export class V3LocalStore {
-  constructor(config, grants, budget) { Object.assign(this, { config, grants, budget }); }
-  async directory(parent, create = false) {
-    scope(parent); this.budget.charge();
-    let { fd, path: selected } = await this.grants.directory(this.config.rootId, this.config.relative, this.config.directoryIdentity);
+  constructor(config, grants, budget, afterStageForIsolatedTest = async () => {}) { Object.assign(this, { config, grants, budget, afterStageForIsolatedTest }); }
+  async parent() {
+    this.budget.charge();
+    const selected = await this.grants.directory(this.config.rootId, this.config.relative, this.config.directoryIdentity);
     try {
-      ensure(!selected.split('/').some(p => ['dormpanel-sync-v2', 'dormpanel-sync-v3'].includes(p)), 'v3 parent is inside protocol namespace');
-      if (this.config.protected) ensure(((await fd.stat()).mode & 0o777) === 0o700, 'v3 protected permissions changed');
+      ensure(!selected.path.split('/').some(p => ['dormpanel-sync-v2', 'dormpanel-sync-v3'].includes(p)), 'v3 parent is inside protocol namespace');
+      if (this.config.protected) ensure(((await selected.fd.stat()).mode & 0o777) === 0o700, 'v3 protected permissions changed');
+      return selected;
+    } catch (e) { await selected.fd.close(); throw e; }
+  }
+  async directory(parent, create = false) {
+    scope(parent); let { fd } = await this.parent();
+    try {
       for (const part of ['dormpanel-sync-v3', ...parent.split('/').filter(Boolean)]) {
         if (create) { try { await mkdir(fdPath(fd, part), { mode: 0o700 }); await fd.sync(); } catch (e) { if (e.code !== 'EEXIST') throw e; } }
         const next = await open(fdPath(fd, part), dirs); await fd.close(); fd = next;
@@ -130,18 +149,33 @@ export class V3LocalStore {
     } catch (e) { if (e.code === 'ENOENT') return null; throw e; } finally { await f?.close(); await fd?.close(); }
   }
   async createForIsolatedTest(path, raw, beforeWriteIntent) {
+    raw = Buffer.from(raw);
     match(path, raw); const old = await this.read(path); if (old) { ensure(old.equals(raw), 'v3 occupied'); return; }
-    const fd = await this.directory(path.slice(0, path.lastIndexOf('/') + 1)); const stage = '.v3-stage-' + randomUUID(); let f;
+    let protocol, parent, stage, f, created = false;
+    const stageName = '.v3-stage-' + randomUUID();
     try {
-      const fs = await statfs(fdPath(fd)); ensure([0xef53, 0x9123683e, 0x58465342, 0x01021994, 0x794c7630].includes(fs.type), 'v3 unverified filesystem');
-      this.budget.charge(raw.length, 0); await beforeWriteIntent(); this.budget.charge(0, 0);
-      f = await open(fdPath(fd, stage), C.O_WRONLY | C.O_CREAT | C.O_EXCL | C.O_NOFOLLOW, 0o600);
+      protocol = await this.directory(path.slice(0, path.lastIndexOf('/') + 1)); parent = await this.parent();
+      const fs = await statfs(fdPath(parent.fd)); ensure([0xef53, 0x9123683e, 0x58465342, 0x01021994, 0x794c7630].includes(fs.type), 'v3 unverified filesystem');
+      ensure((await parent.fd.stat()).dev === (await protocol.stat()).dev, 'v3 cross-filesystem publication');
+      this.budget.charge(raw.length, 0);
+      // Private sibling of dormpanel-sync-v3, following LocalCommitStore's no-follow/link/fsync boundary.
+      await mkdir(fdPath(parent.fd, stageName), { mode: 0o700 }); created = true; await parent.fd.sync();
+      stage = await open(fdPath(parent.fd, stageName), dirs); ensure(((await stage.stat()).mode & 0o777) === 0o700);
+      f = await open(fdPath(stage, 'content'), C.O_WRONLY | C.O_CREAT | C.O_EXCL | C.O_NOFOLLOW, 0o600);
       await f.writeFile(raw); await f.chmod(0o444); await f.sync(); await f.close(); f = null;
-      await link(fdPath(fd, stage), fdPath(fd, path.split('/').at(-1))); await fd.sync();
+      await stage.sync(); await this.afterStageForIsolatedTest(stageName, 'staged');
+      this.budget.charge(0, 0); await beforeWriteIntent(); this.budget.charge(0, 0);
+      await link(fdPath(stage, 'content'), fdPath(protocol, path.split('/').at(-1))); await protocol.sync();
+      await this.afterStageForIsolatedTest(stageName, 'published');
     } finally {
-      await f?.close();
-      try { await unlink(fdPath(fd, stage)); await fd.sync(); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-      finally { await fd.close(); }
+      try {
+        await f?.close();
+        if (stage) { try { await unlink(fdPath(stage, 'content')); } catch (e) { if (e.code !== 'ENOENT') throw e; } await stage.sync(); }
+      } finally {
+        await stage?.close();
+        try { if (created) { await rmdir(fdPath(parent.fd, stageName)); await parent.fd.sync(); } }
+        finally { await protocol?.close(); await parent?.fd.close(); }
+      }
     }
     ensure((await this.read(path))?.equals(raw), 'v3 uncertain local write');
   }

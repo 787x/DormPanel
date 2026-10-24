@@ -72,6 +72,23 @@ def output():
     files['bad-checksum.dpv'] = raw[:-1] + bytes([raw[-1] ^ 1])
     files['bad-truncated.dpv'] = raw[:-1]
     files['manifest.properties'] = ''.join(f'{k}={v}\n' for k,v in sorted(manifest.items())).encode()
+    def epoch_path(dataset, epoch):
+        digits = epoch.replace('-', '')
+        return f'dataset-{dataset}/epochs/' + '/'.join(digits[j:j+2] for j in range(0, 32, 2)) + '/'
+    base = f'dataset-{uid(1)}/'
+    examples = [uid(10), '01234567-89ab-cdef-0123-456789abcdef', 'ffffffff-ffff-ffff-ffff-ffffffffffff']
+    objects = {name: (base if obj['type'] == 1 else epoch_path(obj['datasetId'], obj['epochId'])) +
+               ['', 'descriptor', 'genesis', 'commit', 'transition'][obj['type']] + '-' + obj['objectId'] + '.dpv'
+               for name, (obj, _) in vectors().items()}
+    paths = dict(epochs={e: epoch_path(uid(1), e) for e in examples}, objects=objects,
+                 scopes=['', base, base+'epochs/'] + [base+'epochs/'+'00/'*j for j in range(1,16)],
+                 invalidScopes=[base+'epoch-'+uid(10)+'/', base+'epochs/0/', base+'epochs/AA/',
+                                base+'epochs/'+'00/'*16, base+'epochs/'+'01/'*17,
+                                base+'epochs/../', base+'epochs/%30%30/'],
+                 invalidFiles=[base+'epoch-'+uid(10)+'/commit-'+uid(5)+'.dpv',
+                               base+'epochs/00/commit-'+uid(5)+'.dpv',
+                               epoch_path(uid(1),uid(10))+'descriptor-'+uid(3)+'.dpv'])
+    files['paths.json'] = (json.dumps(paths, indent=2, ensure_ascii=False)+'\n').encode()
     return files
 if __name__ == '__main__':
     import sys

@@ -13,27 +13,49 @@ class V3Budget(private val maxRequests: Int = 512, private val maxBytes: Long = 
     @Synchronized fun readLimit(max: Int): Int { charge(0, 0); return minOf(max.toLong(), maxBytes - bytes).toInt() }
 }
 
+data class V3Scope(val kind: String, val datasetId: String? = null, val epochPrefix: String = "", val epochId: String? = null)
+
 object V3Paths {
     const val ROOT = "dormpanel-sync-v3/"
     fun dataset(id: String): String { ScheduleCommitCodec.uuid(id); require(id != SyncV3Codec.ZERO); return "dataset-$id/" }
-    fun epoch(dataset: String, epoch: String): String { ScheduleCommitCodec.uuid(epoch); require(epoch != SyncV3Codec.ZERO); return dataset(dataset) + "epoch-$epoch/" }
+    fun epochs(dataset: String) = dataset(dataset) + "epochs/"
+    fun epoch(dataset: String, epoch: String): String {
+        ScheduleCommitCodec.uuid(epoch); require(epoch != SyncV3Codec.ZERO)
+        return epochs(dataset) + epoch.replace("-", "").chunked(2).joinToString("/", postfix = "/")
+    }
     fun path(o: V3Object): String = (if (o.type == 1) dataset(o.datasetId) else epoch(o.datasetId, o.epochId)) +
         listOf("", "descriptor", "genesis", "commit", "transition")[o.type] + "-${o.objectId}.dpv"
-    fun scope(s: String) {
-        require(s == "" || s.matches(Regex("dataset-[0-9a-f-]{36}/(?:epoch-[0-9a-f-]{36}/)?")))
-        if (s.isNotEmpty()) { require(dataset(s.substring(8, 44)) == s.take(45)); if (s.length > 45) require(epoch(s.substring(8, 44), s.substring(51, 87)) == s) }
+    /** Validated prefix strings can be persisted as bounded discovery cursors. */
+    fun describe(s: String): V3Scope {
+        if (s.isEmpty()) return V3Scope("root")
+        val m = requireNotNull(Regex("dataset-([0-9a-f-]{36})/(?:epochs/((?:[0-9a-f]{2}/){0,16}))?").matchEntire(s))
+        val dataset = m.groupValues[1]; dataset(dataset)
+        if (s == dataset(dataset)) return V3Scope("dataset", dataset)
+        val prefix = m.groupValues[2].replace("/", ""); require(prefix.length <= 32)
+        if (prefix.length < 32) return V3Scope("prefix", dataset, prefix)
+        val epochId = "${prefix.take(8)}-${prefix.substring(8,12)}-${prefix.substring(12,16)}-${prefix.substring(16,20)}-${prefix.substring(20)}"
+        require(s == epoch(dataset, epochId)); return V3Scope("epoch", dataset, prefix, epochId)
     }
+    fun scope(s: String) { describe(s) }
     fun file(s: String) {
-        val scope = s.substringBeforeLast('/', "") + "/"; scope(scope)
+        val parent = s.substringBeforeLast('/', "") + "/"; val info = describe(parent)
         val name = s.substringAfterLast('/'); val match = Regex("(descriptor|genesis|commit|transition)-([0-9a-f-]{36})\\.dpv").matchEntire(name)
         requireNotNull(match); ScheduleCommitCodec.uuid(match.groupValues[2]); require(match.groupValues[2] != SyncV3Codec.ZERO)
-        require((scope.length == 45) == (match.groupValues[1] == "descriptor"))
+        require(if (match.groupValues[1] == "descriptor") info.kind == "dataset" else info.kind == "epoch")
     }
     fun match(path: String, raw: ByteArray): V3Object { file(path); return SyncV3Codec.decode(raw).also { require(path(it) == path) } }
     fun child(scope: String, name: String, directory: Boolean): String {
-        scope(scope)
+        val info = describe(scope)
         val p = scope + name + if (directory) "/" else ""
-        if (directory) { scope(p); require(if (scope.isEmpty()) p.length == 45 else scope.length == 45 && p.length == 88) }
+        if (directory) {
+            val next = describe(p)
+            require(when (info.kind) {
+                "root" -> next.kind == "dataset"
+                "dataset" -> name == "epochs"
+                "prefix" -> name.matches(Regex("[0-9a-f]{2}")) && next.epochPrefix.length == info.epochPrefix.length + 2
+                else -> false
+            })
+        }
         else file(p)
         return p
     }

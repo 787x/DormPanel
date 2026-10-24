@@ -8,12 +8,18 @@
 
 ```text
 dataset-<datasetId>/descriptor-<objectId>.dpv
-dataset-<datasetId>/epoch-<epochId>/genesis-<objectId>.dpv
-dataset-<datasetId>/epoch-<epochId>/commit-<objectId>.dpv
-dataset-<datasetId>/epoch-<epochId>/transition-<objectId>.dpv
+dataset-<datasetId>/epochs/<e00>/<e01>/.../<e15>/genesis-<objectId>.dpv
+dataset-<datasetId>/epochs/<e00>/<e01>/.../<e15>/commit-<objectId>.dpv
+dataset-<datasetId>/epochs/<e00>/<e01>/.../<e15>/transition-<objectId>.dpv
 ```
 
-各目录只列举直属子项：根仅 dataset 目录；dataset 目录仅 descriptor 文件及 epoch 目录；epoch 目录仅 genesis/commit/transition 文件。每个目录本轮至多 256 个直属子项（含目录）；超过时停止并保留本地数据，不截断后宣布成功。后续引擎应在每代达到容量前启动换代；过多分代的根发现也可能预算耗尽，必须恢复有界巡检而不能承诺一次完整发现。
+Epoch 路径为**UUID 原始十六进制的固定深度字节树**：从规范小写 epochId 删除四个连字符，得到 32 个十六进制字符，按从左至右每两个字符拆成 16 段 e00..e15（每段精确为 `00`..`ff`）。不哈希、不取模、不使用 epochNumber，不保留 `epoch-<UUID>` 叶名称。例如 `01234567-89ab-cdef-0123-456789abcdef` 的叶目录为 `epochs/01/23/45/67/89/ab/cd/ef/01/23/45/67/89/ab/cd/ef/`。这是身份的无损、一一对应编码，不会因分桶碰撞而使某个桶累计任意多个 Epoch。
+
+各目录只列举直属子项：根仅 dataset 目录；dataset 目录仅 descriptor 文件及唯一的 `epochs/` 目录；`epochs/` 和不足 16 段的前缀目录仅接受两位小写 hex 子目录；恰好 16 段的叶才是 Epoch 目录，仅接受 genesis/commit/transition 文件。全零 UUID 的完整叶非法，允许全零的中间前缀。禁止旧版草案平铺路径、浅层业务文件、叶下子目录、多余第 17 段、大小写/编码别名或错误对象身份。引用中的 epochId 和解码后的叶 UUID 必须一致。
+
+每个目录本轮仍至多 256 个直属子项（含目录），超限安全停止，不截断后宣布成功。字节树内部每个节点至多 256 个合法分支，叶唯一对应一个 Epoch，因而这一预算不会再成为单个数据集的累计 Epoch 数上限；叶内对象容量仍有限，后续引擎应在其达到容量前启动换代。根下 dataset 数量仍有单次列举限制，本次修订不引入多数据集管理扩展。多代发现仍可能跨轮耗尽请求/字节/时间预算，需要恢复有界巡检，不能承诺一轮完整发现。
+
+本布局在 v3 正式启用前修订：DPV3 对象字节和引用不变，Kotlin/Node 路径接口及独立 `paths.json` 向量共同冻结新布局。旧草案的隔离测试目录/缓存不自动迁移、不删除；遇旧路径明确拒绝，使用新测试目录。v2 路径与字节不受影响。
 
 UUID 是固定 36 字节小写 ASCII `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`，接受所有十六进制版本位；新身份用安全随机 UUIDv4。`ZERO` 为全零 UUID，仅用作 descriptor 的无 Epoch 哨兵。实际 dataset/object/writer/epoch 身份不得为 ZERO。UUID 不是认证信息：授权仍由服务器/官方本地目录权限管理。
 
@@ -101,7 +107,11 @@ Transition 存在于源 Epoch，固定源前沿与目标 Genesis 的完整哈希
 
 ## 5. 分代发现与普通 WebDAV 的限制
 
-新设备有界列举根/dataset/epoch 目录，读取 descriptor、所有本轮发现的 Transition 及引用目标；每条继承链须验证到已确认根。预算内未完成则持久化发现队列和待验证引用，不绑定成“唯一最新”。某次空目录、404、最大序号或服务器 mtime 都不能证明没有其他代。
+新设备有界列举根/dataset/epochs 前缀树，只有完整 16 段叶才进入 Epoch 对象列举，读取 descriptor、所有本轮发现的 Transition 及引用目标；每条继承链须验证到已确认根。叶目录存在或可为空只是一项路径观察，不证明存在合法 Genesis 或换代已提交。预算内未完成则持久化发现队列和待验证引用，不绑定成“唯一最新”。某次空目录、404、最大序号或服务器 mtime 都不能证明没有其他代。
+
+路径接口 `epochsScope/epochs(dataset)` 返回字节树根，`epochScope/epoch(dataset, epochId)` 可在不列举祖先目录的情况下精确定位任意引用的 Epoch；`scopeInfo/describe(scope)` 返回 root/dataset/prefix/epoch、datasetId、已展开的 epochPrefix 及完整叶的 epochId。`list(scope)` 只返回经过严格验证的完整直属路径，可直接存成下一轮的前缀队列。路径前缀深度有界为 16，每个列表最多 256 项，无需服务器分页、CAS、LOCK、可信 mtime 或可变全局 head。
+
+PR54 的增量发现实现应持久保存协议布局版本、已绑定 dataset/descriptor、待扫描 scope 队列/已观察子路径、已知引用及巡检轮次。一个目录的列表验证完后再原子提交其子任务与游标；提交前中断可重列当前 scope，不能将部分解析的列表记成已完成。已观察的子项即使暂时漏列也保留并直接回查。队列很大时分批落盘，不能无界保存在内存。跨轮暂停不得在同一轮重置预算；下一轮恢复时重新验证 scope，实际重列进度与远端当前完整性是不同证据。新前缀或迟到 Epoch 可能在已扫描前缀出现，完成一次前缀扫描不代表永久封存，必须公平轮转重扫已知内部前缀（包括 `epochs/`）并沿 Transition/父引用直接定位对象。此处定义可实现的恢复接口，PR53 只在测试中模拟分批队列，不启用生产发现算法。
 
 已绑定设备从持久已知代及待验证路径增量读取，按各源代的 Transition 发现目标，再核验 Genesis 和继承；可重新列举 dataset 目录补充漏列的独立候选。已知 Transition/父引用必须按精确路径回查，即使后续列表漏列它。观察过但不可验证的路径不能因下一次漏列而忘记，未来引擎需持久化该清单与分页/巡检进度。没有全局可变 head。
 
@@ -125,7 +135,11 @@ Transition 存在于源 Epoch，固定源前沿与目标 Genesis 的完整哈希
 
 换代先确认目标 Genesis，再确认源 Transition，最后在本地事务提交活动代选择；任一步中断保留日志，不能因为新代目录存在就切换。更换候选身份须保留原不确定对象和相应 Genesis/Transition 引用；由后续协调器生成整体一致的新候选，不能只改某个 objectId。冲突、并发候选、共同基线未知时停在待决状态。
 
+本地 create 沿用既有 LocalCommitStore 的安全边界：通过官方 LocalGrants 与目录身份检查打开选定父目录，仅在已验证文件系统且与目标同设备时，在 `dormpanel-sync-v3/` **之外**创建随机兄弟目录 `.v3-stage-<UUID>/`（精确权限 0700）。所有访问通过固定目录 FD 和 O_NOFOLLOW；候选 content 文件写入、chmod 0444、fsync，暂存目录 fsync 后，紧邻公开前调用持久意图回调，通过排他 hard link 原子公开到目标路径，再 fsync 目标目录并精确回读。已有不同内容或 link EEXIST 绝不覆盖。正式协议文件名规则不允许任何 `.v3-stage-*`。写前/公开后测试钩子只用于隔离故障测试，不进入正式发布协调器。正常 finally 仅清理本次暂存目录并 fsync 父目录；SIGKILL 等造成的未知残留留在协议目录外，不会出现在任何正式 list 中，也不自动清理以免破坏恢复证据。后续协调器仍须处理 attempted 日志与残留的关联，但正常 Epoch 列举不依赖残留清理。
+
 缓存独立目录名 `sync-v3-cache-v1`，位于应用私有存储（Android 用独立文件日志，不改 Room schema；FPK 与 workspace.json 分离）。完整 `.dpv` 按完整内容哈希命名；不可变路径→预期哈希 receipt 使用原子 rename、文件 fsync 和受支持平台的目录 fsync，在 blob 前持久化。索引项从经验证原始对象重建，记录 path、hash、size、type、dataset、Epoch 和全部 refs；缺 blob 的 receipt 保留预期身份，远端恢复必须匹配。对象写后索引未更新时，重启可校验孤儿并重建索引；残缺 temp 不可信。已知哈希文件损坏/路径同身份不同内容安全停止，不自动覆盖修复。缓存只有一个拥有者/写队列；不能让多个进程各自打开目录竞争，后续集成必须复用既有 Writer/事务保护。
+
+**PR54 前置条件：缓存分批恢复。** 当前私有缓存仍为平铺 blob/receipt，启动恢复上限 4096 个目录项，且受 64 MiB/90 秒预算约束；一对象通常占两个目录项，因此实际会在约 2048 个对象前后（还有 temp 等）耗尽数量预算，也可能先耗尽字节预算。Epoch 远端路径分层没有解决这个本地限制，本 PR 不宣称长期多 Epoch 全缓存可用。PR54 在正式启用长期多代同步前，必须实现：独立版本化/可恢复索引格式；确定性分桶或可游标枚举的持久索引；在事务中保存分批重建游标及已验证 receipt 预期身份；按需逐对象哈希重验，不要求一次启动解码全历史；对恢复日志/待发布候选引用对象持久 pin，不能以预算为理由删除。每批继续受同轮预算限制，重启可重放当前批，未完成的索引不能冒充完整历史闭包。升级现有隔离缓存时须显式可恢复，保留 v2 与业务存储，并补充超过 4096 项、批中断和原日志引用保护测试。PR53 保持现有安全停止行为，不简单提高或移除上限。
 
 当前不自动删除孤儿、temp 或 blob，避免误删尚被恢复日志引用的数据。启动不修改 v2 graph.raw/checkpoint、Room 业务行或 FPK 日用工作区。Windows JVM 的目录 fsync 不可用，只用于开发测试；目标 Android/Linux 实施目录 fsync，真实掉电保证仍取决于私有文件系统，不能用 JVM 测试代替实机掉电测试。
 
