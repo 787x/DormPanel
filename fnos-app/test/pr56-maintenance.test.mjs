@@ -73,6 +73,15 @@ test('PR56 WAL 一致性快照：全部行及 Pending/capture 精确保留',asyn
   const {DatabaseSync}=await import('node:sqlite'), copy=new DatabaseSync(target,{readOnly:true});
   try{assert.deepEqual(copy.prepare('SELECT * FROM v3_records ORDER BY seq').all(),f.db.activeV3.journal.meta.db.prepare('SELECT * FROM v3_records ORDER BY seq').all());}finally{copy.close();}
 });
+test('PR56 audit: 预算中断后重开从持久游标继续，业务和远端对象不变',async t=>{
+  const f=await fixture(t);await f.sync({create:true});await f.settle();let m=new V3Maintenance(f.catalog,f.id);
+  const before=f.db.snapshot(),puts=f.remote.puts,listing=f.remote.list;let calls=0;
+  f.remote.list=async p=>{if(++calls===2)throw Error('v3 budget exhausted');return listing(p);};
+  const paused=await m.audit();assert.equal(paused.status,'BUDGET');const cursor=m.meta.get('control','scopeAudit');assert(cursor);assert.deepEqual(f.db.snapshot(),before);
+  f.remote.list=listing;await f.catalog.close();const reopened=await Catalog.open({store:f.catalog.store,configPath:join(f.dir,'config.json'),v3RemoteFactory:()=>f.remote});t.after(()=>reopened.close());await reopened.load(f.id);
+  m=new V3Maintenance(reopened,f.id);m.local();assert.deepEqual(m.meta.get('control','scopeAudit'),cursor);
+  const result=await m.audit();assert.equal(result.status,'BOUNDED');assert.equal(result.oldHistoryAuditComplete,false);assert.deepEqual(reopened.db(f.id).snapshot(),before);assert.equal(f.remote.puts,puts);
+});
 test('PR56 rollback: 审计观察到新前沿但业务未接收时拒绝预览，不能漏掉远端修改',async t=>{
   const f=await fixture(t);await f.sync({create:true});await f.settle();const m=new V3Maintenance(f.catalog,f.id),root=m.list().rows.find(r=>r.type===2);
   const {decode,encode}=await import('../src/v3-protocol.mjs'),{objectPath}=await import('../src/v3-store.mjs'),{reference}=await import('../src/v3-history.mjs'),{randomUUID}=await import('node:crypto');
@@ -97,6 +106,12 @@ test('PR56 清理保护所有持久引用，候选变化拒绝；原子回执及
   await assert.rejects(m.cleanup({...pinPlan,confirm:'整理本地冗余快照'},'admin'),/变化/);
   meta.atomic(()=>meta.put('futureUnknown','protected',{version:99}));
   await assert.rejects(m.cleanupPreview({},'admin'),/未知/);
+});
+test('PR56 partial-index: 身份索引缺失时保护全部快照，不生成删除决策',async t=>{
+  const f=await fixture(t);await f.sync({create:true});await f.settle();const m=new V3Maintenance(f.catalog,f.id),node=m.list().rows[0],count=m.meta.count('snapshot');
+  m.meta.atomic(()=>m.meta.remove('identity',node.objectId));
+  assert.equal(m.list().rows.find(r=>r.id===node.id).status,'INDEX_INCOMPLETE');
+  await assert.rejects(m.cleanupPreview({},'admin'),/索引缺失/);assert.equal(m.meta.count('snapshot'),count);
 });
 test('PR56 八类 RAW 历史详情与差异保留完整稳定身份和 null/空字符串',async t=>{
   const f=await fixture(t),{readFile}=await import('node:fs/promises'),{decode}=await import('../src/v3-protocol.mjs');
@@ -130,6 +145,15 @@ test('PR56 清理事务中断：提交前不删除，提交后重开返回同一
   const {unlink}=await import('node:fs/promises'),{IndexedV3Cache}=await import('../src/v3-index.mjs'),{Budget}=await import('../src/v3-store.mjs');
   const cache=new IndexedV3Cache(m.journal.directory,new Budget()),path=m.list().rows.find(r=>r.type===2).path, bytes=await cache.get(path);await unlink(cache.blob(path));
   let restored=await m.restoreArchive(job.location,'admin');assert(restored.restoredObjects>0);while(!restored.complete)restored=await m.restoreArchive(job.location,'admin');assert(restored.knownReferenceClosureVerified);assert.deepEqual(await cache.get(path),bytes);assert.equal(f.remote.puts,puts);
+  const {readFile,writeFile}=await import('node:fs/promises'),manifestPath=join(exports,job.location.relative,'verified.json'),manifest=JSON.parse(await readFile(manifestPath,'utf8'));manifest.frontier=[];
+  await writeFile(manifestPath,JSON.stringify(manifest));
+  await assert.rejects(async()=>{for(let i=0;i<8;i++)await m.restoreArchive(job.location,'admin');},/前沿/);
+});
+test('PR56 archive: 只有绑定而未索引 Descriptor 时拒绝生成空成功归档',async t=>{
+  const f=await fixture(t),{readFile}=await import('node:fs/promises'),{decode,sha}=await import('../src/v3-protocol.mjs');
+  const bytes=await readFile(new URL('../../schedule-core/src/test/resources/sync-v3/descriptor.dpv',import.meta.url));
+  await f.db.activeV3.engine.bind(decode(bytes),sha(bytes));const m=new V3Maintenance(f.catalog,f.id);
+  await assert.rejects(m.archive({rootId:'ungranted'},'admin'),/Descriptor/);assert.equal(m.meta.count('archiveJob'),0);
 });
 (process.platform==='linux'?test:test.skip)('PR56 混合 v2/v3 加密备份实际创建、验证、恢复及旧状态拒绝',async t=>{
   const f=await fixture(t);await f.sync({create:true});await f.settle();

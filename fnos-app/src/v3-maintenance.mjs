@@ -28,10 +28,12 @@ export class V3Maintenance {
     const ns=namespaces[status], scanned=this.meta.page(ns,after,limit), rows=[];
     for(const row of scanned) {
       const node=ns==='node'?row.value:this.meta.get('node',row.key);
+      const anomaly=ns==='error'?row.value:this.meta.get('error',row.key), indexVerified=!!node && this.meta.get('identity',node.objectId)?.path===row.key;
       if(input.epoch && node?.epochId!==input.epoch || input.writer && node?.writerId!==input.writer || input.type && node?.type!==Number(input.type))continue;
       if(input.since && (!node?.verifiedAt || node.verifiedAt<Number(input.since)) || input.until && (!node?.verifiedAt || node.verifiedAt>Number(input.until)))continue;
       // DPV3 does not encode a wall-clock creation timestamp. Never substitute file mtime.
-      rows.push({seq:row.seq,path:row.key,id:node?.objectId??row.key,...(node??{}),...row.value,status:ns==='node'?'VERIFIED':ns==='error'?'ERROR':ns==='epoch'?(row.value.active?'ACTIVE_EPOCH':'INACTIVE_EPOCH'):node?'VERIFIED':'OBSERVED',createdAt:null});
+      rows.push({seq:row.seq,path:row.key,id:node?.objectId??row.key,...(node??{}),...row.value,indexVerified,anomaly:anomaly??null,
+        status:node && !indexVerified?'INDEX_INCOMPLETE':anomaly?(indexVerified?'VERIFIED_WITH_ANOMALY':'ERROR'):ns==='node'?'VERIFIED':ns==='epoch'?(row.value.active?'ACTIVE_EPOCH':'INACTIVE_EPOCH'):node?'VERIFIED':'OBSERVED',createdAt:null});
     }
     const last=scanned.at(-1)?.seq??after, s=this.journal.value;
     return {protocol:'v3',datasetId:s.binding?.datasetId,descriptor:s.binding,activeEpoch:s.activeEpoch,
@@ -158,10 +160,13 @@ export class V3Maintenance {
     this.local();let job=input.jobId?this.meta.get('archiveJob',input.jobId):null;
     if(!job) {
       ensure(!input.jobId && this.journal.value.binding,'归档任务不存在');
+      const binding=this.journal.value.binding,descriptor=this.meta.get('node',binding.descriptorPath);
+      ensure(descriptor?.type===1 && descriptor.hash===binding.descriptorHash,'Descriptor 尚未进入已验证索引，请先继续历史审计');
+      ensure(!this.meta.page('activate',0,1).length,'当前前沿索引尚未完成，请先继续历史审计');
       const location=await this.catalog.grants.protectedFolder(input.rootId,input.relative??'','history-'+randomUUID());
       job={id:randomUUID(),user,location,binding:this.journal.value.binding,startedAt:Date.now(),ceiling:this.meta.lastSeq('node'),after:0,formatVersion:2,pageCount:0,chainHash:null,buffer:[],
         frontier:this.meta.page('frontier',0,65).map(r=>r.key),observed:this.meta.count('observed'),anomalies:this.meta.count('error'),scanPending:this.meta.count('scan'),validationPending:this.meta.count('todo'),status:'COPYING',
-        evidence:{lastAudit:this.meta.get('maintenance','audit'),scopeCursor:this.meta.get('control','scopeAudit'),objectCursor:this.meta.get('control','objectAudit'),
+        evidence:{sourceControl:{pendingPhase:this.journal.value.pending?.phase??null,initializationRemaining:this.journal.value.initialization?.length??0,rotation:!!this.journal.value.rotation,conflict:!!this.journal.value.conflict},lastAudit:this.meta.get('maintenance','audit'),scopeCursor:this.meta.get('control','scopeAudit'),objectCursor:this.meta.get('control','objectAudit'),
           incompleteScopes:this.meta.page('scan',0,16),unverifiedObjects:this.meta.page('todo',0,16),anomalySample:this.meta.page('error',0,16).map(r=>({seq:r.seq,path:r.key,reason:String(r.value.reason??'').slice(0,512)})),samplesOnly:true}};
       this.meta.atomic(()=>this.meta.put('archiveJob',job.id,job));
     }
@@ -172,11 +177,11 @@ export class V3Maintenance {
     const rows=this.meta.page('node',job.after,1,job.ceiling), objects=job.buffer??[];
     for(const row of rows) {
       let bytes=await cache.get(row.key);const cached=!!bytes;if(!bytes)bytes=await remote.read(row.key);
-      ensure(bytes && sha(bytes)===row.value.hash,'归档对象缺失或身份变化');match(row.key,bytes);
+      ensure(bytes && sha(bytes)===row.value.hash,'归档对象缺失或身份变化');const object=match(row.key,bytes);
       const old=await archive.read(row.key);ensure(!old || old.equals(bytes),'归档同路径身份冲突');
       if(!old){await archive.prepare(row.key.slice(0,row.key.lastIndexOf('/')+1));await archive.putOnce(row.key,bytes);}
       ensure((await archive.read(row.key))?.equals(bytes),'实际归档回读失败');
-      objects.push({path:row.key,type:row.value.type,epoch:row.value.epochId,length:bytes.length,sha256:row.value.hash,refs:row.value.refs,
+      objects.push({path:row.key,type:object.type,epoch:object.epochId,length:bytes.length,sha256:row.value.hash,refs:object.refs,
         verification:{verifiedAt:row.value.verifiedAt??null,cacheUsed:cached,currentRemoteRead:!cached,recordedRemoteReadback:this.meta.get('evidence',row.key),observed:this.meta.get('observed',row.key)}});job.after=row.seq;
     }
     job.buffer=objects;
@@ -239,7 +244,7 @@ export class V3Maintenance {
         await history.open();
         for(const row of scoped.page('input',task.verifiedAfter,8)){await history.verify(row.key,row.value.hash);task.verifiedAfter=row.seq;}
         history.drainActivation();
-        if(!scoped.page('input',task.verifiedAfter,1).length){ensure(scoped.count('node')===scoped.count('input'),'归档闭包对象集合不等价');task.status='COMPLETE';}
+        if(!scoped.page('input',task.verifiedAfter,1).length){ensure(scoped.count('node')===scoped.count('input'),'归档闭包对象集合不等价');ensure(Array.isArray(manifest.frontier) && hash(history.tips())===hash([...manifest.frontier].sort()),'归档前沿与实际因果图不等价');task.status='COMPLETE';}
         else task.status='VALIDATING';
       }catch(e){if(!/budget/.test(e.message))throw e;task.status='BUDGET';}
       this.local();meta.atomic(()=>meta.put('archiveRestore',key,task));
@@ -249,18 +254,21 @@ export class V3Maintenance {
   }
   async space() {
     this.local();const {readdir,lstat}=await import('node:fs/promises'),{join}=await import('node:path');
-    const totals={sqlite:0,cacheBlobs:0,witness:0,damaged:0,otherProtected:0}, root=this.journal.directory;let count=0;
-    const walk=async dir=>{for(const e of await readdir(dir,{withFileTypes:true})){ensure(++count<=20000,'空间扫描预算耗尽，未产生清理决策');const path=join(dir,e.name),s=await lstat(path);if(s.isSymbolicLink()){totals.otherProtected+=s.size;continue;}if(s.isDirectory())await walk(path);else {const category=/^v3-state-v2.sqlite/.test(e.name)?'sqlite':e.name==='object.dpv'?'cacheBlobs':e.name==='witness.json'?'witness':e.name.startsWith('damaged-')?'damaged':'otherProtected';totals[category]+=s.size;}}};await walk(root);
-    return {...this.summary(),bytes:totals,measurement:'实际文件逻辑字节；SQLite 页内回收不等于文件缩小',snapshotRows:this.meta.count('snapshot'),protected:['local/baseline/Pending/capture/receipt','frontier/祖先/witness/pin','冲突/决定/迁移/备份与恢复/回退预览','所有缓存及损坏隔离材料'],archives:this.meta.count('archiveJob'),remoteGC:this.eligibility()};
+    const totals={sqlite:0,cacheBlobs:0,witness:0,damaged:0,otherProtected:0}, allocated={...totals}, root=this.journal.directory;let count=0;
+    const add=(category,s)=>{totals[category]+=s.size;if(process.platform==='linux' && Number.isSafeInteger(s.blocks) && allocated[category]!==null)allocated[category]+=s.blocks*512;else allocated[category]=null;};
+    const walk=async dir=>{for(const e of await readdir(dir,{withFileTypes:true})){ensure(++count<=20000,'空间扫描预算耗尽，未产生清理决策');const path=join(dir,e.name),s=await lstat(path);if(s.isSymbolicLink()){add('otherProtected',s);continue;}if(s.isDirectory())await walk(path);else {const category=/^v3-state-v2.sqlite/.test(e.name)?'sqlite':e.name==='object.dpv'?'cacheBlobs':e.name==='witness.json'?'witness':e.name.startsWith('damaged-')?'damaged':'otherProtected';add(category,s);}}};await walk(root);
+    return {...this.summary(),bytes:totals,allocatedFileBytes:allocated,measurement:'逐文件观测逻辑字节与 Linux st_blocks 分配量；不含目录元数据、文件系统快照保留与并发占用；SQLite 页内复用不等于文件缩小',snapshotRows:this.meta.count('snapshot'),protected:['local/baseline/Pending/capture/receipt','frontier/祖先/witness/pin','冲突/决定/迁移/备份与恢复/回退预览','所有缓存及损坏隔离材料'],archives:this.meta.count('archiveJob'),remoteGC:this.eligibility()};
   }
   summary() {
     this.local();const seq=this.meta.lastSeq('cleanupAudit'),lastCleanup=seq?this.meta.page('cleanupAudit',seq-1,1)[0]?.value:null;
     return {knownVerifiedObjects:this.meta.count('node'),observedObjects:this.meta.count('observed'),validationPending:this.meta.count('todo'),scanPending:this.meta.count('scan'),
-      audit:this.meta.get('maintenance','audit'),lastCleanup,reclaimedBytes:lastCleanup?.reclaimedFileBytes??0,reclaimedBytesScope:'LAST_RECORDED_COMPACTION_INTERVAL',oldHistoryAuditComplete:false,completeRemoteHistory:false};
+      audit:this.meta.get('maintenance','audit'),lastCleanup,reclaimedBytes:lastCleanup?.reclaimedFileBytes??0,reclaimedAllocatedFileBytes:lastCleanup?.reclaimedAllocatedFileBytes??null,reclaimedBytesScope:'LAST_RECORDED_COMPACTION_INTERVAL',oldHistoryAuditComplete:false,completeRemoteHistory:false};
   }
   snapshotPlan() {
     this.local();const refs=new Set(),candidates=[],sums=[];let rows=0;
     ensure(this.meta.get('format','version')?.value===2,'未知元数据版本，拒绝整理');
+    ensure(this.meta.db.prepare("SELECT 1 FROM v3_records WHERE ns='workspace' AND k='workspace.json'").get(),'工作区根索引缺失，保护全部快照');
+    const identity=this.meta.get('installation','identity');ensure(identity?.writerId===this.catalog.store.identity.writerId && identity?.installationId===this.catalog.store.identity.installationId,'安装身份索引缺失或变化，保护全部快照');
     const known=new Set(['format','installation','workspace','state','node','identity','epoch','frontier','covered','observed','scope','scan','todo','listing','activate','control','error','evidence','failedWalk','proof','decision','conflictHistory','hostMigration','hostMigrationHeader','hostV2Fork','rollbackPreview','rollbackOperation','archiveJob','archiveRestore','maintenance','restoreValidation']);
     const visit=v=>{if(typeof v==='string' && /^[0-9a-f]{64}$/.test(v))refs.add(v);else if(Array.isArray(v))v.forEach(visit);else if(v && typeof v==='object')Object.values(v).forEach(visit);};
     // Every durable namespace participates, including unknown extensions. No age heuristics.
@@ -269,6 +277,10 @@ export class V3Maintenance {
       ensure(known.has(namespace) || namespace==='input' && namespace!==r.ns || /^(?:members:[0-9a-f-]{36}|epochFrontier:[0-9a-f-]{36}(?::covered)?|proof:[0-9a-f]{64}(?::(?:queue|seen|tips|covered))?|(?:stack|visiting):[0-9a-f-]{36})$/.test(namespace),'未知元数据命名空间，保护全部快照');
       ensure(++rows<=20000,'清理分析预算耗尽；不产生可删除候选');ensure(sha(Buffer.from(r.ns+'\0'+r.k+'\0'+r.v))===r.sum,'损坏引用，拒绝整理');
       this.meta.budget.charge(Buffer.byteLength(r.v),0);const value=JSON.parse(r.v);visit(value);sums.push(r.ns+'\0'+r.k+'\0'+r.sum);
+      if(namespace==='node') {
+        const prefix=r.ns.slice(0,-4);ensure(this.meta.get(prefix+'identity',value.objectId)?.path===r.k,'历史身份索引缺失，保护全部快照');
+        for(const ref of value.refs){const target=this.meta.get(prefix+'identity',ref.objectId);ensure(target?.hash===ref.hash && this.meta.get(prefix+'node',target.path)?.hash===ref.hash,'历史引用索引缺失，保护全部快照');}
+      }
     }
     for(const r of this.meta.db.prepare("SELECT k,v,sum FROM v3_records WHERE ns='snapshot' ORDER BY seq").iterate()) {
       ensure(++rows<=20000,'清理分析预算耗尽');ensure(sha(Buffer.from('snapshot\0'+r.k+'\0'+r.v))===r.sum,'损坏快照，拒绝整理');
@@ -276,7 +288,7 @@ export class V3Maintenance {
     }
     // Cache pins are filesystem metadata. A new pin must invalidate an existing preview too.
     const scan=dir=>{let entries;try{entries=readdirSync(dir,{withFileTypes:true});}catch(e){if(e.code==='ENOENT')return;throw e;}
-      for(const e of entries.sort((a,b)=>a.name.localeCompare(b.name))){ensure(++rows<=20000,'引用扫描预算耗尽');const p=join(dir,e.name),s=lstatSync(p);ensure(!s.isSymbolicLink(),'未知缓存链接，拒绝整理');if(s.isDirectory())scan(p);else if(e.name==='witness.json'){ensure(s.size<=32768,'witness 超限');const raw=readFileSync(p);this.meta.budget.charge(raw.length,0);const w=JSON.parse(raw);ensure(w.version===2 && Array.isArray(w.pins),'未知 witness 版本');sums.push(p+'\0'+sha(raw));}else {ensure(e.name==='object.dpv'||/^damaged-[0-9a-f-]{36}\.dpv$/.test(e.name),'未知缓存文件，拒绝整理');sums.push(p+'\0'+s.size+'\0'+s.mtimeMs+'\0'+s.ctimeMs);}}
+      for(const e of entries.sort((a,b)=>a.name.localeCompare(b.name))){ensure(++rows<=20000,'引用扫描预算耗尽');const p=join(dir,e.name),s=lstatSync(p);ensure(!s.isSymbolicLink(),'未知缓存链接，拒绝整理');if(s.isDirectory())scan(p);else if(e.name==='witness.json'){ensure(s.size<=32768,'witness 超限');const raw=readFileSync(p);this.meta.budget.charge(raw.length,0);const w=JSON.parse(raw);ensure(w.version===2 && Array.isArray(w.pins) && w.pins.length<=128 && w.pins.every(v=>typeof v==='string' && v.length>0 && v.length<=160) && /^[0-9a-f]{64}$/.test(w.hash),'未知或损坏 witness');const expected=join(new IndexedV3Cache(this.journal.directory,this.meta.budget).location(w.path),'witness.json');ensure(expected===p,'witness 路径身份损坏');const node=this.meta.get('node',w.path);ensure(!node || node.hash===w.hash,'witness 与历史身份不一致');sums.push(p+'\0'+sha(raw));}else {ensure(e.name==='object.dpv'||/^damaged-[0-9a-f-]{36}\.dpv$/.test(e.name),'未知缓存文件，拒绝整理');sums.push(p+'\0'+s.size+'\0'+s.mtimeMs+'\0'+s.ctimeMs);}}
     };scan(join(this.journal.directory,'sync-v3-index-v2'));
     return {fingerprint:hash(sums),candidates:candidates.slice(0,256),candidateTotal:candidates.length,estimatedReusableBytes:candidates.slice(0,256).reduce((n,r)=>n+r.bytes,0)};
   }
@@ -291,16 +303,17 @@ export class V3Maintenance {
     ensure(!this.catalog.protection(this.id) && !this.catalog.restoreGuards[this.id],'迁移或恢复保护禁止整理');
     const now=this.snapshotPlan();ensure(now.fingerprint===p.fingerprint && hash(now.candidates)===hash(p.candidates),'引用或候选变化；请重新预览');
     // One SQLite transaction: crash before commit deletes nothing; after commit has its receipt.
-    const result={token:input.token,user,status:'ROWS_REMOVED',rowsRemoved:p.candidates.length,reusableSQLiteBytes:p.estimatedReusableBytes,reclaimedFileBytes:0,at:Date.now()};
+    const result={token:input.token,user,status:'ROWS_REMOVED',rowsRemoved:p.candidates.length,reusableSQLiteBytes:p.estimatedReusableBytes,reclaimedFileBytes:0,reclaimedAllocatedFileBytes:0,at:Date.now()};
     this.meta.atomic(()=>{for(const c of p.candidates)this.meta.db.prepare("DELETE FROM v3_records WHERE ns='snapshot' AND k=? AND sum=?").run(c.key,c.sum);this.meta.put('cleanupAudit',input.token,result);});return this.compact(result);
   }
   compact(result) {
     const path=join(this.journal.directory,'v3-state-v2.sqlite');
-    const bytes=()=>[path,path+'-wal'].reduce((n,p)=>{try{return n+statSync(p).size;}catch(e){if(e.code==='ENOENT')return n;throw e;}},0), before=bytes(), fs=statfsSync(this.journal.directory);
+    const bytes=(allocated=false)=>[path,path+'-wal'].reduce((n,p)=>{try{const s=statSync(p);return n+(allocated?s.blocks*512:s.size);}catch(e){if(e.code==='ENOENT')return n;throw e;}},0), before=bytes(), beforeAllocated=process.platform==='linux'?bytes(true):null, fs=statfsSync(this.journal.directory);
     if(before<=64*1024*1024 && fs.bavail*fs.bsize>before*3) {
       // SQLite's own atomic rebuild, on its existing connection. No copying of live DB/WAL.
       this.meta.db.exec('VACUUM');this.meta.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
       result.reclaimedFileBytes=Math.max(0,before-bytes());result.measurement='本次 SQLite VACUUM/checkpoint 前后主库与 WAL 实测差；后续审计日志可能重新占页';
+      result.reclaimedAllocatedFileBytes=beforeAllocated===null?null:Math.max(0,beforeAllocated-bytes(true));
     }else result.compactionDeferred='超过 64 MiB 重建预算或磁盘不足；删除页可被 SQLite 重用，未声称文件已释放';
     result.status='COMPLETED';this.meta.atomic(()=>this.meta.put('cleanupAudit',result.token,result));return result;
   }

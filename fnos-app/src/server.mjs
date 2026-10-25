@@ -188,6 +188,10 @@ export async function createApp({
         }
         const input = await body(req);
         if (path === '/api/agent') { ensure(!internal, 'Agent 不能批准自身'); send(200, await agents.admin(input, user)); return; }
+        if ((path === '/api/sync' && input.discover === true) || (path === '/api/migration' && input.action === 'v3.discover')) {
+          ensure(!input.bind && !input.create, '发现不可同时创建或绑定');
+          send(200, await catalog.discover(input.workspaceId, input.targetConnectionId)); return;
+        }
         writing = true; writes++;
         ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
         ensure(!historyLock, '历史操作进行中，请稍后重试');
@@ -210,10 +214,6 @@ export async function createApp({
         }
         ensure(!catalog.configuring && !catalog.manifest.transition, "正在保存配置或等待恢复");
         const network = action => catalog.network(workspaceId, action);
-        if ((path === '/api/sync' && input.discover === true) || (path === '/api/migration' && input.action === 'v3.discover')) {
-          ensure(!input.bind && !input.create, '发现不可同时创建或绑定');
-          send(200, await catalog.discover(workspaceId, input.targetConnectionId)); return;
-        }
         if (path === '/api/migration' && input.action?.startsWith('v3.')) {
           ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision, '迁移版本过期或存在并发操作');
           historyLock = true;

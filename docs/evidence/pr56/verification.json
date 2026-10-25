@@ -1,0 +1,123 @@
+{
+  "baseline": "04728d367b6030bc8cbcc9180ccf734f6360ed3f",
+  "phasesAreSeparateRuns": true,
+  "phases": [
+    {
+      "name": "阶段性广泛回归",
+      "tests": 110,
+      "pass": 110,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "uploadedSourceSha256": null
+    },
+    {
+      "name": "维护与备份复验",
+      "tests": 50,
+      "pass": 50,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "uploadedSourceSha256": "8e7b7e94926793c602d45b9d009a08f0347f0586bbfc44f90aa5daf3d8efc0d2"
+    },
+    {
+      "name": "维护和 Agent 接入",
+      "tests": 33,
+      "pass": 33,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "uploadedSourceSha256": "8e7b7e94926793c602d45b9d009a08f0347f0586bbfc44f90aa5daf3d8efc0d2"
+    },
+    {
+      "name": "维护专项",
+      "tests": 15,
+      "pass": 15,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "uploadedSourceSha256": "723d817481f67f9630dd7e4d238b25196cc93dea048e014b99125f4e435e693e"
+    },
+    {
+      "name": "归档追加",
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "uploadedSourceSha256": "b9b069b277b2e2a85fb35ab18045b398827b868019d6eb6d232eb117e2f23761"
+    },
+    {
+      "name": "审计重开追加",
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "uploadedSourceSha256": "b9b069b277b2e2a85fb35ab18045b398827b868019d6eb6d232eb117e2f23761"
+    },
+    {
+      "name": "冷工作区与权限追加",
+      "tests": 14,
+      "pass": 14,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "uploadedSourceSha256": "376b8373a9054172ab5260dfa0ade5ebd2d1ef76b1691a48f68d2fb1c05f2bd6"
+    }
+  ],
+  "officialFpk": {
+    "version": "0.7.6",
+    "sha256": "28c1594b295cd8c84500eae1f84474c67308d17ac6473c3672732a12e1e1f789",
+    "packagedSourcesVerified": 42
+  },
+  "installedIsolatedPackage": {
+    "checked": 40,
+    "mismatch": [],
+    "isolatedManifestVersion": [
+      "0.7.16"
+    ],
+    "activeWorkspace": "deee0c3d-bd19-4f12-abd1-a6f26bd7ca4c",
+    "productionFpkSha256": "28c1594b295cd8c84500eae1f84474c67308d17ac6473c3672732a12e1e1f789"
+  },
+  "actualWeb": {
+    "v3CreateEditSync": true,
+    "rollbackNewCommitOldHistoryRetained": true,
+    "backupFormat": 2,
+    "encryptedBackupCreateVerifyRestore": true,
+    "restorePublicationIsolationAndReadOnlyValidation": true,
+    "backupRetainedOldStateAndArchiveProofs": true,
+    "archiveContinuationVerifiedPages": 2,
+    "legacyArchiveCacheRecoveryClosureVerified": true,
+    "localCleanupRowsRemoved": 1,
+    "rawPayloadReusableBytes": 492,
+    "logicalDatabaseAndWalReductionBytes": 296648,
+    "physicalVolumeFreeSpaceNotClaimed": true,
+    "viewport": [
+      1280,
+      800
+    ]
+  },
+  "installedCliAndMcp": {
+    "defaultReadDiscovery": true,
+    "sqliteRowsUnchanged": true,
+    "mcpTools": 81,
+    "negotiatedProtocol": "2026-07-28"
+  },
+  "isolatedRealHttpsWebDav": {
+    "discoveryRowsAndPutCountUnchanged": true,
+    "knownObjects": 4,
+    "putCount": 4,
+    "oldObjectsByteIdentical": 3,
+    "rollbackCurrentParentVerified": true,
+    "productionHistoryTouched": false
+  },
+  "remoteGc": "NOT_ELIGIBLE",
+  "notExecuted": [
+    "真实断电",
+    "新的 Android 实机矩阵",
+    "生产课表清理/恢复/迁移",
+    "所有 WebDAV 服务实现",
+    "1024 增长及四小时 soak 重跑"
+  ]
+}

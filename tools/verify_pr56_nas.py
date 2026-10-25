@@ -19,6 +19,11 @@ with tarfile.open(fileobj=payload, mode="w:gz") as archive:
             if path.is_file():
                 archive.add(path, arcname=path.relative_to(repo).as_posix())
 remote = "/tmp/dormpanel-pr56-" + str(uuid.uuid4())
+source = hashlib.sha256()
+with tarfile.open(fileobj=io.BytesIO(payload.getvalue()), mode="r:gz") as archived:
+    for member in sorted((m for m in archived.getmembers() if m.name.startswith("fnos-app/src/") and m.name.endswith(".mjs")), key=lambda m: m.name):
+        source.update(pathlib.PurePosixPath(member.name).name.encode())
+        source.update(archived.extractfile(member).read())
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 client.connect(config["host"], username=config["username"], password=config["password"], timeout=15)
@@ -48,10 +53,6 @@ error = stderr.read().decode()
 if error:
     print(error, file=sys.stderr)
 code = stdout.channel.recv_exit_status()
-source = hashlib.sha256()
-for path in sorted((repo / "fnos-app/src").glob("*.mjs")):
-    source.update(path.name.encode())
-    source.update(path.read_bytes())
 print(json.dumps({"remote": remote, "exitCode": code, "sourceSha256": source.hexdigest()}))
 client.close()
 sys.exit(code)

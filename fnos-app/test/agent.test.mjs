@@ -65,6 +65,17 @@ test('v3 正式 Agent/网页：同一 Writer、revision、权限、历史摘要�
   assert((await f.call('migration.v3-discover',{workspaceId:targetId})).ok);
   assert.deepEqual(durable(),beforeDiscovery);assert.equal(f.app.db.frame.revision,revision);
   await f.grant();
+  const coldConnection=await f.write('connections.save',{name:'cold',type:'webdav',url:'https://cold.isolated.test/',username:'test',password:'test'});assert(coldConnection.ok,JSON.stringify(coldConnection));
+  const cold=await f.write('workspaces.add',{name:'cold discovery',protocol:'v3',connectionId:coldConnection.data.connectionId});assert(cold.ok,JSON.stringify(cold));
+  const coldId=cold.data.resultWorkspaceId;f.app.catalog.prune();await Promise.all(f.app.catalog.closing.values());
+  const {DatabaseSync}=await import('node:sqlite'),coldPath=join(f.app.catalog.workspaceStore(coldId).dir,'v3','v3-state-v2.sqlite');
+  const rawDb=new DatabaseSync(coldPath),format=rawDb.prepare("SELECT * FROM v3_records WHERE ns='format' AND k='version'").get();
+  rawDb.prepare("DELETE FROM v3_records WHERE ns='format' AND k='version'").run();rawDb.close();
+  const coldRows=()=>{const db=new DatabaseSync(coldPath,{readOnly:true});try{return db.prepare('SELECT * FROM v3_records ORDER BY seq').all();}finally{db.close();}};
+  const beforeCold=coldRows(),catalogRevision=f.app.catalog.manifest.revision;
+  const coldDiscovery=await f.webCall('POST','/api/sync',{workspaceId:coldId,version:-1,discover:true},{'X-DormPanel-CSRF':f.csrf});
+  assert.equal(coldDiscovery.status,200);assert.equal(coldDiscovery.data.candidates.length,1);assert.deepEqual(coldRows(),beforeCold);assert(!f.app.catalog.workspaces.has(coldId));assert.equal(f.app.catalog.manifest.revision,catalogRevision);
+  const repaired=new DatabaseSync(coldPath);repaired.prepare('INSERT INTO v3_records(seq,ns,k,v,sum) VALUES(?,?,?,?,?)').run(format.seq,format.ns,format.k,format.v,format.sum);repaired.close();
   const editContext=f.context();
   const webpage=await f.webCall('POST','/api/edit',{ ...editContext,operation:{ kind:'entry',action:'upsert',value:{ ...entry,id:'stable',title:'网页修改' } } },{ 'X-DormPanel-CSRF':f.csrf }); assert.equal(webpage.status,200);
   const stale=await f.call('entry.upsert',{ ...editContext,edit:{ value:{ ...entry,id:'stable' } } },{ operationId:operationId() }); assert.equal(stale.error.code,'STALE');
