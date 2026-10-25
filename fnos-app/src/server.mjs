@@ -586,13 +586,21 @@ export async function createApp({
       const db=await catalog.load(input.workspaceId);ensure(db.activeV3,'仅支持 v3 本地快照整理');
       const service=new V3Maintenance(catalog,input.workspaceId);service.local();const p=service.meta.get('cleanupPreview',input.token);
       ensure(p && p.user==='agent-package-os' && p.expires>Date.now() && p.fingerprint===service.snapshotPlan().fingerprint,'清理预览已失效');
-      return {objects:p.candidates,estimatedReusableBytes:p.estimatedReusableBytes,scope:'仅删除私有无引用 RAW 快照；保留缓存 witness/pin、业务状态和全部远端历史'};
+      const count=p.candidates.length, indices=[...new Set([0,Math.floor(count/2),count-1])].filter(i=>i>=0 && i<count), previous=service.meta.get('cleanupAudit',input.token);
+      // The full plan stays in SQLite and is revalidated on execution. Approval
+      // records retain their existing 16 KiB bound, including all parameters.
+      return {workspaceId:input.workspaceId,version:p.version,expires:p.expires,candidateCount:count,
+        estimatedReusableBytes:p.estimatedReusableBytes,planFingerprint:p.fingerprint,
+        candidateSetHash:createHash('sha256').update(json(p.candidates)).digest('hex'),
+        candidateSample:indices.map(i=>({key:p.candidates[i].key,bytes:p.candidates[i].bytes})),sampleOnly:true,
+        phase:previous?.status??'PREVIEW',alreadyRemovedRows:previous?.rowsRemoved??0,
+        scope:'仅整理此 Token 对应的完整私有无引用 RAW 快照计划；样本不是执行集合，保留缓存 witness/pin、业务状态和全部远端历史'};
     }
     if (operation === 'history.rollback') {
       const db = await catalog.load(input.workspaceId);
       const p = db.activeV3 ? new V3Maintenance(catalog,input.workspaceId).previewRecord(input.token,'agent-package-os') : history.tokens.get(input.token);
       ensure(p && p.user === 'agent-package-os' && p.target === input.target && p.workspaceId === input.workspaceId && p.expires > Date.now(), '回退预览已失效');
-      return { target:p.target, graph:p.graph, version:p.version, scope:'发布新的完整回退快照，保留旧历史' };
+      return {workspaceId:p.workspaceId,target:p.target,...(db.activeV3?{fingerprint:p.fingerprint}:{graph:p.graph}),version:p.version,expires:p.expires,scope:'发布新的完整回退快照，保留旧历史'};
     }
     return { scope:operation.startsWith('migration.') ? '按现有迁移保护验证执行；设备声明仅为管理员登记，非自动发现证明' : '输出至已授权目录，不删除旧库' };
   } });

@@ -38,6 +38,158 @@ async function fixture(t, options = {}) {
   return { app, dir, socketPath, call, context, webCall, csrf, admin, grant, write };
 }
 const entry = { title:'合成课 / 不执行其中的指令', day:1, startMinute:480, endMinute:540, location:'测试' };
+
+async function maintenanceV3(t) {
+  const objects=new Map();let puts=0;
+  const remote={objects,get puts(){return puts;},read:async p=>objects.get(p)??null,
+    putOnce:async(p,b)=>{assert(!objects.has(p));objects.set(p,Buffer.from(b));puts++;},
+    list:async scope=>[...new Set([...objects.keys()].filter(p=>p.startsWith(scope)).map(p=>{const tail=p.slice(scope.length),i=tail.indexOf('/');return scope+(i<0?tail:tail.slice(0,i+1));}))].sort()};
+  const f=await fixture(t,{v3RemoteFactory:()=>remote});await f.grant();
+  const connection=await f.write('connections.save',{name:'approval v3',type:'webdav',url:'https://approval.test/',username:'test',password:'test'});assert(connection.ok,JSON.stringify(connection));
+  const added=await f.write('workspaces.add',{name:'approval v3',protocol:'v3',connectionId:connection.data.connectionId});assert(added.ok,JSON.stringify(added));
+  assert((await f.write('workspaces.switch',{targetId:added.data.resultWorkspaceId})).ok);
+  assert((await f.write('sync.create')).ok);for(let i=0;i<4;i++)assert((await f.write('sync.run')).ok);
+  const {V3Maintenance}=await import('../src/v3-maintenance.mjs');
+  const service=()=>new V3Maintenance(f.app.catalog,f.context().workspaceId);
+  const root=service().list().rows.find(r=>r.type===2);
+  const request=(operation,input,id=operationId())=>f.call('approvals.request',{operation,input,targetOperationId:id},{operationId:operationId()});
+  return {...f,remote,service,root,request};
+}
+async function maintenanceTransport(t,f,kind) {
+  if(kind==='cli')return async(operation,input,options={})=>{
+    const args=[...operation.split('.'),'--json'];if(options.operationId)args.push('--operation-id',options.operationId);if(options.approvalId)args.push('--approval-id',options.approvalId);
+    return JSON.parse((await cli(f.socketPath,args,JSON.stringify(input))).stdout);
+  };
+  const client=new Client({name:'pr56-approval',version:'1.0.0'},{versionNegotiation:{mode:'auto'}});
+  await client.connect(new StdioClientTransport({command:process.execPath,args:['src/mcp.mjs'],cwd:new URL('../',import.meta.url).pathname.replace(/^\/(\w:)/,'$1'),env:{...process.env,DORMPANEL_AGENT_SOCKET:f.socketPath},stderr:'pipe',maxBufferSize:2*1024*1024}));
+  t.after(()=>client.close());
+  return async(operation,input,options={})=>(await client.callTool({name:operation.replaceAll('.','_'),arguments:{...input,...options}})).structuredContent;
+}
+async function garbageSnapshots(f,count=256) {
+  // Real Workspace edits create distinct immutable RAW snapshots; the final local
+  // state and baseline remain referenced, leaving exactly count prior snapshots.
+  for(let i=0;i<=count;i++)await f.app.db.edit({kind:'entry',action:'upsert',value:{...entry,id:'bulk-stable',title:'bulk '+i}});
+  const p=await f.write('history.cleanup-preview');assert(p.ok,JSON.stringify(p));assert.equal(p.data.candidates.length,count);assert.equal(p.data.candidateTotal,count);return p.data;
+}
+const snapshotRows=f=>f.app.db.activeV3.journal.meta.db.prepare("SELECT * FROM v3_records WHERE ns='snapshot' ORDER BY seq").all();
+
+for(const kind of ['cli','mcp'])test(`PR56 approval ${kind}: v3 回退完整独立批准、当前父引用与重复请求`,async t=>{
+  const f=await maintenanceV3(t),call=await maintenanceTransport(t,f,kind);
+  assert((await f.write('entry.upsert',{edit:{value:{...entry,id:'rollback-stable'}}})).ok);assert((await f.write('sync.run')).ok);
+  const preview=await call('history.preview',{...f.context(),target:f.root.id},{operationId:operationId()});assert(preview.ok,JSON.stringify(preview));
+  const input={...f.context(),token:preview.data.token,target:f.root.id,confirm:f.root.id},id=operationId();
+  assert.equal((await call('history.rollback',input,{operationId:id})).error.code,'APPROVAL');
+  const requested=await call('approvals.request',{operation:'history.rollback',input,targetOperationId:id},{operationId:operationId()});assert(requested.ok,JSON.stringify(requested));
+  const approvalId=requested.data.approvalId;
+  assert.equal((await call('history.rollback',input,{operationId:id,approvalId})).error.code,'APPROVAL');
+  assert.equal((await f.admin({action:'approve',id:approvalId})).status,200);
+  const tips=f.service().list().frontier,old=new Map([...f.remote.objects].map(([p,b])=>[p,Buffer.from(b)])),puts=f.remote.puts;
+  const result=await call('history.rollback',input,{operationId:id,approvalId});assert(result.ok,JSON.stringify(result));assert.equal(f.app.db.frame.local.entries.length,0);assert.equal(f.remote.puts,puts+1);
+  const {decode}=await import('../src/v3-protocol.mjs'),{refPath}=await import('../src/v3-history.mjs'),receipt=f.app.db.activeV3.journal.value.receipt,commit=decode(f.remote.objects.get(receipt.path));
+  assert.equal(commit.type,3);assert.deepEqual(commit.refs.filter(r=>r.role===1).map(r=>refPath(commit.datasetId,r)).sort(),tips);
+  for(const [path,bytes]of old)assert.deepEqual(f.remote.objects.get(path),bytes);
+  assert.deepEqual(await call('history.rollback',input,{operationId:id,approvalId}),result);assert.equal(f.remote.puts,puts+1);
+  assert.equal(f.service().meta.get('rollbackOperation',input.token).operationId,input.token);
+});
+
+test('PR56 approval ownership: 缺失归属的旧预览、错误用户/目标/Workspace 及过期输入均拒绝',async t=>{
+  const f=await maintenanceV3(t);assert((await f.write('entry.upsert',{edit:{value:{...entry,id:'other-target'}}})).ok);assert((await f.write('sync.run')).ok);
+  const otherTarget=f.service().list().rows.find(r=>r.type===3).id;
+  const connection=await f.write('connections.save',{name:'other approval',type:'webdav',url:'https://other-approval.test/',username:'test',password:'test'});assert(connection.ok);
+  const other=await f.write('workspaces.add',{name:'other',protocol:'v3',connectionId:connection.data.connectionId});assert(other.ok);
+  const p=await f.write('history.preview',{target:f.root.id});assert(p.ok);const input={...f.context(),token:p.data.token,target:f.root.id,confirm:f.root.id},meta=f.service().meta,record=meta.get('rollbackPreview',p.data.token);
+  assert.equal(record.workspaceId,input.workspaceId);assert.equal(record.token,input.token);
+  const puts=f.remote.puts;
+  for(const change of [p=>{delete p.workspaceId;},p=>{p.workspaceId=other.data.resultWorkspaceId;},p=>{p.user='another-user';},p=>{p.expires=Date.now()-1;},p=>{p.version--;}]) {
+    const invalid=structuredClone(record);change(invalid);meta.atomic(()=>meta.put('rollbackPreview',p.data.token,invalid));
+    assert.equal((await f.request('history.rollback',input)).ok,false);
+    const web=await f.webCall('POST','/api/history/rollback',input,{'X-DormPanel-CSRF':f.csrf});assert.notEqual(web.status,200);
+  }
+  meta.atomic(()=>meta.put('rollbackPreview',p.data.token,record));
+  assert.equal((await f.request('history.rollback',{...input,target:otherTarget,confirm:otherTarget})).ok,false);
+  assert.equal((await f.request('history.rollback',{...input,token:randomUUID()})).ok,false);
+  const otherDb=await f.app.catalog.load(other.data.resultWorkspaceId);
+  assert.equal((await f.request('history.rollback',{...input,workspaceId:other.data.resultWorkspaceId,datasetId:otherDb.frame.datasetId,version:otherDb.frame.revision})).ok,false);
+  // A real browser-created preview belongs to its authenticated web user.
+  const webPreview=await f.webCall('POST','/api/history/preview',{...f.context(),target:f.root.id},{'X-DormPanel-CSRF':f.csrf});assert.equal(webPreview.status,200);
+  assert.equal((await f.request('history.rollback',{...input,token:webPreview.data.token})).ok,false);assert.equal(f.remote.puts,puts);
+  const webRecord=meta.get('rollbackPreview',webPreview.data.token),legacy=structuredClone(webRecord);delete legacy.workspaceId;meta.atomic(()=>meta.put('rollbackPreview',webPreview.data.token,legacy));
+  const rejectedWeb=await f.webCall('POST','/api/history/rollback',{...f.context(),token:webPreview.data.token,target:f.root.id,confirm:f.root.id},{'X-DormPanel-CSRF':f.csrf});assert.notEqual(rejectedWeb.status,200);assert.equal(f.remote.puts,puts);
+  meta.atomic(()=>meta.put('rollbackPreview',webPreview.data.token,webRecord));
+  const webRollback=await f.webCall('POST','/api/history/rollback',{...f.context(),token:webPreview.data.token,target:f.root.id,confirm:f.root.id},{'X-DormPanel-CSRF':f.csrf});assert.equal(webRollback.status,200);
+});
+
+test('PR56 approval stale rollback: 批准后的新编辑或新远端前沿不触发业务回退',async t=>{
+  const f=await maintenanceV3(t);
+  for(const change of ['expired','revision','frontier']) {
+    const p=await f.write('history.preview',{target:f.root.id});assert(p.ok);
+    const input={...f.context(),token:p.data.token,target:f.root.id,confirm:f.root.id},id=operationId(),requested=await f.request('history.rollback',input,id);assert(requested.ok,JSON.stringify(requested));
+    assert.equal((await f.admin({action:'approve',id:requested.data.approvalId})).status,200);
+    if(change==='expired'){const meta=f.service().meta,p=meta.get('rollbackPreview',input.token);p.expires=Date.now()-1;meta.atomic(()=>meta.put('rollbackPreview',input.token,p));}
+    else if(change==='revision')await f.app.db.edit({kind:'entry',action:'upsert',value:{...entry,id:'new-edit'}});
+    else {
+      const {decode,encode}=await import('../src/v3-protocol.mjs'),{reference}=await import('../src/v3-history.mjs'),{objectPath}=await import('../src/v3-store.mjs'),tip=f.service().list().rows.find(r=>f.service().list().frontier.includes(r.path)),parent=decode(f.remote.objects.get(tip.path));
+      const state=structuredClone(parent.state);state.entries.push({...entry,id:'remote-new'});const commit={...parent,type:3,objectId:randomUUID(),writerId:randomUUID(),refs:[reference(parent,tip.hash,1)],state};f.remote.objects.set(objectPath(commit),encode(commit));
+    }
+    const local=structuredClone(f.app.db.frame.local),puts=f.remote.puts,result=await f.call('history.rollback',input,{operationId:id,approvalId:requested.data.approvalId});assert.equal(result.ok,false);assert.deepEqual(f.app.db.frame.local,local);assert.equal(f.remote.puts,puts);
+    if(change==='revision')for(let i=0;i<3;i++)assert((await f.write('sync.run')).ok);
+  }
+});
+
+for(const kind of ['cli','mcp'])test(`PR56 approval ${kind}: 256 个真实快照候选在 16 KiB 内批准并完整整理`,async t=>{
+  const f=await maintenanceV3(t),call=await maintenanceTransport(t,f,kind),p=await garbageSnapshots(f),before=snapshotRows(f),local=f.app.db.snapshot();
+  const input={...f.context(),token:p.token,confirm:'整理本地冗余快照'},id=operationId();
+  const requested=await call('approvals.request',{operation:'history.cleanup',input,targetOperationId:id},{operationId:operationId()});assert(requested.ok,JSON.stringify(requested));
+  const approval=f.app.agents.state.approvals.find(a=>a.id===requested.data.approvalId);assert(Buffer.byteLength(JSON.stringify(approval))<16384);
+  t.diagnostic(`256 候选审批记录：${Buffer.byteLength(JSON.stringify(approval))} / 16384 字节`);
+  assert.equal(approval.summary.preview.candidateCount,256);assert(approval.summary.preview.candidateSample.length<=3);assert.equal(approval.summary.preview.planFingerprint,p.fingerprint);
+  const {createHash}=await import('node:crypto');assert.equal(approval.summary.preview.candidateSetHash,createHash('sha256').update(JSON.stringify(p.candidates)).digest('hex'));
+  assert(!Object.hasOwn(approval.summary.preview,'objects'));assert.equal(f.service().meta.get('cleanupPreview',p.token).candidates.length,256);
+  assert.equal((await call('history.cleanup',input,{operationId:id,approvalId:approval.id})).error.code,'APPROVAL');assert.equal((await f.admin({action:'approve',id:approval.id})).status,200);
+  assert(Buffer.byteLength(JSON.stringify(approval))<16384);
+  const nextPreview=await f.write('history.cleanup-preview');assert(nextPreview.ok);
+  assert.equal((await call('history.cleanup',{...input,token:nextPreview.data.token},{operationId:id,approvalId:approval.id})).error.code,'APPROVAL');
+  assert.equal((await call('history.cleanup',input,{operationId:operationId(),approvalId:approval.id})).error.code,'APPROVAL');
+  assert.equal((await call('history.cleanup',{...input,confirm:'different'},{operationId:id,approvalId:approval.id})).error.code,'APPROVAL');
+  const result=await call('history.cleanup',input,{operationId:id,approvalId:approval.id});assert(result.ok,JSON.stringify(result));assert.equal(result.data.rowsRemoved,256);assert.equal(snapshotRows(f).length,before.length-256);assert.deepEqual(f.app.db.snapshot(),local);
+  assert.deepEqual(await call('history.cleanup',input,{operationId:id,approvalId:approval.id}),result);
+});
+
+for(const change of ['pin','reference','candidate','edit','pending','permission'])test(`PR56 approval cleanup protected: 批准后 ${change} 变化不删除快照`,async t=>{
+  const f=await maintenanceV3(t),p=await garbageSnapshots(f,4),input={...f.context(),token:p.token,confirm:'整理本地冗余快照'},id=operationId(),requested=await f.request('history.cleanup',input,id);assert(requested.ok,JSON.stringify(requested));
+  assert.equal((await f.admin({action:'approve',id:requested.data.approvalId})).status,200);
+  if(change==='pin') {const {IndexedV3Cache}=await import('../src/v3-index.mjs'),{Budget}=await import('../src/v3-store.mjs');await new IndexedV3Cache(f.app.db.activeV3.journal.directory,new Budget()).pin(f.root.path,'approval-new-pin');}
+  if(change==='reference') {const {decode}=await import('../src/v3-protocol.mjs'),meta=f.service().meta,state=decode(Buffer.from(meta.get('snapshot',p.candidates[0].key).bytes,'base64')).state;meta.atomic(()=>meta.put('decision','approval-new-reference',{state}));}
+  if(change==='candidate'){const state=structuredClone(f.app.db.frame.local),meta=f.service().meta;state.entries[0].title='additional unreferenced candidate';meta.atomic(()=>meta.pack(state));assert.equal(f.service().snapshotPlan().fingerprint,p.fingerprint);}
+  if(change==='edit')await f.app.db.edit({kind:'entry',action:'upsert',value:{...entry,id:'new-protected-edit'}});
+  if(change==='pending'){
+    const {V3Publisher}=await import('../src/v3-transaction.mjs'),{decode,encode,sha}=await import('../src/v3-protocol.mjs'),{reference}=await import('../src/v3-history.mjs'),{objectPath}=await import('../src/v3-store.mjs');
+    const journal=f.app.db.activeV3.journal,path=f.service().list().frontier[0],bytes=f.remote.objects.get(path),parent=decode(bytes),state=f.app.db.frame.local;
+    const commit={...parent,type:3,objectId:randomUUID(),writerId:f.app.store.identity.writerId,refs:[reference(parent,sha(bytes),1)],state};
+    await new V3Publisher(journal,f.remote).stage(objectPath(commit),encode(commit),{kind:'commit',local:state,revision:journal.value.revision});
+  }
+  if(change==='permission')await f.grant(['read']);
+  const before=snapshotRows(f);
+  const result=await f.call('history.cleanup',input,{operationId:id,approvalId:requested.data.approvalId});assert.equal(result.ok,false);assert.deepEqual(snapshotRows(f),before);
+  if(change==='permission')assert.equal(result.error.code,'PERMISSION');
+});
+
+test('PR56 approval cleanup recovery: 提交后故障保留原子回执，新批准仅续做压缩且不重复删除',async t=>{
+  const f=await maintenanceV3(t),p=await garbageSnapshots(f,4),input={...f.context(),token:p.token,confirm:'整理本地冗余快照'},id=operationId(),requested=await f.request('history.cleanup',input,id);assert(requested.ok);
+  assert.equal((await f.admin({action:'approve',id:requested.data.approvalId})).status,200);
+  const old=f.app.db,meta=old.activeV3.journal.meta;meta.fault=point=>{if(point==='after-commit')throw Error('injected approval cleanup commit');};
+  const failed=await f.call('history.cleanup',input,{operationId:id,approvalId:requested.data.approvalId});assert.equal(failed.ok,false);
+  assert.deepEqual(await f.call('history.cleanup',input,{operationId:id,approvalId:requested.data.approvalId}),failed);
+  // Reopen the same Catalog-owned Workspace after the deliberately uncertain
+  // SQLite acknowledgement; the service and its Agent receipt ledger stay put.
+  f.app.catalog.workspaces.delete(input.workspaceId);await old.activeV3.close();await f.app.catalog.load(input.workspaceId);
+  const status=await f.call('maintenance.status',{workspaceId:input.workspaceId});assert.equal(status.data.lastCleanup.status,'ROWS_REMOVED');
+  const before=snapshotRows(f),retryId=operationId(),retry=await f.request('history.cleanup',input,retryId);assert(retry.ok,JSON.stringify(retry));
+  const approval=f.app.agents.state.approvals.find(a=>a.id===retry.data.approvalId);assert.equal(approval.summary.preview.phase,'ROWS_REMOVED');assert.equal(approval.summary.preview.alreadyRemovedRows,4);
+  assert.equal((await f.admin({action:'approve',id:retry.data.approvalId})).status,200);
+  const resumed=await f.call('history.cleanup',input,{operationId:retryId,approvalId:retry.data.approvalId});assert(resumed.ok,JSON.stringify(resumed));assert.equal(resumed.data.rowsRemoved,4);assert.deepEqual(snapshotRows(f),before);
+  assert.equal(f.service().meta.get('cleanupAudit',input.token).status,'COMPLETED');
+});
 test('v3 正式 Agent/网页：同一 Writer、revision、权限、历史摘要及 v2 能力拒绝', async t => {
   const objects = new Map();
   const remote = {

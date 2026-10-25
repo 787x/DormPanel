@@ -73,7 +73,9 @@ export class V3Maintenance {
   }
   previewRecord(token,user) {
     this.local(); const p=this.meta.get('rollbackPreview',token);
-    ensure(p && p.user===user && p.expires>Date.now() && p.fingerprint===this.fingerprint(),'回退预览过期或输入变化');return p;
+    // Older previews without explicit ownership must be recreated, even when a
+    // token happens to be present in this Workspace's private namespace.
+    ensure(p && p.token===token && p.workspaceId===this.id && p.user===user && p.expires>Date.now() && p.version===this.db.frame.revision && p.fingerprint===this.fingerprint(),'回退预览过期或输入变化');return p;
   }
   async audit(options={}) {
     if(this.catalog.restoreGuards[this.id])return this.revalidateRestored();
@@ -122,7 +124,7 @@ export class V3Maintenance {
     const audit=await this.audit({objectSteps:0});ensure(audit.status!=='BUDGET','回退预检预算耗尽；进度已保存，请继续历史检查');
     ensure(!this.blockers().length,this.blockers().join('；'));
     const state=await this.snapshot(input.target), token=randomUUID(), fingerprint=this.fingerprint();
-    const record={token,target:input.target,user,expires:Date.now()+10*60000,fingerprint,version:this.db.frame.revision};
+    const record={token,workspaceId:this.id,target:input.target,user,expires:Date.now()+10*60000,fingerprint,version:this.db.frame.revision};
     this.meta.atomic(()=>this.meta.put('rollbackPreview',token,record));
     return {...record,diff:differences(this.db.frame.local,state),unchanged:hash(state)===hash(this.db.frame.local)};
   }

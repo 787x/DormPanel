@@ -1,0 +1,44 @@
+{
+  "reviewBaseline": "56d45701ace63ddac78cb97141c4d5b09ab6b431",
+  "scope": "CLI/MCP 独立管理员批准修复",
+  "newApprovalTests": 13,
+  "tests": [
+    "fnos-app/test/agent.test.mjs",
+    "fnos-app/test/pr56-maintenance.test.mjs",
+    "fnos-app/test/active-v3.test.mjs"
+  ],
+  "windows": {
+    "node": "24.19.0",
+    "passed": 40,
+    "failed": 0,
+    "linuxOnlySkipped": 9
+  },
+  "nas": {
+    "runtime": "官方 Node 22",
+    "identity": "应用包用户",
+    "passed": 49,
+    "failed": 0,
+    "skipped": 0,
+    "uploadedSourceSha256": "1468e9a352621ccc2cea04ed35c1d5cf52bb5f8f94cad9ac5344c4220721d538"
+  },
+  "bulkApproval": {
+    "realCandidates": 256,
+    "workspaceEditsPerPlan": 257,
+    "sampleMaximum": 3,
+    "requestedRecordBytesCli": 1277,
+    "requestedRecordBytesMcp": 1277,
+    "approvedRecordsBelowLimit": true,
+    "unchangedLimitBytes": 16384
+  },
+  "staticChecks": {
+    "npmRunCheck": true,
+    "gitDiffCheck": true
+  },
+  "notExecuted": [
+    "本次补丁的官方 FPK 安装",
+    "Android 构建或实机矩阵",
+    "1024 增长",
+    "soak",
+    "真实断电"
+  ]
+}
