@@ -210,6 +210,25 @@ async function approved(f, operation, fields = {}) {
   assert.equal((await f.admin({ action:'approve',id:requested.data.approvalId })).status,200);
   return f.call(operation,input,{ operationId:id,approvalId:requested.data.approvalId });
 }
+test('CLI/MCP 本地快照创建 v3 与迁移恢复必须独立批准，批准后复用同一业务 Workspace',async t=>{
+  const rows=new Map(), objects=new Map();let v2Puts=0;
+  const source={key:'https://isolated.test/dormpanel-sync-v2/',list:async()=>[...rows.keys()],read:async id=>rows.get(id)??null,put:async(id,b)=>{v2Puts++;rows.set(id,b);}};
+  const remote={read:async p=>objects.get(p)??null,putOnce:async(p,b)=>{assert(!objects.has(p));objects.set(p,Buffer.from(b));},list:async scope=>[...new Set([...objects.keys()].filter(p=>p.startsWith(scope)).map(p=>{const s=p.slice(scope.length),i=s.indexOf('/');return scope+(i<0?s:s.slice(0,i+1));}))].sort()};
+  const f=await fixture(t,{remoteFactory:()=>source,v3RemoteFactory:()=>remote});await f.grant();
+  const original=f.context().workspaceId;
+  const connection=await f.write('connections.save',{name:'local capture',type:'webdav',url:'https://isolated.test/',username:'test',password:'test'});assert(connection.ok);
+  assert((await f.write('workspaces.endpoint',{targetId:original,targetVersion:f.context().version,connectionId:connection.data.connectionId})).ok);
+  assert((await f.write('entry.upsert',{edit:{value:{...entry,id:'local-stable'}}})).ok);
+  const preview=await f.write('migration.v3-preview');assert(preview.ok,JSON.stringify(preview));assert.equal(preview.data.sourceProtocol,'LOCAL');
+  const input={token:preview.data.token,confirm:'LOCAL',writersStopped:true};
+  assert.equal((await f.write('migration.v3-prepare',input)).error.code,'APPROVAL');assert.equal(objects.size,0);
+  const prepared=await approved(f,'migration.v3-prepare',input);assert(prepared.ok,JSON.stringify(prepared));
+  assert.equal((await f.write('migration.v3-resume',{migrationId:prepared.data.id})).error.code,'APPROVAL');
+  const active=await approved(f,'migration.v3-resume',{migrationId:prepared.data.id});assert(active.ok,JSON.stringify(active));assert.equal(active.data.phase,'ACTIVE');assert.equal(v2Puts,0);
+  const current=f.context();assert.notEqual(current.workspaceId,original);
+  assert.equal((await f.call('records.list',{workspaceId:current.workspaceId,table:'entries'})).data.rows[0].id,'local-stable');
+  const history=await f.call('history.list',{workspaceId:current.workspaceId});assert(history.ok);assert.equal(history.data.protocol,'v3');
+});
 linux('Agent 实际本地连接、工作区、共享数据集、同步回执、历史快照/比较/回退/归档/精简闭环', async t => {
   const f = await fixture(t); await f.grant();
   const connection = await f.write('connections.save',{ name:'合成连接',type:'local',rootId:'private',createPrivate:true }); assert(connection.ok,JSON.stringify(connection));

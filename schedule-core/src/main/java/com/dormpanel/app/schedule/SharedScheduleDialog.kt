@@ -33,13 +33,14 @@ object SharedScheduleDialog {
         var bindButton: Button? = null
         var inspectButton: Button? = null
         var conflictButton: Button? = null
+        var recoveryButton:Button?=null
         fun refresh() {
             val time = sync.settings.lastSuccess
-            status.text = sync.status + (if (time > 0) "\n上次成功：${Instant.ofEpochMilli(time)}" else "") +
+            status.text = sync.status + (if (time > 0) "\n上次同步检查（本机）：${Instant.ofEpochMilli(time)}" else "") +
                 if (time > 0 && System.currentTimeMillis() - time > 24 * 60 * 60 * 1000L) "\n数据可能过期（超过 24 小时未验证）" else ""
             if (source.syncStore?.isV3() == true) {
-                val b = source.syncStore?.v3Information()?.optJSONObject("binding")
-                status.append("\nSync v3 · ${b?.optString("datasetId") ?: "创建 / 加入恢复中"}\nDescriptor: ${b?.optString("descriptorHash") ?: "等待精确回读"}\n旧 Epoch 巡检未完成；未知设备及服务端停写情况未确认")
+                val control=source.syncStore?.v3Control();val b=control?.optJSONObject("binding")
+                status.append(if(control?.optString("mode")=="RECOVERY_REQUIRED") "\n本地事务确认中断，请重开活动 Store；不会清库或重新绑定" else "\nSync v3 · ${b?.optString("datasetId") ?: "创建 / 加入恢复中"}\nDescriptor: ${b?.optString("descriptorHash") ?: "等待精确回读"}\n旧 Epoch 巡检未完成；未知设备及服务端停写情况未确认")
             }
             publishButton?.text = if (!bound()) "创建新的共享课表" else "立即同步"
             folder.isEnabled = !sync.busy && !source.applyingSnapshot && !source.error && !bound()
@@ -50,6 +51,7 @@ object SharedScheduleDialog {
             if (bound()) previewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.visibility = android.view.View.GONE
             synchronizeButton?.isEnabled = !sync.busy && source.state.sync != null
             conflictButton?.isEnabled = !sync.busy
+            recoveryButton?.isEnabled = !sync.busy && source.syncStore?.isV3()==true
         }
         refresh()
         fun save(): Boolean = runCatching {
@@ -87,10 +89,39 @@ object SharedScheduleDialog {
             }
         }
         button("检查迁移后的旧 v2 源", false) { sync.auditV3MigrationSource() }
+        recoveryButton=button("重开活动 Store（保留同一数据库和候选）", false) { sync.reopenV3Store() }
+        button("后续 v2 设备加入既有 v3 目标（只读预检）") {
+            if(source.syncStore?.isV3()==true) status.text="本机已有活动 v3 绑定，禁止隐式换库"
+            else sync.discoverV3 { candidates ->
+                if(active) AlertDialog.Builder(context).setTitle("选择首台设备迁移出的目标")
+                    .setItems(candidates.map { "${it.descriptor.datasetId}\n${it.hash}" }.toTypedArray()) { _,index ->
+                        sync.previewExistingV3(candidates[index].bytes) { preview ->
+                            if(active) AlertDialog.Builder(context).setTitle("加入已迁移目标")
+                                .setMessage("目标 ${preview.target.identity.datasetId}\n源与目标八类 RAW 已逐字段核验等价。确认时重新检查源及目标，再原子暂停本机 v2 Writer 并加入，不创建新的 Descriptor 或 Genesis。保留原 v2 基线、本地快照和历史证据。\n\n请停止其他已知旧客户端。未知设备无法自动发现；旧目录未由服务端禁止写入，远端保留历史不是独立备份。")
+                                .setNegativeButton("取消",null).setPositiveButton("已停止旧客户端，加入") { _,_ -> sync.joinMigratedV3(preview) }.show()
+                        }
+                    }.setNegativeButton("关闭",null).show()
+            }
+        }
         button("取消尚未创建目标的 v3 迁移", false) {
             AlertDialog.Builder(context).setTitle("取消迁移准备")
                 .setMessage("仅在尚未产生 v3 Descriptor/Genesis 候选时允许恢复原 v2 修改与基线。目标已有候选、已发布或已接受 v3 编辑时会拒绝；不会删除两端历史。")
                 .setNegativeButton("保留", null).setPositiveButton("检查并取消") { _, _ -> sync.cancelUnpublishedV3Migration() }.show()
+        }
+        fun verifyJoin(selected:SharedScheduleController.V3Candidate) {
+            sync.previewJoinV3(selected.bytes) { preview ->
+                if(active) {
+                    if(preview==null) AlertDialog.Builder(context).setTitle("只读预检尚未完成")
+                        .setMessage("进度已持久保存，当前业务库尚未切换。可继续同一目标的有界预检；不会创建新数据集。")
+                        .setNegativeButton("稍后",null).setPositiveButton("继续预检") { _,_->verifyJoin(selected) }.show()
+                    else {
+                        val v=preview.target.value.state!!
+                        AlertDialog.Builder(context).setTitle("确认加入 ${selected.descriptor.datasetId}")
+                            .setMessage("已验证 Descriptor、观察到的 DAG 和前沿快照。\n课程 ${v.entries.size} · 事件 ${v.events.size} · 来源 ${v.sources.size} · 实例 ${v.imported.size} · 覆盖 ${v.classOverrides.size} · 日期调整 ${v.dayAdjustments.size} · 学期 ${v.profiles.size} · 自定义 ${v.customProfileKeys.size}\nRAW SHA-256: ${SyncV3Codec.hash(SyncV3Codec.stateBytes(v))}\n\n确认时重新检查目标，再原子加入。本地非空、已有绑定或恢复状态会阻止覆盖；普通 WebDAV 不能证明未知客户端已停写。")
+                            .setNegativeButton("取消",null).setPositiveButton("加入并继续验证") { _,_->if(active && !bound())sync.joinV3(preview) }.show()
+                    }
+                }
+            }
         }
         button("发现并加入 Sync v3 数据集") {
             if (bound()) status.text = "已有活动绑定，禁止隐式换库"
@@ -100,9 +131,7 @@ object SharedScheduleDialog {
                     else AlertDialog.Builder(context).setTitle("选择 v3 数据集（Descriptor 已验证）")
                         .setItems(candidates.map { "${it.descriptor.datasetId}\nDescriptor SHA-256: ${it.hash}" }.toTypedArray()) { _, index ->
                             val selected = candidates[index]
-                            AlertDialog.Builder(context).setTitle("确认加入 ${selected.descriptor.datasetId}")
-                                .setMessage("Descriptor 身份已验证，完整 DAG 与业务快照仍需验证。本地非空、已有绑定或恢复状态时会拒绝覆盖；普通 WebDAV 不能证明未知客户端已停写。")
-                                .setNegativeButton("取消", null).setPositiveButton("加入并继续验证") { _, _ -> if (active && !bound()) sync.joinV3(selected.bytes) }.show()
+                            verifyJoin(selected)
                         }.show()
                 }
             }

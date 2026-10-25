@@ -5,7 +5,7 @@ import org.json.JSONObject
 import java.util.Base64
 import java.util.UUID
 
-/** Explicit isolated engine. Production Room/FPK bindings never instantiate it in PR54. */
+/** Sync core. The production host owns activation, permissions and its single Writer. */
 class V3Engine(private val journal: V3Journal, private val writerId: String) {
     init { require(!journal.snapshot().has("writerId") || journal.snapshot().getString("writerId") == writerId) { "v3 writer identity changed" } }
     private val network = journal.networkGate

@@ -8,25 +8,77 @@ import java.util.UUID
 /** Private metadata tables share the existing Room connection and its transaction.
  * No second course database is opened. v2 checkpoint rows stay intact for recovery. */
 internal class ActiveScheduleV3(private val database: ScheduleDatabase,
-    mirror: (ScheduleState) -> Unit, closeDatabase: Boolean) : AutoCloseable {
+    mirror: (ScheduleState) -> Unit) : AutoCloseable {
     companion object {
         const val MODE = 205
         const val ORIGINAL_LOCAL = 206
         fun active(database: ScheduleDatabase) = database.dao().hasSyncRecord(MODE)
     }
     val directory = File(requireNotNull(database.openHelper.writableDatabase.path) + ".sync-v3")
-    val journal = V3Journal(directory, { V3RoomSql(database, closeDatabase) }, { frame ->
+    val journal = V3Journal(directory, { V3RoomSql(database, false) }, { frame ->
         mirror(requireNotNull(SyncV3Codec.decode(Base64.getDecoder().decode(frame.getString("local"))).state))
     })
-    private val writer = database.runInTransaction<String> {
-        database.dao().syncRecord(20)?.payload?.toString(Charsets.US_ASCII) ?: UUID.randomUUID().toString().also {
+    init {
+        try { if(active(database)) {
+            val frame=journal.controlSummary()
+            check(journal.snapshot().has("local")) { "活动 v3 本地事务缺失；保留 Room 课程和证据，拒绝重建空数据集" }
+            check(binding().optString("phase")!="ACTIVE" || frame.has("binding") && frame.has("baselinePath")) { "活动 v3 绑定或基线缺失；拒绝生成新 Genesis" }
+        } } catch(error:Exception) { journal.close(); throw error }
+    }
+    private val writer = try { database.runInTransaction<String> {
+        database.dao().syncRecord(20)?.payload?.toString(Charsets.US_ASCII)?.also(ScheduleCommitCodec::uuid) ?: run {
+            check(!active(database)) { "活动 v3 Writer 身份缺失；拒绝生成新 Writer" }
+            UUID.randomUUID().toString().also {
             database.dao().checkpoint(ScheduleSyncCheckpoint(20, it.toByteArray(Charsets.US_ASCII)))
+            }
+        }
+    } } catch(error:Exception) { journal.close();throw error }
+    val engine = try { V3Engine(journal, writer) } catch(error:Exception) { journal.close();throw error }
+    fun binding() = JSONObject(requireNotNull(database.dao().syncRecord(MODE)).payload.toString(Charsets.UTF_8))
+    fun migrationEvidence(): JSONObject = journal.meta.localOperation {
+        requireNotNull(journal.meta.get("hostMigration", binding().getString("migrationId"))) { "迁移证明缺失；保留源与目标并停止切换" }
+    }
+    fun localWritesAllowed(): Boolean = binding().let { mode ->
+        runCatching { journal.meta.assertWritable() }.isSuccess && mode.optString("phase") !in listOf("MIGRATING","JOINING")
+    }
+    private fun envelope(state:ScheduleState):String {
+        val id="00000000-0000-0000-0000-000000000001"
+        return Base64.getEncoder().encodeToString(SyncV3Codec.encode(V3Object(2,id,id,id,id,1,"1".repeat(64),state=state.copy(sync=null))))
+    }
+    fun prepareVerifiedJoin(preview:UnboundV3JoinPreview,validateBefore:()->Unit) {
+        val target=preview.target; val state=requireNotNull(target.value.state)
+        val descriptor=JSONObject().put("datasetId",target.identity.datasetId).put("descriptorPath",V3Paths.path(target.identity)).put("descriptorHash",SyncV3Codec.hash(target.descriptor))
+        val mode=JSONObject().put("protocol","v3").put("folder",target.folder).put("intent","JOIN").put("phase","ACTIVE")
+        journal.localTransaction { frame ->
+            check(!active(database) && !frame.has("binding"));validateBefore()
+            val original=ScheduleSnapshotCodec.encode(ScheduleSnapshot(UUID.randomUUID().toString(),UUID.randomUUID().toString(),null,System.currentTimeMillis(),preview.original.copy(sync=null),1))
+            database.dao().checkpoint(ScheduleSyncCheckpoint(ORIGINAL_LOCAL,original))
+            database.dao().checkpoint(ScheduleSyncCheckpoint(MODE,mode.toString().toByteArray(Charsets.UTF_8)))
+            val raw=envelope(state)
+            frame.put("writerId",writer).put("binding",descriptor).put("local",raw).put("baseline",raw).put("baselinePath",V3Paths.path(target.value))
+                .put("baselineHash",target.hash).put("activeEpoch",target.value.epochId).put("revision",0).put("unbasedLocal",false)
+                .put("joinReadback",JSONObject().put("path",V3Paths.path(target.value)).put("hash",target.hash).put("endpoint",target.folder).put("roundId",target.readbackRound))
         }
     }
-    val engine = V3Engine(journal, writer)
-    fun binding() = JSONObject(requireNotNull(database.dao().syncRecord(MODE)).payload.toString(Charsets.UTF_8))
-    fun localWritesAllowed(): Boolean = binding().let { mode ->
-        mode.optString("phase") != "MIGRATING" && (mode.optString("intent") != "JOIN" || journal.snapshot().has("baselinePath"))
+    fun prepareExisting(preview:ExistingV3MigrationPreview,validateBefore:()->Unit) {
+        val source=preview.source; val target=preview.target; val state=requireNotNull(target.value.state)
+        check(SyncV3Codec.stateBytes(source.merged).contentEquals(SyncV3Codec.stateBytes(state))) { "源与目标 RAW 不等价，不能证明安全加入；保留双方并停止切换" }
+        check(target.identity.datasetId!=source.frame.baseline!!.datasetId) { "跨协议数据集身份必须独立" }
+        val control=JSONObject().put("protocol","v3").put("folder",target.folder).put("intent","JOIN").put("phase","ACTIVE").put("migrationId",source.transactionId)
+        val descriptor=JSONObject().put("datasetId",target.identity.datasetId).put("descriptorPath",V3Paths.path(target.identity)).put("descriptorHash",SyncV3Codec.hash(target.descriptor))
+        val proof=source.evidence().put("targetKind","EXISTING").put("targetDescriptor",descriptor).put("targetBaselinePath",V3Paths.path(target.value))
+            .put("targetBaselineHash",target.hash).put("exactReadbackConfirmed",true).put("rawEquivalent",true).put("sourceWriterPaused",true)
+        journal.localTransaction { frame ->
+            check(!active(database) && !frame.has("binding")); validateBefore()
+            val original=ScheduleSnapshotCodec.encode(source.frame.baseline.snapshot().copy(state=source.frame.local.copy(sync=null)))
+            database.dao().checkpoint(ScheduleSyncCheckpoint(ORIGINAL_LOCAL,original))
+            journal.meta.put("hostMigration",source.transactionId,proof)
+            database.dao().checkpoint(ScheduleSyncCheckpoint(MODE,control.toString().toByteArray(Charsets.UTF_8)))
+            val raw=envelope(state)
+            frame.put("writerId",writer).put("binding",descriptor).put("local",raw).put("baseline",raw)
+                .put("baselinePath",V3Paths.path(target.value)).put("baselineHash",target.hash).put("activeEpoch",target.value.epochId)
+                .put("revision",0).put("unbasedLocal",false).put("joinReadback",JSONObject().put("path",V3Paths.path(target.value)).put("hash",target.hash))
+        }
     }
     fun state(): ScheduleState {
         val s = journal.snapshot()
@@ -38,17 +90,18 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
     fun prepare(seed: ScheduleState, folder: String, descriptor: ByteArray? = null,
         migration: ScheduleV3MigrationPreview? = null, validateBefore: () -> Unit = {}) {
         check(!active(database)) { "已有活动协议；禁止重复切换" }
-        val mode = JSONObject().put("protocol", "v3").put("folder", folder).put("intent", if (descriptor == null) "CREATE" else "JOIN")
-        if (migration != null) mode.put("migration", migration.evidence()).put("phase", "MIGRATING")
+        val mode = JSONObject().put("protocol", "v3").put("folder", folder).put("intent", if (descriptor == null) "CREATE" else "JOIN").put("phase","CREATING")
+        if (migration != null) mode.put("migrationId", migration.transactionId).put("phase", "MIGRATING")
         if (descriptor != null) {
             val d = SyncV3Codec.decode(descriptor); require(d.type == 1)
             mode.put("descriptor", Base64.getEncoder().encodeToString(descriptor)).put("descriptorHash", SyncV3Codec.hash(descriptor))
+            mode.put("phase","JOINING")
         }
-        val stateId = "00000000-0000-0000-0000-000000000001"
-        val encoded = Base64.getEncoder().encodeToString(SyncV3Codec.encode(V3Object(2, stateId, stateId, stateId, stateId, 1, "1".repeat(64), state = seed.copy(sync = null))))
+        val encoded = envelope(seed)
         journal.localTransaction { frame ->
             check(!active(database))
             validateBefore()
+            if(migration!=null) journal.meta.put("hostMigration",migration.transactionId,migration.evidence())
             val raw = ScheduleSnapshotCodec.encode(ScheduleSnapshot(UUID.randomUUID().toString(), UUID.randomUUID().toString(), null,
                 System.currentTimeMillis(), (migration?.frame?.local ?: seed).copy(sync = null), 1))
             database.dao().checkpoint(ScheduleSyncCheckpoint(ORIGINAL_LOCAL, raw))
@@ -58,7 +111,7 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
     }
     fun synchronize(account: WebDavAccount): String {
         val b = binding(); val budget = V3Budget(); val remote = V3WebDavStore(account, b.getString("folder"), budget)
-        val proof = b.optJSONObject("migration")?.takeIf { b.optString("phase") != "ACTIVE" }?.let(ScheduleV3MigrationPreview::restore)
+        val proof = if(b.has("migrationId") && b.optString("phase")!="ACTIVE") ScheduleV3MigrationPreview.restore(migrationEvidence()) else null
         val recheck: (() -> Unit)? = proof?.let { p -> {
             val old = WebDavCommitStore(account, p.sourceFolder)
             ScheduleV3Migration.unchanged(p, ScheduleV3Migration.inspect(p.frame, p.hashes, old, p.sourceFolder, p.transactionId))
@@ -67,7 +120,7 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
     }
     fun synchronize(remote: V3ObjectStore, publication: V3PublicationStore, budget: V3Budget, recheck: (() -> Unit)? = null): String {
         val b = binding()
-        val migrating = b.has("migration") && b.optString("phase") != "ACTIVE"
+        val migrating = b.has("migrationId") && b.optString("phase") != "ACTIVE"
         if (migrating) requireNotNull(recheck) { "迁移恢复必须重新验证源历史" }.invoke()
         if (!journal.snapshot().has("binding")) {
             if (b.getString("intent") == "CREATE") engine.initialize(publication)
@@ -79,20 +132,27 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
         }
         if (migrating) {
             if ((journal.snapshot().optJSONArray("initialization")?.length() ?: 0) > 0) engine.initialize(publication)
-            val s = journal.snapshot(); val p = b.getJSONObject("migration")
+            val s = journal.snapshot(); val p = migrationEvidence()
             check(s.optJSONArray("initialization")?.length() == 0 && s.has("baselinePath") && s.has("receipt")) { "Genesis 尚未回读确认；继续恢复原候选" }
             val genesisState = requireNotNull(SyncV3Codec.decode(Base64.getDecoder().decode(s.getString("baseline"))).state)
             check(SyncV3Codec.hash(SyncV3Codec.stateBytes(genesisState)) == p.getString("rawHash")) { "目标 Genesis 与完整源 RAW 快照不等价" }
             recheck!!.invoke()
             journal.localTransaction {
-                val mode = binding(); val evidence = mode.getJSONObject("migration")
+                val mode = binding(); val evidence = migrationEvidence()
                 evidence.put("targetDescriptor", s.getJSONObject("binding")).put("targetGenesisPath", s.getString("baselinePath"))
                     .put("targetGenesisHash", s.getString("baselineHash")).put("exactReadbackConfirmed", true).put("businessEquivalent", true)
                 mode.put("phase", "ACTIVE")
+                journal.meta.put("hostMigration",mode.getString("migrationId"),evidence)
                 database.dao().checkpoint(ScheduleSyncCheckpoint(MODE, mode.toString().toByteArray(Charsets.UTF_8)))
             }
         }
-        return try { engine.round(remote, publication, V3IndexedCache(directory, budget), budget, 32) }
+        return try {
+            val result=engine.round(remote, publication, V3IndexedCache(directory, budget), budget, 32)
+            if(binding().optString("phase") in listOf("JOINING","CREATING") && journal.controlSummary().has("baselinePath")) journal.localTransaction {
+                val mode=binding().put("phase","ACTIVE"); database.dao().checkpoint(ScheduleSyncCheckpoint(MODE,mode.toString().toByteArray(Charsets.UTF_8)))
+            }
+            result
+        }
         catch (e: IllegalStateException) {
             when {
                 e.message.orEmpty().contains("budget") -> "BUDGET"

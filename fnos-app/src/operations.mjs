@@ -1,6 +1,6 @@
 // 三个入口共用的操作目录。业务写入仍全部进入 server 的原事务/互斥处理器。
 import { z } from 'zod';
-export const VERSION = '0.7.2';
+export const VERSION = '0.7.4';
 export const BUDGET = 2 * 1024 * 1024;
 const text = z.string().max(4096), id = z.uuid(), number = z.number().int().nonnegative();
 const workspace = { workspaceId: id };
@@ -63,8 +63,9 @@ for (const action of ['archive','compact']) add('history.' + action, action === 
 for (const action of ['list','create','verify','cancel','restore']) add('backups.' + action, '加密应用备份：' + action + '；沿用现有恢复预览、身份与外部依赖验证', { ...write, ...paging, rootId:text.optional(), relative:text.optional(), directoryIdentity:text.optional(), name:text.optional(), password:text.optional(), token:text.optional(), confirm:text.optional() }, '/api/backups/' + action, 'maintenance', { approval:['create','restore'].includes(action) });
 add('migration.status', '换库进度、设备证据、保护状态及人工清理前检查；不会删除旧库', { ...workspace, ...paging }, '/api/migration');
 add('migration.v3-preview', '只读验证完整 v2 与本地未发布快照；无需新增 v2 提交', write, '/api/migration', 'maintenance', { fixed:{ action:'v3.preview' } });
+add('migration.v3-discover', '发现已经迁移出的 v3 目标；只读，不发布 v2 或隐式选择目标', { ...write,targetConnectionId:id.optional() }, '/api/migration', 'maintenance', { fixed:{ action:'v3.discover' } });
 add('migration.v3-audit', '检查迁移后的旧 v2 写入，只记录跨协议分叉证据，不作为 v3 LATE 整合', { ...write,migrationId:id }, '/api/migration', 'maintenance', { fixed:{ action:'v3.audit' } });
-add('migration.v3-prepare', '持久暂停本机源 Writer，保留 RAW、基线和完整提交证据；不宣称未知设备停写', { ...write, token:text, confirm:id, writersStopped:z.boolean(), targetConnectionId:id.optional() }, '/api/migration', 'maintenance', { fixed:{ action:'v3.prepare' }, approval:true });
+add('migration.v3-prepare', '持久暂停本机源 Writer，保留 RAW、基线和完整提交证据；不宣称未知设备停写', { ...write, token:text, confirm:z.union([id,z.literal('LOCAL')]), writersStopped:z.boolean(), targetConnectionId:id.optional(), descriptorPath:text.optional(),descriptorHash:text.optional() }, '/api/migration', 'maintenance', { fixed:{ action:'v3.prepare' }, approval:true });
 for (const action of ['resume','cancel']) add('migration.v3-' + action, '恢复同一 v3 目标与候选；已发布目标禁止简单切回 v2', { ...write, migrationId:id }, '/api/migration', 'maintenance', { fixed:{ action:'v3.'+action }, approval:true });
 add('migration.verify', '预检源、完整归档、精简候选和 Android 实际使用的目标 WebDAV 全图，不准备或切换工作区', { ...write, rootId:text, candidateRelative:text, targetConnectionId:id }, '/api/migration/verify', 'maintenance');
 for (const action of ['prepare','device','freeze','switch','recheck','cancel','retire']) add('migration.' + action, '数据集迁移：' + action + '；设备停写与验收证据必须由管理员登记', { ...write, ...paging, rootId:text.optional(), candidateRelative:text.optional(), targetConnectionId:id.optional(), migrationId:id.optional(), migrationVersion:number.optional(), confirm:text.optional(), writersStopped:z.boolean().optional(), type:z.enum(['X08E','Phone','其他']).optional(), name:text.optional(), stopped:z.boolean().optional(), accepted:z.boolean().optional(), evidence:z.string().max(2000).optional() }, '/api/migration', 'maintenance', { fixed:{ action }, approval:action !== 'recheck' });
@@ -85,6 +86,7 @@ export function errorValue(error, code = 'VALIDATION') {
   else if (/确认|请输入/.test(message)) code = 'CONFIRMATION';
   else if (/身份|绑定|数据集/.test(message)) code = 'IDENTITY';
   else if (/完整历史|不可验证/.test(message)) code = 'INCOMPLETE';
+  else if (/budget|预算|超限|容量|上限/.test(message)) code = 'LIMIT';
   return { code, message: { VALIDATION:'参数或业务条件不满足，请检查 schema 与当前状态', STALE:'版本或预览已过期，请重新读取后明确决策', PROTECTED:'操作被现有保护规则拒绝', BUSY:'服务正在执行互斥操作，请稍后查询状态', PERMISSION:'管理员尚未授予此操作权限', APPROVAL:'需要管理员在管理网页独立批准具体操作', UNAVAILABLE:'应用不可用；请启动已安装 FPK 后重试', LIMIT:'请求、响应或操作预算超限', UNKNOWN:'操作可能已提交，请查询回执与业务状态，勿更换操作 ID 盲目重试', NO_CONNECTION:'请先添加连接并创建工作区', NOT_FOUND:'目标记录或必要文件不存在，请核对身份及完整性', NETWORK:'连接或网络验证失败，请检查授权、端点和证书后重试', CONFIRMATION:'缺少与预览一致的明确确认参数', IDENTITY:'工作区、绑定或数据集身份不符；禁止隐式换库', INCOMPLETE:'历史尚未完整验证，请检查 deferred、异常与保护状态', CONFLICT:'存在冲突，请读取冲突摘要并在有效 token 下明确决策' }[code] ?? '操作失败' };
 }
 export function redact(value) {

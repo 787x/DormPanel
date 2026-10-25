@@ -7,6 +7,7 @@ import { Store } from '../src/store.mjs';
 import { Catalog } from '../src/catalog.mjs';
 import { BackupManager } from '../src/backup.mjs';
 import { Budget } from '../src/v3-store.mjs';
+import { DatabaseSync } from 'node:sqlite';
 
 const edit = title => ({ kind: 'entry', action: 'upsert', value: { id: 'course', title, day: 1, startMinute: 480, endMinute: 540, location: '' } });
 const remote = () => {
@@ -83,4 +84,21 @@ test('Catalog v3: 正式 Workspace 编辑后的冲突与过期决定重开后保
   await b.sync();
   await b.catalog.network(b.id, e => e.resolve('local', b.db().conflictToken(), b.db().frame.revision));
   await b.settle(); await a.settle(); assert.equal(a.db().frame.local.entries[0].title, 'right');
+});
+test('Catalog v3: 释放非活动 Writer 后只读身份检查不重开业务帧；旧引用不能写',async t=>{
+  const c=await client(t,remote()); await c.sync({create:true}); await c.settle();
+  const old=c.db(),dataset=old.frame.datasetId; c.catalog.prune();
+  await assert.rejects(old.edit(edit('stale')),/失效/);
+  const identities=await c.catalog.identities(); assert.equal(identities.get(c.id),dataset); assert(!c.catalog.workspaces.has(c.id));
+  await c.catalog.load(c.id); assert.equal(c.db().frame.datasetId,dataset);
+});
+test('Catalog v3: 已注册 SQLite 丢失 Workspace 帧时拒绝静默创建空帧',async t=>{
+  const c=await client(t,remote()); await c.sync({create:true}); await c.settle();
+  const path=join(c.catalog.workspaceStore(c.id).dir,'v3','v3-state-v2.sqlite');
+  c.db().activeV3.journal.meta.atomic(()=>c.db().activeV3.journal.meta.remove('workspace','workspace.json'));
+  c.catalog.prune(); await Promise.all(c.catalog.closing.values());
+  await assert.rejects(c.catalog.load(c.id),/帧缺失/);
+  const db=new DatabaseSync(path,{readOnly:true});
+  try { assert.equal(db.prepare("SELECT count(*) AS n FROM v3_records WHERE ns='workspace' AND k='workspace.json'").get().n,0); }
+  finally {db.close();}
 });

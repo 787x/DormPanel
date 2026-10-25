@@ -171,7 +171,14 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         status = when (error) {
             is ScheduleHistoryPending -> error.message!!
             is WebDavException -> if (error.reason.startsWith("Network")) "离线 / 等待重试；本地修改已保留" else error.reason
-            else -> "同步失败；本地数据已保留：${error.message?.take(200) ?: "请检查账号或远端版本"}"
+            is java.net.UnknownHostException, is java.net.SocketTimeoutException -> "离线 / 等待重试；本地修改已保留"
+            is android.database.sqlite.SQLiteException -> "本地事务需要恢复；数据已保留，请重开活动 Store"
+            else -> {
+                val message=error.message.orEmpty()
+                if(message.contains("reopen")) "本地事务确认中断；已停止写入，请重开活动 Store"
+                else if(Regex("(?i)(?:/data/|/var/|/vol[0-9]/|/home/|/proc/|/tmp/|[a-z]:\\\\|password=|token=)").containsMatchIn(message)) "本地或远端验证失败；数据与证据保留，请检查恢复状态"
+                else "同步失败；本地数据已保留：${message.take(200).ifBlank { "请检查账号或远端版本" }}"
+            }
         }
         if (savedConflict) status = "存在冲突 · $status"
         settings.result(status); busy = false
@@ -267,17 +274,38 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     fun sync() { settings.resetRetries(); synchronize(false) }
     fun publish() { settings.resetRetries(); synchronize(true) }
     fun createV3() = activateV3(null)
+    fun reopenV3Store() = run({ synchronized(SharedScheduleRunLock) { SharedScheduleViews.changing { source.syncStore!!.reopenV3Store() } } }) {
+        source.reload { complete("活动 v3 Store 已从同一数据库恢复；课程、候选与绑定保留",false) }
+    }
     fun cancelUnpublishedV3Migration() = run({ synchronized(SharedScheduleRunLock) { source.syncStore!!.cancelUnpublishedV3Migration() } }) {
         source.reload { complete("已取消未创建目标的迁移；原 v2 本地修改和基线已恢复，证据保留", false) }
     }
-    fun auditV3MigrationSource() = run({ source.syncStore!!.auditV3MigrationSource(account()) }) { complete(it, false) }
+    fun auditV3MigrationSource() = run({ synchronized(SharedScheduleRunLock) { source.syncStore!!.auditV3MigrationSource(account()) } }) { complete(it, false) }
     fun previewV3Migration(done: (ScheduleV3MigrationPreview) -> Unit) = run({
         synchronized(SharedScheduleRunLock) { requireNotNull(source.syncStore).previewV3Migration(v2Remote(), v2Folder()) }
     }) { busy = false; status = "v2 源历史及完整本地快照已验证；尚未切换"; notifyChanged(); done(it) }
     fun migrateV3(preview: ScheduleV3MigrationPreview) = run({
         synchronized(SharedScheduleRunLock) { requireNotNull(source.syncStore).prepareV3Migration(preview, v2Remote(), transport.folder(account(), settings.folder)) }
     }) { source.reload { complete("源 Writer 已持久暂停；v3 迁移等待精确回读及源重检", false); sync() } }
-    fun joinV3(descriptor: ByteArray) = activateV3(descriptor)
+    fun previewExistingV3(descriptor:ByteArray,done:(ExistingV3MigrationPreview)->Unit) = run({
+        synchronized(SharedScheduleRunLock) { source.syncStore!!.previewExistingV3Migration(v2Remote(),v2Folder(),account(),transport.folder(account(),settings.folder),descriptor) }
+    }) { preview ->
+        busy=false
+        status=if(preview==null) "目标只读预检进度已保存；请再次选择同一目标继续" else "源与既有 v3 目标完整 RAW 等价；尚未切换"
+        settings.result(status,false); notifyChanged(); if(preview!=null) done(preview)
+    }
+    fun joinMigratedV3(preview:ExistingV3MigrationPreview) = run({
+        synchronized(SharedScheduleRunLock) { source.syncStore!!.prepareExistingV3Migration(preview,v2Remote(),account()) }
+    }) { source.reload { complete("本机 v2 Writer 已暂停；已加入经验证的同一 v3 目标，未创建新 Genesis",false); sync() } }
+    fun previewJoinV3(descriptor:ByteArray,done:(UnboundV3JoinPreview?)->Unit) = run({
+        synchronized(SharedScheduleRunLock) { source.syncStore!!.previewUnboundV3Join(account(),transport.folder(account(),settings.folder),descriptor) }
+    }) { preview ->
+        busy=false;status=if(preview==null) "只读预检进度已保存，尚未绑定；请选择同一目标继续" else "目标身份、前沿及完整业务快照已验证，尚未绑定"
+        settings.result(status,false);notifyChanged();done(preview)
+    }
+    fun joinV3(preview:UnboundV3JoinPreview) = run({
+        synchronized(SharedScheduleRunLock) { source.syncStore!!.joinVerifiedV3(preview,account()) }
+    }) { source.reload { complete("已加入指定 v3 身份；目标快照经精确回读，本地已保存",true);sync() } }
     private fun activateV3(descriptor: ByteArray?) = run({
         synchronized(SharedScheduleRunLock) {
             check(settings.publishedRevision == null && settings.pendingRevision == null) { "已有 v1 绑定，禁止隐式切换" }
@@ -320,7 +348,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
                 SharedScheduleViews.reloaded()
                 savedConflict = result == "CONFLICT"
                 source.reload { loaded -> loaded.onSuccess {
-                    complete(v3StatusMessage(result), false)
+                    complete(v3StatusMessage(result), result in listOf("OBSERVED","PUBLISHED"))
                     if (result in listOf("BUDGET", "DISCOVERING", "ROTATED") && settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
                 }.onFailure(::failure) }
             }
@@ -357,7 +385,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     }
     fun loadConflicts(done: (List<ScheduleMerge.Conflict>) -> Unit) = run({
         if (source.syncStore?.isV3() == true) {
-            val conflict = source.syncStore!!.v3Information()?.optJSONObject("conflict")
+            val conflict = source.syncStore!!.v3Control()?.optJSONObject("conflict")
             val rows = conflict?.getJSONArray("conflicts")
             return@run (if (rows == null) emptyList() else (0 until rows.length()).map { index -> rows.getJSONObject(index).let {
                 ScheduleMerge.Conflict(it.getString("key"), it.getString("description"))

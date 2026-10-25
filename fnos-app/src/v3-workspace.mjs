@@ -7,12 +7,16 @@ import { Budget } from './v3-store.mjs';
 
 /** Opt-in PR55 transaction adapter. Reuses Workspace edit/revision/guard rules; local
  * courses and V3 control live in ONE SQLite-backed Workspace row. No v2 import/binding.
- * Caller supplies the catalog/administrator/directory guard; no routes invoke this yet. */
-export async function openV3Workspace(directory, writable, installationIdentity = null) {
+ * Caller supplies the Catalog/administrator/directory guard; it owns activation. */
+export async function openV3Workspace(directory, writable, installationIdentity = null, { requireExisting = false } = {}) {
   ensure(typeof writable === 'function', 'v3 Workspace requires permission guard'); writable();
   const meta = new V3Metadata(directory); meta.guard = writable;
   try {
     ensure(!meta.get('state', 'frame'), 'v3 standalone state cannot silently become a Workspace');
+    if(requireExisting) {
+      ensure(meta.get('workspace','workspace.json'),'已注册 v3 工作区帧缺失；拒绝创建空帧覆盖');
+      ensure(meta.get('installation','identity'),'已注册 v3 安装身份缺失；拒绝生成新 Writer');
+    }
     let identity = meta.get('installation', 'identity');
     if (!identity) { identity = installationIdentity ?? { writerId: randomUUID(), installationId: randomUUID() }; meta.atomic(() => meta.put('installation', 'identity', identity)); }
     ensure(!installationIdentity || identity.writerId === installationIdentity.writerId && identity.installationId === installationIdentity.installationId, 'v3 安装身份变化');
@@ -50,6 +54,6 @@ export async function openV3Workspace(directory, writable, installationIdentity 
       },
       async close() { await workspace.queue; meta.close(); }
     };
-    return { journal, workspace, writerId: identity.writerId };
+    return { journal, workspace, writerId: identity.writerId, isInternalFrame:frame => engineFrames.has(frame) };
   } catch (e) { meta.close(); throw e; }
 }

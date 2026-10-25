@@ -214,22 +214,24 @@ export async function createApp({
           historyLock = true;
           try {
             const service = new V3DatasetMigration(catalog);
+            if(input.action==='v3.discover') { send(200,await service.discover(workspaceId,input.targetConnectionId)); return; }
             if (input.action === 'v3.preview') {
               for (const [id,p] of v3Previews) if (p.expires < Date.now()) v3Previews.delete(id);
               ensure(v3Previews.size < 8, '迁移预览数量超限');
               const preview = await service.preview(workspaceId), token = randomUUID();
               v3Previews.set(token, { preview, workspaceId, user, version:db.frame.revision, expires:Date.now()+15*60000 });
-              send(200, { token, sourceDatasetId:preview.evidence.datasetId, commits:Object.keys(preview.evidence.hashes).length,
+              send(200, { token, sourceProtocol:preview.evidence.sourceProtocol,sourceDatasetId:preview.evidence.datasetId, commits:Object.keys(preview.evidence.hashes).length,
                 tips:preview.evidence.tips, rawHash:preview.evidence.rawHash, businessHash:preview.evidence.businessHash,
                 knownWriterIds:preview.evidence.knownWriterIds, counts:Object.fromEntries(Object.entries(preview.evidence.merged).map(([k,v]) => [k,v.length])),
-                sourceHistoryRetained:true, independentBackupVerified:false, unknownWritersStopped:false, serverWriteProhibited:false }); return;
+                sourceHistoryRetained:preview.evidence.sourceProtocol!=='LOCAL', independentBackupVerified:false, unknownWritersStopped:false, serverWriteProhibited:false }); return;
             }
             let result;
             if (input.action === 'v3.prepare') {
               const p = v3Previews.get(input.token);
               ensure(p && p.workspaceId === workspaceId && p.user === user && p.expires > Date.now() && p.version === db.frame.revision, '迁移预览过期');
-              ensure(input.confirm === p.preview.evidence.datasetId && input.writersStopped === true, '请确认源身份及已停止已知旧客户端；未知设备无法自动发现');
-              const m = await service.prepare(workspaceId, p.preview, input.targetConnectionId); v3Previews.delete(input.token); result = service.summary(m);
+              ensure(input.confirm === (p.preview.evidence.datasetId ?? 'LOCAL') && input.writersStopped === true, '请确认源身份及已停止已知旧客户端；未知设备无法自动发现');
+              ensure(!input.descriptorPath || input.descriptorHash,'请选择完整 Descriptor 身份');
+              const m = await service.prepare(workspaceId, p.preview, input.targetConnectionId,input.descriptorPath ? { descriptorPath:input.descriptorPath,descriptorHash:input.descriptorHash } : null); v3Previews.delete(input.token); result = service.summary(m);
             } else {
               const m = catalog.v3Migrations.find(m => m.id === input.migrationId && [m.sourceId,m.targetId].includes(workspaceId));
               ensure(m, '迁移记录或工作区不匹配');
@@ -529,7 +531,9 @@ export async function createApp({
       }
       send(404, { error: "不存在" });
     } catch (e) {
-      send(/过期|变化|失效/.test(e.message) ? 409 : 400, { error: e.message });
+      const message=String(e.message ?? '操作失败');
+      const sensitive=/\b(?:ENOENT|EACCES|EPERM|EIO|ERR_SQLITE|SQLITE_[A-Z_]+)\b|\/(?:data|var|vol\d+|home|proc|tmp)\/|[A-Za-z]:\\|password=|token=/i.test(message+' '+(e.code ?? ''));
+      send(/过期|变化|失效/.test(message) ? 409 : 400, { error:sensitive ? '存储或访问验证失败；数据与恢复证据已保留，敏感位置已隐藏' : message.slice(0,500) });
     } finally {
       if (writing) writes--; requests--;
       if (requests === 0) catalog.prune();
@@ -544,6 +548,17 @@ export async function createApp({
     return { status, data };
   };
   agents = await AgentService.open({ store, catalog:() => catalog, dispatch, approvalSummary:async (operation, input) => {
+    if(operation==='migration.v3-prepare') {
+      const p=v3Previews.get(input.token); ensure(p && p.user==='agent-package-os' && p.workspaceId===input.workspaceId && p.expires>Date.now(),'迁移预览已失效');
+      return {sourceProtocol:p.preview.evidence.sourceProtocol,sourceDatasetId:p.preview.evidence.datasetId,rawHash:p.preview.evidence.rawHash,
+        knownWriterIds:p.preview.evidence.knownWriterIds,targetConnectionId:input.targetConnectionId ?? catalog.row(input.workspaceId).connectionId,
+        targetDescriptor:input.descriptorPath ? {path:input.descriptorPath,hash:input.descriptorHash} : null,
+        scope:'持久暂停本机源 Writer，保留完整 RAW、基线和提交证据；未知旧客户端与服务端停写未被证明'};
+    }
+    if(['migration.v3-resume','migration.v3-cancel'].includes(operation)) {
+      const m=catalog.v3Migrations.find(m=>m.id===input.migrationId && [m.sourceId,m.targetId].includes(input.workspaceId));
+      ensure(m,'迁移记录不存在'); return new V3DatasetMigration(catalog).summary(m);
+    }
     if (operation === 'backups.restore') {
       const p = backups.previews.get(input.token);
       ensure(p && p.user === 'agent-package-os' && p.expires > Date.now(), '恢复预览已失效');

@@ -48,6 +48,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     sourceSets.getByName("androidTest").assets.srcDir("../schedule-core/src/test/resources/schedule")
+    sourceSets.getByName("androidTest").kotlin.srcDir("../schedule-core/src/uiTest/java")
 }
 dependencies {
     implementation(project(":schedule-core"))

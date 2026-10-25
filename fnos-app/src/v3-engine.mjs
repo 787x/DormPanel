@@ -7,9 +7,9 @@ import { V3Publisher } from './v3-transaction.mjs';
 import { V3History, V3Discovery, reference, refPath } from './v3-history.mjs';
 import { emptyState, merge, same, mergePlan } from './merge.mjs';
 
-/** Isolated engine only. Caller owns Workspace's exclusive writer lease for the lifetime.
+/** Sync core. Caller owns Workspace's exclusive writer lease for the lifetime.
  * Edits and receipts share one durable journal; an engine queue serializes network rounds.
- * No production binding, server route or v2 workspace ever invokes this class. */
+ * Production activation and permissions belong to Catalog; v2 never calls this engine. */
 export class V3Engine {
   constructor(journal, writerId) { ensure(!journal.value.writerId || journal.value.writerId === writerId, 'v3 writer identity changed'); Object.assign(this, { journal, writerId }); }
   serial(fn) { const p = this.journal.networkQueue.then(() => { this.journal.meta.assertWritable(); return fn(); }); this.journal.networkQueue = p.catch(() => {}); return p; }

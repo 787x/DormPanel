@@ -176,7 +176,7 @@ class TimetableActivity : AppCompatActivity() {
         val adjustment = source.state.daysByDate[selected.toString()]
         list.addView(scheduleLabel("$selected${adjustment?.let { " · ${if (it.mode == "none") "无课" else "使用星期 ${it.weekday} 课表"}" }.orEmpty()}", 16f))
         val classes = projected.filter { it.start < selected.plusDays(1).atStartOfDay(source.clock.zone()).toInstant() && it.end > selected.atStartOfDay(source.clock.zone()).toInstant() }
-        if (classes.isEmpty()) list.addView(scheduleLabel(if (source.readOnly) "今天没有课程。当前显示已缓存的共享课表；请在 X08E 修改并发布。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV、XLS。", 18f))
+        if (classes.isEmpty()) list.addView(scheduleLabel(if (source.readOnly) "课表正在验证或受迁移保护；本地数据保留，请从共享课表入口继续恢复。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV、XLS。", 18f))
         classes.forEach { item ->
             list.addView(scheduleButton(buildString {
                 append(item.entry.title).append("\n")

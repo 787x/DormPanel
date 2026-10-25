@@ -49,6 +49,15 @@ class V3Journal(val directory: File, sqlFactory: ((File) -> V3SqlPort)? = null,
     private var frame = try { (meta.get("state", "frame") ?: JSONObject().put("version", 2)).also { require(it.getInt("version") == 2) } }
         catch (e: Exception) { meta.close(); throw e }
     @Synchronized fun snapshot() = JSONObject(frame.toString())
+    /** UI reads small control fields without serializing full local/baseline/capture. */
+    @Synchronized fun controlSummary(): JSONObject = JSONObject().also { out ->
+        listOf("binding","revision","baselinePath","activeEpoch","receipt").forEach { key ->
+            if(frame.has(key)) out.put(key,when(val value=frame.get(key)) { is JSONObject->JSONObject(value.toString()); else->value })
+        }
+        frame.optJSONObject("pending")?.let { p -> out.put("pending",JSONObject().put("phase",p.getString("phase")).put("path",p.getString("path")).put("hash",p.getString("hash"))) }
+        frame.optJSONObject("conflict")?.let { c -> out.put("conflict",JSONObject().put("id",c.getString("id")).put("revision",c.getLong("revision"))
+            .put("conflicts",org.json.JSONArray(c.getJSONArray("conflicts").toString()))) }
+    }
     @Synchronized fun localTransaction(change: (JSONObject) -> Unit) = meta.localOperation { transaction(change) }
     @Synchronized fun transaction(change: (JSONObject) -> Unit) {
         val next = snapshot()

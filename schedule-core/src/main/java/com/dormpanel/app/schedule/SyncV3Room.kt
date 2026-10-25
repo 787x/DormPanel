@@ -12,8 +12,8 @@ import org.json.JSONObject
 @Entity(tableName = "v3_records", indices = [Index(value = ["ns", "k"], unique = true), Index(value = ["ns", "seq"])])
 data class V3Record(@PrimaryKey(autoGenerate = true) val seq: Long = 0, val ns: String, val k: String, val v: String, val sum: String)
 
-/** Dedicated opt-in schema; ScheduleDatabase v4 and production factories remain unchanged.
- * PR55 can use this adapter without inventing a second course/receipt transaction boundary. */
+/** Dedicated isolated schema retained for adapter tests. Production ActiveScheduleV3 uses
+ * the existing ScheduleDatabase v4 connection for the same course/receipt transaction. */
 @Database(entities = [EventRow::class, TimetableRow::class, ImportSource::class, ImportedClassOccurrence::class,
     DayAdjustment::class, ClassOverride::class, ScheduleSyncCheckpoint::class, V3Record::class], version = 1, exportSchema = false)
 abstract class V3RoomDatabase : RoomDatabase() { abstract fun dao(): ScheduleDao }

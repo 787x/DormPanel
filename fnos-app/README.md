@@ -1,4 +1,6 @@
-# DormPanel Schedule Manager 0.7.1
+# DormPanel Schedule Manager 0.7.4（PR55 测试候选）
+
+0.7.4 接入显式 v3 工作区与 v2→v3 迁移，复用同一 Catalog / Workspace / Writer 和管理员边界。当前 v3 应用状态不能由 DPBK0001 完整备份，相关备份/恢复明确拒绝；v2 专属回退、归档和精简不适用于 v3。验收进度见 [PR55 记录](../docs/pr55-sync-v3-verification.md)。
 
 0.7.1 增加随包 CLI 与官方 MCP stdio Server，共 69 项业务操作、只读资源和工作流 Prompt；沿用运行中进程的单 Writer、版本检查与保护规则。默认只读，管理员在原网页授权并独立批准高影响操作。实际安装路径、SSH 配置、权限、幂等语义和限制见 [CLI / MCP 使用说明](../docs/fpk-0.7.1-agent-guide.md)，候选、代码测试及已安装验收见 [PR49 验证记录](../docs/pr49-fpk-agent-verification.md)。
 

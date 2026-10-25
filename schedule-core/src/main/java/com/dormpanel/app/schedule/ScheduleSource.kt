@@ -64,7 +64,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     var applyingSnapshot = false; private set
     /** PR32 bindings are writable. Short transactional reloads use applyingSnapshot separately. */
     val readOnly get() = !closed && ((store as? RoomScheduleStore)?.businessPaused() ?: ((store as? ScheduleV2Store)?.v2DatasetPaused() == true))
-    val editBlockReason get() = if (readOnly) ScheduleDatasetWriteProtected().message else null
+    val editBlockReason get() = if (readOnly) (store as? RoomScheduleStore)?.businessBlockReason() ?: ScheduleDatasetWriteProtected().message else null
     val syncStore get() = store as? RoomScheduleStore
     var localCommitted: (() -> Unit)? = null
     internal fun markLocalPending() {

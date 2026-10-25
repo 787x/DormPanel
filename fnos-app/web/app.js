@@ -66,7 +66,7 @@ async function load() {
         : s.dirty
           ? " · 有待发布修改"
           : " · 无待发布本地修改") +
-      (s.published ? "\n本机发布已回读确认；其他设备接收情况未知" : "");
+      (s.published ? "\n上次发布对象已回读确认；当前待发布修改另计，其他设备接收情况未知" : "");
     if (activeProtocol === 'v3') $('status').textContent += '\nSync v3 · ' + (s.datasetId ?? '未绑定') + '\n旧 Epoch 巡检未完成；未知旧客户端与服务端停写情况未确认。';
     if (s.writeProtection) $('status').textContent += '\n' + s.writeProtection;
     $('managerStatus').textContent = $('status').textContent;
@@ -890,7 +890,7 @@ async function loadManagement(epoch = loadEpoch) {
     if (w.id === workspaceId) {
       if (c) more.append(el('p', '此存储位置中有课表时接收已有数据集；空目录则可创建独立数据集。'), button('接收已有课表…', () => $('bind').click()), button('在空目录创建共享课表…', () => $('create').click()));
       more.append(button('查看冲突', showConflicts));
-      if (c && w.protocol !== 'v3') more.append(button('v2→v3 安全迁移…', migrateToV3));
+      if (c && w.protocol !== 'v3') more.append(button('创建 / 迁移到 Sync v3…', migrateToV3));
       more.append(button('恢复 v3 迁移 / 查看证据', recoverV3Migration));
     }
     if (w.unknown) for (const b of more.querySelectorAll('button')) b.disabled = true;
@@ -923,9 +923,20 @@ async function loadManagement(epoch = loadEpoch) {
 async function migrateToV3() {
   try {
     const p = await post('/api/migration', { action:'v3.preview' });
-    const message = `源 ${p.sourceDatasetId}\n已验证 ${p.commits} 个提交，${p.tips.length} 个前沿。\n八类 RAW: ${JSON.stringify(p.counts)}\nRAW SHA-256: ${p.rawHash}\n\n保留未发布本地修改及原 v2 基线，不新增 v2 提交。确认后本机源 Writer 持久暂停；精确回读新 Genesis 并再次验证源后才激活 v3。原远端历史仍保留，这不是独立验证的备份。\n\n请先停止其他已知旧客户端。普通 WebDAV 无法证明未知设备已经停写，旧目录没有被服务端禁止写入。后续设备须加入此目标，不要各自再次迁移。`;
+    const targetMode=await requestText('输入 create 为首台设备创建唯一新目标；输入 join 加入首台设备已经迁移出的目标。后续设备必须选择 join。','create');
+    if(!['create','join'].includes(targetMode))return;
+    let selected=null;
+    if(targetMode==='join') {
+      const discovery=await post('/api/migration',{action:'v3.discover'});
+      const candidates=discovery.candidates.filter(c=>c.state==='DESCRIPTOR_VERIFIED');
+      if(!candidates.length)return notifyUser('未发现可验证的已有 v3 目标；没有创建第二个数据集。');
+      const choice=await requestText('请选择已有目标序号：\n'+candidates.map((c,i)=>`${i+1}. ${c.datasetId}\nDescriptor: ${c.descriptorHash}`).join('\n'),'1');
+      if(choice===null)return; selected=candidates[Number(choice)-1]; if(!selected)return notifyUser('请选择有效序号。');
+    }
+    const message = `源 ${p.sourceProtocol === 'LOCAL' ? '本地未绑定课表' : p.sourceDatasetId}\n已验证 ${p.commits} 个提交，${p.tips.length} 个前沿。\n八类 RAW: ${JSON.stringify(p.counts)}\nRAW SHA-256: ${p.rawHash}\n\n保留未发布本地修改及原 v2 基线，不新增 v2 提交。确认后本机源 Writer 持久暂停；${selected ? '只读验证既有目标，完整 RAW 等价后加入，不创建新 Genesis' : '精确回读新 Genesis 并再次验证源后激活 v3'}。${p.sourceProtocol === 'LOCAL' ? '保留原本地完整快照' : '原 v2 远端历史仍保留'}；这不是独立验证的备份。\n\n请先停止其他已知旧客户端。普通 WebDAV 无法证明未知设备已经停写，旧目录没有被服务端禁止写入。后续设备须加入此目标，不要各自再次迁移。`;
     if (!await confirmAction(message, '已停止已知旧客户端，准备迁移')) return;
-    const m = await post('/api/migration', { action:'v3.prepare', token:p.token, confirm:p.sourceDatasetId, writersStopped:true });
+    const m = await post('/api/migration', { action:'v3.prepare', token:p.token, confirm:p.sourceDatasetId ?? 'LOCAL', writersStopped:true,
+      ...(selected ? {descriptorPath:selected.descriptorPath,descriptorHash:selected.descriptorHash} : {}) });
     await load();
     await resumeV3Migration(m.id);
   } catch (e) { await notifyUser(e.message + '。本地、源历史与目标候选已保留，请从恢复入口继续。'); await load(); }
@@ -942,7 +953,7 @@ async function recoverV3Migration() {
     const m = status.v3Records.at(-1);
     if (m.phase === 'ACTIVE' || m.phase === 'CANCELLED') return notifyUser(JSON.stringify(m,null,2));
     if (await confirmAction(JSON.stringify(m,null,2) + '\n继续恢复同一事务和目标？')) await resumeV3Migration(m.id);
-    else if (await confirmAction('仅在尚无目标候选时可取消准备并恢复源 Writer；已有候选会拒绝。检查并取消？')) { await post('/api/migration', { action:'v3.cancel', migrationId:m.id }); await load(); }
+    else if (await confirmAction('仅在尚未发布本机候选、尚未激活目标时可取消准备并恢复源 Writer。加入既有目标的只读预检可以取消；不删除两端文件。检查并取消？')) { await post('/api/migration', { action:'v3.cancel', migrationId:m.id }); await load(); }
   } catch (e) { await notifyUser(e.message + '。保留两端数据，禁止清库或简单切回旧协议。'); }
 }
 async function manageAction(input) {

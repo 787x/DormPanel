@@ -109,27 +109,29 @@ abstract class ScheduleDatabase : RoomDatabase() {
 object ScheduleStores {
     @Volatile var overrideFactory: ((Context) -> ScheduleStore)? = null
     private var production: RoomScheduleStore? = null
+    private fun database(context:Context) = Room.databaseBuilder(context.applicationContext,ScheduleDatabase::class.java,"schedule.db")
+        .addMigrations(ScheduleDatabase.MIGRATION_1_2,ScheduleDatabase.MIGRATION_2_3,ScheduleDatabase.MIGRATION_3_4).build()
     @Synchronized fun create(context: Context, profiles: TermScheduleProfileStore = TermScheduleProfileStore(context)): ScheduleStore {
         overrideFactory?.let { return it(context).also { store -> (store as? RoomScheduleStore)?.attachProfileStore(profiles) } }
         val store = production ?: RoomScheduleStore(
-            Room.databaseBuilder(context.applicationContext, ScheduleDatabase::class.java, "schedule.db")
-                .addMigrations(ScheduleDatabase.MIGRATION_1_2, ScheduleDatabase.MIGRATION_2_3, ScheduleDatabase.MIGRATION_3_4).build(),
-            profiles = profiles, onCommitted = { ScheduleSyncJobs.schedule(context.applicationContext) }, keepOpen = true).also { production = it }
+            database(context), profiles = profiles, onCommitted = { ScheduleSyncJobs.schedule(context.applicationContext) }, keepOpen = true,
+            reopenDatabase={database(context)}).also { production = it }
         store.attachProfileStore(profiles); return store
     }
 }
 /** Admission/close share a lock. Accepted writes drain; neither close nor Activity teardown waits. */
-class RoomScheduleStore(private val database: ScheduleDatabase,
+class RoomScheduleStore(private var database: ScheduleDatabase,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor(),
     private val closeDatabase: Boolean = true, private var profiles: TermScheduleProfileStore? = null,
     private val afterSnapshotRows: (() -> Unit)? = null, private val onCommitted: (() -> Unit)? = null,
-    private val keepOpen: Boolean = false) : ScheduleStore, ScheduleSyncStore, ScheduleV2Store {
+    private val keepOpen: Boolean = false, private val reopenDatabase:(()->ScheduleDatabase)?=null,
+    private val v3Fault:((String)->Unit)?=null) : ScheduleStore, ScheduleSyncStore, ScheduleV2Store {
     init { profiles?.sharedStore = this }
     fun attachProfileStore(store: TermScheduleProfileStore) { profiles = store; store.sharedStore = this }
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var closed = false
     private var activeV3: ActiveScheduleV3? = null
-    private fun v3(): ActiveScheduleV3 = activeV3 ?: ActiveScheduleV3(database, ::mirrorV3, closeDatabase).also { activeV3 = it }
+    private fun v3(): ActiveScheduleV3 = activeV3 ?: ActiveScheduleV3(database, ::mirrorV3).also { it.journal.meta.fault=v3Fault; activeV3 = it }
     private fun mirrorV3(state: ScheduleState) {
         val dao = database.dao()
         dao.clearOverrides(); dao.clearDays(); dao.clearSources(); dao.clearEvents(); dao.clearEntries()
@@ -256,13 +258,95 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     fun isV3(): Boolean = workerCall { ActiveScheduleV3.active(database) }
     fun businessPaused(): Boolean = workerCall {
         database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) ||
-            ActiveScheduleV3.active(database) && !v3().localWritesAllowed()
+            ActiveScheduleV3.active(database) && !runCatching { v3().localWritesAllowed() }.getOrDefault(false)
+    }
+    fun businessBlockReason():String? = workerCall {
+        when {
+            ActiveScheduleV3.active(database) && runCatching { v3().journal.meta.assertWritable() }.isFailure -> "本地事务确认中断，已停止写入；请使用“重开活动 Store”恢复，不要清库或重新绑定。"
+            database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) || ActiveScheduleV3.active(database) && !v3().localWritesAllowed() -> ScheduleDatasetWriteProtected().message
+            else -> null
+        }
+    }
+    /** Called under the host network gate, after UI admission is paused. Same Store object
+     * remains authoritative for every existing Activity and JobService reference. */
+    fun reopenV3Store() = workerCall {
+        check(ActiveScheduleV3.active(database)); val factory=requireNotNull(reopenDatabase) { "此存储请通过重启进程重新打开；数据与绑定保留" }
+        activeV3?.close(); database.close()
+        activeV3=null; database=factory(); v3().journal.meta.assertWritable(); v3().state()
+        Unit
     }
     fun previewV3Migration(remote: CommitStore, sourceFolder: String): ScheduleV3MigrationPreview {
         v2RequireSyncAllowed()
         val expectedKey = blocking { database.dao().syncRecord(102)?.payload?.toString(Charsets.US_ASCII) }
         check(expectedKey == null || expectedKey == remote.bindingKey) { "源访问身份变化" }
         return ScheduleV3Migration.inspect(v2Frame(), v2Witness(), remote, sourceFolder)
+    }
+    private fun requireMigrationCapture(preview:ScheduleV3MigrationPreview) {
+        requireNoDatasetMigration()
+        check(SyncV3Codec.stateBytes(fullState()).contentEquals(SyncV3Codec.stateBytes(preview.frame.local)) && v2Commit(21)==preview.frame.baseline && v2Ids(22)==preview.frame.frontier &&
+            !database.dao().hasSyncRecord(23) && v2Plan()==null && v2Hashes(97).isEmpty() && v2Problems().isEmpty()) { "本地状态已变化，迁移预览过期" }
+    }
+    private fun requireEmptyUnboundJoin():ScheduleState {
+        requireNoDatasetMigration()
+        check(v2Commit(21)==null && v2Commit(23)==null && decoded(1)==null && decoded(4)==null) { "已有绑定或待发布，请使用迁移目标加入入口" }
+        return fullState().also { s ->check(s.events.isEmpty() && s.entries.isEmpty() && s.sources.isEmpty() && s.imported.isEmpty() &&
+            s.dayAdjustments.isEmpty() && s.classOverrides.isEmpty() && s.customProfileKeys.isEmpty()) { "本地非空，禁止覆盖加入；本地修改保留" } }
+    }
+    fun previewUnboundV3Join(account:WebDavAccount,folder:String,descriptor:ByteArray):UnboundV3JoinPreview? {
+        val original=workerCall { requireEmptyUnboundJoin() }; val budget=V3Budget(); val remote=V3WebDavStore(account,folder,budget)
+        val target=inspectUnboundTarget(remote,budget,descriptor,folder,account.username) ?: return null
+        return UnboundV3JoinPreview(original,target)
+    }
+    private fun inspectUnboundTarget(remote:V3ObjectStore,budget:V3Budget,descriptor:ByteArray,folder:String,user:String):VerifiedV3Snapshot? {
+        val key=digest((folder+"\n"+user+"\n"+SyncV3Codec.hash(descriptor)+"\nLOCAL").toByteArray(Charsets.UTF_8))
+        val (directory,writer)=workerCall {
+            requireEmptyUnboundJoin()
+            val prior=database.dao().syncRecord(207)?.payload?.let { org.json.JSONObject(it.toString(Charsets.UTF_8)) }
+            val stage=if(prior?.optString("key")==key) prior.getString("stageId") else java.util.UUID.randomUUID().toString().also { id ->
+                database.dao().checkpoint(ScheduleSyncCheckpoint(207,org.json.JSONObject().put("key",key).put("stageId",id).toString().toByteArray(Charsets.UTF_8)))
+            }
+            ScheduleCommitCodec.uuid(stage)
+            java.io.File(requireNotNull(database.openHelper.writableDatabase.path)+".v3-inspect-$stage") to v2Writer()
+        }
+        return V3DatasetInspection.inspect(directory,writer,remote,budget,descriptor,folder)
+    }
+    fun joinVerifiedV3(preview:UnboundV3JoinPreview,account:WebDavAccount) {
+        val budget=V3Budget();val target=inspectUnboundTarget(V3WebDavStore(account,preview.target.folder,budget),budget,preview.target.descriptor,preview.target.folder,account.username)
+        check(target!=null && target.snapshot.contentEquals(preview.target.snapshot)) { "目标预检尚未完成或已变化，请重新预览同一目标" }
+        workerCall { v3().prepareVerifiedJoin(preview) {
+            check(SyncV3Codec.stateBytes(requireEmptyUnboundJoin()).contentEquals(SyncV3Codec.stateBytes(preview.original))) { "本地预览后变化，禁止覆盖加入" }
+        } }
+    }
+    private fun inspectExistingTarget(source:ScheduleV3MigrationPreview,remote:V3ObjectStore,budget:V3Budget,descriptor:ByteArray,folder:String):VerifiedV3Snapshot? {
+        val key=digest((folder+"\n"+SyncV3Codec.hash(descriptor)+"\n"+source.frame.baseline!!.datasetId+"\n"+source.sourceKey).toByteArray(Charsets.UTF_8))
+        val stageId=workerCall {
+            requireNoDatasetMigration()
+            val prior=database.dao().syncRecord(207)?.payload?.let { org.json.JSONObject(it.toString(Charsets.UTF_8)) }
+            if(prior?.optString("key")==key) prior.getString("stageId") else java.util.UUID.randomUUID().toString().also { id ->
+                database.dao().checkpoint(ScheduleSyncCheckpoint(207,org.json.JSONObject().put("key",key).put("stageId",id).toString().toByteArray(Charsets.UTF_8)))
+            }
+        }
+        ScheduleCommitCodec.uuid(stageId)
+        val directory=workerCall { java.io.File(requireNotNull(database.openHelper.writableDatabase.path)+".v3-inspect-$stageId") }
+        return V3DatasetInspection.inspect(directory,source.frame.writerId,remote,budget,descriptor,folder)
+    }
+    fun previewExistingV3Migration(sourceRemote:CommitStore,sourceFolder:String,account:WebDavAccount,targetFolder:String,descriptor:ByteArray):ExistingV3MigrationPreview? {
+        val source=previewV3Migration(sourceRemote,sourceFolder); val budget=V3Budget()
+        val target=inspectExistingTarget(source,V3WebDavStore(account,targetFolder,budget),budget,descriptor,targetFolder) ?: return null
+        check(SyncV3Codec.stateBytes(source.merged).contentEquals(SyncV3Codec.stateBytes(requireNotNull(target.value.state)))) { "源与目标完整 RAW 不等价，无法证明共同基线；保留两端，不覆盖加入" }
+        return ExistingV3MigrationPreview(source,target)
+    }
+    fun prepareExistingV3Migration(preview:ExistingV3MigrationPreview,sourceRemote:CommitStore,account:WebDavAccount) {
+        val source=previewV3Migration(sourceRemote,preview.source.sourceFolder); ScheduleV3Migration.unchanged(preview.source,source)
+        val budget=V3Budget(); val target=inspectExistingTarget(source,V3WebDavStore(account,preview.target.folder,budget),budget,preview.target.descriptor,preview.target.folder)
+        check(target!=null && target.snapshot.contentEquals(preview.target.snapshot)) { "目标预检尚未完成或预览后发生变化；请选择同一身份继续检查" }
+        workerCall { v3().prepareExisting(preview) { requireMigrationCapture(preview.source) } }
+    }
+    internal fun prepareExistingV3Migration(preview:ExistingV3MigrationPreview,sourceRemote:CommitStore,targetRemote:V3ObjectStore,budget:V3Budget) {
+        val source=previewV3Migration(sourceRemote,preview.source.sourceFolder); ScheduleV3Migration.unchanged(preview.source,source)
+        val target=inspectExistingTarget(source,targetRemote,budget,preview.target.descriptor,preview.target.folder)
+        check(target!=null && target.snapshot.contentEquals(preview.target.snapshot)) { "目标预检未完成或已变化" }
+        workerCall { v3().prepareExisting(preview) { requireMigrationCapture(preview.source) } }
     }
     fun prepareV3Migration(preview: ScheduleV3MigrationPreview, remote: CommitStore, targetFolder: String) {
         val current = previewV3Migration(remote, preview.sourceFolder)
@@ -282,15 +366,15 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         check(mode.optString("phase") == "MIGRATING" && !runtime.journal.snapshot().has("binding")) { "目标已有候选或已接受 v3 编辑；禁止简单切回 v2，请保护两端并恢复迁移" }
         val original = ScheduleSnapshotCodec.decode(requireNotNull(database.dao().syncRecord(ActiveScheduleV3.ORIGINAL_LOCAL)).payload).state
         runtime.engine.edit {
-            runtime.journal.meta.put("migrationRecovery", mode.getJSONObject("migration").getString("transactionId"), mode.put("phase", "CANCELLED"))
+            runtime.journal.meta.put("migrationRecovery", mode.getString("migrationId"), mode.put("phase", "CANCELLED"))
             database.dao().deleteSyncRecord(ActiveScheduleV3.MODE)
             original
         }
     }
     fun auditV3MigrationSource(account: WebDavAccount): String {
         val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
-        val mode = runtime.binding(); check(mode.has("migration")) { "本机没有 v2→v3 迁移记录" }
-        val proof = ScheduleV3MigrationPreview.restore(mode.getJSONObject("migration"))
+        val mode = runtime.binding(); check(mode.has("migrationId")) { "本机没有 v2→v3 迁移记录" }
+        val proof = ScheduleV3MigrationPreview.restore(runtime.migrationEvidence())
         val graph = ScheduleCommitGraph(WebDavCommitStore(account, proof.sourceFolder), proof.frame.baseline!!.datasetId).load(proof.hashes.keys.toList())
         check(graph.deferred.isEmpty()) { "旧源存在不可验证路径，不能声明未变化" }
         val hashes = graph.commits.mapValues { digest(ScheduleCommitCodec.encode(it.value)) }
@@ -306,6 +390,11 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     fun v3Information(): org.json.JSONObject? = workerCall {
         if (!ActiveScheduleV3.active(database)) null else v3().journal.snapshot()
     }
+    fun v3Control(): org.json.JSONObject? = workerCall {
+        if(!ActiveScheduleV3.active(database)) null else runCatching {
+            v3().journal.meta.assertWritable();v3().journal.controlSummary().put("mode",v3().binding().optString("phase","ACTIVE"))
+        }.getOrElse { org.json.JSONObject().put("mode","RECOVERY_REQUIRED") }
+    }
     fun prepareV3(folder: String, descriptor: ByteArray? = null) = workerCall {
         requireNoDatasetMigration()
         check(v2Commit(21) == null && v2Commit(23) == null && decoded(1) == null && decoded(4) == null) { "已有绑定或待发布；请使用 v2→v3 迁移" }
@@ -320,7 +409,7 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
     }
     internal fun synchronizeV3(remote: V3ObjectStore, publication: V3PublicationStore, budget: V3Budget, source: CommitStore? = null): String {
         val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
-        val proof = runtime.binding().optJSONObject("migration")?.let(ScheduleV3MigrationPreview::restore)
+        val proof = if(runtime.binding().has("migrationId")) ScheduleV3MigrationPreview.restore(runtime.migrationEvidence()) else null
         return runtime.synchronize(remote, publication, budget, if (source == null || proof == null) null else ({
             ScheduleV3Migration.unchanged(proof, ScheduleV3Migration.inspect(proof.frame, proof.hashes, source, proof.sourceFolder, proof.transactionId))
         }))
@@ -757,6 +846,6 @@ class RoomScheduleStore(private val database: ScheduleDatabase,
         if (keepOpen) return // One process-owned Room/Writer shared by Activities and JobService.
         if (closed) return
         closed = true
-        executor.execute { if (activeV3 != null) activeV3?.close() else if (closeDatabase) database.close() }; executor.shutdown()
+        executor.execute { try { activeV3?.close() } finally { if (closeDatabase) database.close() } }; executor.shutdown()
     }
 }

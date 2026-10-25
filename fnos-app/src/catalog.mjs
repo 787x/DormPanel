@@ -8,7 +8,7 @@ import { LocalGrants, LocalCommitStore, segments } from './local.mjs';
 import { ensure, uuid, decode } from './protocol.mjs';
 import { loadGraph } from './graph.mjs';
 import { SyncEngine, verifyEndpointMove, verifyRestoredHistory } from './sync.mjs';
-import { openActiveV3 } from './active-v3.mjs';
+import { openActiveV3,readV3WorkspaceIdentity } from './active-v3.mjs';
 
 const DEFAULT = '00000000-0000-4000-8000-000000000001';
 const label = value => {
@@ -23,6 +23,7 @@ export class Catalog {
     Object.assign(self, { store, remoteFactory, grants: new LocalGrants([{ id: 'private', name: 'FPK 私有本地数据', path: privateRoot }, ...authorizedRoots]), guardQueue: Promise.resolve(), workspaces: new Map(), loading: new Map(), busy: new Set(), configuring: false });
     self.restoreGuards = (await store.read('restore-guards.json')) ?? {};
     self.v3RemoteFactory = v3RemoteFactory;
+    self.closing = new Map();
     self.migrations = (await store.read('dataset-migrations.json')) ?? [];
     self.v3Migrations = (await store.read('v3-migrations.json')) ?? [];
     self.manifest = await store.read('catalog.json');
@@ -66,8 +67,12 @@ export class Catalog {
     db.guard = () => ensure(!this.maintenance && !this.invalidated && this.workspaces.get(id) === db, '正在备份恢复或工作区引用已失效');
     db.assertWritable = () => ensure(!this.protection(id), '换库保护 / 退役工作区只读；请在历史与版本继续或取消迁移');
     db.mutationGuard = (before, after) => {
+      const internalV3=db.isV3InternalFrame?.(after)===true;
       mutationGuard?.(before, after);
-      if (this.protection(id)) ensure(['local', 'baseline', 'frontier', 'datasetId', 'pending', 'conflict', 'receipt', 'abandoned'].every(k => json(before[k]) === json(after[k])), '换库保护禁止课程编辑、发布与冲突决策');
+      const protection=this.protection(id);
+      const verifiedJoinSeed=protection?.targetId===id && protection.intent==='JOIN_EXISTING' && protection.phase==='PREPARED' &&
+        this.configuring && internalV3 && db.activeV3?.migrationSeedId===protection.id;
+      if (protection && !verifiedJoinSeed) ensure(['local', 'baseline', 'frontier', 'datasetId', 'pending', 'conflict', 'receipt', 'abandoned'].every(k => json(before[k]) === json(after[k])), '换库保护禁止课程编辑、发布与冲突决策');
     };
     this.workspaces.set(id, db); return db;
   }
@@ -86,6 +91,8 @@ export class Catalog {
     this.row(id);
     if (this.workspaces.has(id)) return this.workspaces.get(id);
     if (!this.loading.has(id)) this.loading.set(id, (async () => {
+      await this.closing.get(id);
+      ensure(!this.invalidated,'恢复后旧管理引用已失效');
       const store = this.workspaceStore(id);
       if (this.row(id).protocol === 'v3') {
         ensure((await stat(join(store.dir, 'v3', 'v3-state-v2.sqlite')).catch(() => null))?.isFile(), 'v3 工作区文件缺失；拒绝重建覆盖');
@@ -113,18 +120,32 @@ export class Catalog {
   }
   async identities() {
     const result = new Map();
-    for (const w of this.manifest.workspaces) result.set(w.id, (await this.status(w.id, true)).datasetId);
+    for (const w of this.manifest.workspaces) {
+      if(w.protocol==='v3') {
+        await this.closing.get(w.id);
+        const live=this.workspaces.get(w.id);
+        result.set(w.id,live ? live.activeV3.bindingIdentity()?.datasetId ?? null : readV3WorkspaceIdentity(join(this.workspaceStore(w.id).dir,'v3'),this.store.identity.writerId)?.datasetId ?? null);
+      } else result.set(w.id,(await this.status(w.id,true)).datasetId);
+    }
     return result;
   }
   prune() {
-    if (this.configuring || this.maintenance || this.loading.size) return;
-    for (const [id, db] of this.workspaces) if (!db.activeV3 && id !== this.manifest.activeId && !this.busy.has(id) && !db.writing) this.workspaces.delete(id);
+    if (this.invalidated || this.configuring || this.maintenance || this.loading.size) return;
+    for (const [id, db] of this.workspaces) if (id !== this.manifest.activeId && !this.busy.has(id) && !db.writing) {
+      this.workspaces.delete(id); // Reject stale references before releasing the native owner.
+      if(db.activeV3) {
+        const closing=db.activeV3.close().catch(error=>{this.invalidated=true;throw error;}).finally(()=>this.closing.delete(id));
+        this.closing.set(id,closing); void closing.catch(()=>{});
+      }
+    }
   }
   async close() {
     ensure(!this.busy.size && !this.loading.size, '工作区仍在运行');
+    this.invalidated = true;
+    await Promise.all(this.closing.values());
     for (const db of this.workspaces.values()) await db.queue;
     for (const db of this.workspaces.values()) if (db.activeV3) await db.activeV3.close();
-    this.invalidated = true; this.workspaces.clear();
+    this.workspaces.clear();
   }
   connection(id) { uuid(id); const c = this.manifest.connections.find(x => x.id === id); ensure(c, '连接不存在'); return c; }
   async commit(next) { await this.store.save('catalog.json', next); this.manifest = next; }
@@ -235,7 +256,7 @@ export class Catalog {
         // an unregistered private store, never an active second Writer for an existing workspace.
         next.workspaces.push({ id, name: label(input.name), connectionId: c.id, ...(input.protocol === 'v3' ? { protocol: 'v3' } : {}) });
         let db;
-        if (input.protocol === 'v3') db = await openActiveV3(this, id);
+        if (input.protocol === 'v3') db = await openActiveV3(this, id, true);
         else db = await Workspace.open(this.workspaceStore(id));
         this.attach(id, db);
         next.revision++; await this.commit(next); return { workspaceId: id };

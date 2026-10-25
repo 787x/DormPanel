@@ -10,8 +10,11 @@ data class ScheduleV3MigrationPreview(val transactionId: String, val sourceFolde
     val frame: ScheduleV2Frame, val hashes: Map<String, String>, val tips: List<String>, val merged: ScheduleState) {
     fun evidence(): JSONObject {
         val baseline = requireNotNull(frame.baseline)
-        fun snapshot(state: ScheduleState) = Base64.getEncoder().encodeToString(ScheduleSnapshotCodec.encode(baseline.snapshot().copy(state = state.copy(sync = null))))
-        return JSONObject().put("transactionId", transactionId).put("sourceProtocol", "DPC2")
+        fun snapshot(state: ScheduleState): String {
+            val id = "00000000-0000-0000-0000-000000000001"
+            return Base64.getEncoder().encodeToString(SyncV3Codec.encode(V3Object(2,id,id,id,id,1,"1".repeat(64),state=state.copy(sync=null))))
+        }
+        return JSONObject().put("transactionId", transactionId).put("privateStateFormat", "DPV3").put("sourceProtocol", "DPC2")
             .put("sourceFolder", sourceFolder).put("sourceKey", sourceKey).put("sourceDatasetId", baseline.datasetId)
             .put("sourceWriterId", frame.writerId)
             .put("sourceBaseline", Base64.getEncoder().encodeToString(ScheduleCommitCodec.encode(baseline)))
@@ -22,7 +25,10 @@ data class ScheduleV3MigrationPreview(val transactionId: String, val sourceFolde
     }
     companion object {
         fun restore(e: JSONObject): ScheduleV3MigrationPreview {
-            fun state(key: String) = ScheduleSnapshotCodec.decode(Base64.getDecoder().decode(e.getString(key))).state
+            fun state(key: String): ScheduleState {
+                val raw=Base64.getDecoder().decode(e.getString(key))
+                return if(e.optString("privateStateFormat")=="DPV3") requireNotNull(SyncV3Codec.decode(raw).state) else ScheduleSnapshotCodec.decode(raw).state
+            }
             fun strings(key: String) = e.getJSONArray(key).let { a -> (0 until a.length()).map(a::getString) }
             val hashes = e.getJSONObject("sourceHashes").let { o -> o.keys().asSequence().associateWith(o::getString) }
             val frame = ScheduleV2Frame(state("sourceLocal"), ScheduleCommitCodec.decode(Base64.getDecoder().decode(e.getString("sourceBaseline"))),
