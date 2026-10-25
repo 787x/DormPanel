@@ -25,7 +25,7 @@ object SharedScheduleDialog {
         val user = if (!publisher) input("用户名", public.second) else null
         val password = if (!publisher) input("密码（留空保留已保存密码）", "", true) else null
         val folder = input("共享目录完整 URL", sync.settings.folder.ifBlank { public.first })
-        fun bound() = source.state.sync != null || sync.settings.publishedRevision != null || sync.settings.pendingRevision != null
+        fun bound() = source.syncStore?.isV3() == true || source.state.sync != null || sync.settings.publishedRevision != null || sync.settings.pendingRevision != null
         folder.isEnabled = !bound()
         val status = label("")
         var publishButton: Button? = null
@@ -33,10 +33,15 @@ object SharedScheduleDialog {
         var bindButton: Button? = null
         var inspectButton: Button? = null
         var conflictButton: Button? = null
+        var recoveryButton:Button?=null
         fun refresh() {
             val time = sync.settings.lastSuccess
-            status.text = sync.status + (if (time > 0) "\n上次成功：${Instant.ofEpochMilli(time)}" else "") +
+            status.text = sync.status + (if (time > 0) "\n上次同步检查（本机）：${Instant.ofEpochMilli(time)}" else "") +
                 if (time > 0 && System.currentTimeMillis() - time > 24 * 60 * 60 * 1000L) "\n数据可能过期（超过 24 小时未验证）" else ""
+            if (source.syncStore?.isV3() == true) {
+                val control=source.syncStore?.v3Control();val b=control?.optJSONObject("binding")
+                status.append(if(control?.optString("mode")=="RECOVERY_REQUIRED") "\n本地事务确认中断，请重开活动 Store；不会清库或重新绑定" else "\nSync v3 · ${b?.optString("datasetId") ?: "创建 / 加入恢复中"}\nDescriptor: ${b?.optString("descriptorHash") ?: "等待精确回读"}\n旧 Epoch 巡检未完成；未知设备及服务端停写情况未确认")
+            }
             publishButton?.text = if (!bound()) "创建新的共享课表" else "立即同步"
             folder.isEnabled = !sync.busy && !source.applyingSnapshot && !source.error && !bound()
             publishButton?.isEnabled = !sync.busy && source.ready
@@ -46,6 +51,7 @@ object SharedScheduleDialog {
             if (bound()) previewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.visibility = android.view.View.GONE
             synchronizeButton?.isEnabled = !sync.busy && source.state.sync != null
             conflictButton?.isEnabled = !sync.busy
+            recoveryButton?.isEnabled = !sync.busy && source.syncStore?.isV3()==true
         }
         refresh()
         fun save(): Boolean = runCatching {
@@ -53,7 +59,7 @@ object SharedScheduleDialog {
             if (!publisher) {
                 val old = sync.accounts.account()
                 val secret = password!!.text.toString().ifBlank { old?.password ?: "" }
-                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), secret)
+                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), secret,old?.certificatePem?.takeIf { old.baseUrl==url.text.toString() && old.username==user.text.toString() })
                 SharedScheduleTransport().folder(account, folder.text.toString())
                 sync.accounts.saveAccount(account)
             }
@@ -63,6 +69,90 @@ object SharedScheduleDialog {
             return Button(context).apply { this.text = text; isAllCaps = false; minHeight = (48 * context.resources.displayMetrics.density).toInt()
                 setOnClickListener { if (!saveRequired || save()) action() }
                 fields.addView(this)
+            }
+        }
+        button("HTTPS 自签名证书（仅此连接）",false) {
+            val old=sync.accounts.account()
+            if(old==null) status.text="请先保存 HTTPS WebDAV 帐号，再配置证书"
+            else {
+                val pem=EditText(context).apply { hint="从可信渠道取得的单个 PEM 公钥证书";contentDescription=hint;setText(old.certificatePem.orEmpty());minLines=4 }
+                AlertDialog.Builder(context).setTitle("单独信任服务器证书")
+                    .setMessage("仅适用于此帐号的 HTTPS 连接。请从 NAS 管理员或可信 SSH 渠道取得证书并核对指纹；不会自动信任网络返回的陌生证书。证书变化会停止同步。活动 v3 不支持隐式更换信任身份。")
+                    .setView(ScrollView(context).apply { addView(pem) }).setNegativeButton("取消",null)
+                    .setNeutralButton("恢复系统 CA") { _,_->sync.accounts.saveAccount(WebDavAccount(old.baseUrl,old.username,old.password));status.text="已恢复此连接的系统 CA 校验" }
+                    .setPositiveButton("核对指纹") { _,_->runCatching {
+                        require(WebDavClient().url(old.baseUrl).isHttps) { "请先保存 HTTPS 地址" }
+                        val value=pem.text.toString().trim();val fingerprint=WebDavTls.fingerprint(value)
+                        AlertDialog.Builder(context).setTitle("确认精确证书信任").setMessage("SHA-256:\n$fingerprint\n\n仅匹配此公钥证书，仍验证有效期和 TLS 握手。不会安装全局 CA。")
+                            .setNegativeButton("取消",null).setPositiveButton("信任此证书并保存") { _,_->
+                                sync.accounts.saveAccount(WebDavAccount(old.baseUrl,old.username,old.password,value));status.text="此连接已保存精确证书信任；可检查并同步"
+                            }.show()
+                    }.onFailure { status.text="证书无效、已过期或地址不是 HTTPS；原设置保留" } }.show()
+            }
+        }
+        button("创建 Sync v3 数据集（保留本地课程）") {
+            if (bound()) status.text = "已有活动绑定；请使用同步或显式迁移入口"
+            else AlertDialog.Builder(context).setTitle("创建独立 v3 数据集")
+                .setMessage("使用当前完整本地课表创建。Descriptor 与 Genesis 经远端精确回读后才确认发布；失败后继续恢复同一候选。旧 Epoch 巡检与其他设备接收是不同事实。")
+                .setNegativeButton("取消", null).setPositiveButton("创建") { _, _ -> sync.createV3() }.show()
+        }
+        button("v2→v3 安全迁移预览 / 继续恢复") {
+            if (source.syncStore?.isV3() == true) sync.sync()
+            else sync.previewV3Migration { preview ->
+                if (active) {
+                    val v = preview.merged
+                    AlertDialog.Builder(context).setTitle("v2→v3 迁移预览")
+                        .setMessage("源 ${preview.frame.baseline?.datasetId}\n已验证 ${preview.hashes.size} 个提交，${preview.tips.size} 个前沿。\n课程 ${v.entries.size} · 事件 ${v.events.size} · 来源 ${v.sources.size} · 导入实例 ${v.imported.size} · 覆盖 ${v.classOverrides.size} · 日期调整 ${v.dayAdjustments.size} · 学期 ${v.profiles.size} · 自定义身份 ${v.customProfileKeys.size}\n业务 SHA-256: ${SyncV3Codec.businessHash(v)}\n\n保留未发布本地修改和原 v2 基线，不新增 v2 提交。确认后本机源 Writer 持久暂停，重新验证源，精确回读 v3 Genesis 并核验等价后才激活。\n\n原 v2 历史仍保留在远端；这不是独立回读验证的备份。请先停止其他已知旧客户端。普通 WebDAV 无法发现未知设备或禁止它们写入，旧目录未被服务端禁止写入。后续设备应加入此目标，不要再次迁移创建另一个目标。")
+                        .setNegativeButton("取消", null).setPositiveButton("已停止已知旧客户端，迁移") { _, _ -> if (active) sync.migrateV3(preview) }.show()
+                }
+            }
+        }
+        button("检查迁移后的旧 v2 源", false) { sync.auditV3MigrationSource() }
+        recoveryButton=button("重开活动 Store（保留同一数据库和候选）", false) { sync.reopenV3Store() }
+        button("后续 v2 设备加入既有 v3 目标（只读预检）") {
+            if(source.syncStore?.isV3()==true) status.text="本机已有活动 v3 绑定，禁止隐式换库"
+            else sync.discoverV3 { candidates ->
+                if(active) AlertDialog.Builder(context).setTitle("选择首台设备迁移出的目标")
+                    .setItems(candidates.map { "${it.descriptor.datasetId}\n${it.hash}" }.toTypedArray()) { _,index ->
+                        sync.previewExistingV3(candidates[index].bytes) { preview ->
+                            if(active) AlertDialog.Builder(context).setTitle("加入已迁移目标")
+                                .setMessage("目标 ${preview.target.identity.datasetId}\n源与目标八类 RAW 已逐字段核验等价。确认时重新检查源及目标，再原子暂停本机 v2 Writer 并加入，不创建新的 Descriptor 或 Genesis。保留原 v2 基线、本地快照和历史证据。\n\n请停止其他已知旧客户端。未知设备无法自动发现；旧目录未由服务端禁止写入，远端保留历史不是独立备份。")
+                                .setNegativeButton("取消",null).setPositiveButton("已停止旧客户端，加入") { _,_ -> sync.joinMigratedV3(preview) }.show()
+                        }
+                    }.setNegativeButton("关闭",null).show()
+            }
+        }
+        button("取消尚未创建目标的 v3 迁移", false) {
+            AlertDialog.Builder(context).setTitle("取消迁移准备")
+                .setMessage("仅在尚未产生 v3 Descriptor/Genesis 候选时允许恢复原 v2 修改与基线。目标已有候选、已发布或已接受 v3 编辑时会拒绝；不会删除两端历史。")
+                .setNegativeButton("保留", null).setPositiveButton("检查并取消") { _, _ -> sync.cancelUnpublishedV3Migration() }.show()
+        }
+        fun verifyJoin(selected:SharedScheduleController.V3Candidate) {
+            sync.previewJoinV3(selected.bytes) { preview ->
+                if(active) {
+                    if(preview==null) AlertDialog.Builder(context).setTitle("只读预检尚未完成")
+                        .setMessage("进度已持久保存，当前业务库尚未切换。可继续同一目标的有界预检；不会创建新数据集。")
+                        .setNegativeButton("稍后",null).setPositiveButton("继续预检") { _,_->verifyJoin(selected) }.show()
+                    else {
+                        val v=preview.target.value.state!!
+                        AlertDialog.Builder(context).setTitle("确认加入 ${selected.descriptor.datasetId}")
+                            .setMessage("已验证 Descriptor、观察到的 DAG 和前沿快照。\n课程 ${v.entries.size} · 事件 ${v.events.size} · 来源 ${v.sources.size} · 实例 ${v.imported.size} · 覆盖 ${v.classOverrides.size} · 日期调整 ${v.dayAdjustments.size} · 学期 ${v.profiles.size} · 自定义 ${v.customProfileKeys.size}\nRAW SHA-256: ${SyncV3Codec.hash(SyncV3Codec.stateBytes(v))}\n\n确认时重新检查目标，再原子加入。本地非空、已有绑定或恢复状态会阻止覆盖；普通 WebDAV 不能证明未知客户端已停写。")
+                            .setNegativeButton("取消",null).setPositiveButton("加入并继续验证") { _,_->if(active && !bound())sync.joinV3(preview) }.show()
+                    }
+                }
+            }
+        }
+        button("发现并加入 Sync v3 数据集") {
+            if (bound()) status.text = "已有活动绑定，禁止隐式换库"
+            else sync.discoverV3 { candidates ->
+                if (active) {
+                    if (candidates.isEmpty()) status.text = "未发现可验证的 v3 Descriptor；尚未绑定"
+                    else AlertDialog.Builder(context).setTitle("选择 v3 数据集（Descriptor 已验证）")
+                        .setItems(candidates.map { "${it.descriptor.datasetId}\nDescriptor SHA-256: ${it.hash}" }.toTypedArray()) { _, index ->
+                            val selected = candidates[index]
+                            verifyJoin(selected)
+                        }.show()
+                }
             }
         }
         fun inspectAndConfirm() {
@@ -99,7 +189,7 @@ object SharedScheduleDialog {
             if (bound()) { status.text = "已绑定，请使用安全换库入口" }
             else runCatching {
                 val old = sync.accounts.account()
-                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), password!!.text.toString().ifBlank { old?.password.orEmpty() })
+                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), password!!.text.toString().ifBlank { old?.password.orEmpty() },old?.certificatePem?.takeIf { old.baseUrl==url.text.toString() && old.username==user.text.toString() })
                 WebDavFolderDialog.show(context, account) { if (active && !bound()) folder.setText(it) }
             }.onFailure { status.text = "请检查服务器地址与凭据" }
         }

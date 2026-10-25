@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { AgentService } from "./agent-service.mjs";
 import { HistoryManager, cachedGraph, historySummary, commitAt, versionDifferences } from './history.mjs';
 import { DatasetMigration } from './migration.mjs';
+import { V3DatasetMigration } from './v3-migration.mjs';
 import { BackupManager, recoverRestore } from "./backup.mjs";
 import { readFile, writeFile, chmod, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -102,17 +103,19 @@ export async function createApp({
   configPath,
   webDir = join(dirname(fileURLToPath(import.meta.url)), "../web"),
   remoteFactory,
+  v3RemoteFactory,
   authorizedRoots = [],
 }) {
   await recoverRestore(dataDir, configPath);
   const store = await new Store(dataDir).init();
-  let catalog = await Catalog.open({ store, configPath, remoteFactory, authorizedRoots });
+  let catalog = await Catalog.open({ store, configPath, remoteFactory, v3RemoteFactory, authorizedRoots });
   const backups = new BackupManager({ catalog, configPath, reopen: async () => {
-    catalog = await Catalog.open({ store, configPath, remoteFactory, authorizedRoots }); backups.catalog = catalog;
+    catalog = await Catalog.open({ store, configPath, remoteFactory, v3RemoteFactory, authorizedRoots }); backups.catalog = catalog;
     previews.clear(); tokens.clear(); history.tokens.clear();
   } });
   await backups.cleanupStages();
   let requests = 0, writes = 0, historyLock = false;
+  const v3Previews = new Map();
   const history = new HistoryManager(catalog);
   const tokens = new Map(),
     previews = new Map();
@@ -206,6 +209,44 @@ export async function createApp({
         }
         ensure(!catalog.configuring && !catalog.manifest.transition, "正在保存配置或等待恢复");
         const network = action => catalog.network(workspaceId, action);
+        if (path === '/api/migration' && input.action?.startsWith('v3.')) {
+          ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision, '迁移版本过期或存在并发操作');
+          historyLock = true;
+          try {
+            const service = new V3DatasetMigration(catalog);
+            if(input.action==='v3.discover') { send(200,await service.discover(workspaceId,input.targetConnectionId)); return; }
+            if (input.action === 'v3.preview') {
+              for (const [id,p] of v3Previews) if (p.expires < Date.now()) v3Previews.delete(id);
+              ensure(v3Previews.size < 8, '迁移预览数量超限');
+              const preview = await service.preview(workspaceId), token = randomUUID();
+              v3Previews.set(token, { preview, workspaceId, user, version:db.frame.revision, expires:Date.now()+15*60000 });
+              send(200, { token, sourceProtocol:preview.evidence.sourceProtocol,sourceDatasetId:preview.evidence.datasetId, commits:Object.keys(preview.evidence.hashes).length,
+                tips:preview.evidence.tips, rawHash:preview.evidence.rawHash, businessHash:preview.evidence.businessHash,
+                knownWriterIds:preview.evidence.knownWriterIds, counts:Object.fromEntries(Object.entries(preview.evidence.merged).map(([k,v]) => [k,v.length])),
+                sourceHistoryRetained:preview.evidence.sourceProtocol!=='LOCAL', independentBackupVerified:false, unknownWritersStopped:false, serverWriteProhibited:false }); return;
+            }
+            let result;
+            if (input.action === 'v3.prepare') {
+              const p = v3Previews.get(input.token);
+              ensure(p && p.workspaceId === workspaceId && p.user === user && p.expires > Date.now() && p.version === db.frame.revision, '迁移预览过期');
+              ensure(input.confirm === (p.preview.evidence.datasetId ?? 'LOCAL') && input.writersStopped === true, '请确认源身份及已停止已知旧客户端；未知设备无法自动发现');
+              ensure(!input.descriptorPath || input.descriptorHash,'请选择完整 Descriptor 身份');
+              const m = await service.prepare(workspaceId, p.preview, input.targetConnectionId,input.descriptorPath ? { descriptorPath:input.descriptorPath,descriptorHash:input.descriptorHash } : null); v3Previews.delete(input.token); result = service.summary(m);
+            } else {
+              const m = catalog.v3Migrations.find(m => m.id === input.migrationId && [m.sourceId,m.targetId].includes(workspaceId));
+              ensure(m, '迁移记录或工作区不匹配');
+              if (input.action === 'v3.resume') result = await service.resume(m.id);
+              else if (input.action === 'v3.cancel') result = await service.cancel(m.id);
+              else if (input.action === 'v3.audit') result = await service.audit(m.id);
+              else throw Error('不支持的 v3 迁移操作');
+            }
+            send(200, result); return;
+          } finally { historyLock = false; }
+        }
+        if (db.activeV3 && (path.startsWith('/api/migration') || path.startsWith('/api/history/'))) {
+          ensure(path === '/api/history/check', 'v3 不支持 v2 专属迁移、回退、归档或精简操作');
+          await network(engine => engine.synchronize()); send(200, { ok: true, version: db.frame.revision }); return;
+        }
         if (path === '/api/migration' || path === '/api/migration/verify') {
           ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision && workspaceId === catalog.manifest.activeId, '迁移版本过期或有并发操作');
           historyLock = true;
@@ -240,11 +281,14 @@ export async function createApp({
           } finally { historyLock = false; }
         }
         else if (path === "/api/edit") await db.edit(input.operation, input.version);
-        else if (path === "/api/refresh" || path === "/api/sync")
-          await network(engine => engine.synchronize({
+        else if (path === "/api/refresh" || path === "/api/sync") {
+          const result = await network(engine => engine.synchronize({
             bind: input.bind === true,
             create: input.create === true,
+            ...(db.activeV3 ? { discover: input.discover === true, descriptorPath: input.descriptorPath, descriptorHash: input.descriptorHash } : {}),
           }));
+          if (input.discover && db.activeV3) { send(200, result); return; }
+        }
         else if (path === "/api/resolve") {
           ensure(input.token === `${workspaceId}:${db.conflictToken()}` && db.conflictToken(), '冲突 token 已失效或工作区不匹配');
           await network((engine) =>
@@ -336,13 +380,22 @@ export async function createApp({
       }
       if (path === '/api/maintenance') {
         const protection = catalog.protection(workspaceId), restored = await store.read('restore-result.json');
-        send(200, { workspaceId, version:db.frame.revision, catalogVersion:catalog.manifest.revision, datasetId:db.frame.datasetId, restoreGuard:!!catalog.restoreGuards[workspaceId], restorePoisoned:backups.poisoned, restorePreviews:backups.previews.size, lastRestore:restored ? { ok:restored.ok, restoredAt:restored.restoredAt, backupCreatedAt:restored.backupCreatedAt } : null, protection:protection ? { id:protection.id, phase:protection.phase, sourceId:protection.sourceId, targetId:protection.targetId } : null, historyCount:Object.keys(db.frame.checkpoint.hashes ?? {}).length, historyCapacity:256, automaticDelete:false, reclaimedBytes:0 }); return;
+        send(200, { workspaceId, version:db.frame.revision, catalogVersion:catalog.manifest.revision, datasetId:db.frame.datasetId, restoreGuard:!!catalog.restoreGuards[workspaceId], restorePoisoned:backups.poisoned, restorePreviews:backups.previews.size, lastRestore:restored ? { ok:restored.ok, restoredAt:restored.restoredAt, backupCreatedAt:restored.backupCreatedAt } : null, protection:protection ? { id:protection.id, phase:protection.phase, sourceId:protection.sourceId, targetId:protection.targetId } : null, protocol:db.activeV3 ? 'v3' : 'v2', historyCount:db.activeV3 ? null : Object.keys(db.frame.checkpoint.hashes ?? {}).length, historyCapacity:db.activeV3 ? null : 256, backupCapability:db.activeV3 ? 'UNSUPPORTED_V3_COMPLETE_BACKUP' : 'DPBK0001', automaticDelete:false, reclaimedBytes:0 }); return;
       }
       const row = db ? catalog.row(workspaceId) : null;
       const c = row?.connectionId ? catalog.connection(row.connectionId) : null;
       const busy = catalog.busy.has(workspaceId);
-      if (path === '/api/migration') { ensure(workspaceId === catalog.manifest.activeId, '迁移只可访问当前工作区'); send(200, publicValue(new DatasetMigration(catalog).summary(workspaceId))); return; }
+      if (path === '/api/migration') {
+        ensure(workspaceId === catalog.manifest.activeId, '迁移只可访问当前工作区');
+        const service = new V3DatasetMigration(catalog);
+        send(200, publicValue({ ...new DatasetMigration(catalog).summary(workspaceId),
+          v3Records:catalog.v3Migrations.filter(m => [m.sourceId,m.targetId].includes(workspaceId)).map(m => service.summary(m)) })); return;
+      }
       if (path.startsWith('/api/history')) {
+        if (db.activeV3) {
+          ensure(path === '/api/history', 'v3 历史仅支持只读摘要');
+          send(200, publicValue(db.activeV3.history())); return;
+        }
         ensure(workspaceId === catalog.manifest.activeId, '历史只可访问当前工作区');
         history.catalog = catalog;
         const g = await cachedGraph(db.frame);
@@ -375,7 +428,7 @@ export async function createApp({
       }
       if (path === "/api/conflicts") {
         const f = db.frame,
-          result = f.conflict ? mergePlan(f.conflict, f.local) : null;
+          result = db.activeV3 ? { conflicts: f.conflict?.conflicts ?? [], details: [], remote: f.conflict?.remote ?? null } : f.conflict ? mergePlan(f.conflict, f.local) : null;
         send(
           200,
           publicValue({
@@ -427,6 +480,8 @@ export async function createApp({
           publicValue({
             workspaceId,
             workspaceName: row.name,
+            protocol: db.activeV3 ? 'v3' : 'v2',
+            ...(db.activeV3 ? { descriptor: f.v3.binding, oldHistoryAuditComplete: false, pendingPhase: f.v3.pending?.phase ?? null } : {}),
             writeProtection: catalog.protection(workspaceId) ? '换库保护 / 退役工作区只读；请在历史与版本继续或取消迁移' : null,
             catalogVersion: catalog.manifest.revision,
             writerId: store.identity.writerId,
@@ -446,7 +501,7 @@ export async function createApp({
             cached: !!viewError,
             tips: f.graph?.tips ?? [],
             deferred: f.checkpoint.deferred ?? [],
-            historyCount: Object.keys(f.checkpoint.hashes ?? {}).length,
+            historyCount: db.activeV3 ? null : Object.keys(f.checkpoint.hashes ?? {}).length,
             localSaved: true,
             dirty: db.dirty(),
             pending: !!f.pending,
@@ -476,7 +531,9 @@ export async function createApp({
       }
       send(404, { error: "不存在" });
     } catch (e) {
-      send(/过期|变化|失效/.test(e.message) ? 409 : 400, { error: e.message });
+      const message=String(e.message ?? '操作失败');
+      const sensitive=/\b(?:ENOENT|EACCES|EPERM|EIO|ERR_SQLITE|SQLITE_[A-Z_]+)\b|\/(?:data|var|vol\d+|home|proc|tmp)\/|[A-Za-z]:\\|password=|token=/i.test(message+' '+(e.code ?? ''));
+      send(/过期|变化|失效/.test(message) ? 409 : 400, { error:sensitive ? '存储或访问验证失败；数据与恢复证据已保留，敏感位置已隐藏' : message.slice(0,500) });
     } finally {
       if (writing) writes--; requests--;
       if (requests === 0) catalog.prune();
@@ -491,6 +548,17 @@ export async function createApp({
     return { status, data };
   };
   agents = await AgentService.open({ store, catalog:() => catalog, dispatch, approvalSummary:async (operation, input) => {
+    if(operation==='migration.v3-prepare') {
+      const p=v3Previews.get(input.token); ensure(p && p.user==='agent-package-os' && p.workspaceId===input.workspaceId && p.expires>Date.now(),'迁移预览已失效');
+      return {sourceProtocol:p.preview.evidence.sourceProtocol,sourceDatasetId:p.preview.evidence.datasetId,rawHash:p.preview.evidence.rawHash,
+        knownWriterIds:p.preview.evidence.knownWriterIds,targetConnectionId:input.targetConnectionId ?? catalog.row(input.workspaceId).connectionId,
+        targetDescriptor:input.descriptorPath ? {path:input.descriptorPath,hash:input.descriptorHash} : null,
+        scope:'持久暂停本机源 Writer，保留完整 RAW、基线和提交证据；未知旧客户端与服务端停写未被证明'};
+    }
+    if(['migration.v3-resume','migration.v3-cancel'].includes(operation)) {
+      const m=catalog.v3Migrations.find(m=>m.id===input.migrationId && [m.sourceId,m.targetId].includes(input.workspaceId));
+      ensure(m,'迁移记录不存在'); return new V3DatasetMigration(catalog).summary(m);
+    }
     if (operation === 'backups.restore') {
       const p = backups.previews.get(input.token);
       ensure(p && p.user === 'agent-package-os' && p.expires > Date.now(), '恢复预览已失效');
@@ -505,7 +573,7 @@ export async function createApp({
   } });
   const agentServer = agents.createServer();
   const server = http.createServer((req, res) => handle(req, res));
-  server.once('close', () => { void backups.close(); });
+  server.once('close', () => { void backups.close().then(() => catalog.close()).catch(() => {}); });
   server.requestTimeout = 65000;
   server.headersTimeout = 10000;
   return { server, agentServer, agents, refresh, store, backups, get catalog() { return catalog; }, get db() { return catalog.db(catalog.manifest.activeId); } };

@@ -40,16 +40,17 @@ class WebDavSettings(context: Context) {
     fun account(): WebDavAccount? {
         val base = prefs.getString("url", null) ?: return null
         val password = secrets.getString("payload", null)?.let(cipher::decrypt) ?: return null
-        return WebDavAccount(base, prefs.getString("username", "").orEmpty(), password)
+        return WebDavAccount(base, prefs.getString("username", "").orEmpty(), password,prefs.getString("certificatePem",null))
     }
     fun publicAccount(): Pair<String, String> = Pair(prefs.getString("url", "").orEmpty(), prefs.getString("username", "").orEmpty())
     fun saveAccount(account: WebDavAccount) {
         WebDavClient().url(account.baseUrl)
+        account.certificatePem?.let { require(WebDavClient().url(account.baseUrl).isHttps);WebDavTls.certificate(it) }
         secrets.edit().putString("payload", cipher.encrypt(account.password)).apply()
-        prefs.edit().putString("url", account.baseUrl.trim()).putString("username", account.username).apply()
+        prefs.edit().putString("url", account.baseUrl.trim()).putString("username", account.username).putString("certificatePem",account.certificatePem).apply()
     }
     fun clearAccount() {
-        prefs.edit().remove("url").remove("username").apply()
+        prefs.edit().remove("url").remove("username").remove("certificatePem").apply()
         secrets.edit().clear().apply()
     }
     fun bindings(): List<WebDavBinding> = runCatching {

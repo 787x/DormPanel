@@ -12,13 +12,13 @@ import org.json.JSONObject
 @Entity(tableName = "v3_records", indices = [Index(value = ["ns", "k"], unique = true), Index(value = ["ns", "seq"])])
 data class V3Record(@PrimaryKey(autoGenerate = true) val seq: Long = 0, val ns: String, val k: String, val v: String, val sum: String)
 
-/** Dedicated opt-in schema; ScheduleDatabase v4 and production factories remain unchanged.
- * PR55 can use this adapter without inventing a second course/receipt transaction boundary. */
+/** Dedicated isolated schema retained for adapter tests. Production ActiveScheduleV3 uses
+ * the existing ScheduleDatabase v4 connection for the same course/receipt transaction. */
 @Database(entities = [EventRow::class, TimetableRow::class, ImportSource::class, ImportedClassOccurrence::class,
     DayAdjustment::class, ClassOverride::class, ScheduleSyncCheckpoint::class, V3Record::class], version = 1, exportSchema = false)
 abstract class V3RoomDatabase : RoomDatabase() { abstract fun dao(): ScheduleDao }
 
-private class V3RoomSql(private val database: V3RoomDatabase) : V3SqlPort {
+internal class V3RoomSql(private val database: RoomDatabase, private val closeDatabase: Boolean = true) : V3SqlPort {
     override fun execute(sql: String, args: List<String>): Int {
         val db = database.openHelper.writableDatabase
         if (sql.startsWith("PRAGMA")) return db.query(sql, args.toTypedArray()).use { it.moveToFirst(); 0 }
@@ -27,7 +27,7 @@ private class V3RoomSql(private val database: V3RoomDatabase) : V3SqlPort {
     }
     override fun rows(sql: String, args: List<String>): List<Map<String, String>> = database.openHelper.writableDatabase.query(sql, args.toTypedArray()).use { c -> buildList { while (c.moveToNext()) add(c.columnNames.indices.associate { c.columnNames[it] to c.getString(it) }) } }
     override fun <T> atomic(operation: () -> T): T = database.runInTransaction<T> { operation() }
-    override fun close() = database.close()
+    override fun close() { if (closeDatabase) database.close() }
 }
 
 class V3RoomAdapter(directory: File, databaseFactory: () -> V3RoomDatabase, writable: () -> Unit) : AutoCloseable {

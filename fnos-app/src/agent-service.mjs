@@ -145,7 +145,7 @@ export class AgentService {
       data = { ...data, workspaces:page(data.workspaces), connections:page(data.connections) };
     } else if (['schedule.day','schedule.range','schedule.events'].includes(op.name)) data = { ...data, rows:undefined, ...page(op.name === 'schedule.events' ? data.rows.filter(r => r.recordType === 'event') : data.rows) };
     else if (op.name === 'directories.browse') data = page(data.directories);
-    else if (op.name === 'history.list') { const { rows, ...rest } = data; data = { ...rest, ...page(rows) }; }
+    else if (op.name === 'history.list') { const { rows, ...rest } = data; data = { ...rest, ...page(rows ?? data.commits ?? []) }; }
     else if (op.name === 'migration.status') data = { ...data, records:page(data.records) };
     else if (op.name === 'backups.list') data = { ...data, backups:page(data.backups) };
     else if (op.name.startsWith('history.') && Array.isArray(data.rows) && input.limit && data.rows.length > input.limit) { data = { ...data, rows:data.rows.slice(0,input.limit), next:(input.offset ?? 0) + input.limit }; }

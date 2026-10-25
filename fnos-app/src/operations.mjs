@@ -1,13 +1,13 @@
 // 三个入口共用的操作目录。业务写入仍全部进入 server 的原事务/互斥处理器。
 import { z } from 'zod';
-export const VERSION = '0.7.2';
+export const VERSION = '0.7.6';
 export const BUDGET = 2 * 1024 * 1024;
 const text = z.string().max(4096), id = z.uuid(), number = z.number().int().nonnegative();
 const workspace = { workspaceId: id };
 const paging = { offset: number.max(50000).default(0), limit: number.min(1).max(100).default(40) };
 const write = { ...workspace, datasetId: id.nullable(), version: number, catalogVersion: number };
 const location = { rootId: text, relative: text.optional() };
-const fields = { name: text.optional(), targetId: id.optional(), targetVersion: number.optional(), connectionId: id.optional(), type: z.enum(['local', 'webdav']).optional(), url: text.optional(), username: text.optional(), password: text.optional(), certificatePem: z.string().max(65536).optional(), rootId: text.optional(), relative: text.optional(), createPrivate: z.boolean().optional(), confirm: text.optional() };
+const fields = { protocol: z.enum(['v2','v3']).optional(), name: text.optional(), targetId: id.optional(), targetVersion: number.optional(), connectionId: id.optional(), type: z.enum(['local', 'webdav']).optional(), url: text.optional(), username: text.optional(), password: text.optional(), certificatePem: z.string().max(65536).optional(), allowInsecureHttp: z.boolean().optional(), rootId: text.optional(), relative: text.optional(), createPrivate: z.boolean().optional(), confirm: text.optional() };
 const definitions = [];
 function add(name, description, shape, route, permission = 'read', extra = {}) {
   definitions.push({ name, description, schema: z.strictObject(shape), route, permission, ...extra });
@@ -45,7 +45,8 @@ for (const kind of ['entry','event','profile','date','source','override']) for (
       : z.strictObject(action === 'upsert' ? { id:recordId.optional(), value:values[kind] } : { id:recordId });
   add(`${kind}.${action}`, `通过 applyEdit ${action === 'upsert' ? '保存' : '删除/重置'}${{ entry:'本地课程', event:'日历事件', profile:'学期身份、作息阶段与节次', date:'停课、补课或日期调整', source:'导入来源', override:'全周或指定周覆盖' }[kind]}；完整记录须符合领域校验`, { ...write, edit }, '/api/edit', 'edit', { edit: { kind, action } });
 }
-for (const [name, fixed] of [['run', {}], ['create', { create:true }], ['bind', { bind:true }]]) add('sync.' + name, '检查、发布并回读确认；保留恢复和数据集身份保护', write, '/api/sync', 'edit', { fixed });
+for (const [name, fixed] of [['run', {}], ['create', { create:true }], ['bind', { bind:true }]]) add('sync.' + name, '检查、发布并回读确认；保留恢复和数据集身份保护', { ...write, descriptorPath:text.optional(), descriptorHash:text.optional() }, '/api/sync', 'edit', { fixed });
+add('sync.discover', '只读发现 v3 Descriptor；必须明确选择身份，不能自动绑定', write, '/api/sync', 'edit', { fixed:{ discover:true } });
 add('conflicts.resolve', '在当前冲突 token 下明确选择 local 或 remote', { ...write, token:text, choice:z.enum(['local','remote']) }, '/api/resolve', 'edit');
 add('import.preview', '有界 ICS/CSV/XLS 字节预览；不得提供 NAS 文件路径', { ...write, filename:text, base64:z.string().max(1800000) }, '/api/import/preview', 'edit');
 add('import.rows', '分页查看未过期导入预览', { ...workspace, id, ...paging }, '/api/import/rows');
@@ -61,6 +62,11 @@ add('history.rollback', '管理员独立批准后发布回退版本；不会删�
 for (const action of ['archive','compact']) add('history.' + action, action === 'archive' ? '完整历史归档并回读验证' : '生成独立精简候选；不删除或切换旧数据集', { ...write, ...location }, '/api/history/' + action, 'maintenance', { approval:true });
 for (const action of ['list','create','verify','cancel','restore']) add('backups.' + action, '加密应用备份：' + action + '；沿用现有恢复预览、身份与外部依赖验证', { ...write, ...paging, rootId:text.optional(), relative:text.optional(), directoryIdentity:text.optional(), name:text.optional(), password:text.optional(), token:text.optional(), confirm:text.optional() }, '/api/backups/' + action, 'maintenance', { approval:['create','restore'].includes(action) });
 add('migration.status', '换库进度、设备证据、保护状态及人工清理前检查；不会删除旧库', { ...workspace, ...paging }, '/api/migration');
+add('migration.v3-preview', '只读验证完整 v2 与本地未发布快照；无需新增 v2 提交', write, '/api/migration', 'maintenance', { fixed:{ action:'v3.preview' } });
+add('migration.v3-discover', '发现已经迁移出的 v3 目标；只读，不发布 v2 或隐式选择目标', { ...write,targetConnectionId:id.optional() }, '/api/migration', 'maintenance', { fixed:{ action:'v3.discover' } });
+add('migration.v3-audit', '检查迁移后的旧 v2 写入，只记录跨协议分叉证据，不作为 v3 LATE 整合', { ...write,migrationId:id }, '/api/migration', 'maintenance', { fixed:{ action:'v3.audit' } });
+add('migration.v3-prepare', '持久暂停本机源 Writer，保留 RAW、基线和完整提交证据；不宣称未知设备停写', { ...write, token:text, confirm:z.union([id,z.literal('LOCAL')]), writersStopped:z.boolean(), targetConnectionId:id.optional(), descriptorPath:text.optional(),descriptorHash:text.optional() }, '/api/migration', 'maintenance', { fixed:{ action:'v3.prepare' }, approval:true });
+for (const action of ['resume','cancel']) add('migration.v3-' + action, '恢复同一 v3 目标与候选；已发布目标禁止简单切回 v2', { ...write, migrationId:id }, '/api/migration', 'maintenance', { fixed:{ action:'v3.'+action }, approval:true });
 add('migration.verify', '预检源、完整归档、精简候选和 Android 实际使用的目标 WebDAV 全图，不准备或切换工作区', { ...write, rootId:text, candidateRelative:text, targetConnectionId:id }, '/api/migration/verify', 'maintenance');
 for (const action of ['prepare','device','freeze','switch','recheck','cancel','retire']) add('migration.' + action, '数据集迁移：' + action + '；设备停写与验收证据必须由管理员登记', { ...write, ...paging, rootId:text.optional(), candidateRelative:text.optional(), targetConnectionId:id.optional(), migrationId:id.optional(), migrationVersion:number.optional(), confirm:text.optional(), writersStopped:z.boolean().optional(), type:z.enum(['X08E','Phone','其他']).optional(), name:text.optional(), stopped:z.boolean().optional(), accepted:z.boolean().optional(), evidence:z.string().max(2000).optional() }, '/api/migration', 'maintenance', { fixed:{ action }, approval:action !== 'recheck' });
 add('operations.receipt', '查询操作回执；unknown 表示必须先检查状态，禁止盲目重试', { operationId:text }, null);
@@ -80,6 +86,7 @@ export function errorValue(error, code = 'VALIDATION') {
   else if (/确认|请输入/.test(message)) code = 'CONFIRMATION';
   else if (/身份|绑定|数据集/.test(message)) code = 'IDENTITY';
   else if (/完整历史|不可验证/.test(message)) code = 'INCOMPLETE';
+  else if (/budget|预算|超限|容量|上限/.test(message)) code = 'LIMIT';
   return { code, message: { VALIDATION:'参数或业务条件不满足，请检查 schema 与当前状态', STALE:'版本或预览已过期，请重新读取后明确决策', PROTECTED:'操作被现有保护规则拒绝', BUSY:'服务正在执行互斥操作，请稍后查询状态', PERMISSION:'管理员尚未授予此操作权限', APPROVAL:'需要管理员在管理网页独立批准具体操作', UNAVAILABLE:'应用不可用；请启动已安装 FPK 后重试', LIMIT:'请求、响应或操作预算超限', UNKNOWN:'操作可能已提交，请查询回执与业务状态，勿更换操作 ID 盲目重试', NO_CONNECTION:'请先添加连接并创建工作区', NOT_FOUND:'目标记录或必要文件不存在，请核对身份及完整性', NETWORK:'连接或网络验证失败，请检查授权、端点和证书后重试', CONFIRMATION:'缺少与预览一致的明确确认参数', IDENTITY:'工作区、绑定或数据集身份不符；禁止隐式换库', INCOMPLETE:'历史尚未完整验证，请检查 deferred、异常与保护状态', CONFLICT:'存在冲突，请读取冲突摘要并在有效 token 下明确决策' }[code] ?? '操作失败' };
 }
 export function redact(value) {

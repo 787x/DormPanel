@@ -1,4 +1,5 @@
 import https from "node:https";
+import http from "node:http";
 import dns from "node:dns";
 import { X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
@@ -62,18 +63,19 @@ export function tlsOptions(config) {
 export function binding(config) {
   const u = new URL(config.url);
   ensure(
-    u.protocol === "https:" &&
+    (u.protocol === "https:" || u.protocol === "http:" && config.allowInsecureHttp === true) &&
       !u.username &&
       !u.password &&
       !u.search &&
       !u.hash,
-    "绑定必须是无凭据的 HTTPS 目录 URL",
+    "连接需要 HTTPS；HTTP 须显式允许明文传输帐号、密码和课表",
   );
   ensure(
     u.pathname.endsWith("/") && !/%2f|%5c|%00/i.test(u.pathname),
     "绑定目录路径无效",
   );
   const base = new URL("dormpanel-sync-v2/", u);
+  ensure(u.protocol !== 'http:' || !config.certificatePem, 'HTTP 不支持证书信任；请明确清除旧证书或使用 HTTPS');
   tlsOptions(config);
   return { base, key: base.href };
 }
@@ -174,7 +176,7 @@ export class WebDav {
         !literal.includes(":") || safeAddress(literal, 6),
         "WebDAV 目标地址被拒绝",
       );
-      const req = https.request(
+      const req = (url.protocol === 'https:' ? https : http).request(
         url,
         {
           method,
@@ -238,9 +240,9 @@ export class WebDav {
         );
         const clear = () => {
           clearTimeout(connect);
-          socket.removeListener("secureConnect", clear);
+          socket.removeListener(url.protocol === 'https:' ? "secureConnect" : "connect", clear);
         };
-        socket.once("secureConnect", clear);
+        socket.once(url.protocol === 'https:' ? "secureConnect" : "connect", clear);
         req.once("close", clear);
       });
       req.setTimeout(20000, () => req.destroy(new Error("WebDAV 读取超时")));

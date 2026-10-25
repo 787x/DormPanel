@@ -3,7 +3,7 @@ package com.dormpanel.app.schedule
 import org.json.JSONObject
 import java.util.Base64
 
-class ScheduleDatasetWriteProtected : IllegalStateException("换库保护已暂停课程编辑和导入；请在共享课表的换库入口继续或取消迁移。")
+class ScheduleDatasetWriteProtected : IllegalStateException("换库保护或首次加入验证已暂停课程编辑和导入；请在共享课表入口继续恢复，或取消尚未创建目标的迁移。")
 
 /** Durable journal lives in the same Room transaction as checkpoints, never in preferences. */
 data class ScheduleDatasetMigration(val id: String, val phase: String, val oldFolder: String, val newFolder: String,

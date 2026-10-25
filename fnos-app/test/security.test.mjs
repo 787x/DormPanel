@@ -51,6 +51,9 @@ test('严格 WebDAV 目录、重复/跨源/子目录/状态/实体', () => {
   assert.throws(() => parseListing(xml([path]).replace('200 OK', '404 Not Found'), base));
   assert.throws(() => parseListing('<!DOCTYPE x>' + xml([]), base)); assert.throws(() => parseListing('<invalid', base));
   for (const url of ['http://example.com/a/', 'https://a:b@example.com/', 'https://example.com/a/?x=1']) assert.throws(() => binding({ url }));
+  assert.equal(binding({url:'http://192.168.3.153:5005/a/',allowInsecureHttp:true}).base.protocol,'http:');
+  for(const url of ['ftp://example.com/a/','http://u:p@example.com/a/','http://example.com/a/?x=1']) assert.throws(()=>binding({url,allowInsecureHttp:true}));
+  assert.throws(()=>binding({url:'http://example.com/a/',allowInsecureHttp:'true'}));
 });
 test('身份与配置进程重建保留；HTTP 数据端点全部授权、写操作拒绝', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'dormpanel-')); t.after(() => rm(dir, { recursive: true, force: true }));

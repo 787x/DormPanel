@@ -33,6 +33,12 @@ class ScheduleSyncJobService : JobService() {
             val store = ScheduleStores.create(this)
             try {
                 val settings = SharedScheduleSettings(this)
+                if (store is RoomScheduleStore && store.isV3()) {
+                    val result = synchronized(SharedScheduleRunLock) { store.synchronizeV3(requireNotNull(WebDavSettings(this).account())) }
+                    retry = result in listOf("BUDGET", "DISCOVERING", "ROTATED") && settings.retryAllowed()
+                    settings.result(v3StatusMessage(result), result in listOf("OBSERVED","PUBLISHED"))
+                    return@execute
+                }
                 if (settings.folder.isNotBlank() && store is ScheduleSyncStore) {
                     val result = synchronized(SharedScheduleRunLock) {
                         val local = store as ScheduleV2Store
@@ -62,7 +68,7 @@ class ScheduleSyncJobService : JobService() {
                 settings.result(if (retry) "离线 / 同步失败，等待重试；本地修改已保留" else "同步失败；自动重试已暂停，请立即同步检查。所有本地修改已保留")
             } finally {
                 store.close()
-                SharedScheduleViews.updated()
+                SharedScheduleViews.reloaded()
                 if (!stopped) jobFinished(params, retry)
             }
         }

@@ -7,9 +7,9 @@ import { V3Publisher } from './v3-transaction.mjs';
 import { V3History, V3Discovery, reference, refPath } from './v3-history.mjs';
 import { emptyState, merge, same, mergePlan } from './merge.mjs';
 
-/** Isolated engine only. Caller owns Workspace's exclusive writer lease for the lifetime.
+/** Sync core. Caller owns Workspace's exclusive writer lease for the lifetime.
  * Edits and receipts share one durable journal; an engine queue serializes network rounds.
- * No production binding, server route or v2 workspace ever invokes this class. */
+ * Production activation and permissions belong to Catalog; v2 never calls this engine. */
 export class V3Engine {
   constructor(journal, writerId) { ensure(!journal.value.writerId || journal.value.writerId === writerId, 'v3 writer identity changed'); Object.assign(this, { journal, writerId }); }
   serial(fn) { const p = this.journal.networkQueue.then(() => { this.journal.meta.assertWritable(); return fn(); }); this.journal.networkQueue = p.catch(() => {}); return p; }
@@ -29,18 +29,24 @@ export class V3Engine {
     encode({ type: 2, datasetId: this.journal.value.binding?.datasetId ?? '00000000-0000-0000-0000-000000000001', objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: this.journal.value.binding?.descriptorHash ?? '1'.repeat(64), refs: [], state });
     return this.journal.transaction(s => { ensure(!s.writerId || s.writerId === this.writerId); s.writerId = this.writerId; s.local = structuredClone(state); s.revision = (s.revision ?? 0) + 1; s.decision = null; }, true);
   }
-  async bind(descriptor, hash, local = undefined) {
+  async bind(descriptor, hash, local = undefined, initialization = undefined) {
     ensure(descriptor.type === 1 && sha(encode(descriptor)) === hash);
-    await this.journal.transaction(s => { ensure(!s.binding && (!s.writerId || s.writerId === this.writerId)); const existing = s.local ?? emptyState(), seed = local ?? existing; ensure(same(existing, emptyState()) || same(existing, seed), 'v3 binding must preserve unbound local edits'); s.writerId = this.writerId; s.binding = { datasetId: descriptor.datasetId, descriptorPath: objectPath(descriptor), descriptorHash: hash }; s.local = seed; s.unbasedLocal = !same(seed, emptyState()); s.baseline = null; s.baselinePath = null; s.revision ??= 0; }, true);
+    await this.journal.transaction(s => { ensure(!s.binding && (!s.writerId || s.writerId === this.writerId)); const existing = s.local ?? emptyState(), seed = local ?? existing; ensure(same(existing, emptyState()) || same(existing, seed), 'v3 binding must preserve unbound local edits'); s.writerId = this.writerId; s.binding = { datasetId: descriptor.datasetId, descriptorPath: objectPath(descriptor), descriptorHash: hash }; s.local = seed; s.unbasedLocal = !same(seed, emptyState()); s.baseline = null; s.baselinePath = null; s.revision ??= 0;
+      if (initialization) s.initialization = initialization;
+    }, true);
   }
   async initialize(remote, state = undefined) {
     return this.serial(async () => {
+      if (this.journal.value.initialization?.length) {
+        const budget = remote.budget ?? new Budget(); this.configure(remote, new IndexedV3Cache(this.journal.directory, budget), budget);
+        await this.resumeInitialization(remote); return structuredClone(this.journal.value.binding);
+      }
       state ??= this.journal.value.local ?? emptyState();
       const descriptor = { type: 1, datasetId: randomUUID(), objectId: randomUUID(), writerId: this.writerId, epochId: ZERO, epochNumber: 0, descriptorHash: ZERO_HASH, refs: [], state: null };
       const genesis = { type: 2, datasetId: descriptor.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: sha(encode(descriptor)), refs: [], state };
-      await this.bind(descriptor, genesis.descriptorHash, state);
+      // Binding and BOTH exact candidates commit together, before any network I/O.
+      await this.bind(descriptor, genesis.descriptorHash, state, [encode(descriptor).toString('base64'), encode(genesis).toString('base64')]);
       const budget = remote.budget ?? new Budget(); this.configure(remote, new IndexedV3Cache(this.journal.directory, budget), budget);
-      await this.journal.transaction(s => { s.initialization = [encode(descriptor).toString('base64'), encode(genesis).toString('base64')]; });
       await this.resumeInitialization(remote); return structuredClone(this.journal.value.binding);
     });
   }
