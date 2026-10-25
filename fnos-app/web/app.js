@@ -156,7 +156,7 @@ async function load() {
     paragraphs("details", [
       `数据集：${s.datasetId ?? "未绑定"}`,
       `Writer：${s.writerId}`,
-      ...(s.published ? [`已发布提交：${s.published.commitId}`] : []),
+      ...(s.published ? [`已发布提交：${(s.published.path ?? s.published.commitId)}`] : []),
       `历史：${s.historyCount ?? 'v3 分页查看'} · 分支：${s.tips.length} · 异常：${s.deferred.length}`,
       `检查时间：${s.checkedAt ? new Intl.DateTimeFormat("zh-CN", { timeZone: s.zone, dateStyle: "short", timeStyle: "medium" }).format(new Date(s.checkedAt)) : "尚未检查"}`,
       ...(s.error ? [`错误：${s.error}`] : []),
@@ -1154,7 +1154,7 @@ async function historyJob(action) {
   buttons.forEach(b => b.disabled = true);
   try { await action(); }
   catch (e) { $('historyStatus').textContent = e.message; historyPreview = null; await load(); }
-  finally { buttons.forEach(b => b.disabled = false); $('historyConfirm').disabled = !historyPreview || workspaceId !== scope; $('historyPreview').disabled = !historyEligible; }
+  finally { buttons.forEach(b => b.disabled = false); $('historyConfirm').disabled = !historyPreview || workspaceId !== scope; $('historyPreview').disabled = !historyEligible; $('historyCompact').disabled = activeProtocol === 'v3'; }
 }
 function historyJSON(value) { return el('pre', JSON.stringify(value, null, 2)); }
 function historyRecord(table, r) {
@@ -1188,6 +1188,9 @@ function renderHistoryDiff(d, append = false, more = null) {
 }
 let v3HistoryFilters = {}, v3ArchiveJob = null;
 async function historyReadV3() {
+  $('historyExportTitle').textContent='已知 v3 历史独立归档';
+  $('historyExportHint').textContent='归档冻结索引中的已验证对象并实际回读；不代表远端全目录或未知旧 Writer 已停写。目录仅供授权管理员使用，不删除远端。';
+  $('historyCompactHint').hidden=true;
   historyPreview = null; historyScope = workspaceId; $('historyOutput').replaceChildren();
   $('historyRows').replaceChildren();
   for (const key of ['historyFrom','historyTo']) $(key).replaceChildren();
@@ -1199,10 +1202,13 @@ async function historyReadV3() {
     const epoch = await requestText('Epoch UUID（留空不限）',v3HistoryFilters.epoch ?? ''); if(epoch===null)return;
     const writer = await requestText('Writer UUID（留空不限）',v3HistoryFilters.writer ?? ''); if(writer===null)return;
     const type = await requestText('对象类型：1 Descriptor / 2 Genesis或Checkpoint / 3 Commit / 4 Transition；留空不限',v3HistoryFilters.type ?? '');if(type===null)return;
-    v3HistoryFilters = {status:status.value,...(epoch?{epoch}:{}),...(writer?{writer}:{}),...(type?{type}:{})}; await historyReadV3();
+    const since = await requestText('本机验证时间起点（ISO 日期时间，留空不限；不是作者创建时间）','');if(since===null)return;
+    const until = await requestText('本机验证时间终点（ISO 日期时间，留空不限）','');if(until===null)return;
+    if(since && !Number.isFinite(Date.parse(since)) || until && !Number.isFinite(Date.parse(until)))throw Error('时间格式无效');
+    v3HistoryFilters = {status:status.value,...(epoch?{epoch}:{}),...(writer?{writer}:{}),...(type?{type}:{}),...(since?{since:Date.parse(since)}:{}),...(until?{until:Date.parse(until)}:{})}; await historyReadV3();
   };
   status.onchange = () => historyJob(async()=>{v3HistoryFilters.status=status.value;await historyReadV3();});
-  controls.append(status,button('筛选 Epoch / Writer / 类型',()=>historyJob(filter)),el('p','协议对象没有可信创建时间，不能按文件时间推断因果关系。显示缓存证据；旧历史覆盖及未知 Writer 状态仍未知。'));
+  controls.append(status,button('筛选 Epoch / Writer / 类型 / 验证时间',()=>historyJob(filter)),el('p','协议对象没有可信创建时间，不能按文件时间推断因果关系。显示缓存证据；旧历史覆盖及未知 Writer 状态仍未知。'));
   controls.append(button('空间统计 / 远端清理资格',()=>historyJob(async()=>{$('historyOutput').replaceChildren(historyJSON(await get('/api/history/space')));})),
     button('预览本机冗余快照整理',()=>historyJob(async()=>{
       const p=await post('/api/history/cleanup-preview');$('historyOutput').replaceChildren(historyJSON(p));
@@ -1211,16 +1217,23 @@ async function historyReadV3() {
       }
     })),button('从独立归档恢复缺失缓存',()=>historyJob(async()=>{
       const relative=await requestText('授权目录中的完整归档相对路径（不会写入远端）','');if(!relative)return;
-      const result=await post('/api/history/archive-restore',{rootId:$('historyRoot').value,relative});$('historyOutput').replaceChildren(historyJSON(result));
-      if(result.next<result.totalPages)$('historyOutput').append(button('继续恢复此归档',()=>historyJob(async()=>{const r=await post('/api/history/archive-restore',{rootId:$('historyRoot').value,relative});$('historyOutput').replaceChildren(historyJSON(r));})));
+      const restore=async()=>{
+        const result=await post('/api/history/archive-restore',{rootId:$('historyRoot').value,relative});$('historyOutput').replaceChildren(historyJSON(result));
+        if(!result.complete)$('historyOutput').append(button('继续恢复并验证此归档',()=>historyJob(restore)));
+      };await restore();
     })));
   $('historyRows').append(controls);
   const loadPage = async after => {
     const h=await get('/api/history?'+new URLSearchParams({...v3HistoryFilters,after,limit:40}));version=h.version;
+    for(const job of h.archiveJobs??[])if(job.status!=='VERIFIED')controls.append(button('继续归档 '+job.id.slice(0,8),()=>historyJob(async()=>{v3ArchiveJob=await post('/api/history/archive',{jobId:job.id,rootId:job.location.rootId});$('historyOutput').replaceChildren(historyJSON(v3ArchiveJob));await historyReadV3();})));
     historyEligible=h.rollbackEnabled; $('historyPreview').disabled=!historyEligible;
     $('historyStatus').textContent=`Sync v3 · ${h.count} 个索引项 · 当前 Epoch ${h.activeEpoch ?? '未知'} · ${h.frontier.length} 个前沿。${h.blockers.join('；')} 旧历史审计未完成，远端全目录和服务器停写未知。`;
     for(const r of h.rows) {
-      const row=el('article',null,'course');row.append(el('strong',`${r.status} · ${['','Descriptor','Genesis / Checkpoint','Commit','Transition'][r.type] ?? '索引项'}`),historyJSON(r));
+      const row=el('article',null,'course');row.append(el('strong',`${r.status} · ${['','Descriptor','Genesis / Checkpoint','Commit','Transition'][r.type] ?? '索引项'}`),
+        el('p',`Epoch ${r.epochNumber ?? r.number ?? '—'} · ${r.objectId ?? r.path}`),el('p',`Writer ${r.writerId ?? '未知'} · 本机验证 ${r.verifiedAt ? new Date(r.verifiedAt).toLocaleString() : '未知'}`));
+      if(r.refs?.length)row.append(el('p','引用：'+r.refs.map(ref=>`${({1:'父提交',2:'继承',3:'迟到',4:'共同基线',5:'目标 Epoch'})[ref.role] ?? ref.role} ${ref.objectId}`).join('；')));
+      if(r.reason)row.append(el('p',r.reason));
+      const detail=el('details');detail.append(el('summary','哈希、原始路径与完整引用'),historyJSON(r));row.append(detail);
       if([2,3].includes(r.type) && r.status==='VERIFIED') {
         for(const key of ['historyFrom','historyTo']){const o=el('option',`Epoch ${r.epochNumber} · ${r.id}`);o.value=r.id;$(key).append(o);}
         row.append(button('查看八类完整业务快照',()=>historyJob(async()=>{
@@ -1238,12 +1251,15 @@ async function historyReadV3() {
     }
     if(h.next!==null)$('historyRows').append(button('继续下一页',e=>{e.currentTarget.remove();return historyJob(()=>loadPage(h.next));}));
   };
-  await loadPage(0);$('historyDiff').disabled=false;$('historyArchive').disabled=false;$('historyCompact').disabled=true;
+  await loadPage(0);$('historyDiff').disabled=false;$('historyArchive').disabled=false;$('historyCompact').disabled=true;$('historyArchive').textContent='归档已知 v3 历史';
   if(v3ArchiveJob && v3ArchiveJob.status!=='VERIFIED')controls.append(button('继续上次归档',()=>historyJob(async()=>{v3ArchiveJob=await post('/api/history/archive',{jobId:v3ArchiveJob.id,rootId:$('historyRoot').value});$('historyOutput').replaceChildren(historyJSON(v3ArchiveJob));await historyReadV3();})));
 }
 async function historyRead() {
   for (const id of ['historyDiff','historyPreview','historyConfirm','historyArchive','historyCompact']) $(id).disabled = activeProtocol === 'v3';
   if (activeProtocol === 'v3') return historyReadV3();
+  $('historyExportTitle').textContent='完整已知 v2 历史归档与精简候选';
+  $('historyExportHint').textContent='复制本轮已验证的 DPC2 原始字节；不包含应用私有课程和凭据。不会删除、移动或改写旧库。';
+  $('historyCompactHint').hidden=false;
   await migrationRead();
   historyPreview = null; historyEligible = false; historyScope = workspaceId; $('historyOutput').replaceChildren();
   const h = await get('/api/history'); if (historyScope !== workspaceId) return;
@@ -1304,7 +1320,7 @@ $('historyConfirm').onclick = () => historyJob(async () => {
 });
 for (const [id, action] of [['historyArchive','archive'],['historyCompact','compact']]) $(id).onclick = () => historyJob(async () => {
   historyPreview = null;
-  if (!await confirmAction(action === 'compact' ? '将先完整归档，再在另一个新目录准备单根数据集。不会切换客户端或删除旧库。' : '将完整课程历史复制到受保护的新目录，请保护 NAS 授权。', '确认导出')) return;
+  if (!await confirmAction(action === 'compact' ? '将先完整归档，再在另一个新目录准备单根数据集。不会切换客户端或删除旧库。' : activeProtocol === 'v3' ? '将冻结索引中已验证的对象及已知引用复制到独立目录并实际回读。未知路径、旧 Writer 和服务端封存仍未证明。' : '将完整课程历史复制到受保护的新目录，请保护 NAS 授权。', '确认导出')) return;
   const result = await post('/api/history/' + action, { rootId:$('historyRoot').value, relative:$('historyRelative').value });
   if(activeProtocol==='v3'){v3ArchiveJob=result; if(result.status!=='VERIFIED')await historyReadV3();}
   $('historyOutput').replaceChildren(historyJSON(result)); $('historyStatus').textContent = result.message;

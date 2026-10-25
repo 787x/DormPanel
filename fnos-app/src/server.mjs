@@ -396,7 +396,7 @@ export async function createApp({
       }
       if (path === '/api/maintenance') {
         const protection = catalog.protection(workspaceId), restored = await store.read('restore-result.json');
-        send(200, { workspaceId, version:db.frame.revision, catalogVersion:catalog.manifest.revision, datasetId:db.frame.datasetId, restoreGuard:!!catalog.restoreGuards[workspaceId], restorePoisoned:backups.poisoned, restorePreviews:backups.previews.size, lastRestore:restored ? { ok:restored.ok, restoredAt:restored.restoredAt, backupCreatedAt:restored.backupCreatedAt } : null, protection:protection ? { id:protection.id, phase:protection.phase, sourceId:protection.sourceId, targetId:protection.targetId } : null, protocol:db.activeV3 ? 'v3' : 'v2', historyCount:db.activeV3 ? null : Object.keys(db.frame.checkpoint.hashes ?? {}).length, historyCapacity:db.activeV3 ? null : 256, backupCapability:db.activeV3 ? 'DPBK0002' : 'DPBK0001', automaticDelete:false, reclaimedBytes:0 }); return;
+        send(200, { workspaceId, version:db.frame.revision, catalogVersion:catalog.manifest.revision, datasetId:db.frame.datasetId, restoreGuard:!!catalog.restoreGuards[workspaceId], restorePoisoned:backups.poisoned, restorePreviews:backups.previews.size, lastRestore:restored ? { ok:restored.ok, restoredAt:restored.restoredAt, backupCreatedAt:restored.backupCreatedAt } : null, protection:protection ? { id:protection.id, phase:protection.phase, sourceId:protection.sourceId, targetId:protection.targetId } : null, protocol:db.activeV3 ? 'v3' : 'v2', historyCount:db.activeV3 ? null : Object.keys(db.frame.checkpoint.hashes ?? {}).length, historyCapacity:db.activeV3 ? null : 256, backupCapability:db.activeV3 ? 'DPBK0002' : 'DPBK0001', automaticDelete:false, reclaimedBytes:0, ...(db.activeV3?new V3Maintenance(catalog,workspaceId).summary():{}) }); return;
       }
       const row = db ? catalog.row(workspaceId) : null;
       const c = row?.connectionId ? catalog.connection(row.connectionId) : null;
@@ -581,6 +581,12 @@ export async function createApp({
       const p = backups.previews.get(input.token);
       ensure(p && p.user === 'agent-package-os' && p.expires > Date.now(), '恢复预览已失效');
       return { createdAt:p.manifest.createdAt, appVersion:p.manifest.appVersion, workspaceCount:p.manifest.workspaceCount, fileCount:p.manifest.files.length, dependencies:p.manifest.dependencies, scope:'完整应用状态覆盖；恢复后重新验证外部历史' };
+    }
+    if(operation==='history.cleanup') {
+      const db=await catalog.load(input.workspaceId);ensure(db.activeV3,'仅支持 v3 本地快照整理');
+      const service=new V3Maintenance(catalog,input.workspaceId);service.local();const p=service.meta.get('cleanupPreview',input.token);
+      ensure(p && p.user==='agent-package-os' && p.expires>Date.now() && p.fingerprint===service.snapshotPlan().fingerprint,'清理预览已失效');
+      return {objects:p.candidates,estimatedReusableBytes:p.estimatedReusableBytes,scope:'仅删除私有无引用 RAW 快照；保留缓存 witness/pin、业务状态和全部远端历史'};
     }
     if (operation === 'history.rollback') {
       const db = await catalog.load(input.workspaceId);

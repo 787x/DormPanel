@@ -71,7 +71,7 @@ export class V3History {
     const { state, ...metadata } = o, m = this.meta, hash = sha(bytes), refs = causal(o), primary = refs[0] ? this.node(refPath(this.datasetId, refs[0])) : null;
     const jumps = primary ? [refPath(this.datasetId, refs[0])] : [];
     for (let n = 1; jumps[n - 1]; n++) { const next = this.node(jumps[n - 1]).jumps[n - 1]; if (!next) break; jumps.push(next); }
-    const node = { ...metadata, hash, size: bytes.length, businessHash: state ? businessHash(state) : null, root: o.type === 2 ? path : primary?.root ?? null, depth: primary ? primary.depth + 1 : 0, jumps };
+    const node = { ...metadata, hash, size: bytes.length, verifiedAt: Date.now(), businessHash: state ? businessHash(state) : null, root: o.type === 2 ? path : primary?.root ?? null, depth: primary ? primary.depth + 1 : 0, jumps };
     m.atomic(() => {
       const identity = m.get('identity', o.objectId), old = m.get('node', path); ensure(!identity || identity.path === path, 'v3 duplicate objectId'); ensure(!old || old.hash === hash, 'v3 identity changed');
       if (!old && o.type !== 1) ensure(m.count('members:' + o.epochId) < 256, 'v3 epoch capacity');

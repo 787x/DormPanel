@@ -52,7 +52,7 @@ add('import.preview', '有界 ICS/CSV/XLS 字节预览；不得提供 NAS 文件
 add('import.rows', '分页查看未过期导入预览', { ...workspace, id, ...paging }, '/api/import/rows');
 add('import.cancel', '取消导入预览', { ...write, id }, '/api/import/cancel', 'edit');
 add('import.confirm', '确认新增导入或替换指定来源；保留覆盖关联', { ...write, id, displayName:text, targetId:text.nullable().optional() }, '/api/import/confirm', 'edit');
-add('history.list', '已验证历史 DAG、容量与异常；不修改合法 DPC', { ...workspace, ...paging, after:number.optional(), epoch:id.optional(), writer:id.optional(), type:number.max(4).optional(), status:z.enum(['verified','observed','pending','error','epoch']).optional() }, '/api/history');
+add('history.list', '已验证历史 DAG、容量与异常；不修改合法 DPC', { ...workspace, ...paging, after:number.optional(), since:number.optional(), until:number.optional(), epoch:id.optional(), writer:id.optional(), type:number.max(4).optional(), status:z.enum(['verified','observed','pending','error','epoch']).optional() }, '/api/history');
 add('history.snapshot', '已验证版本完整快照分页', { ...workspace, id, table:text.optional(), ...paging }, '/api/history/snapshot');
 add('history.diff', '比较任意两个已验证版本', { ...workspace, from:text, to:text, ...paging }, '/api/history/diff');
 add('history.preview-diff', '回退预览分页', { ...workspace, token:text, ...paging }, '/api/history/preview-diff');
@@ -64,7 +64,7 @@ add('history.cleanup', '根据当前引用确认整理本机冗余快照；不�
 add('history.check', '重新观察远端历史及异常', write, '/api/history/check', 'edit');
 add('history.preview', '预览发布回退版本的影响', { ...write, target:id }, '/api/history/preview', 'maintenance');
 add('history.rollback', '管理员独立批准后发布回退版本；不会删除旧历史', { ...write, token:text, target:id, confirm:text }, '/api/history/rollback', 'maintenance', { approval:true });
-for (const action of ['archive','compact']) add('history.' + action, action === 'archive' ? '完整历史归档并回读验证' : '生成独立精简候选；不删除或切换旧数据集', { ...write, ...location, jobId:id.optional() }, '/api/history/' + action, 'maintenance', { approval:true });
+for (const action of ['archive','compact']) add('history.' + action, action === 'archive' ? '已知已验证历史归档并回读验证；不宣称远端全目录完整' : '生成独立精简候选；不删除或切换旧数据集', { ...write, ...location, jobId:id.optional() }, '/api/history/' + action, 'maintenance', { approval:true });
 for (const action of ['list','create','verify','cancel','restore']) add('backups.' + action, '加密应用备份：' + action + '；沿用现有恢复预览、身份与外部依赖验证', { ...write, ...paging, rootId:text.optional(), relative:text.optional(), directoryIdentity:text.optional(), name:text.optional(), password:text.optional(), token:text.optional(), confirm:text.optional() }, '/api/backups/' + action, 'maintenance', { approval:['create','restore'].includes(action) });
 add('migration.status', '换库进度、设备证据、保护状态及人工清理前检查；不会删除旧库', { ...workspace, ...paging }, '/api/migration');
 add('migration.v3-preview', '只读验证完整 v2 与本地未发布快照；无需新增 v2 提交', write, '/api/migration', 'maintenance', { fixed:{ action:'v3.preview' } });
