@@ -20,7 +20,7 @@ import org.w3c.dom.Element
 import org.xml.sax.InputSource
 
 class WebDavException(val reason: String) : IOException(reason)
-class WebDavAccount(val baseUrl: String, val username: String, val password: String) {
+class WebDavAccount(val baseUrl: String, val username: String, val password: String, val certificatePem:String?=null) {
     override fun toString() = "WebDavAccount(<redacted>)"
 }
 data class WebDavItem(val url: String, val name: String, val folder: Boolean, val etag: String?,
@@ -33,6 +33,15 @@ class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(f
     private val http = http.newBuilder().followRedirects(false).followSslRedirects(false)
         .callTimeout(if (http.callTimeoutMillis > 0) http.callTimeoutMillis.toLong() else 60_000L, TimeUnit.MILLISECONDS).build()
     private val immutableHttp = this.http.newBuilder().retryOnConnectionFailure(false).build()
+    private var pinnedClients:Pair<String,Pair<OkHttpClient,OkHttpClient>>?=null
+    @Synchronized private fun transport(account:WebDavAccount,immutable:Boolean):OkHttpClient {
+        val pem=account.certificatePem ?: return if(immutable)immutableHttp else http
+        require(url(account.baseUrl).isHttps) { "HTTP 不支持证书信任" }
+        val clients=pinnedClients?.takeIf { it.first==pem }?.second ?: WebDavTls.client(http,pem).let {
+            (it to it.newBuilder().retryOnConnectionFailure(false).build()).also { pair -> pinnedClients=pem to pair }
+        }
+        return if(immutable)clients.second else clients.first
+    }
     companion object {
         const val MAX_XML = 512 * 1024
         private val OK_STATUS = Regex("\\s200(?:\\s|$)")
@@ -61,7 +70,7 @@ class WebDavClient(http: OkHttpClient = OkHttpClient.Builder().followRedirects(f
                     if (match != null) header("If-Match", match)
                     if (lastModified != null && etag == null) header("If-Modified-Since", lastModified) }
                 .method(method, if (payload != null) payload.toRequestBody("application/octet-stream".toMediaType()) else if (method == "PROPFIND") PROPERTIES.toRequestBody("application/xml; charset=utf-8".toMediaType()) else null).build()
-            val response = try { (if (method == "PUT" && match == null && !create) immutableHttp else http).newCall(request).execute() } catch (_: IOException) { throw WebDavException("Network unavailable or timed out.") }
+            val response = try { transport(account,method == "PUT" && match == null && !create).newCall(request).execute() } catch (_: IOException) { throw WebDavException("Network unavailable or TLS certificate rejected.") }
             if (response.code in listOf(301, 302, 307, 308)) {
                 if (method == "PUT" && match == null && !create) {
                     response.close(); throw WebDavException("Immutable upload redirected; verify the original path before retry.")

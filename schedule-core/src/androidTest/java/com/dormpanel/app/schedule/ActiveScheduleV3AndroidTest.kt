@@ -34,6 +34,21 @@ class ActiveScheduleV3AndroidTest {
         val result = CompletableFuture<Result<T>>(); operation { result.complete(it) }; return result.get(10, TimeUnit.SECONDS).getOrThrow()
     }
     private fun entry(title: String) = TimetableEntry("stable", title, 1, 480, 540, "")
+    @Test fun changedAccessIdentityStopsBeforeNetworkAndRetainsLocalEdits() {
+        val a=Client();val r=Remote()
+        try {
+            await<Unit> { a.store.put(entry("retained"),it) };a.store.prepareV3("https://never-resolve.invalid/");a.settle(r)
+            val account=WebDavAccount("https://never-resolve.invalid/","original","test")
+            val key=ActiveScheduleV3.endpointKey(V3WebDavStore(account,account.baseUrl,V3Budget()),account)
+            val mode=org.json.JSONObject(a.db.dao().syncRecord(205)!!.payload.toString(Charsets.UTF_8)).put("endpointKey",key)
+            a.db.dao().checkpoint(ScheduleSyncCheckpoint(205,mode.toString().toByteArray(Charsets.UTF_8)))
+            a.reopen()
+            val error=assertThrows(Exception::class.java) { a.store.synchronizeV3(WebDavAccount(account.baseUrl,"changed","test")) }
+            assertTrue(generateSequence(error as Throwable?) { it.cause }.any { it.message.orEmpty().contains("帐号身份变化") })
+            assertEquals("retained",await<ScheduleState>(a.store::load).entries.single().title)
+            assertEquals(key,org.json.JSONObject(a.db.dao().syncRecord(205)!!.payload.toString(Charsets.UTF_8)).getString("endpointKey"))
+        } finally { a.close() }
+    }
     @Test fun productionStoreEditsJoinReceiptsAndReopenUseSameRoomFile() {
         val a = Client(); val b = Client(); val r = Remote()
         try {

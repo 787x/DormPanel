@@ -989,9 +989,10 @@ function connectionDialog(type, c = null) {
     const name = field('连接名称', c?.name ?? (type === 'local' ? '本地课程' : 'WebDAV 课程'));
     let read;
     if (type === 'webdav') {
-      const url = field('HTTPS 共享父目录（末尾 /）', c?.url ?? ''), username = field('用户名', c?.username ?? ''), password = field('密码（留空保留已保存密码）', '', 'password'), cert = field('独立信任的服务器公钥证书 PEM（留空保留）', '', 'textarea'), system = field('恢复系统 CA', '', 'checkbox');
+      const url = field('WebDAV 共享父目录（末尾 /，推荐 HTTPS）', c?.url ?? ''), username = field('用户名', c?.username ?? ''), password = field('密码（留空保留已保存密码）', '', 'password'), insecure = field('允许 HTTP 明文内网连接（帐号、密码和课表不加密）', '', 'checkbox'), cert = field('独立信任的服务器公钥证书 PEM（留空保留）', '', 'textarea'), system = field('恢复系统 CA / 清除独立证书', '', 'checkbox');
+      insecure.checked = c?.allowInsecureHttp === true;
       $('fields').append(el('p', `独立证书信任：${c?.hasTrustedCertificate ? '已设置' : '未设置'}。修改地址、凭据或信任配置时，已绑定工作区须重新验证完整历史。`));
-      read = () => ({ type, name: name.value, connectionId: c?.id, url: url.value, username: username.value, password: password.value, certificatePem: system.checked ? '' : cert.value || undefined });
+      read = () => ({ type, name: name.value, connectionId: c?.id, url: url.value, username: username.value, password: password.value, allowInsecureHttp: insecure.checked, certificatePem: system.checked ? '' : cert.value || undefined });
     } else {
       const root = el('select'); root.setAttribute('aria-label', '存储范围'); root.disabled = true;
       let relative = c?.relative ?? '', browseEpoch = 0, directoryReady = false, selected = null;

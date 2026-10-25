@@ -102,7 +102,9 @@ class V3WebDavStore(private val account: WebDavAccount, folder: String,
     }
     private val listingHttp = okhttp3.OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS).callTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
+        .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS).callTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build().let { http ->
+            account.certificatePem?.let { require(client.url(account.baseUrl).isHttps);WebDavTls.client(http,it) } ?: http
+        }
     private fun listing(directory: String): ByteArray {
         // Collection getcontentlength is optional on ordinary WebDAV (often propstat 404).
         // Only request the type needed for strict path validation; GET enforces byte limits.

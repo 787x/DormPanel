@@ -1,13 +1,13 @@
 // 三个入口共用的操作目录。业务写入仍全部进入 server 的原事务/互斥处理器。
 import { z } from 'zod';
-export const VERSION = '0.7.4';
+export const VERSION = '0.7.6';
 export const BUDGET = 2 * 1024 * 1024;
 const text = z.string().max(4096), id = z.uuid(), number = z.number().int().nonnegative();
 const workspace = { workspaceId: id };
 const paging = { offset: number.max(50000).default(0), limit: number.min(1).max(100).default(40) };
 const write = { ...workspace, datasetId: id.nullable(), version: number, catalogVersion: number };
 const location = { rootId: text, relative: text.optional() };
-const fields = { protocol: z.enum(['v2','v3']).optional(), name: text.optional(), targetId: id.optional(), targetVersion: number.optional(), connectionId: id.optional(), type: z.enum(['local', 'webdav']).optional(), url: text.optional(), username: text.optional(), password: text.optional(), certificatePem: z.string().max(65536).optional(), rootId: text.optional(), relative: text.optional(), createPrivate: z.boolean().optional(), confirm: text.optional() };
+const fields = { protocol: z.enum(['v2','v3']).optional(), name: text.optional(), targetId: id.optional(), targetVersion: number.optional(), connectionId: id.optional(), type: z.enum(['local', 'webdav']).optional(), url: text.optional(), username: text.optional(), password: text.optional(), certificatePem: z.string().max(65536).optional(), allowInsecureHttp: z.boolean().optional(), rootId: text.optional(), relative: text.optional(), createPrivate: z.boolean().optional(), confirm: text.optional() };
 const definitions = [];
 function add(name, description, shape, route, permission = 'read', extra = {}) {
   definitions.push({ name, description, schema: z.strictObject(shape), route, permission, ...extra });

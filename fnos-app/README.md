@@ -1,6 +1,6 @@
-# DormPanel Schedule Manager 0.7.4（PR55 测试候选）
+# DormPanel Schedule Manager 0.7.6（PR55 测试候选）
 
-0.7.4 接入显式 v3 工作区与 v2→v3 迁移，复用同一 Catalog / Workspace / Writer 和管理员边界。当前 v3 应用状态不能由 DPBK0001 完整备份，相关备份/恢复明确拒绝；v2 专属回退、归档和精简不适用于 v3。验收进度见 [PR55 记录](../docs/pr55-sync-v3-verification.md)。
+0.7.6 接入显式 v3 工作区与 v2→v3 迁移，复用同一 Catalog / Workspace / Writer 和管理员边界。当前 v3 应用状态不能由 DPBK0001 完整备份，相关备份/恢复明确拒绝；v2 专属回退、归档和精简不适用于 v3。验收结果与边界见 [PR55 记录](../docs/pr55-sync-v3-verification.md)。
 
 0.7.1 增加随包 CLI 与官方 MCP stdio Server，共 69 项业务操作、只读资源和工作流 Prompt；沿用运行中进程的单 Writer、版本检查与保护规则。默认只读，管理员在原网页授权并独立批准高影响操作。实际安装路径、SSH 配置、权限、幂等语义和限制见 [CLI / MCP 使用说明](../docs/fpk-0.7.1-agent-guide.md)，候选、代码测试及已安装验收见 [PR49 验证记录](../docs/pr49-fpk-agent-verification.md)。
 
@@ -10,7 +10,9 @@
 
 启动只完整读取活动工作区。其余列表状态来自以原文件标识/时间/大小核对的可丢弃摘要；失效时显示待检查，切换时读取真实状态。0.3.2 原工作区文件和 writerId 保持，identity 仅新增一次 installationId。详细说明、资源预算、测试、实测数据和候选哈希见 [PR42](../docs/pr42-fpk-backup-recovery.md)。
 
-fnOS Native 可编辑课表与 Sync v2 Writer。本次不修改 Android、DPC2 / DPSS/1 协议、Room 数据库或正式 APK。
+fnOS Native 通过 Catalog 管理显式 v2 / v3 工作区；原 v2 默认行为保持，协议切换通过明确迁移。DPC2 / DPSS/1 和 DPV3/3 格式保持。
+
+HTTP WebDAV 须在连接中显式允许明文传输；HTTPS 推荐使用系统 CA，fnOS 自签名证书可通过连接表单独立信任已核对的 PEM 公钥证书，不关闭全局 TLS 校验。
 
 ## 使用
 

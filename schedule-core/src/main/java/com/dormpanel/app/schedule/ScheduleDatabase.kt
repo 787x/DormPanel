@@ -311,9 +311,10 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         return V3DatasetInspection.inspect(directory,writer,remote,budget,descriptor,folder)
     }
     fun joinVerifiedV3(preview:UnboundV3JoinPreview,account:WebDavAccount) {
-        val budget=V3Budget();val target=inspectUnboundTarget(V3WebDavStore(account,preview.target.folder,budget),budget,preview.target.descriptor,preview.target.folder,account.username)
+        val budget=V3Budget();val remote=V3WebDavStore(account,preview.target.folder,budget)
+        val target=inspectUnboundTarget(remote,budget,preview.target.descriptor,preview.target.folder,account.username)
         check(target!=null && target.snapshot.contentEquals(preview.target.snapshot)) { "目标预检尚未完成或已变化，请重新预览同一目标" }
-        workerCall { v3().prepareVerifiedJoin(preview) {
+        workerCall { v3().prepareVerifiedJoin(preview,ActiveScheduleV3.endpointKey(remote,account)) {
             check(SyncV3Codec.stateBytes(requireEmptyUnboundJoin()).contentEquals(SyncV3Codec.stateBytes(preview.original))) { "本地预览后变化，禁止覆盖加入" }
         } }
     }
@@ -338,9 +339,10 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     }
     fun prepareExistingV3Migration(preview:ExistingV3MigrationPreview,sourceRemote:CommitStore,account:WebDavAccount) {
         val source=previewV3Migration(sourceRemote,preview.source.sourceFolder); ScheduleV3Migration.unchanged(preview.source,source)
-        val budget=V3Budget(); val target=inspectExistingTarget(source,V3WebDavStore(account,preview.target.folder,budget),budget,preview.target.descriptor,preview.target.folder)
+        val budget=V3Budget(); val remote=V3WebDavStore(account,preview.target.folder,budget)
+        val target=inspectExistingTarget(source,remote,budget,preview.target.descriptor,preview.target.folder)
         check(target!=null && target.snapshot.contentEquals(preview.target.snapshot)) { "目标预检尚未完成或预览后发生变化；请选择同一身份继续检查" }
-        workerCall { v3().prepareExisting(preview) { requireMigrationCapture(preview.source) } }
+        workerCall { v3().prepareExisting(preview,ActiveScheduleV3.endpointKey(remote,account)) { requireMigrationCapture(preview.source) } }
     }
     internal fun prepareExistingV3Migration(preview:ExistingV3MigrationPreview,sourceRemote:CommitStore,targetRemote:V3ObjectStore,budget:V3Budget) {
         val source=previewV3Migration(sourceRemote,preview.source.sourceFolder); ScheduleV3Migration.unchanged(preview.source,source)

@@ -11,6 +11,18 @@ import { SyncEngine } from '../src/sync.mjs';
 import { decode, encode, hash } from '../src/protocol.mjs';
 
 const operation = (title, id = 'course') => ({ kind: 'entry', action: 'upsert', value: { id, title, day: 1, startMinute: 480, endMinute: 530, location: '' } });
+test('HTTP 必须显式允许，连接与重启保留同一明文授权；禁止伪装证书保护', async t => {
+  const f=await setup(t);t.after(()=>f.catalog.close());
+  const input={action:'connection.save',type:'webdav',name:'isolated HTTP',url:'http://192.168.3.153:5005/dormpanel/',username:'test',password:'test'};
+  await assert.rejects(f.manage(input),/显式允许/);
+  const {connectionId}=await f.manage({...input,allowInsecureHttp:true});
+  assert.equal(f.catalog.connection(connectionId).config.allowInsecureHttp,true);
+  assert.equal((await f.catalog.summary()).connections.find(c=>c.id===connectionId).allowInsecureHttp,true);
+  await assert.rejects(f.manage({...input,connectionId,allowInsecureHttp:false}),/显式允许/);
+  await assert.rejects(f.manage({...input,connectionId,certificatePem:'test'}),/HTTP 不支持证书/);
+  await f.catalog.close();f.catalog=await Catalog.open(f.options);
+  assert.equal(f.catalog.connection(connectionId).config.allowInsecureHttp,true);
+});
 function remote(key, rows = new Map()) {
   return { key, rows, list: async () => [...rows.keys()], read: async id => rows.get(id) ?? null,
     put: async (id, bytes) => { assert(!rows.has(id)); rows.set(id, bytes); } };

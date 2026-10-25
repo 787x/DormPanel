@@ -20,7 +20,8 @@ class ActiveScheduleV3HttpsAndroidTest {
         assumeTrue("explicit PR55 isolated probe required",encoded!=null)
         val probe=JSONObject(String(Base64.getDecoder().decode(encoded),Charsets.UTF_8)); val config=probe.getJSONObject("config"); val binding=probe.getJSONObject("binding")
         val url=config.getString("url"); require(Regex("/pr55-runtime-[0-9a-f-]{36}/$").containsMatchIn(url))
-        val account=WebDavAccount(url,config.getString("username"),config.getString("password"))
+        val account=WebDavAccount(url,config.getString("username"),config.getString("password"),config.optString("certificatePem").takeIf { it.isNotBlank() })
+        val diagnosticClient=account.certificatePem?.let { WebDavTls.client(okhttp3.OkHttpClient(),it) } ?: okhttp3.OkHttpClient()
         val device=args.getString("v3Device","test"); require(device in listOf("phone","x08e")); val mode=args.getString("v3Mode","publish")
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         check(context.packageName=="com.dormpanel.schedule.core.test")
@@ -30,16 +31,24 @@ class ActiveScheduleV3HttpsAndroidTest {
         assertTrue(V3HttpsProbeActivity.resumed.await(15,TimeUnit.SECONDS))
         if (mode=="diagnose") {
             // No Authorization header in this diagnostic; normal TLS validation stays enabled.
-            okhttp3.OkHttpClient().newCall(okhttp3.Request.Builder().url(url).build()).execute().use { assertTrue(it.code in 200..499) }
+            diagnosticClient.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { assertTrue(it.code in 200..499) }
             return
         }
-        val name="pr55-https-${binding.getString("datasetId")}-$device.db"
+        val name="pr55-https-endpoint-v1-${binding.getString("datasetId")}-$device.db"
+        WebDavSettings.overrideNamespace=name
+        val settings=WebDavSettings(context)
+        if(mode=="publish")settings.saveAccount(account)
+        else {
+            val saved=requireNotNull(settings.account())
+            assertEquals(account.baseUrl,saved.baseUrl);assertEquals(account.username,saved.username)
+            assertEquals(account.certificatePem?.let(WebDavTls::fingerprint),saved.certificatePem?.let(WebDavTls::fingerprint))
+        }
         val executor=Executors.newSingleThreadExecutor(); val db=Room.databaseBuilder(context,ScheduleDatabase::class.java,name).build()
         val store=RoomScheduleStore(db,executor,profiles=TermScheduleProfileStore(context))
         try {
             if (mode=="receive") {
                 // Distinguish a cold device DNS failure from persisted Store recovery.
-                okhttp3.OkHttpClient().newCall(okhttp3.Request.Builder().url(url).build()).execute().close()
+                diagnosticClient.newCall(okhttp3.Request.Builder().url(url).build()).execute().close()
             }
             if (!store.isV3()) {
                 assertEquals("publish",mode)
@@ -66,10 +75,14 @@ class ActiveScheduleV3HttpsAndroidTest {
                 val state=await<ScheduleState>(store::load)
                 assertTrue(listOf("node","android-phone","android-x08e").all { id->state.entries.any { it.id==id } })
                 assertTrue(state.events.any { it.id=="node-final" })
+                config.optString("expectedRawHash").takeIf { it.isNotBlank() }?.let { expected ->
+                    assertEquals(expected,SyncV3Codec.hash(SyncV3Codec.stateBytes(state)))
+                }
             }
             assertEquals(binding.getString("datasetId"),store.v3Information()!!.getJSONObject("binding").getString("datasetId"))
         } finally {
             store.close(); assertTrue(executor.awaitTermination(20,TimeUnit.SECONDS))
+            WebDavSettings.overrideNamespace=null
             InstrumentationRegistry.getInstrumentation().runOnMainSync { V3HttpsProbeActivity.current.get()?.finish() }
         }
     }

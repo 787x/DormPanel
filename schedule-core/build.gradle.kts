@@ -17,6 +17,7 @@ android {
 dependencies {
     api("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     implementation("net.sf.biweekly:biweekly:0.6.8") { exclude(group = "com.fasterxml.jackson.core") }
     implementation(libs.androidx.core.ktx)
     api(libs.androidx.room.runtime)

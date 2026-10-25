@@ -292,7 +292,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
                 if (saved?.baseUrl == entered && saved.username == username) saved.password else ""
             }
             if (secret.isBlank()) { status.text = "Enter the account password."; return null }
-            return runCatching { WebDavClient().url(entered); WebDavAccount(entered, username, secret) }
+            return runCatching { WebDavClient().url(entered); WebDavAccount(entered, username, secret,saved?.certificatePem?.takeIf { saved.baseUrl==entered && saved.username==username }) }
                 .onFailure { status.text = it.message }.getOrNull()
         }
         val test = Button(context).apply { text = "Test connection"; setOnClickListener {

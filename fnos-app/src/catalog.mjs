@@ -160,7 +160,8 @@ export class Catalog {
     let config;
     if (type === 'webdav') {
       config = { url: input.url ?? old?.config.url, username: input.username ?? old?.config.username,
-        password: input.password || old?.config.password, certificatePem: input.certificatePem ?? old?.config.certificatePem };
+        password: input.password || old?.config.password, certificatePem: input.certificatePem ?? old?.config.certificatePem,
+        ...(input.allowInsecureHttp === true || input.allowInsecureHttp === undefined && old?.config.allowInsecureHttp === true ? {allowInsecureHttp:true} : {}) };
       this.validateWebDav(config);
     } else {
       const rootId = input.rootId ?? old?.config.rootId;
@@ -180,7 +181,7 @@ export class Catalog {
     return { revision: this.manifest.revision, activeId: this.manifest.activeId,
       roots: this.grants.roots.map(({ id, name }) => ({ id, name })),
       connections: this.manifest.connections.map(c => ({ id: c.id, name: c.name, type: c.type,
-        ...(c.type === 'webdav' ? { url: c.config.url, username: c.config.username, hasCredentials: !!c.config.password, hasTrustedCertificate: !!c.config.certificatePem } : { rootId: c.config.rootId, relative: c.config.relative }) })),
+        ...(c.type === 'webdav' ? { url: c.config.url, username: c.config.username, hasCredentials: !!c.config.password, hasTrustedCertificate: !!c.config.certificatePem, allowInsecureHttp: c.config.allowInsecureHttp === true } : { rootId: c.config.rootId, relative: c.config.relative }) })),
       workspaces: this.manifest.workspaces.map(row => ({ ...row, ...summaries.get(row.id), restoredPendingValidation: !!this.restoreGuards[row.id], recovery: this.restoreGuards[row.id] ? true : summaries.get(row.id).recovery, busy: this.busy.has(row.id) })) };
   }
 

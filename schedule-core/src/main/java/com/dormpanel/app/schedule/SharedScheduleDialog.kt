@@ -59,7 +59,7 @@ object SharedScheduleDialog {
             if (!publisher) {
                 val old = sync.accounts.account()
                 val secret = password!!.text.toString().ifBlank { old?.password ?: "" }
-                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), secret)
+                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), secret,old?.certificatePem?.takeIf { old.baseUrl==url.text.toString() && old.username==user.text.toString() })
                 SharedScheduleTransport().folder(account, folder.text.toString())
                 sync.accounts.saveAccount(account)
             }
@@ -69,6 +69,25 @@ object SharedScheduleDialog {
             return Button(context).apply { this.text = text; isAllCaps = false; minHeight = (48 * context.resources.displayMetrics.density).toInt()
                 setOnClickListener { if (!saveRequired || save()) action() }
                 fields.addView(this)
+            }
+        }
+        button("HTTPS 自签名证书（仅此连接）",false) {
+            val old=sync.accounts.account()
+            if(old==null) status.text="请先保存 HTTPS WebDAV 帐号，再配置证书"
+            else {
+                val pem=EditText(context).apply { hint="从可信渠道取得的单个 PEM 公钥证书";contentDescription=hint;setText(old.certificatePem.orEmpty());minLines=4 }
+                AlertDialog.Builder(context).setTitle("单独信任服务器证书")
+                    .setMessage("仅适用于此帐号的 HTTPS 连接。请从 NAS 管理员或可信 SSH 渠道取得证书并核对指纹；不会自动信任网络返回的陌生证书。证书变化会停止同步。活动 v3 不支持隐式更换信任身份。")
+                    .setView(ScrollView(context).apply { addView(pem) }).setNegativeButton("取消",null)
+                    .setNeutralButton("恢复系统 CA") { _,_->sync.accounts.saveAccount(WebDavAccount(old.baseUrl,old.username,old.password));status.text="已恢复此连接的系统 CA 校验" }
+                    .setPositiveButton("核对指纹") { _,_->runCatching {
+                        require(WebDavClient().url(old.baseUrl).isHttps) { "请先保存 HTTPS 地址" }
+                        val value=pem.text.toString().trim();val fingerprint=WebDavTls.fingerprint(value)
+                        AlertDialog.Builder(context).setTitle("确认精确证书信任").setMessage("SHA-256:\n$fingerprint\n\n仅匹配此公钥证书，仍验证有效期和 TLS 握手。不会安装全局 CA。")
+                            .setNegativeButton("取消",null).setPositiveButton("信任此证书并保存") { _,_->
+                                sync.accounts.saveAccount(WebDavAccount(old.baseUrl,old.username,old.password,value));status.text="此连接已保存精确证书信任；可检查并同步"
+                            }.show()
+                    }.onFailure { status.text="证书无效、已过期或地址不是 HTTPS；原设置保留" } }.show()
             }
         }
         button("创建 Sync v3 数据集（保留本地课程）") {
@@ -170,7 +189,7 @@ object SharedScheduleDialog {
             if (bound()) { status.text = "已绑定，请使用安全换库入口" }
             else runCatching {
                 val old = sync.accounts.account()
-                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), password!!.text.toString().ifBlank { old?.password.orEmpty() })
+                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), password!!.text.toString().ifBlank { old?.password.orEmpty() },old?.certificatePem?.takeIf { old.baseUrl==url.text.toString() && old.username==user.text.toString() })
                 WebDavFolderDialog.show(context, account) { if (active && !bound()) folder.setText(it) }
             }.onFailure { status.text = "请检查服务器地址与凭据" }
         }

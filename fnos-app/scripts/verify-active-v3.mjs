@@ -18,7 +18,7 @@ if (mode==='init') {
   const parent=new URL(args.url); assert(parent.pathname.endsWith('/dormpanel/'));
   const probe=new URL(`pr55-runtime-${randomUUID()}/`,parent), transport=new WebDav(args); transport.base=probe;
   await transport.request('MKCOL',probe,65536);
-  config={ url:probe.href,username:args.username,password:args.password };
+  config={ url:probe.href,username:args.username,password:args.password,...(args.allowInsecureHttp===true?{allowInsecureHttp:true}:{}),...(args.certificatePem?{certificatePem:args.certificatePem}:{}) };
   root=await mkdtemp(join(tmpdir(),'pr55-active-catalog-'));
 } else ({config,root,workspaceId}=JSON.parse(await readFile(args.privatePath,'utf8')));
 assert(/\/pr55-runtime-[0-9a-f-]{36}\/$/.test(new URL(config.url).pathname));

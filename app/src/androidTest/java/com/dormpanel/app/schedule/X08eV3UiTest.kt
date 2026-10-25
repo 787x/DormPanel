@@ -43,6 +43,9 @@ class X08eV3UiTest {
                     assertTrue(vm.schedule.state.entries.any { it.title=="PR55 X08E UI" }); assertTrue(vm.schedule.syncStore!!.isV3()); editors?.close()
                     SharedScheduleDialog.show(activity,vm.schedule,vm.sharedSchedule,true)
                 }
+                onView(withText("共享课表 · WebDAV")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+                    .check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
+                instrumentation.waitForIdleSync()
                 val bitmap=instrumentation.uiAutomation.takeScreenshot()
                 java.io.File(instrumentation.targetContext.getExternalFilesDir(null),"pr55-x08e-v3-ui.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }; bitmap.recycle()
                 onView(withText("关闭")).perform(click())

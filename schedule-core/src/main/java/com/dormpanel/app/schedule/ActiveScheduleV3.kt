@@ -13,6 +13,7 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
         const val MODE = 205
         const val ORIGINAL_LOCAL = 206
         fun active(database: ScheduleDatabase) = database.dao().hasSyncRecord(MODE)
+        fun endpointKey(remote:V3WebDavStore,account:WebDavAccount)=digest(("WebDAV\n"+remote.endpointIdentity()+"\n"+account.username+(account.certificatePem?.let { "\n"+WebDavTls.fingerprint(it) } ?: "")).toByteArray(Charsets.UTF_8))
     }
     val directory = File(requireNotNull(database.openHelper.writableDatabase.path) + ".sync-v3")
     val journal = V3Journal(directory, { V3RoomSql(database, false) }, { frame ->
@@ -45,10 +46,10 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
         val id="00000000-0000-0000-0000-000000000001"
         return Base64.getEncoder().encodeToString(SyncV3Codec.encode(V3Object(2,id,id,id,id,1,"1".repeat(64),state=state.copy(sync=null))))
     }
-    fun prepareVerifiedJoin(preview:UnboundV3JoinPreview,validateBefore:()->Unit) {
+    fun prepareVerifiedJoin(preview:UnboundV3JoinPreview,accessKey:String,validateBefore:()->Unit) {
         val target=preview.target; val state=requireNotNull(target.value.state)
         val descriptor=JSONObject().put("datasetId",target.identity.datasetId).put("descriptorPath",V3Paths.path(target.identity)).put("descriptorHash",SyncV3Codec.hash(target.descriptor))
-        val mode=JSONObject().put("protocol","v3").put("folder",target.folder).put("intent","JOIN").put("phase","ACTIVE")
+        val mode=JSONObject().put("protocol","v3").put("folder",target.folder).put("intent","JOIN").put("phase","ACTIVE").put("endpointKey",accessKey)
         journal.localTransaction { frame ->
             check(!active(database) && !frame.has("binding"));validateBefore()
             val original=ScheduleSnapshotCodec.encode(ScheduleSnapshot(UUID.randomUUID().toString(),UUID.randomUUID().toString(),null,System.currentTimeMillis(),preview.original.copy(sync=null),1))
@@ -60,11 +61,12 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
                 .put("joinReadback",JSONObject().put("path",V3Paths.path(target.value)).put("hash",target.hash).put("endpoint",target.folder).put("roundId",target.readbackRound))
         }
     }
-    fun prepareExisting(preview:ExistingV3MigrationPreview,validateBefore:()->Unit) {
+    fun prepareExisting(preview:ExistingV3MigrationPreview,accessKey:String?=null,validateBefore:()->Unit) {
         val source=preview.source; val target=preview.target; val state=requireNotNull(target.value.state)
         check(SyncV3Codec.stateBytes(source.merged).contentEquals(SyncV3Codec.stateBytes(state))) { "源与目标 RAW 不等价，不能证明安全加入；保留双方并停止切换" }
         check(target.identity.datasetId!=source.frame.baseline!!.datasetId) { "跨协议数据集身份必须独立" }
         val control=JSONObject().put("protocol","v3").put("folder",target.folder).put("intent","JOIN").put("phase","ACTIVE").put("migrationId",source.transactionId)
+        if(accessKey!=null)control.put("endpointKey",accessKey)
         val descriptor=JSONObject().put("datasetId",target.identity.datasetId).put("descriptorPath",V3Paths.path(target.identity)).put("descriptorHash",SyncV3Codec.hash(target.descriptor))
         val proof=source.evidence().put("targetKind","EXISTING").put("targetDescriptor",descriptor).put("targetBaselinePath",V3Paths.path(target.value))
             .put("targetBaselineHash",target.hash).put("exactReadbackConfirmed",true).put("rawEquivalent",true).put("sourceWriterPaused",true)
@@ -111,6 +113,11 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
     }
     fun synchronize(account: WebDavAccount): String {
         val b = binding(); val budget = V3Budget(); val remote = V3WebDavStore(account, b.getString("folder"), budget)
+        val accessKey=endpointKey(remote,account)
+        if(!b.has("endpointKey")) {
+            check(!journal.controlSummary().has("binding")) { "旧草案绑定缺少端点身份；保留本地数据与候选，拒绝猜测新帐号身份" }
+            journal.localTransaction { val mode=binding().put("endpointKey",accessKey);database.dao().checkpoint(ScheduleSyncCheckpoint(MODE,mode.toString().toByteArray(Charsets.UTF_8))) }
+        } else check(b.getString("endpointKey")==accessKey) { "访问端点或帐号身份变化；本地修改保留，请恢复原帐号，不能隐式更换 v3 端点" }
         val proof = if(b.has("migrationId") && b.optString("phase")!="ACTIVE") ScheduleV3MigrationPreview.restore(migrationEvidence()) else null
         val recheck: (() -> Unit)? = proof?.let { p -> {
             val old = WebDavCommitStore(account, p.sourceFolder)

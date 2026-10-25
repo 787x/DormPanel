@@ -71,10 +71,10 @@ class PhoneV3UiTest {
                     waitFor(scenario) { !it.sharedSync.busy }
                     var verified=false;scenario.onActivity { verified=it.sharedSync.status.contains("完整业务快照已验证") }
                     if(verified)break
-                    onView(withText("继续预检")).perform(click())
+                    onView(withText("继续预检")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
                 }
                 scenario.onActivity { assertFalse(it.source.syncStore!!.isV3());assertTrue(it.source.state.entries.isEmpty()) }
-                onView(withText("加入并继续验证")).perform(click())
+                onView(withText("加入并继续验证")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
                 stage("join confirmed")
                 waitFor(scenario) {
                     if (!it.sharedSync.busy && !it.source.applyingSnapshot && it.source.state.entries.isEmpty()) it.sharedSync.sync()
