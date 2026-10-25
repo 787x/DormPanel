@@ -1,5 +1,5 @@
 param(
-    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\0.1.4'),
+    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\sync-v3-rc1'),
     [string]$BuildToolsDirectory,
     [string]$PreviousX08eApk
 )
@@ -10,7 +10,7 @@ $tools = Get-AndroidReleaseTools $BuildToolsDirectory
 Assert-ReleaseDirectory $Directory $tools
 $fixture = Join-Path $PSScriptRoot ('..\artifacts\pr33\negative-' + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Path $fixture -Force | Out-Null
-$source = Join-Path $Directory "DormPanel-X08E-$releaseVersion.apk"
+$source = Join-Path $Directory "DormPanel-X08E-$($releaseApps[0].Version).apk"
 $apk = Join-Path $fixture 'negative.apk'
 $count = 0
 function Expect-Rejected([string]$Label, [scriptblock]$Action) {
@@ -22,7 +22,7 @@ function Expect-Rejected([string]$Label, [scriptblock]$Action) {
 }
 Expect-Rejected 'missing APK' { Assert-ReleaseApk $apk $releaseApps[0] $tools }
 Expect-Rejected 'wrong application APK' {
-    Assert-ReleaseApk (Join-Path $Directory "DormPanel-Phone-$releaseVersion.apk") $releaseApps[0] $tools
+    Assert-ReleaseApk (Join-Path $Directory "DormPanel-Phone-$($releaseApps[1].Version).apk") $releaseApps[0] $tools
 }
 if ($PreviousX08eApk) {
     Expect-Rejected 'previous signed version' { Assert-ReleaseApk $PreviousX08eApk $releaseApps[0] $tools }
@@ -68,11 +68,11 @@ Set-Content -LiteralPath (Join-Path $fakeRoot 'gradlew.bat') -Encoding ascii -Va
 foreach ($app in $releaseApps) {
     $stale = Join-Path $fakeRoot "$($app.Module)\build\outputs\apk\release"
     New-Item -ItemType Directory -Path $stale -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $Directory "DormPanel-$($app.Device)-$releaseVersion.apk") -Destination (Join-Path $stale "$($app.Module)-release.apk")
+    Copy-Item -LiteralPath (Join-Path $Directory "DormPanel-$($app.Device)-$($app.Version).apk") -Destination (Join-Path $stale "$($app.Module)-release.apk")
 }
 $buildLog = & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $fakeTools 'build-release.ps1') -SkipTests -Keystore $testKey -KeyAlias negative-fixture -StorePassword fixture-only -KeyPassword fixture-only -BuildToolsDirectory (Split-Path $tools.Signer) 2>&1
 if ($LASTEXITCODE -eq 0 -or ($buildLog -join "`n") -notmatch 'Missing or empty release APK') { throw 'No-op Gradle did not fail at missing artifact gate.' }
-if (Test-Path -LiteralPath (Join-Path $fakeRoot "artifacts\release\$releaseVersion")) { throw 'Failed build exposed final candidates.' }
+if (Test-Path -LiteralPath (Join-Path $fakeRoot "artifacts\release\$releaseCandidate")) { throw 'Failed build exposed final candidates.' }
 $count++
 Write-Host 'PASS rejects stale artifacts after successful no-op Gradle'
 # An already frozen directory is rejected before signing/building, including a custom path.

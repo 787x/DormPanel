@@ -26,8 +26,8 @@ upgrade, with live HA CSV/WebDAV, phone entry, Xiaomi coexistence/boot, and a
 observation limits, and [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes
 since 0.1.0. PR29 recorded acceptance evidence only; it did not publish a release.
 
-当前稳定版为 **0.1.2**（X08E code 6 / Phone code 4），HA 集成仍为 0.1.1。
-[下载正式版](https://github.com/787x/DormPanel/releases/tag/v0.1.2) · [发布说明](docs/RELEASE-0.1.2.md) · [正式包验收](docs/RELEASE-0.1.2-acceptance.md)。
+已公开的 Android 稳定资产分别为 [X08E 0.1.8 / code 11、HA 0.1.2](https://github.com/787x/DormPanel/releases/tag/v0.1.8) 和 [Phone 0.1.7 / code 9](https://github.com/787x/DormPanel/releases/tag/v0.1.7)。fnOS 最近公开候选为 [0.7.2](https://github.com/787x/DormPanel/releases/tag/fpk-v0.7.2)，标记为预发布。
+PR58 准备 X08E 0.1.9、Phone 0.1.8、fnOS 0.8.0 的 Sync v3 统一发布候选，尚未公开稳定发布；安装与验收结论见 [PR58 RC 记录](docs/pr58-sync-v3-rc.md)。
 支持现有本地数据原位升级及 Sync v2 新建、绑定和双向同步；已有 v1 共享绑定不提供兼容性保证。
 [RC2/PR36 验收记录](docs/PR36-rc2-physical-acceptance.md)、RC1/PR34 历史结论和 0.1.1 产物保留。
 
@@ -35,7 +35,7 @@ since 0.1.0. PR29 recorded acceptance evidence only; it did not publish a releas
 
 ### APK installation
 
-1. 下载对应设备的 `DormPanel-X08E-0.1.2.apk` 或 `DormPanel-Phone-0.1.2.apk` 并传到设备。
+1. 从对应发布页下载 `DormPanel-X08E-0.1.8.apk` 或 `DormPanel-Phone-0.1.7.apk` 并传到设备；PR58 候选另按 RC 验收记录操作。
 2. Open the APK on the device and confirm installation.
 3. If Android asks, grant **Install unknown apps** for the app you are installing from.
 
@@ -44,8 +44,8 @@ since 0.1.0. PR29 recorded acceptance evidence only; it did not publish a releas
 Always update in place:
 
 ```bash
-adb install -r DormPanel-X08E-0.1.2.apk
-# 手机请使用 DormPanel-Phone-0.1.2.apk
+adb install -r DormPanel-X08E-0.1.8.apk
+# 手机请使用 DormPanel-Phone-0.1.7.apk
 ```
 
 or install the new APK over the existing one from the system installer.

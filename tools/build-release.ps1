@@ -12,7 +12,7 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'release-validation.ps1')
 
 # A frozen candidate is immutable. Rebuilds must name a new directory.
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repositoryRoot "artifacts\release\$releaseVersion" }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repositoryRoot "artifacts\release\$releaseCandidate" }
 $outDir = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $outDir) { throw "Candidate directory already exists; use a new -OutputDirectory: $outDir" }
 
@@ -57,7 +57,7 @@ try {
         # Exact AGP output, never newest-file or wildcard selection.
         $source = Join-Path $repositoryRoot "$($app.Module)\build\outputs\apk\release\$($app.Module)-release.apk"
         Assert-ReleaseApk $source $app $tools
-        $apk = Join-Path $staging "DormPanel-$($app.Device)-$releaseVersion.apk"
+        $apk = Join-Path $staging "DormPanel-$($app.Device)-$($app.Version).apk"
         Copy-Item -LiteralPath $source -Destination $apk
         $hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
         Set-Content -LiteralPath "$apk.sha256" -Encoding ascii -Value "$hash  $([IO.Path]::GetFileName($apk))"
@@ -65,7 +65,7 @@ try {
     Assert-ReleaseDirectory $staging $tools
 
     # HA has its own version lifecycle. Never label it with Android's RC version.
-    $haVersion = '0.1.1'
+    $haVersion = $haReleaseVersion
     $haRoot = Join-Path $repositoryRoot 'homeassistant\custom_components\dormpanel'
     $manifest = Get-Content -LiteralPath (Join-Path $haRoot 'manifest.json') -Raw | ConvertFrom-Json
     if ($manifest.version -cne $haVersion) { throw "Unexpected HA manifest version (expected $haVersion)." }
@@ -84,12 +84,31 @@ try {
             [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $entry) | Out-Null
         }
     } finally { $zip.Dispose() }
+    $haHash = (Get-FileHash -LiteralPath $haZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath "$haZip.sha256" -Encoding ascii -Value "$haHash  $([IO.Path]::GetFileName($haZip))"
+    Assert-HaReleaseArchive $haZip $haRoot
+    $record = [ordered]@{
+        candidate = $releaseCandidate
+        sourceCommit = (& git rev-parse HEAD)
+        trackedChanges = @(& git status --porcelain --untracked-files=no)
+        builtAtUtc = [DateTime]::UtcNow.ToString('o')
+        java = @(& java -version 2>&1 | ForEach-Object { "$_" })
+        buildTools = Split-Path $tools.Signer
+        apps = $releaseApps
+        signerSha256 = $expectedSigner
+        haVersion = $haVersion
+        artifacts = @(Get-ChildItem -LiteralPath $staging -File | Where-Object Extension -in '.apk', '.zip' | ForEach-Object {
+            @{ name = $_.Name; bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+        })
+    }
+    $record | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $staging 'build-record.json') -Encoding utf8
     # All staging gates pass before exposing the final directory.
     # Move the verified directory as a unit; no overwrite of a previous candidate.
     if (Test-Path -LiteralPath $outDir) { throw "Candidate directory appeared during build: $outDir" }
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $outDir))
     [IO.Directory]::Move($staging, $outDir)
     Assert-ReleaseDirectory $outDir $tools
+    Assert-HaReleaseArchive (Join-Path $outDir "DormPanel-HA-$haVersion.zip") $haRoot
     Write-Host "HA archive (actual integration version $haVersion): $outDir\DormPanel-HA-$haVersion.zip"
     Write-Host "Local signed artifacts: $outDir. No tag or Release created; device acceptance is recorded separately."
 } finally {

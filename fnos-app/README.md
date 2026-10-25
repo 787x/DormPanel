@@ -1,4 +1,4 @@
-# DormPanel Schedule Manager 0.7.6（PR55 测试候选）
+# DormPanel Schedule Manager 0.8.0（PR58 发布候选）
 
 显式 v3 工作区与 v2→v3 迁移复用同一 Catalog / Workspace / Writer 和管理员边界。PR56 增加无副作用的只读 Descriptor 发现、游标分页历史、八类 RAW 版本详情与差异、新提交式回退、可续做审计和独立历史归档。v3 完整应用备份使用 DPBK0002 一致性 SQLite 快照，继续读取 DPBK0001；恢复后先隔离发布并核验已知引用。支持明确预览与确认的私有无引用 RAW 快照整理；缓存身份、未知恢复材料和全部远端历史均不自动删除。普通 WebDAV 远端 GC 保持 NOT_ELIGIBLE，v2 精简候选不适用于 v3。实际范围、预算和验收见 [PR56 记录](../docs/pr56-sync-v3-maintenance.md)，此前接入边界见 [PR55 记录](../docs/pr55-sync-v3-verification.md)。
 

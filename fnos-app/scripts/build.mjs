@@ -9,8 +9,9 @@ for (const name of ['package.json', 'package-lock.json']) await cp(new URL(name,
 if (!process.env.npm_execpath) throw Error('请使用 npm run build');
 const installed = spawnSync(process.execPath, [process.env.npm_execpath, 'ci', '--omit=dev', '--ignore-scripts', '--prefix', new URL('app/server/', build).pathname.replace(/^\/(\w:)/, '$1')], { stdio: 'inherit' });
 if (installed.status !== 0) throw Error('依赖安装失败');
+const pkg = JSON.parse(await readFile(new URL('package.json', root), 'utf8'));
 await writeFile(new URL('manifest', build), `appname=dormpanel-schedule-manager
-version=0.7.6
+version=${pkg.version}
 display_name=DormPanel Schedule Manager
 desc=多工作区、本地与 WebDAV 数据源、Sync v2/v3 课表编辑与安全迁移
 platform=all
