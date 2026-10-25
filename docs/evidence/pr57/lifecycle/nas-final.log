@@ -1,0 +1,139 @@
+TAP version 13
+# (node:20806) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 cli: read-only preview and resume, independent admin approval, stale and repeated decision
+ok 1 - PR57 cli: read-only preview and resume, independent admin approval, stale and repeated decision
+  ---
+  duration_ms: 4208.562657
+  type: 'test'
+  ...
+# Subtest: PR57 mcp: read-only preview and resume, independent admin approval, stale and repeated decision
+ok 2 - PR57 mcp: read-only preview and resume, independent admin approval, stale and repeated decision
+  ---
+  duration_ms: 2960.104472
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle cli: default reader can cancel failed private preview; pending approval pins evidence
+ok 3 - PR57 lifecycle cli: default reader can cancel failed private preview; pending approval pins evidence
+  ---
+  duration_ms: 4508.6493
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle mcp: default reader can cancel failed private preview; pending approval pins evidence
+ok 4 - PR57 lifecycle mcp: default reader can cancel failed private preview; pending approval pins evidence
+  ---
+  duration_ms: 3110.77883
+  type: 'test'
+  ...
+# (node:20807) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 read-only candidate, atomic manifest switch, original Writer/RAW/error and idempotence
+ok 5 - PR57 read-only candidate, atomic manifest switch, original Writer/RAW/error and idempotence
+  ---
+  duration_ms: 2288.277893
+  type: 'test'
+  ...
+# Subtest: PR57 rejects changed/missing known object and different Descriptor without altering active state
+ok 6 - PR57 rejects changed/missing known object and different Descriptor without altering active state
+  ---
+  duration_ms: 2552.687246
+  type: 'test'
+  ...
+# Subtest: PR57 stale local edit, owner mismatch, cancel and attempted PUT retain all evidence
+ok 7 - PR57 stale local edit, owner mismatch, cancel and attempted PUT retain all evidence
+  ---
+  duration_ms: 1282.538846
+  type: 'test'
+  ...
+# Subtest: PR57 STAGED candidate/capture retained, edits after capture replay through original receipt
+ok 8 - PR57 STAGED candidate/capture retained, edits after capture replay through original receipt
+  ---
+  duration_ms: 1915.10693
+  type: 'test'
+  ...
+# Subtest: PR57 extra concurrent branch verified separately, normal sync conflicts after move
+ok 9 - PR57 extra concurrent branch verified separately, normal sync conflicts after move
+  ---
+  duration_ms: 2897.162685
+  type: 'test'
+  ...
+# Subtest: PR57 all eight RAW collections, original global connection users and expired candidate
+ok 10 - PR57 all eight RAW collections, original global connection users and expired candidate
+  ---
+  duration_ms: 2455.920286
+  type: 'test'
+  ...
+# Subtest: PR57 Catalog interruption before durable decision, reopen repeats same result
+ok 11 - PR57 Catalog interruption before durable decision, reopen repeats same result
+  ---
+  duration_ms: 1596.091399
+  type: 'test'
+  ...
+# Subtest: PR57 Catalog interruption after durable decision, reopen repeats same result
+ok 12 - PR57 Catalog interruption after durable decision, reopen repeats same result
+  ---
+  duration_ms: 1105.584344
+  type: 'test'
+  ...
+# Subtest: PR57 real HTTPS: independently provided certificates, bad pin, changed URL/account and inaccessible old endpoint
+ok 13 - PR57 real HTTPS: independently provided certificates, bad pin, changed URL/account and inaccessible old endpoint
+  ---
+  duration_ms: 4340.448764
+  type: 'test'
+  ...
+# (node:20808) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 lifecycle: >64 cancelled graphs free slots, active history and shared witnesses preserved
+ok 14 - PR57 lifecycle: >64 cancelled graphs free slots, active history and shared witnesses preserved
+  ---
+  duration_ms: 19387.568121
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle: fixed expiry, protected approvals and owner quota; cleanup crash cannot revive READY
+ok 15 - PR57 lifecycle: fixed expiry, protected approvals and owner quota; cleanup crash cannot revive READY
+  ---
+  duration_ms: 1043.431042
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle: partially cleaned graph survives backup/maintenance and Catalog reopen
+ok 16 - PR57 lifecycle: partially cleaned graph survives backup/maintenance and Catalog reopen
+  ---
+  duration_ms: 966.625652
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle: unknown graph namespace stops collection; live tasks are not evicted to satisfy quota
+ok 17 - PR57 lifecycle: unknown graph namespace stops collection; live tasks are not evicted to satisfy quota
+  ---
+  duration_ms: 2567.441688
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle: durable uncertain Agent intent, sync and restore exclusions retain expired evidence
+ok 18 - PR57 lifecycle: durable uncertain Agent intent, sync and restore exclusions retain expired evidence
+  ---
+  duration_ms: 1033.171904
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle: stored RAW references must stop cleanup before expansion
+ok 19 - PR57 lifecycle: stored RAW references must stop cleanup before expansion
+  ---
+  duration_ms: 980.651862
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle: latest remains owner-scoped beyond the receipt page and terminal window
+ok 20 - PR57 lifecycle: latest remains owner-scoped beyond the receipt page and terminal window
+  ---
+  duration_ms: 800.627917
+  type: 'test'
+  ...
+1..20
+# tests 20
+# suites 0
+# pass 20
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 27138.470329
+Could not chdir to home directory /home/w: No such file or directory
+
+{"remote": "/tmp/dormpanel-pr57-ad53ebad-eab3-48b7-aa02-3b1208a3f062", "exitCode": 0, "sourceSha256": "719a5d3b06f8c08fb13dc489917255bb9f280461daf50bf736ce1d82cda2f889"}

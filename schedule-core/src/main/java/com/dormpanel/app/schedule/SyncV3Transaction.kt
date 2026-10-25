@@ -41,9 +41,9 @@ internal object V3Atomic {
 /** Separate isolated state adapter: course state, capture and receipt share one atomic document.
  * Existing Room/v2 bindings are not touched. PR55 must supply the production Room adapter. */
 class V3Journal(val directory: File, sqlFactory: ((File) -> V3SqlPort)? = null,
-    private val mirrorLocal: ((JSONObject) -> Unit)? = null) : AutoCloseable {
+    private val mirrorLocal: ((JSONObject) -> Unit)? = null, requireExisting:Boolean=false) : AutoCloseable {
     internal val networkGate = Any()
-    val meta = V3Metadata(directory, sqlFactory)
+    val meta = V3Metadata(directory, sqlFactory, requireExisting)
     var prepareReceipt: ((JSONObject) -> Unit)? = null
     var roundId: String? = null
     private var frame = try { (meta.get("state", "frame") ?: JSONObject().put("version", 2)).also { require(it.getInt("version") == 2) } }

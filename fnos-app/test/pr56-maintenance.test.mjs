@@ -9,22 +9,8 @@ import { operations } from '../src/operations.mjs';
 import { V3Maintenance } from '../src/v3-maintenance.mjs';
 import { BackupManager, recoverRestore } from '../src/backup.mjs';
 
-export async function fixture(t) {
-  const objects = new Map(); let puts = 0;
-  const remote = { objects, get puts() { return puts; }, read: async p => objects.get(p) ?? null,
-    putOnce: async (p,b) => { assert(!objects.has(p)); objects.set(p,Buffer.from(b)); puts++; },
-    list: async s => [...new Set([...objects.keys()].filter(p=>p.startsWith(s)).map(p=> { const tail=p.slice(s.length), i=tail.indexOf('/'); return s+(i<0?tail:tail.slice(0,i+1)); }))].sort() };
-  const dir = await mkdtemp(join(tmpdir(),'pr56-')), store = await new Store(dir).init();
-  const catalog = await Catalog.open({store,configPath:join(dir,'config.json'),v3RemoteFactory:()=>remote});
-  t.after(()=>catalog.close());
-  const manage = input=>catalog.manage({catalogVersion:catalog.manifest.revision,...input});
-  const {connectionId}=await manage({action:'connection.save',name:'isolated',type:'webdav',url:'https://isolated.test/',username:'test',password:'test'});
-  const {workspaceId:id}=await manage({action:'workspace.add',name:'test',connectionId,protocol:'v3'});
-  await manage({action:'workspace.switch',targetId:id});
-  const db=catalog.db(id), sync=opts=>catalog.network(id,e=>e.synchronize(opts));
-  const settle=async()=>{for(let i=0;i<5;i++)await sync();};
-  return {dir,catalog,id,db,remote,sync,settle};
-}
+import { fixture } from './fixtures/v3-catalog.mjs';
+
 test('PR56 Descriptor 发现成功及失败：所有持久行、revision、错误与远端逐字不变',async t=>{
   const f=await fixture(t); await f.sync({create:true}); await f.settle();
   await f.db.tx(s=>{s.error='保留同步异常';});

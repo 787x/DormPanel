@@ -1,0 +1,56 @@
+{
+  "base": "27268b7df3742ca8b4bbc15b5f23a99bd14d3632",
+  "fnosSourceSha256": "89c5e8c36e2750b9c4cac5c0f19c18cf19ab87db1a9fdabe13f6a19e3e2834a6",
+  "nasRegression": {
+    "tests": 124,
+    "passed": 124,
+    "node": "22.18.0",
+    "uid": "dormpanel-schedule-manager"
+  },
+  "https": {
+    "certificateRotation": true,
+    "wrongCertificateRejected": true,
+    "urlAndAccountChange": true,
+    "caToExactLeafPin": true,
+    "originalObjectsUnchanged": true
+  },
+  "android": {
+    "X08E": {
+      "tests": 3,
+      "passed": 3,
+      "resolution": "1280x800"
+    },
+    "Phone MIX 2S": {
+      "tests": 3,
+      "passed": 3
+    },
+    "directNasHttps": "both passed",
+    "dailyApksInstalled": false,
+    "initialCoreUnitSuite": {
+      "tests": 187,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1
+    }
+  },
+  "fpk": {
+    "officialFnpackBuilt": true,
+    "installed": false,
+    "sha256": "fcfd79e9e1b8bac451266f44a89eff5cc0e8da9f10cee349a67d2c653247e3af"
+  },
+  "limitations": [
+    "No real power-cut test",
+    "New FPK not installed",
+    "No server stop-write/global-directory proof",
+    "Large cumulative-history endpoint soak not performed",
+    "Authorized-local/WebDAV conversion and HTTP downgrade not physically tested"
+  ],
+  "regressionSourceSha256": "07dcdc30e6bd9a10cb2e38288b81165a426adce7892a4dfc251362bcb8515ea7",
+  "finalTarget": {
+    "tests": 11,
+    "passed": 11,
+    "change": "Explicit approval summary includes URL, account name and exact certificate fingerprint, no secrets"
+  },
+  "gitCanonicalSourceSha256": "7a975fefb0959cdaf344977c1562faf0fff9e916bd565fac56f43eb5df995dd8",
+  "sourceHashNote": "运行日志为传输至 NAS 的原字节指纹；Git 依仓库属性规范化行尾，另记录暂存源码指纹。"
+}

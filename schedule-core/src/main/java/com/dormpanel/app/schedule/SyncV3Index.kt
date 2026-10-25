@@ -7,7 +7,7 @@ internal class V3CacheCorruptException : IllegalStateException("v3 cache hash")
 
 /** v2 direct-path persistent index. Opening never enumerates receipts or decodes old snapshots.
  * No cache deletion or GC exists. Missing content does not erase a durable identity witness. */
-class V3IndexedCache(root: File, internal val budget: V3Budget) {
+class V3IndexedCache(root: File, internal val budget: V3Budget, private val requireRemoteReadback: Boolean = false) {
     var contentReads = 0L; private set
     private val directory = File(root, "sync-v3-index-v2")
     init { require(!java.nio.file.Files.isSymbolicLink(directory.toPath())) }
@@ -36,6 +36,11 @@ class V3IndexedCache(root: File, internal val budget: V3Budget) {
         return V3Atomic.read(blob, SyncV3Codec.MAX_BYTES, budget).also { contentReads++; if (SyncV3Codec.hash(it) != receipt.getString("hash")) throw V3CacheCorruptException(); V3Paths.match(path, it) }
     }
     fun load(path: String, remote: V3ObjectStore, expectedHash: String? = null): ByteArray? {
+        if(requireRemoteReadback) {
+            val raw=requireNotNull(remote.read(path)) { "候选祖先缺失" }
+            require(expectedHash==null || SyncV3Codec.hash(raw)==expectedHash) { "候选祖先哈希变化" }
+            put(path,raw);return raw
+        }
         var expected = expectedHash
         val hit = try { get(path) } catch (e: V3CacheCorruptException) {
             val w = requireNotNull(witness(path)); require(expected == null || w.getString("hash") == expected) { "v3 cache witness identity changed" }; expected = w.getString("hash")

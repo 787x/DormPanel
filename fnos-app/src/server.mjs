@@ -1,4 +1,5 @@
 import { V3Maintenance } from './v3-maintenance.mjs';
+import { V3EndpointMove } from './v3-endpoint.mjs';
 import http from "node:http";
 import { Readable } from "node:stream";
 import { AgentService } from "./agent-service.mjs";
@@ -159,6 +160,7 @@ export async function createApp({
         path = u.pathname.slice(PREFIX.length);
       if (req.method === "POST") {
         const routes = [
+          '/api/endpoint',
           '/api/agent', '/api/import/cancel',
           '/api/migration', '/api/migration/verify',
           '/api/history/archive-restore', '/api/history/cleanup-preview', '/api/history/cleanup', '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
@@ -188,6 +190,25 @@ export async function createApp({
         }
         const input = await body(req);
         if (path === '/api/agent') { ensure(!internal, 'Agent 不能批准自身'); send(200, await agents.admin(input, user)); return; }
+        if (path === '/api/endpoint') {
+          ensure(!catalog.maintenance && !catalog.configuring && !catalog.invalidated && !writes && !historyLock && !catalog.busy.size,'存在并发操作或恢复保护');
+          const db=await catalog.load(input.workspaceId);await db.queue;
+          ensure(!writes && !historyLock && !catalog.configuring,'存在并发操作');
+          historyLock=true;catalog.busy.add(input.workspaceId);catalog.endpointTaskOwner=input.workspaceId;
+          try {
+            catalog.endpointApprovalState=()=>agents.state;
+            const service=new V3EndpointMove(catalog,input.workspaceId);
+            let result;
+            if(input.action==='preview')result=await service.preview(input.candidate,user);
+            else if(input.action==='resume')result=await service.resume(input.token,user);
+            else if(input.action==='status')result=input.token?service.status(input.token,user):service.latest(user);
+            else if(input.action==='cancel')result=await service.cancel(input.token,user);
+            else if(input.action==='confirm'){
+              catalog.busy.delete(input.workspaceId);result=await service.confirm(input,user);
+            } else throw Error('未知端点操作');
+            send(200,result);return;
+          } finally {historyLock=false;catalog.busy.delete(input.workspaceId);delete catalog.endpointTaskOwner;}
+        }
         if ((path === '/api/sync' && input.discover === true) || (path === '/api/migration' && input.action === 'v3.discover')) {
           ensure(!input.bind && !input.create, '发现不可同时创建或绑定');
           send(200, await catalog.discover(input.workspaceId, input.targetConnectionId)); return;
@@ -566,6 +587,10 @@ export async function createApp({
     return { status, data };
   };
   agents = await AgentService.open({ store, catalog:() => catalog, dispatch, approvalSummary:async (operation, input) => {
+    if(operation==='endpoint.confirm') {
+      await catalog.load(input.workspaceId);
+      return new V3EndpointMove(catalog,input.workspaceId).status(input.token,'agent-package-os');
+    }
     if(operation==='migration.v3-prepare') {
       const p=v3Previews.get(input.token); ensure(p && p.user==='agent-package-os' && p.workspaceId===input.workspaceId && p.expires>Date.now(),'迁移预览已失效');
       return {sourceProtocol:p.preview.evidence.sourceProtocol,sourceDatasetId:p.preview.evidence.datasetId,rawHash:p.preview.evidence.rawHash,

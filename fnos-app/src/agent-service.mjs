@@ -79,7 +79,7 @@ export class AgentService {
           p.consumed = true;
         }
         if (this.state.receipts.length >= 512) fail('LIMIT');
-        const receipt = { operationId, digest, time:now };
+        const receipt = { operationId, digest, time:now, ...(op.name==='endpoint.confirm'?{operation:op.name,workspaceId:input.workspaceId,endpointToken:input.token}:{}) };
         this.state.receipts.push(receipt);
         // 先保存意图：崩溃后为 unknown，不重新执行可能已提交的业务操作。
         await this.save(); intentSaved = true;
@@ -117,7 +117,7 @@ export class AgentService {
       const r = this.state.receipts.find(r => r.operationId === input.operationId);
       return r?.result ?? { ok:false, error:errorValue(null, r ? 'UNKNOWN' : 'STALE') };
     }
-    const method = op.permission === 'read' ? 'GET' : 'POST';
+    const method = op.method ?? (op.permission === 'read' ? 'GET' : 'POST');
     let data = { ...input, ...op.fixed };
     if (op.edit) { data.operation = { ...input.edit, ...op.edit }; delete data.edit; }
     const result = await this.dispatch(method, op.route, data);
@@ -152,7 +152,7 @@ export class AgentService {
     if (method === 'POST') {
       const current = this.catalog();
       const db = current.manifest.workspaces.some(w => w.id === input.workspaceId) ? await current.load(input.workspaceId) : null;
-      data = { ...data, ...(data.workspaceId ? { resultWorkspaceId:data.workspaceId } : {}), ...(data.datasetId ? { resultDatasetId:data.datasetId } : {}), catalogVersion:current.manifest.revision, currentWorkspaceId:current.manifest.activeId, workspaceId:input.workspaceId, version:db?.frame.revision ?? null, datasetId:db?.frame.datasetId ?? null, localSaved:!!db, dirty:db?.dirty() ?? null, pending:db ? !!db.frame.pending : null, receipt:db?.frame.receipt ?? null, status:db?.frame.graph?.status ?? 'unchecked', conflict:!!db?.frame.conflict, error:db?.frame.error ? errorValue(new Error(db.frame.error)) : null, deferred:db?.frame.checkpoint.deferred ?? [], otherDevicesReceived:'unknown' };
+      data = { ...data, ...(data.workspaceId ? { resultWorkspaceId:data.workspaceId } : {}), ...(data.datasetId ? { resultDatasetId:data.datasetId } : {}), catalogVersion:current.manifest.revision, currentWorkspaceId:current.manifest.activeId, workspaceId:input.workspaceId, version:db?.frame.revision ?? null, datasetId:db?.frame.datasetId ?? null, localSaved:!!db, dirty:db?.dirty() ?? null, pending:db ? !!db.frame.pending : null, receipt:db?.frame.receipt ?? null, status:op.name.startsWith('endpoint.') ? data.status : db?.frame.graph?.status ?? 'unchecked', conflict:!!db?.frame.conflict, error:db?.frame.error ? errorValue(new Error(db.frame.error)) : null, deferred:db?.frame.checkpoint.deferred ?? [], otherDevicesReceived:'unknown' };
       if (op.name.startsWith('sync.') && (data.error || data.conflict || data.deferred.length)) return { ok:false, data:redact(data), error:data.error ?? errorValue(null, data.conflict ? 'CONFLICT' : 'INCOMPLETE') };
     }
     return { ok:true, data:redact(data) };

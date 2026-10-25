@@ -1,0 +1,15 @@
+✔ PR57 lifecycle: >64 cancelled graphs free slots, active history and shared witnesses preserved (6381.785ms)
+✔ PR57 lifecycle: fixed expiry, protected approvals and owner quota; cleanup crash cannot revive READY (438.2305ms)
+✔ PR57 lifecycle: partially cleaned graph survives backup/maintenance and Catalog reopen (448.2035ms)
+✔ PR57 lifecycle: unknown graph namespace stops collection; live tasks are not evicted to satisfy quota (1183.5851ms)
+✔ PR57 lifecycle: durable uncertain Agent intent, sync and restore exclusions retain expired evidence (410.6368ms)
+✔ PR57 lifecycle: stored RAW references must stop cleanup before expansion (450.3414ms)
+✔ PR57 lifecycle: latest remains owner-scoped beyond the receipt page and terminal window (311.5505ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10078.4293

@@ -1,0 +1,12 @@
+
+> dormpanel-schedule-manager@0.7.6 build
+> node scripts/build.mjs
+
+
+added 14 packages, and audited 15 packages in 3s
+
+9 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+FPK 工程已生成：/D:/Projects/DormPanel/fnos-app/build/dormpanel-schedule-manager/

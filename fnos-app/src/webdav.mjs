@@ -1,4 +1,5 @@
 import https from "node:https";
+import tls from 'node:tls';
 import http from "node:http";
 import dns from "node:dns";
 import { X509Certificate } from "node:crypto";
@@ -52,7 +53,9 @@ export function tlsOptions(config) {
   );
   const expected = new X509Certificate(config.certificatePem);
   return {
-    ca: config.certificatePem,
+    // A CA-issued leaf is not itself a root. Keep system chain validation AND
+    // the exact peer check below; an unrelated system-trusted leaf still fails.
+    ca: [...tls.rootCertificates, config.certificatePem],
     rejectUnauthorized: true,
     checkServerIdentity: (_host, peer) => {
       if (!peer.raw || !new X509Certificate(peer.raw).raw.equals(expected.raw))

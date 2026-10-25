@@ -43,6 +43,15 @@ class WebDavSettings(context: Context) {
         return WebDavAccount(base, prefs.getString("username", "").orEmpty(), password,prefs.getString("certificatePem",null))
     }
     fun publicAccount(): Pair<String, String> = Pair(prefs.getString("url", "").orEmpty(), prefs.getString("username", "").orEmpty())
+    /** Immutable candidate envelope. Only Room's committed mode selects it; global
+     * import credentials never change during preview, commit or crash recovery. */
+    internal fun sealEndpoint(account:WebDavAccount):String {
+        WebDavClient().url(account.baseUrl);account.certificatePem?.let { WebDavTls.certificate(it) }
+        return cipher.encrypt(JSONObject().put("url",account.baseUrl).put("username",account.username).put("password",account.password).put("certificatePem",account.certificatePem).toString())
+    }
+    internal fun openEndpoint(payload:String):WebDavAccount = JSONObject(requireNotNull(cipher.decrypt(payload)) { "端点凭据解密失败，请保留绑定并恢复 Keystore" }).let {
+        WebDavAccount(it.getString("url"),it.getString("username"),it.getString("password"),it.optString("certificatePem").ifBlank { null })
+    }
     fun saveAccount(account: WebDavAccount) {
         WebDavClient().url(account.baseUrl)
         account.certificatePem?.let { require(WebDavClient().url(account.baseUrl).isHttps);WebDavTls.certificate(it) }

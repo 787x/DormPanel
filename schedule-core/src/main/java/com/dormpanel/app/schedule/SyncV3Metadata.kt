@@ -37,10 +37,11 @@ private class V3JvmSql(file: File) : V3SqlPort {
 }
 
 data class V3MetaRow(val seq: Long, val key: String, val value: JSONObject)
+data class V3NamedRow(val seq:Long,val namespace:String,val key:String,val value:JSONObject)
 
 /** SQLite B-tree pages, direct immutable identities, bounded keyset cursors. Local control and
  * indexes share the SAME transaction. This whole-file lock overlaps Node SQLite owner locks. */
-class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null) : AutoCloseable {
+class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null, requireExisting:Boolean=false) : AutoCloseable {
     private val owner: FileChannel
     private val lease: java.nio.channels.FileLock
     private lateinit var sql: V3SqlPort
@@ -54,6 +55,7 @@ class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null) : A
     var guard: (() -> Unit)? = null
     private val verifiedSnapshots = linkedSetOf<String>()
     init {
+        if(requireExisting)require(directory.isDirectory&&File(directory,"v3-state-v2.sqlite").isFile&&File(directory,"v3-owner.lock").isFile) { "候选私有数据库缺失，停止清理而不重建" }
         require(directory.absolutePath.replace('\\', '/').split('/').none { it == "dormpanel-sync-v2" || it == "dormpanel-sync-v3" }) { "v3 metadata must remain outside protocol directories" }
         val missing = generateSequence(directory) { it.parentFile }.takeWhile { !it.exists() }.toList()
         check(directory.isDirectory || directory.mkdirs()); require(!java.nio.file.Files.isSymbolicLink(directory.toPath()))
@@ -66,6 +68,10 @@ class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null) : A
             V3Atomic.sync(directory); missing.forEach { V3Atomic.sync(requireNotNull(it.parentFile)) }
             val file = File(directory, "v3-state-v2.sqlite"); require(!java.nio.file.Files.isSymbolicLink(file.toPath()))
             sql = sqlFactory?.invoke(file) ?: if (System.getProperty("java.vm.name") == "Dalvik") V3AndroidSql(file) else V3JvmSql(file)
+            if(requireExisting) {
+                require(sql.rows("SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*'").map { it.getValue("name") }.toSet()==setOf("v3_records")) { "未知候选数据库，停止清理" }
+                require(get("format","version")?.getInt("value")==2) { "候选数据库格式或归属不明，停止清理" }
+            }
             sql.rows("PRAGMA journal_mode=WAL"); sql.execute("PRAGMA synchronous=FULL"); sql.execute("PRAGMA cache_size=-2048"); sql.execute("PRAGMA mmap_size=0"); sql.execute("PRAGMA wal_autocheckpoint=64"); sql.execute("PRAGMA journal_size_limit=1048576")
             sql.execute("CREATE TABLE IF NOT EXISTS v3_records(seq INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, ns TEXT NOT NULL, k TEXT NOT NULL, v TEXT NOT NULL, sum TEXT NOT NULL)")
             sql.execute("CREATE UNIQUE INDEX IF NOT EXISTS index_v3_records_ns_k ON v3_records(ns,k)"); sql.execute("CREATE INDEX IF NOT EXISTS index_v3_records_ns_seq ON v3_records(ns,seq)")
@@ -77,11 +83,11 @@ class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null) : A
     @Synchronized fun assertWritable() { checkOpen(); guard?.invoke() }
     @Synchronized fun <T> localOperation(operation: () -> T): T { val previous = budget; budget = V3Budget(maxRequests = 0); try { return operation() } finally { budget = previous } }
     private fun digest(ns: String, key: String, value: String) = SyncV3Codec.hash((ns + "\u0000" + key + "\u0000" + value).toByteArray(Charsets.UTF_8))
-    private fun decode(ns: String, row: Map<String, String>): JSONObject {
+    private fun decode(ns: String, row: Map<String, String>, expandSnapshots:Boolean=true): JSONObject {
         val raw = row.getValue("v"); val bytes = raw.toByteArray(Charsets.UTF_8).size.toLong(); budget?.charge(bytes, 0); reads++; readBytes += bytes
         if (ns == "node") nodeReads++
         require(digest(ns, row.getValue("k"), raw) == row.getValue("sum")) { "v3 metadata checksum corrupt" }
-        val value = JSONObject(raw); return if (ns == "snapshot") value else unpack(value, mutableMapOf()) as JSONObject
+        val value = JSONObject(raw); return if (ns == "snapshot"||!expandSnapshots) value else unpack(value, mutableMapOf()) as JSONObject
     }
     private fun remember(hash: String) { if (verifiedSnapshots.size >= 128) verifiedSnapshots.remove(verifiedSnapshots.first()); verifiedSnapshots += hash }
     private fun pack(value: Any?): Any? = when (value) {
@@ -120,6 +126,13 @@ class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null) : A
     }
     @Synchronized fun lastSeq(ns: String): Long { checkOpen(); return sql.rows("SELECT seq FROM v3_records WHERE ns=? ORDER BY seq DESC LIMIT 1", listOf(ns)).firstOrNull()?.getValue("seq")?.toLong() ?: 0 }
     @Synchronized fun count(ns: String): Long { checkOpen(); return sql.rows("SELECT COUNT(*) AS n FROM v3_records WHERE ns=?", listOf(ns)).single().getValue("n").toLong() }
+    /** GC must see the stored reference marker, not its expanded RAW body. */
+    @Synchronized fun rawRecords(after:Long,limit:Int=128):List<V3NamedRow> {
+        checkOpen();require(after>=0&&limit in 1..128)
+        return sql.rows("SELECT seq,ns,k,v,sum FROM v3_records WHERE seq>? ORDER BY seq LIMIT ?",listOf(after.toString(),limit.toString())).map {
+            V3NamedRow(it.getValue("seq").toLong(),it.getValue("ns"),it.getValue("k"),decode(it.getValue("ns"),it,false))
+        }
+    }
     @Synchronized fun <T> atomic(operation: () -> T): T {
         checkOpen(); guard?.invoke(); if (depth > 0) return operation()
         var committed = false
