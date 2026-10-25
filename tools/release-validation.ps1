@@ -76,7 +76,7 @@ function Assert-HaReleaseArchive([string]$Archive, [string]$SourceRoot) {
     $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
     $manifest = Get-Content -LiteralPath (Join-Path $SourceRoot 'manifest.json') -Raw | ConvertFrom-Json
     if ($manifest.version -cne $haReleaseVersion) { throw 'Unexpected HA source version.' }
-    $expected = @{}
+    $expected = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     foreach ($file in Get-ChildItem -LiteralPath $SourceRoot -Recurse -File) {
         if ($file.FullName -match '\\(__pycache__|\.storage|transfer[^\\]*)\\') { continue }
         $entry = 'custom_components/dormpanel/' + $file.FullName.Substring($SourceRoot.Length).TrimStart('\', '/').Replace('\', '/')
@@ -85,7 +85,7 @@ function Assert-HaReleaseArchive([string]$Archive, [string]$SourceRoot) {
     $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
     try {
         if ($zip.Entries.Count -ne $expected.Count) { throw 'HA archive entry count mismatch.' }
-        $seen = @{}
+        $seen = [Collections.Generic.Dictionary[string,bool]]::new([StringComparer]::Ordinal)
         foreach ($entry in $zip.Entries) {
             if (-not $expected.ContainsKey($entry.FullName) -or $seen.ContainsKey($entry.FullName)) { throw "Unexpected/duplicate HA entry: $($entry.FullName)" }
             $seen[$entry.FullName] = $true

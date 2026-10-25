@@ -98,7 +98,7 @@ Optional, required for timetable and APK relay features:
    `config/custom_components/dormpanel/`.
 2. Restart Home Assistant.
 
-   XLS 升级顺序：先将 HA 集成更新到 0.1.2 并重启 HA（当前集成不支持卸载重载），再升级 X08E 到本次 0.1.8 / code 11 候选并重新连接 HA，重新注册 `schedule_xls_v1`。面板刷新后使用 XLS 区域上传湖北大学 BIFF8 `.xls`（最多 1 MiB）；仅支持该能力的设备可选。设备预览并确认后才保存，未知学期先配置日期和作息；旧设备仍可接收原有 ICS/CSV。详见 [PR52 说明](docs/pr52-ha-xls.md)。
+   XLS 升级顺序：先将 HA 集成更新到 0.1.2 并重启 HA（当前集成不支持卸载重载），再升级 X08E 到已发布的 0.1.8 / code 11（或后续已验收版本）并重新连接 HA，重新注册 `schedule_xls_v1`。面板刷新后使用 XLS 区域上传湖北大学 BIFF8 `.xls`（最多 1 MiB）；仅支持该能力的设备可选。设备预览并确认后才保存，未知学期先配置日期和作息；旧设备仍可接收原有 ICS/CSV。详见 [PR52 说明](docs/pr52-ha-xls.md)。
 
 3. **Settings → Devices & Services → Add Integration → DormPanel**.
 4. Create the integration entry (admin user required for relay registration).
