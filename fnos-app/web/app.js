@@ -998,7 +998,12 @@ function v3EndpointDialog(w) {
       output.textContent=`${status}\n数据集：${p.datasetId??'见当前工作区绑定'}\n`+(p.facts?`网络可达：${p.facts.networkReachable?'已验证':'未确认'}；TLS / 认证：${p.facts.tlsAndAuthenticationValid?'已验证':'未确认'}\nDescriptor 精确匹配：${p.facts.descriptorExact?'是':'未确认'}\n已知历史完整回读：${p.facts.knownHistoryComplete?'完成':'尚未完成'}；额外对象：${p.facts.extraObjects??'待验证'}\n`:'')+
         (p.failure?`本次验证暂停：${p.failure.stage} / ${p.failure.code}\n`:'')+'旧端点新变化与未知 Writer 未能证明；其他设备接收未知。';
     };
-    const call=async(action,extra={})=>{try{const result=await post('/api/endpoint',{workspaceId:w.id,action,token:preview?.token??sessionStorage.getItem(key),...extra});display(result);}catch(e){output.textContent=e.message;}};
+    const call=async(action,extra={})=>{try{
+      const result=await post('/api/endpoint',{workspaceId:w.id,action,token:preview?.token??sessionStorage.getItem(key),...extra});
+      // 确认会原子更新 Catalog；回执不携带新 revision，后续操作须重新读取。
+      if(result.status==='COMMITTED')await load();
+      display(result);
+    }catch(e){output.textContent=e.message;}};
     controls.append(button('只读预检所选连接',()=>call('preview',{candidate:{connectionId:select.value}})),resumeButton=button('继续上次预检',()=>call('resume')),button('查询状态',()=>call('status')),cancelButton=button('取消预检',()=>call('cancel')),
       confirmButton=button('确认更换此工作区端点',async()=>{
         if(preview?.status!=='READY')return notifyUser('请先继续预检，直到已知历史验证完成');

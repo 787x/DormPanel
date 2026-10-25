@@ -476,3 +476,48 @@ test('换库向导显示真实来源、人工设备清单与零物理回收；�
   await expect(f.page.locator('#historyStatus')).not.toContainText('迁移只可访问当前工作区');
   assert.deepEqual(f.errors, []);
 });
+
+test('PR58 v3 端点确认后刷新 Catalog revision，随后备份读取不要求手工刷新', async t => {
+  const f = await fixture(t, { authorized: true }), datasetId = randomUUID(), connectionId = randomUUID(), token = randomUUID();
+  const revision = f.app.catalog.manifest.revision;
+  let committed = false, backupRevision;
+  await f.page.route('**/api/schedule?*', async route => {
+    const response = await route.fetch(), data = await response.json();
+    await route.fulfill({ response, json: { ...data, protocol: 'v3', datasetId, catalogVersion: revision + Number(committed) } });
+  });
+  await f.page.route('**/api/manage?*', async route => {
+    const response = await route.fetch(), data = await response.json();
+    data.revision = revision + Number(committed);
+    data.connections.push({ id: connectionId, name: '合成候选', type: 'webdav', url: 'https://candidate.test/', username: 'synthetic', hasCredentials: true });
+    data.workspaces[0] = { ...data.workspaces[0], protocol: 'v3', connectionId, datasetId };
+    await route.fulfill({ response, json: data });
+  });
+  await f.page.route('**/api/endpoint', async route => {
+    const input = route.request().postDataJSON();
+    if (input.action === 'status') return route.fulfill({ json: { status: 'NOT_STARTED' } });
+    if (input.action === 'confirm') {
+      assert.equal(input.catalogVersion, revision); committed = true;
+      // 与真实确认回执一致：不携带新 Catalog revision。
+      return route.fulfill({ json: { status: 'COMMITTED', token, datasetId } });
+    }
+    await route.fulfill({ json: { status: 'READY', token, datasetId, version: 0, catalogVersion: revision } });
+  });
+  await f.page.route('**/api/backups/list', async route => {
+    backupRevision = route.request().postDataJSON().catalogVersion;
+    if (backupRevision !== revision + 1) return route.fulfill({ status: 409, json: { error: '管理版本过期' } });
+    await route.fulfill({ json: { backups: [], directoryIdentity: 'synthetic-directory' } });
+  });
+  await f.open();
+  const card = f.page.locator('#workspaceRows article').first();
+  await card.getByText('更多操作', { exact: true }).click();
+  await card.getByRole('button', { name: '选择访问端点', exact: true }).click();
+  await f.page.getByRole('button', { name: '只读预检所选连接', exact: true }).click();
+  await expect(f.page.getByRole('button', { name: '确认更换此工作区端点', exact: true })).toBeEnabled();
+  await f.page.getByRole('button', { name: '确认更换此工作区端点', exact: true }).click();
+  await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#fields')).toContainText('本机访问端点已切换');
+  await f.page.locator('#cancel').click();
+  await f.page.locator('#backupsPage').click();
+  await expect(f.page.locator('#backupStatus')).toContainText('0 个加密备份');
+  assert.equal(backupRevision, revision + 1); assert.deepEqual(f.errors, []);
+});
