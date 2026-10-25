@@ -8,6 +8,7 @@ import { IndexedV3Cache } from './v3-index.mjs';
 import { sha } from './v3-protocol.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { uuid } from './protocol.mjs';
+import { V3Maintenance } from './v3-maintenance.mjs';
 
 /** Catalog owns lifetime, permissions and endpoint configuration. The facade projects
  * the one SQLite Workspace into existing business services; it never persists a v2 frame. */
@@ -40,16 +41,10 @@ export async function openActiveV3(catalog, id, create = false) {
     journal, engine,
     bindingIdentity() { const b=workspace.frame.v3?.binding; return b ? structuredClone(b) : null; },
     migrationHeader(id) { return readLocal(()=>journal.meta.get('hostMigrationHeader',id)); },
-    history() {
-      const s = journal.value, page = ns => readLocal(() => journal.meta.page(ns, 0, 100).map(r => ({ key: r.key, value: r.value })));
-      return { protocol: 'v3', datasetId: s.binding?.datasetId ?? null, descriptor: s.binding,
-        epochs: page('epoch'), commits: page('node'), frontier: page('frontier').map(r => r.key),
-        anomalies: page('error'), pendingPhase: s.pending?.phase ?? null,
-        oldHistoryAuditComplete: false, automaticDelete: false, readOnly: true };
-    },
+    history(input = {}) { return readLocal(() => new V3Maintenance(catalog,id).list(input)); },
     async synchronize(options = {}) {
       const budget = new Budget(), remote = remoteV3(catalog, id, budget);
-      if (options.discover) return discoverV3(remote);
+      ensure(!options.discover, '只读发现必须使用 Catalog.discover，禁止进入编辑事务');
       const current = journal.value;
       if (options.bind && current.binding) ensure(options.descriptorPath === current.binding.descriptorPath && options.descriptorHash === current.binding.descriptorHash, '已有活动数据集，禁止隐式换库');
       if (!current.binding && options.bind) {

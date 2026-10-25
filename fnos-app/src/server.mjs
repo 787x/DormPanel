@@ -1,3 +1,4 @@
+import { V3Maintenance } from './v3-maintenance.mjs';
 import http from "node:http";
 import { Readable } from "node:stream";
 import { AgentService } from "./agent-service.mjs";
@@ -160,7 +161,7 @@ export async function createApp({
         const routes = [
           '/api/agent', '/api/import/cancel',
           '/api/migration', '/api/migration/verify',
-          '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
+          '/api/history/archive-restore', '/api/history/cleanup-preview', '/api/history/cleanup', '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
           "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore", "/api/backups/cancel",
           "/api/edit",
           "/api/refresh",
@@ -209,6 +210,10 @@ export async function createApp({
         }
         ensure(!catalog.configuring && !catalog.manifest.transition, "正在保存配置或等待恢复");
         const network = action => catalog.network(workspaceId, action);
+        if ((path === '/api/sync' && input.discover === true) || (path === '/api/migration' && input.action === 'v3.discover')) {
+          ensure(!input.bind && !input.create, '发现不可同时创建或绑定');
+          send(200, await catalog.discover(workspaceId, input.targetConnectionId)); return;
+        }
         if (path === '/api/migration' && input.action?.startsWith('v3.')) {
           ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision, '迁移版本过期或存在并发操作');
           historyLock = true;
@@ -244,8 +249,16 @@ export async function createApp({
           } finally { historyLock = false; }
         }
         if (db.activeV3 && (path.startsWith('/api/migration') || path.startsWith('/api/history/'))) {
-          ensure(path === '/api/history/check', 'v3 不支持 v2 专属迁移、回退、归档或精简操作');
-          await network(engine => engine.synchronize()); send(200, { ok: true, version: db.frame.revision }); return;
+          ensure(path.startsWith('/api/history/'), 'v3 不支持 v2 专属迁移');
+          ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision && workspaceId === catalog.manifest.activeId, '历史版本过期或存在并发操作');
+          historyLock = true; catalog.busy.add(workspaceId);
+          try {
+            const service = new V3Maintenance(catalog, workspaceId), action = path.split('/').pop();
+            ensure(['check','preview','rollback','archive','archive-restore','cleanup-preview','cleanup'].includes(action), '不支持此 v3 历史操作');
+            const method = {check:'audit','archive-restore':'restoreArchive','cleanup-preview':'cleanupPreview'}[action] ?? action;
+            const result = await service[method](input, user);
+            send(200, publicValue({...result,version:db.frame.revision})); return;
+          } finally { historyLock = false; catalog.busy.delete(workspaceId); }
         }
         if (path === '/api/migration' || path === '/api/migration/verify') {
           ensure(writes === 1 && !catalog.busy.size && input.catalogVersion === catalog.manifest.revision && workspaceId === catalog.manifest.activeId, '迁移版本过期或有并发操作');
@@ -364,7 +377,10 @@ export async function createApp({
         return;
       }
       // schedule 无 ID 仅用于初次引导；其余数据读取必须明确指定工作区。
-      if (path.startsWith('/api/') && !['/api/maintenance', '/api/agent', '/api/import/rows', '/api/schedule/range', '/api/migration', '/api/history', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
+      if (path === '/api/sync/discover') {
+        send(200, await catalog.discover(u.searchParams.get('workspaceId'), u.searchParams.get('targetConnectionId'))); return;
+      }
+      if (path.startsWith('/api/') && !['/api/maintenance', '/api/agent', '/api/import/rows', '/api/schedule/range', '/api/migration', '/api/history', '/api/history/space', '/api/history/eligibility', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
         send(404, { error: '不存在' }); return;
       }
       ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
@@ -380,7 +396,7 @@ export async function createApp({
       }
       if (path === '/api/maintenance') {
         const protection = catalog.protection(workspaceId), restored = await store.read('restore-result.json');
-        send(200, { workspaceId, version:db.frame.revision, catalogVersion:catalog.manifest.revision, datasetId:db.frame.datasetId, restoreGuard:!!catalog.restoreGuards[workspaceId], restorePoisoned:backups.poisoned, restorePreviews:backups.previews.size, lastRestore:restored ? { ok:restored.ok, restoredAt:restored.restoredAt, backupCreatedAt:restored.backupCreatedAt } : null, protection:protection ? { id:protection.id, phase:protection.phase, sourceId:protection.sourceId, targetId:protection.targetId } : null, protocol:db.activeV3 ? 'v3' : 'v2', historyCount:db.activeV3 ? null : Object.keys(db.frame.checkpoint.hashes ?? {}).length, historyCapacity:db.activeV3 ? null : 256, backupCapability:db.activeV3 ? 'UNSUPPORTED_V3_COMPLETE_BACKUP' : 'DPBK0001', automaticDelete:false, reclaimedBytes:0 }); return;
+        send(200, { workspaceId, version:db.frame.revision, catalogVersion:catalog.manifest.revision, datasetId:db.frame.datasetId, restoreGuard:!!catalog.restoreGuards[workspaceId], restorePoisoned:backups.poisoned, restorePreviews:backups.previews.size, lastRestore:restored ? { ok:restored.ok, restoredAt:restored.restoredAt, backupCreatedAt:restored.backupCreatedAt } : null, protection:protection ? { id:protection.id, phase:protection.phase, sourceId:protection.sourceId, targetId:protection.targetId } : null, protocol:db.activeV3 ? 'v3' : 'v2', historyCount:db.activeV3 ? null : Object.keys(db.frame.checkpoint.hashes ?? {}).length, historyCapacity:db.activeV3 ? null : 256, backupCapability:db.activeV3 ? 'DPBK0002' : 'DPBK0001', automaticDelete:false, reclaimedBytes:0 }); return;
       }
       const row = db ? catalog.row(workspaceId) : null;
       const c = row?.connectionId ? catalog.connection(row.connectionId) : null;
@@ -393,8 +409,10 @@ export async function createApp({
       }
       if (path.startsWith('/api/history')) {
         if (db.activeV3) {
-          ensure(path === '/api/history', 'v3 历史仅支持只读摘要');
-          send(200, publicValue(db.activeV3.history())); return;
+          const kind = path === '/api/history' ? 'list' : path.split('/').pop();
+          const service = new V3Maintenance(catalog,workspaceId);
+          const input = Object.fromEntries(u.searchParams);
+          send(200, publicValue({...await service.read(kind,input,user),version:db.frame.revision})); return;
         }
         ensure(workspaceId === catalog.manifest.activeId, '历史只可访问当前工作区');
         history.catalog = catalog;
@@ -565,7 +583,8 @@ export async function createApp({
       return { createdAt:p.manifest.createdAt, appVersion:p.manifest.appVersion, workspaceCount:p.manifest.workspaceCount, fileCount:p.manifest.files.length, dependencies:p.manifest.dependencies, scope:'完整应用状态覆盖；恢复后重新验证外部历史' };
     }
     if (operation === 'history.rollback') {
-      const p = history.tokens.get(input.token);
+      const db = await catalog.load(input.workspaceId);
+      const p = db.activeV3 ? new V3Maintenance(catalog,input.workspaceId).previewRecord(input.token,'agent-package-os') : history.tokens.get(input.token);
       ensure(p && p.user === 'agent-package-os' && p.target === input.target && p.workspaceId === input.workspaceId && p.expires > Date.now(), '回退预览已失效');
       return { target:p.target, graph:p.graph, version:p.version, scope:'发布新的完整回退快照，保留旧历史' };
     }

@@ -52,11 +52,11 @@ export class LocalGrants {
   }
   async protectedFolder(rootId, relative, name) {
     ensure(rootId !== 'private', '请使用 fnOS 授权的导出目录');
-    ensure(!segments(relative).includes('dormpanel-sync-v2'), '不能写入活跃协议目录');
+    ensure(!segments(relative).some(p=>['dormpanel-sync-v2','dormpanel-sync-v3'].includes(p)), '不能写入活跃协议目录');
     ensure(/^(history|compact)-[0-9a-f-]{36}$/.test(name), '导出名称无效');
     const parent = await this.directory(rootId, relative);
     try {
-      ensure(!parent.path.split(/[\\/]/).includes('dormpanel-sync-v2'), '授权目标不能位于活跃协议目录中');
+      ensure(!parent.path.split(/[\\/]/).some(p=>['dormpanel-sync-v2','dormpanel-sync-v3'].includes(p)), '授权目标不能位于活跃协议目录中');
       const fs = await statfs(fdPath(parent.fd));
       ensure(fs.bavail * fs.bsize >= 80 * 1024 * 1024, '导出目录可用容量不足 80 MiB');
       await mkdir(fdPath(parent.fd, name), { mode: 0o700 }); await parent.fd.sync();
@@ -66,7 +66,7 @@ export class LocalGrants {
     finally { await child.fd.close(); }
   }
   async writePrivate(config, name, bytes) {
-    ensure(name === 'verified.json' && bytes.length <= 128 * 1024, '归档清单超限');
+    ensure((name === 'verified.json' || /^v3-manifest-[0-9]{6}\.json$/.test(name)) && bytes.length <= 128 * 1024, '归档清单超限');
     const dir = await this.directory(config.rootId, config.relative, config.directoryIdentity); let file;
     const stage = '.manifest-' + randomUUID();
     try {
@@ -77,6 +77,17 @@ export class LocalGrants {
       ensure(read.equals(bytes), '归档清单回读失败');
       await link(fdPath(dir.fd, stage), fdPath(dir.fd, name)); await dir.fd.sync();
     } finally { await file?.close(); await unlink(fdPath(dir.fd, stage)).catch(() => {}); await dir.fd.close(); }
+  }
+  async readPrivate(config, name) {
+    ensure(name === 'verified.json' || /^v3-manifest-[0-9]{6}\.json$/.test(name), '归档清单路径无效');
+    const dir = await this.directory(config.rootId, config.relative, config.directoryIdentity); let f;
+    try {
+      f = await open(fdPath(dir.fd, name), C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
+      const s=await f.stat(); ensure(s.isFile() && s.size<=128*1024, '归档清单类型或大小无效');
+      const b=Buffer.alloc(s.size+1); let n=0;
+      while(n<b.length){const r=await f.read(b,n,b.length-n,n);if(!r.bytesRead)break;n+=r.bytesRead;}
+      const after=await f.stat();ensure(n===s.size && s.size===after.size && s.ctimeMs===after.ctimeMs && s.mtimeMs===after.mtimeMs,'归档清单变化');return b.subarray(0,n);
+    } finally {await f?.close();await dir.fd.close();}
   }
   async root(id) {
     const grant = this.roots.find(r => r.id === id);

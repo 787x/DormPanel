@@ -58,10 +58,17 @@ test('v3 正式 Agent/网页：同一 Writer、revision、权限、历史摘要�
   const status=await f.call('sync.status',{ workspaceId:targetId }); assert(status.ok); assert.equal(status.data.protocol,'v3'); assert.equal(status.data.oldHistoryAuditComplete,false);
   assert.equal((await f.call('records.list',{ workspaceId:targetId,table:'entries' })).data.rows[0].id,'stable');
   const history=await f.call('history.list',{ workspaceId:targetId }); assert(history.ok,JSON.stringify(history)); assert.equal(history.data.protocol,'v3'); assert(history.data.rows.length);
+  await f.grant([]);
+  const durable = () => f.app.db.activeV3.journal.meta.db.prepare('SELECT * FROM v3_records ORDER BY seq').all();
+  const beforeDiscovery=durable(), revision=f.app.db.frame.revision;
+  const discovered=await f.call('sync.discover',{workspaceId:targetId});assert(discovered.ok,JSON.stringify(discovered));assert.equal(discovered.data.candidates.length,1);
+  assert((await f.call('migration.v3-discover',{workspaceId:targetId})).ok);
+  assert.deepEqual(durable(),beforeDiscovery);assert.equal(f.app.db.frame.revision,revision);
+  await f.grant();
   const editContext=f.context();
   const webpage=await f.webCall('POST','/api/edit',{ ...editContext,operation:{ kind:'entry',action:'upsert',value:{ ...entry,id:'stable',title:'网页修改' } } },{ 'X-DormPanel-CSRF':f.csrf }); assert.equal(webpage.status,200);
   const stale=await f.call('entry.upsert',{ ...editContext,edit:{ value:{ ...entry,id:'stable' } } },{ operationId:operationId() }); assert.equal(stale.error.code,'STALE');
-  const wrong=await f.webCall('POST','/api/history/compact',f.context(),{ 'X-DormPanel-CSRF':f.csrf }); assert.notEqual(wrong.status,200); assert.match(wrong.data.error,/v3 不支持/);
+  const wrong=await f.webCall('POST','/api/history/compact',f.context(),{ 'X-DormPanel-CSRF':f.csrf }); assert.notEqual(wrong.status,200); assert.match(wrong.data.error,/不支持/);
   assert.equal(f.app.db.activeV3.journal.value.writerId,f.app.store.identity.writerId);
 });
 function cli(socketPath, args, input = '', entryPath = 'src/cli.mjs') {

@@ -1186,14 +1186,64 @@ function renderHistoryDiff(d, append = false, more = null) {
   }
   if (d.next !== null && more) output.append(button('继续查看下 40 条', e => { e.currentTarget.remove(); return historyJob(() => more(d.next)); }));
 }
+let v3HistoryFilters = {}, v3ArchiveJob = null;
+async function historyReadV3() {
+  historyPreview = null; historyScope = workspaceId; $('historyOutput').replaceChildren();
+  $('historyRows').replaceChildren();
+  for (const key of ['historyFrom','historyTo']) $(key).replaceChildren();
+  const controls = el('section');
+  const status = el('select');
+  for (const [value,label] of [['verified','已验证对象'],['observed','远端观察'],['pending','待验证'],['error','异常'],['epoch','Epoch']]) { const o=el('option',label);o.value=value;status.append(o); }
+  status.value = v3HistoryFilters.status ?? 'verified';
+  const filter = async () => {
+    const epoch = await requestText('Epoch UUID（留空不限）',v3HistoryFilters.epoch ?? ''); if(epoch===null)return;
+    const writer = await requestText('Writer UUID（留空不限）',v3HistoryFilters.writer ?? ''); if(writer===null)return;
+    const type = await requestText('对象类型：1 Descriptor / 2 Genesis或Checkpoint / 3 Commit / 4 Transition；留空不限',v3HistoryFilters.type ?? '');if(type===null)return;
+    v3HistoryFilters = {status:status.value,...(epoch?{epoch}:{}),...(writer?{writer}:{}),...(type?{type}:{})}; await historyReadV3();
+  };
+  status.onchange = () => historyJob(async()=>{v3HistoryFilters.status=status.value;await historyReadV3();});
+  controls.append(status,button('筛选 Epoch / Writer / 类型',()=>historyJob(filter)),el('p','协议对象没有可信创建时间，不能按文件时间推断因果关系。显示缓存证据；旧历史覆盖及未知 Writer 状态仍未知。'));
+  controls.append(button('空间统计 / 远端清理资格',()=>historyJob(async()=>{$('historyOutput').replaceChildren(historyJSON(await get('/api/history/space')));})),
+    button('预览本机冗余快照整理',()=>historyJob(async()=>{
+      const p=await post('/api/history/cleanup-preview');$('historyOutput').replaceChildren(historyJSON(p));
+      if(p.candidates.length && await confirmAction(`确认整理 ${p.candidates.length} 个已证明无引用的本地快照？预计 SQLite 可复用 ${p.estimatedReusableBytes} 字节，文件释放量以实际结果为准。`)) {
+        const r=await post('/api/history/cleanup',{token:p.token,confirm:'整理本地冗余快照'});$('historyOutput').replaceChildren(historyJSON(r));
+      }
+    })),button('从独立归档恢复缺失缓存',()=>historyJob(async()=>{
+      const relative=await requestText('授权目录中的完整归档相对路径（不会写入远端）','');if(!relative)return;
+      const result=await post('/api/history/archive-restore',{rootId:$('historyRoot').value,relative});$('historyOutput').replaceChildren(historyJSON(result));
+      if(result.next<result.totalPages)$('historyOutput').append(button('继续恢复此归档',()=>historyJob(async()=>{const r=await post('/api/history/archive-restore',{rootId:$('historyRoot').value,relative});$('historyOutput').replaceChildren(historyJSON(r));})));
+    })));
+  $('historyRows').append(controls);
+  const loadPage = async after => {
+    const h=await get('/api/history?'+new URLSearchParams({...v3HistoryFilters,after,limit:40}));version=h.version;
+    historyEligible=h.rollbackEnabled; $('historyPreview').disabled=!historyEligible;
+    $('historyStatus').textContent=`Sync v3 · ${h.count} 个索引项 · 当前 Epoch ${h.activeEpoch ?? '未知'} · ${h.frontier.length} 个前沿。${h.blockers.join('；')} 旧历史审计未完成，远端全目录和服务器停写未知。`;
+    for(const r of h.rows) {
+      const row=el('article',null,'course');row.append(el('strong',`${r.status} · ${['','Descriptor','Genesis / Checkpoint','Commit','Transition'][r.type] ?? '索引项'}`),historyJSON(r));
+      if([2,3].includes(r.type) && r.status==='VERIFIED') {
+        for(const key of ['historyFrom','historyTo']){const o=el('option',`Epoch ${r.epochNumber} · ${r.id}`);o.value=r.id;$(key).append(o);}
+        row.append(button('查看八类完整业务快照',()=>historyJob(async()=>{
+          $('historyOutput').replaceChildren();
+          for(const table of ['entries','events','sources','imported','classOverrides','dayAdjustments','profiles','customProfileKeys']) {
+            const section=el('section');section.append(el('h4',table));$('historyOutput').append(section);
+            const read=async offset=>{const page=await get('/api/history/snapshot?'+new URLSearchParams({id:r.id,table,offset}));section.append(...page.rows.map(v=>historyRecord(table,v)));if(page.next!==null)section.append(button('下一页',e=>{e.currentTarget.remove();return historyJob(()=>read(page.next));}));};
+            section.append(button('展开',e=>{e.currentTarget.remove();return historyJob(()=>read(0));}));
+          }
+        })),button('与当前全部 RAW 比较',()=>historyJob(async()=>{
+          const read=async offset=>renderHistoryDiff(await get('/api/history/diff?'+new URLSearchParams({from:r.id,to:'current',offset})),offset>0,read);await read(0);
+        })));
+      }
+      $('historyRows').append(row);
+    }
+    if(h.next!==null)$('historyRows').append(button('继续下一页',e=>{e.currentTarget.remove();return historyJob(()=>loadPage(h.next));}));
+  };
+  await loadPage(0);$('historyDiff').disabled=false;$('historyArchive').disabled=false;$('historyCompact').disabled=true;
+  if(v3ArchiveJob && v3ArchiveJob.status!=='VERIFIED')controls.append(button('继续上次归档',()=>historyJob(async()=>{v3ArchiveJob=await post('/api/history/archive',{jobId:v3ArchiveJob.id,rootId:$('historyRoot').value});$('historyOutput').replaceChildren(historyJSON(v3ArchiveJob));await historyReadV3();})));
+}
 async function historyRead() {
   for (const id of ['historyDiff','historyPreview','historyConfirm','historyArchive','historyCompact']) $(id).disabled = activeProtocol === 'v3';
-  if (activeProtocol === 'v3') {
-    const summary = await get('/api/history?workspaceId=' + encodeURIComponent(workspaceId));
-    $('historyStatus').textContent = 'Sync v3 只读历史摘要；回退、v2 归档和精简不适用。旧 Epoch 巡检未完成，不代表全部设备已同步。';
-    $('historyRows').replaceChildren(historyJSON(summary));
-    return;
-  }
+  if (activeProtocol === 'v3') return historyReadV3();
   await migrationRead();
   historyPreview = null; historyEligible = false; historyScope = workspaceId; $('historyOutput').replaceChildren();
   const h = await get('/api/history'); if (historyScope !== workspaceId) return;
@@ -1256,6 +1306,7 @@ for (const [id, action] of [['historyArchive','archive'],['historyCompact','comp
   historyPreview = null;
   if (!await confirmAction(action === 'compact' ? '将先完整归档，再在另一个新目录准备单根数据集。不会切换客户端或删除旧库。' : '将完整课程历史复制到受保护的新目录，请保护 NAS 授权。', '确认导出')) return;
   const result = await post('/api/history/' + action, { rootId:$('historyRoot').value, relative:$('historyRelative').value });
+  if(activeProtocol==='v3'){v3ArchiveJob=result; if(result.status!=='VERIFIED')await historyReadV3();}
   $('historyOutput').replaceChildren(historyJSON(result)); $('historyStatus').textContent = result.message;
 });
 

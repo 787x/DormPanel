@@ -28,7 +28,7 @@ async function client(t, shared) {
   const { connectionId } = await c.manage({ action: 'connection.save', name: 'isolated', type: 'webdav', url: 'https://isolated.test/schedules/', username: 'test', password: 'test' });
   const { workspaceId } = await c.manage({ action: 'workspace.add', connectionId, name: 'v3 test', protocol: 'v3' });
   c.id = workspaceId; c.db = () => c.catalog.db(c.id);
-  c.sync = options => c.catalog.network(c.id, e => e.synchronize(options));
+  c.sync = options => options?.discover ? c.catalog.discover(c.id) : c.catalog.network(c.id, e => e.synchronize(options));
   c.settle = async () => { let result; for (let n = 0; n < 8; n++) { try { result = await c.sync(); } catch (e) { if (!/budget|incomplete/.test(e.message)) throw e; } } return result; };
   c.reopen = async () => { await c.catalog.close(); c.catalog = await Catalog.open(options); await c.catalog.load(c.id); };
   return c;
@@ -69,8 +69,8 @@ test('Catalog v3: 非空加入不覆盖；备份、旧历史和连接切换有�
   const c = b.catalog.connection(b.catalog.row(b.id).connectionId);
   await assert.rejects(b.manage({ action: 'connection.save', connectionId: c.id, url: 'https://other.test/' }), /v3 连接变更/);
   const backup = new BackupManager({ catalog: b.catalog, configPath: b.options.configPath });
-  await assert.rejects(backup.create({}), /不支持 v3/);
-  await assert.rejects(backup.restore({}), /活动 v3/);
+  await assert.rejects(backup.create({}), /口令/);
+  await assert.rejects(backup.restore({}), /预览/);
 });
 
 test('Catalog v3: 正式 Workspace 编辑后的冲突与过期决定重开后保留', async t => {
