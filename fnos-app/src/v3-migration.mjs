@@ -60,7 +60,7 @@ export class V3DatasetMigration {
   remote(id) { const c = this.catalog; return c.remote(c.connection(c.row(id).connectionId)); }
   async discover(id,connectionId) {
     const c=this.catalog; c.row(id);
-    return discoverV3(remoteV3Connection(c,connectionId ?? c.row(id).connectionId,new Budget()));
+    return c.discover(id, connectionId);
   }
   async preview(id) {
     const c = this.catalog, db = await c.load(id);

@@ -1,3 +1,5 @@
+import { file as v3Path, match as v3Match, scopeInfo as v3ScopeInfo } from './v3-store.mjs';
+import { v3File, v3Directory, sqliteSnapshot, verifyV3Backup } from './v3-backup.mjs';
 import { constants as C, createReadStream } from 'node:fs';
 import { open, mkdir, readdir, lstat, rename, unlink, link, rm, statfs, realpath } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
@@ -13,7 +15,7 @@ import { binding, tlsOptions } from './webdav.mjs';
 import { segments } from './local.mjs';
 
 // 有界、无压缩、无通用解包器。固定头 + AES-256-GCM(长度前缀清单 + 顺序文件)。
-const MAGIC = Buffer.from('DPBK0001'), HEADER = 52;
+const MAGIC = Buffer.from('DPBK0001'), MAGIC2 = Buffer.from('DPBK0002'), HEADER = 52;
 export const LIMITS = { files: 4096, file: 64 * 1024 * 1024, total: 256 * 1024 * 1024, manifest: 1024 * 1024 };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const fdPath = (fd, name) => `/proc/self/fd/${fd.fd}/${name}`;
@@ -27,15 +29,27 @@ async function readAt(file, bytes, position) {
   while (n < bytes.length) { const r = await file.read(bytes, n, bytes.length - n, position + n); ensure(r.bytesRead > 0, '归档读取截断'); n += r.bytesRead; }
   return bytes;
 }
+const privateV3File = name => {
+  const m=/^local-data\/(.*?)dormpanel-sync-v3\/(dataset-.*\.dpv)$/.exec(name);if(!m)return false;
+  try{segments(m[1].replace(/\/$/,''));v3Path(m[2]);return true;}catch{return false;}
+};
 const privateFile = name => {
+  if(privateV3File(name))return true;
   if (!/^local-data\/(?:[^/]+\/)*dormpanel-sync-v2\/commit-[0-9a-f-]{36}\.dpc$/.test(name)) return false;
   try { segments(name.split('/').slice(1, -2).join('/')); return true; } catch { return false; }
 };
-const allowed = name => /^(identity|catalog|workspace|checkpoint|observation|graph|restore-guards|dataset-migrations)\.json$/.test(name)
+const baseAllowed = name => v3File(name) || name === 'v3-migrations.json' || name === 'restore-result.json' || /^(identity|catalog|workspace|checkpoint|observation|graph|restore-guards|dataset-migrations)\.json$/.test(name)
   || /^archive-[0-9a-f-]{36}\.json$/.test(name)
   || /^workspaces\/[0-9a-f-]{36}\/(workspace|checkpoint|observation|graph)\.json$/.test(name)
   || privateFile(name)
   || name === 'config/webdav.json';
+const allowed = name => {
+  const parts=name.split('/');let depth=0;
+  while(/^\.backup-[0-9a-f-]{36}$/.test(parts[depth]??''))depth++;
+  if(depth>8)return false;
+  const tail=parts.slice(depth).join('/');
+  return depth>0 && tail==='.manifest.json' || baseAllowed(tail);
+};
 async function syncDir(path) {
   if (process.platform === 'win32') return;
   const f = await open(path, 'r'); try { await f.sync(); } finally { await f.close(); }
@@ -82,19 +96,37 @@ async function key(password, salt) {
 }
 async function inventory(root, configPath) {
   const result = []; let directories = 0;
-  async function scan(dir, prefix = '') {
+  async function scan(dir, prefix = '', logical = '') {
+    const last=!logical?await new Store(dir).read('restore-result.json'):null;
+    const retained=last?.previousState;
+    let retainedFound=!retained;
+    if(retained)ensure(/^\.backup-[0-9a-f-]{36}$/.test(retained),'恢复前状态引用异常；拒绝遗漏备份');
     ensure(++directories <= LIMITS.files, '私有目录数量超限');
     for (const e of await readdir(dir, { withFileTypes: true })) {
-      const name = prefix + e.name;
+      const name = prefix + e.name, logicalName=logical+e.name;
+      if (/^workspaces\/[0-9a-f-]{36}\/v3\/$/.test(logical) && ['v3-state-v2.sqlite-wal','v3-state-v2.sqlite-shm','v3-owner.lock','v3-owner.lock-journal','v3-owner.lock-wal','v3-owner.lock-shm'].includes(e.name)) continue;
+      if(!logical && e.name===retained) {
+        ensure(e.isDirectory() && allowed(name+'/identity.json'),'恢复前状态目录异常或嵌套超限');
+        retainedFound=true;await scan(join(dir,e.name),name+'/','');continue;
+      }
+      if(e.name==='.manifest.json' && prefix.startsWith('.backup-')){ensure(e.isFile(),'恢复清单类型异常');result.push(name);continue;}
       if (e.name.startsWith('.') || /\.(tmp|log|pid|sock)$/.test(e.name) || ['socket.ready', 'summary.json'].includes(e.name)) continue;
-      if (!prefix && !['local-data', 'workspaces'].includes(e.name) && !allowed(name)) continue;
+      if (!logical && !['local-data', 'workspaces'].includes(e.name) && !baseAllowed(logicalName)) continue;
       if (e.isDirectory()) {
-        if (name.startsWith('local-data/')) segments(name.slice('local-data/'.length));
-        if (!prefix || /^workspaces\/[0-9a-f-]{36}$/.test(name) || name.startsWith('local-data/')) await scan(join(dir, e.name), name + '/');
+        if (logicalName.startsWith('local-data/')) {
+          const relative=logicalName.slice('local-data/'.length), marker=relative.indexOf('/dormpanel-sync-v3');
+          if(marker>=0) {
+            segments(relative.slice(0,marker));
+            const suffix=relative.slice(marker+'/dormpanel-sync-v3'.length);
+            ensure(!suffix || suffix.startsWith('/'),'私有 v3 协议目录无效');v3ScopeInfo(suffix?suffix.slice(1)+'/':'');
+          }else segments(relative);
+        }
+        if (!logical || /^workspaces\/[0-9a-f-]{36}$/.test(logicalName) || logicalName.startsWith('local-data/') || v3Directory(logicalName)) await scan(join(dir,e.name),name+'/',logicalName+'/');
         else throw Error('私有持久化目录不能识别；拒绝遗漏备份');
       } else { ensure(e.isFile() && allowed(name), '私有数据类型不能识别；拒绝遗漏备份'); result.push(name); }
       ensure(result.length <= LIMITS.files, '备份文件数量超限');
     }
+    ensure(retainedFound,'恢复前状态目录缺失，拒绝不完整备份');
   }
   await scan(root);
   if (configPath && await lstat(configPath).catch(e => { if (e.code !== 'ENOENT') throw e; return null; })) result.push('config/webdav.json');
@@ -104,20 +136,23 @@ const sourcePath = (root, config, name) => name === 'config/webdav.json' ? confi
 async function snapshot(root, config, target) {
   const files = []; let total = 0;
   for (const name of await inventory(root, config)) {
-    const bytes = await readBounded(await sourcePath(root, config, name));
+    let bytes;
+    if (name.endsWith('/v3-state-v2.sqlite') && !name.startsWith('.backup-')) {
+      const path = await safePath(target,name,true); await sqliteSnapshot(await safePath(root,name),path); bytes=await readBounded(path);
+    } else bytes = await readBounded(await sourcePath(root, config, name));
     total += bytes.length; ensure(total <= LIMITS.total, '备份总大小超限');
-    await atomic(await safePath(target, name, true), bytes);
+    if (!name.endsWith('/v3-state-v2.sqlite') || name.startsWith('.backup-')) await atomic(await safePath(target, name, true), bytes);
     files.push({ name, size: bytes.length, sha256: digest(bytes) });
   }
   return files;
 }
 function validateManifest(m) {
-  ensure(m?.format === 'DormPanel FPK backup' && m.version === 1 && ['0.4.0', '0.4.1', '0.4.2', '0.4.3', '0.4.4', '0.5.0', '0.6.0', '0.6.1', '0.7.0', '0.7.1', '0.7.2', '0.7.3', '0.7.4', '0.7.5', '0.7.6'].includes(m.appVersion), '不支持备份格式或版本');
+  ensure(m?.format === 'DormPanel FPK backup' && [1,2].includes(m.version) && ['0.4.0', '0.4.1', '0.4.2', '0.4.3', '0.4.4', '0.5.0', '0.6.0', '0.6.1', '0.7.0', '0.7.1', '0.7.2', '0.7.3', '0.7.4', '0.7.5', '0.7.6'].includes(m.appVersion), '不支持备份格式或版本');
   uuid(m.identity?.writerId); uuid(m.identity?.installationId);
   ensure(Array.isArray(m.files) && m.files.length > 0 && m.files.length <= LIMITS.files, '备份文件数量超限');
   const names = new Set(); let total = 0;
   for (const f of m.files) {
-    ensure(allowed(f.name) && !names.has(f.name), '备份路径非法或文件重复'); names.add(f.name);
+    ensure(allowed(f.name) && (m.version === 2 || !v3File(f.name) && !privateV3File(f.name) && !f.name.startsWith('.backup-') && f.name !== 'v3-migrations.json' && f.name !== 'restore-result.json') && !names.has(f.name), '备份路径非法或文件重复'); names.add(f.name);
     ensure(Number.isSafeInteger(f.size) && f.size >= 0 && f.size <= LIMITS.file && /^[0-9a-f]{64}$/.test(f.sha256), '文件大小或校验信息无效');
     total += f.size; ensure(total <= LIMITS.total, '备份总大小超限');
   }
@@ -131,12 +166,18 @@ function dependency(row, connection, f) {
     type: connection?.type ?? 'unbound', endpoint: connection?.type === 'webdav' ? connection.config.url : connection ? { rootId: connection.config.rootId, relative: connection.config.relative, directoryIdentity: connection.config.directoryIdentity } : null,
     hashes: { ...f.graph?.hashes, ...f.checkpoint.hashes }, frontier: f.frontier, deferred: f.checkpoint.deferred ?? [], abandoned: f.abandoned };
 }
+async function v3Dependency(root,row,connection,identity,files) {
+  return {...await verifyV3Backup(root,row.id,identity,files),workspaceName:row.name,connectionId:row.connectionId,
+    included:connection?.type==='local' && connection.config.rootId==='private',type:connection?.type??'unbound',
+    endpoint:connection?.type==='webdav'?connection.config.url:connection?{rootId:connection.config.rootId,relative:connection.config.relative,directoryIdentity:connection.config.directoryIdentity}:null};
+}
 async function verifyFiles(root, m, identity, configPath = null) {
   validateManifest(m);
   ensure(json(m.identity) === json(identity), '仅支持同一安装身份恢复；不支持迁移或 writer 接管');
   for (const f of m.files) {
     const b = await readBounded(configPath && f.name === 'config/webdav.json' ? configPath : await safePath(root, f.name));
     ensure(b.length === f.size && digest(b) === f.sha256, '备份文件长度或 SHA-256 不匹配');
+    if(privateV3File(f.name))v3Match(f.name.split('/dormpanel-sync-v3/')[1],b);
     if (f.name.endsWith('.dpc')) decode(b, /commit-([0-9a-f-]+)\.dpc$/.exec(f.name)[1]);
   }
   const store = new Store(root); store.identity = identity;
@@ -152,6 +193,11 @@ async function verifyFiles(root, m, identity, configPath = null) {
   const datasets = new Set(), dependencies = [];
   for (const row of catalog.workspaces) {
     uuid(row.id); ensure(!ids.has(row.id) && (!row.connectionId || connections.has(row.connectionId)), '工作区或连接身份无效'); ids.add(row.id);
+    if(row.protocol === 'v3') {
+      ensure(m.version===2,'旧备份不支持 v3');
+      const d=await v3Dependency(root,row,catalog.connections.find(c=>c.id===row.connectionId),identity,m.files);dependencies.push(d);
+      if(d.datasetId){ensure(!datasets.has(d.datasetId),'备份数据集重复绑定');datasets.add(d.datasetId);}continue;
+    }
     ensure(m.files.some(f => f.name === `workspaces/${row.id}/workspace.json`), '备份缺少注册工作区');
     const child = new Store(join(root, 'workspaces', row.id)); child.identity = identity;
     const db = await Workspace.open(child), f = db.frame;
@@ -277,7 +323,14 @@ export class BackupManager {
   }
   async stamps() {
     const result = [];
-    for (const row of this.catalog.manifest.workspaces) result.push([row.id, await workspaceStamp(this.catalog.workspaceStore(row.id))]);
+    for (const row of this.catalog.manifest.workspaces) {
+      if(row.protocol==='v3'){const p=join(this.catalog.workspaceStore(row.id).dir,'v3','v3-state-v2.sqlite');const temp=await this.stage();try{await sqliteSnapshot(p,join(temp,'stamp.sqlite'));result.push([row.id,digest(await readBounded(join(temp,'stamp.sqlite')))]);}finally{this.retireStage(temp);}}
+      else result.push([row.id,await workspaceStamp(this.catalog.workspaceStore(row.id))]);
+    }
+    let cacheBytes=0;
+    for(const name of (await inventory(this.catalog.store.dir,this.configPath)).filter(n=>v3File(n) && !n.endsWith('/v3-state-v2.sqlite'))) {
+      const bytes=await readBounded(await safePath(this.catalog.store.dir,name));cacheBytes+=bytes.length;ensure(cacheBytes<=LIMITS.total,'缓存确认预算超限');result.push([name,digest(bytes)]);
+    }
     return json(result);
   }
   async directory(input) {
@@ -288,7 +341,6 @@ export class BackupManager {
     return d;
   }
   async create(input) {
-    ensure(!this.catalog.manifest.workspaces.some(w => w.protocol === 'v3') && !this.catalog.v3Migrations?.length, '当前备份格式不支持 v3 SQLite、Pending 与身份的完整一致性备份；拒绝生成残缺备份');
     return this.isolated(async () => {
       // 口令先检查，不在无效请求中产生私有明文副本。
       ensure(typeof input.password === 'string' && input.password.length >= 12 && Buffer.byteLength(input.password) <= 1024, '备份口令须为 12–1024 字节');
@@ -298,14 +350,15 @@ export class BackupManager {
       const dependencies = [];
       for (const row of c.manifest.workspaces) {
         // 从静止快照逐个读取，备份不把所有非活动帧放进 Catalog 缓存。
+        if(row.protocol==='v3'){dependencies.push(await v3Dependency(stage,row,row.connectionId?c.connection(row.connectionId):null,c.store.identity,files));continue;}
         const child = new Store(join(stage, 'workspaces', row.id)); child.identity = c.store.identity;
         const db = await Workspace.open(child), f = db.frame, connection = row.connectionId ? c.connection(row.connectionId) : null;
         dependencies.push(dependency(row, connection, f));
       }
-      const m = { format: 'DormPanel FPK backup', version: 1, appVersion: '0.7.6', createdAt: new Date().toISOString(), identity: c.store.identity, files, workspaceCount: c.manifest.workspaces.length, dependencies };
+      const m = { format: 'DormPanel FPK backup', version: files.some(f=>v3File(f.name) || privateV3File(f.name) || f.name.startsWith('.backup-') || f.name==='v3-migrations.json' || f.name==='restore-result.json') ? 2 : 1, appVersion: '0.7.6', createdAt: new Date().toISOString(), identity: c.store.identity, files, workspaceCount: c.manifest.workspaces.length, dependencies };
       await verifyFiles(stage, m, c.store.identity);
       const manifest = Buffer.from(json(m)); ensure(manifest.length <= LIMITS.manifest, '备份清单超限');
-      const header = Buffer.alloc(HEADER); MAGIC.copy(header); randomBytes(16).copy(header, 8); randomBytes(12).copy(header, 24);
+      const header = Buffer.alloc(HEADER); (m.version===2?MAGIC2:MAGIC).copy(header); randomBytes(16).copy(header, 8); randomBytes(12).copy(header, 24);
       const secret = await key(input.password, header.subarray(8, 24)), cipher = createCipheriv('aes-256-gcm', secret, header.subarray(24, 36)); cipher.setAAD(header.subarray(0, 36));
       const d = await this.directory(input), name = `backup-${randomUUID()}.dpbk`, tmp = '.stage-' + randomUUID(); let output;
       try {
@@ -333,7 +386,7 @@ export class BackupManager {
     try {
       source = await open(path, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
       const s = await source.stat(); ensure(s.isFile() && s.size >= HEADER + 4 && s.size <= HEADER + 4 + LIMITS.manifest + LIMITS.total, '归档类型、长度或资源预算无效');
-      const header = await readAt(source, Buffer.alloc(HEADER), 0); ensure(header.subarray(0, 8).equals(MAGIC), '归档格式无效');
+      const header = await readAt(source, Buffer.alloc(HEADER), 0); ensure(header.subarray(0, 8).equals(MAGIC) || header.subarray(0,8).equals(MAGIC2), '归档格式无效');
       const secret = await key(password, header.subarray(8, 24)), decipher = createDecipheriv('aes-256-gcm', secret, header.subarray(24, 36));
       decipher.setAAD(header.subarray(0, 36)); decipher.setAuthTag(header.subarray(36));
       plain = await open(join(stage, '.plain'), 'wx+', 0o600);
@@ -346,6 +399,7 @@ export class BackupManager {
       const len = await readAt(plain, Buffer.alloc(4), 0), n = len.readUInt32BE(); ensure(n > 0 && n <= LIMITS.manifest && n + 4 <= count, '清单长度无效');
       const mb = await readAt(plain, Buffer.alloc(n), 4);
       const m = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(mb)), total = validateManifest(m);
+      ensure(header.subarray(0,8).equals(m.version===2?MAGIC2:MAGIC),'容器与清单版本不匹配');
       ensure(count === 4 + n + total, '归档缺失文件、截断或多余字节');
       let offset = 4 + n;
       for (const f of m.files) {
@@ -385,6 +439,7 @@ export class BackupManager {
         const external = [], catalog = await new Store(result.stage).read('catalog.json'), started = Date.now();
         for (const row of catalog.workspaces) {
           const c = catalog.connections.find(c => c.id === row.connectionId);
+          if(row.protocol==='v3'){external.push({workspaceId:row.id,verified:false,reason:'恢复后隔离发布，逐步只读核验 Descriptor 与已知引用；归档未声明全部远端历史'});continue;}
           if (!c || (c.type === 'local' && c.config.rootId === 'private')) continue;
           if (Date.now() - started > 60000) { external.push({ workspaceId: row.id, verified: false, reason: '本轮外部检查时间预算耗尽；恢复后保持发布隔离' }); continue; }
           const store = new Store(join(result.stage, 'workspaces', row.id)); store.identity = this.catalog.store.identity;
@@ -409,7 +464,7 @@ export class BackupManager {
     });
   }
   async restore(input, user) {
-    ensure(!this.catalog.manifest.workspaces.some(w => w.protocol === 'v3') && !this.catalog.v3Migrations?.length, '当前恢复格式不支持活动 v3 工作区；禁止覆盖其课程与恢复证据');
+    // Older containers must never erase v3 workspaces or migration/recovery evidence.
     ensure(!this.catalog.migrations.some(m => m.phase !== 'cancelled'), '迁移或退役保护禁止用旧应用备份覆盖证据');
     return this.isolated(async () => {
       const p = this.previews.get(input.token), c = this.catalog;
@@ -417,8 +472,30 @@ export class BackupManager {
       ensure(p.catalogVersion === c.manifest.revision, '管理目录变化，请重新验证备份');
       ensure(p.stamps === await this.stamps(), '工作区变化，请重新验证备份');
       await verifyFiles(p.stage, p.manifest, c.store.identity);
+      if(c.manifest.workspaces.some(w=>w.protocol==='v3') || c.v3Migrations?.length) {
+        ensure(p.manifest.version===2,'禁止旧备份覆盖活动 v3');
+        const currentStage=await this.stage();
+        try {
+          const currentFiles=await snapshot(c.store.dir,this.configPath,currentStage);
+          for(const row of c.manifest.workspaces.filter(w=>w.protocol==='v3')) {
+            const current=await v3Dependency(currentStage,row,row.connectionId?c.connection(row.connectionId):null,c.store.identity,currentFiles);
+            const archived=p.manifest.dependencies.find(d=>d.protocol==='v3' && d.workspaceId===row.id);
+            const stable=value=>{const {externalCacheDependencies,...identity}=value;return identity;};
+            ensure(archived && json(stable(current))===json(stable(archived)),'活动 v3 已有新数据或恢复证据，拒绝旧备份覆盖');
+            const prefix=`workspaces/${row.id}/v3/`;
+            for(const file of currentFiles.filter(f=>f.name.startsWith(prefix) && !f.name.endsWith('/v3-state-v2.sqlite'))) {
+              ensure(p.manifest.files.some(f=>f.name===file.name && f.sha256===file.sha256),'当前缓存、pin 或隔离证据已变化，禁止覆盖');
+            }
+          }
+          for(const name of ['v3-migrations.json','restore-result.json']) {
+            const current=currentFiles.find(f=>f.name===name), archived=p.manifest.files.find(f=>f.name===name);
+            ensure(!current || current.sha256===archived?.sha256,'较新的迁移或恢复证据禁止覆盖');
+          }
+        } finally {this.retireStage(currentStage);}
+      }
+
       // 私有提交同样不可变。保留备份后新增的历史，UUID 碰撞绝不以恢复覆盖。
-      for (const f of p.manifest.files.filter(f => privateFile(f.name))) {
+      for (const f of p.manifest.files.filter(f => privateFile(f.name) || f.name.startsWith('.backup-'))) {
         const path = await safePath(c.store.dir, f.name).catch(e => { if (e.code !== 'ENOENT') throw e; return null; });
         if (path && await lstat(path).catch(() => null)) ensure(digest(await readBounded(path)) === f.sha256, '私有提交路径内容与备份冲突，拒绝覆盖');
       }
@@ -431,6 +508,7 @@ export class BackupManager {
       // 决策落盘后不回到旧内存；失败时所有 API 隔离，重启只完成已验证的新状态。
       this.poisoned = true; c.invalidated = true;
       await this.fault('restore-committed');
+      await Promise.all([...c.workspaces.values()].map(db=>db.activeV3?.close()));
       await recoverRestore(c.store.dir, this.configPath, this.fault);
       await this.reopen(); this.poisoned = false;
       for (const value of this.previews.values()) this.retireStage(value.stage);
@@ -452,9 +530,10 @@ export async function recoverRestore(dataDir, configPath, fault = async () => {}
   const catalog = await verifyFiles(stage, m, currentIdentity);
   for (const f of m.files) {
     const path = f.name === 'config/webdav.json' ? configPath : await safePath(dataDir, f.name, true);
-    if (privateFile(f.name) && await lstat(path).catch(() => null)) {
+    if ((privateFile(f.name) || f.name.startsWith('.backup-')) && await lstat(path).catch(() => null)) {
       ensure(digest(await readBounded(path)) === f.sha256, '私有提交内容冲突，停止恢复'); continue;
     }
+    if(f.name.endsWith('/v3-state-v2.sqlite'))for(const suffix of ['-wal','-shm'])await unlink(path+suffix).catch(e=>{if(e.code!=='ENOENT')throw e;});
     ensure(path, '缺少旧配置恢复位置'); await atomic(path, await readBounded(await safePath(stage, f.name))); await fault('restore-file');
   }
   for (const f of journal.oldFiles) if (!m.files.some(n => n.name === f.name)) {
@@ -463,8 +542,8 @@ export async function recoverRestore(dataDir, configPath, fault = async () => {}
   }
   const guards = {};
   for (const row of catalog.workspaces) {
-    const f = await new Store(join(dataDir, 'workspaces', row.id)).read('workspace.json');
-    if (row.connectionId) guards[row.id] = { bindingKey: f.bindingKey, restoredAt: m.createdAt };
+    const f = row.protocol==='v3' ? m.dependencies.find(d=>d.workspaceId===row.id) : await new Store(join(dataDir, 'workspaces', row.id)).read('workspace.json');
+    if (row.connectionId) guards[row.id] = { protocol:row.protocol??'v2', bindingKey:f.bindingKey??null, binding:f.binding??null, endpointHash:row.protocol==='v3'?digest(Buffer.from(JSON.stringify(catalog.connections.find(c=>c.id===row.connectionId)))):null, restoredAt:m.createdAt };
   }
   await store.save('restore-guards.json', guards);
   // 再次读取所有有效文件；guards 是独立恢复隔离元数据，不改写备份帧。

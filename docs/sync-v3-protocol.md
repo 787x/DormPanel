@@ -200,3 +200,14 @@ dayAdjustment mode 只能 `none`（该日停课）或 `weekday`（改用另一�
 profile termKey 非空白、timezone 可识别、week1Monday 必须周一，至少一个 phase，且第一周起点已有生效 phase。每 phase 至少一个 period，periodNumber >=1、end > start，时间在 05:00..23:59 之间。customProfileKeys 是完整 catalog 中自定义覆盖的键子集：即使内容等于内置预设也仍保留自定义身份。不能用接收端内置配置覆盖远端 catalog。
 
 课程覆盖 title 为 null 或非空白且至多 160 个 UTF-16 单元；location/teacher/note 各至多 500 个 UTF-16 单元；全周编辑只允许 weekday，不允许 date；指定周编辑只允许 date，不允许 weekday。periodStart、periodEnd 各自允许 null 或 1..30；timingMode 只允许 null、`linked`、`custom`；startMinute 允许 null 或 0..1439，endMinute 允许 null 或 1..1439。稀疏字段独立继承；覆盖本身允许不完整成对值，投影时在继承完整课程和学期后再检查有效区间，无法得到有效区间的覆盖保留但不制造有效课程。不能引入悬空课程、来源或 catalog。兼容既有模型的精确有效值由跨语言实现按这些规则校验，拒绝不支持的语义。
+
+
+## PR56 宿主历史与维护合同
+
+PR56 的实现与实际证据见 [历史与安全维护验收](pr56-sync-v3-maintenance.md)。DPV3/3 的字节、对象引用、Epoch 与业务合并规则保持不变；本机 `verifiedAt` 仅为私有索引证据，不是作者时间。
+
+fnOS 的只读 Descriptor 发现不进入 Workspace 网络写事务。历史回退先确认完整 RAW 差异与当前已接收前沿，再通过原单 Writer 形成新的业务提交，不倒退前沿。审计刚观察到但尚未进入业务基线的前沿会阻止回退，需先同步接收并重新预览。
+
+独立归档采用明确版本的私有清单和哈希链，逐对象持久推进、实际文件回读，恢复缓存后复用原因果验证器；历史未完成、远端未观察范围、缓存验证与当轮 GET 是不同证据。应用备份采用 DPBK0002 与一致性 SQLite 快照，保留 DPBK0001 的读取含义；恢复后仍隔离远端发布，直到已知身份和引用重新核验。
+
+普通同步仍不执行缓存/快照 GC。仅管理员明确预览、确认的 fnOS 私有无引用 RAW 快照，才可在全部持久引用、恢复材料与 witness/pin 未变化时事务删除并记录回执。缓存 blob、身份 witness、未知暂存、损坏隔离和全部远端对象均不删除。普通 WebDAV 没有可验证的永久停写证明，远端物理 GC 保持 NOT_ELIGIBLE，不能通过管理员勾选绕过。

@@ -303,6 +303,13 @@ export class Catalog {
     const graph = await loadGraph(remote);
     return { ok: true, observed: Object.keys(graph.hashes).length, datasetId: graph.datasetId, deferred: graph.deferred.length, permission: c.type === 'local' ? '已验证读写与排他原子发布' : '已验证只读连接；发布权限将在创建/同步时验证' };
   }
+  async discover(id, connectionId) {
+    ensure(!this.configuring && !this.maintenance && !this.invalidated && !this.manifest.transition, '正在保存配置或等待恢复');
+    this.row(id);
+    const { discoverV3, remoteV3Connection } = await import('./active-v3.mjs');
+    const { Budget } = await import('./v3-store.mjs');
+    return discoverV3(remoteV3Connection(this, connectionId ?? this.row(id).connectionId, new Budget()));
+  }
   async network(id, action, { probeIdentity = true } = {}) {
     ensure(!this.configuring && !this.maintenance && !this.manifest.transition, '正在保存配置或等待恢复');
     const db = await this.load(id), row = this.row(id);
@@ -315,7 +322,12 @@ export class Catalog {
     this.busy.add(id);
     try {
       if (db.activeV3) {
-        ensure(!this.restoreGuards[id] && !this.protection(id), '恢复或换库保护禁止 v3 发布');
+        if(this.restoreGuards[id]) {
+          const { V3Maintenance }=await import('./v3-maintenance.mjs');
+          const result=await new V3Maintenance(this,id).revalidateRestored();
+          if(this.restoreGuards[id])return result;
+        }
+        ensure(!this.protection(id), '换库保护禁止 v3 发布');
         const result = await action(db.activeV3);
         await db.tx(f => { f.error = null; });
         return result;
