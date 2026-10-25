@@ -71,6 +71,52 @@ object SharedScheduleDialog {
                 fields.addView(this)
             }
         }
+        button("安全更换 v3 访问端点 / 继续预检",false) {
+            if(source.syncStore?.isV3()!=true)status.text="需要已绑定的活动 v3 数据集"
+            else {
+                val form=LinearLayout(context).apply { orientation=LinearLayout.VERTICAL;setPadding(24,12,24,12) }
+                fun entry(hint:String,value:String="",secret:Boolean=false)=EditText(context).apply {
+                    this.hint=hint;contentDescription=hint;setText(value);if(secret)inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD;form.addView(this)
+                }
+                val old=runCatching { source.syncStore!!.v3Account(sync.accounts) }.getOrNull()
+                form.addView(TextView(context).apply { text="只读预检不改绑定、不上传。确认后仅本 v3 课表使用独立加密账号，全局 WebDAV 导入账号保持原样。旧端点新变化、未知 Writer 和其他设备接收情况未能证明。" })
+                val target=entry("新 WebDAV 服务地址",old?.baseUrl.orEmpty())
+                val name=entry("新用户名",old?.username.orEmpty())
+                val secret=entry("新密码（留空沿用当前 v3 密码）",secret=true)
+                val dir=entry("新共享父目录完整 URL",old?.baseUrl.orEmpty())
+                val cert=entry("经独立核对的单证书 PEM；留空使用系统 CA",old?.certificatePem.orEmpty()).apply { minLines=3 }
+                val output=TextView(context).also { form.addView(it) };var job=source.syncStore!!.latestV3Endpoint()
+                fun display(value:org.json.JSONObject) {
+                    job=value
+                    val text=when(value.optString("status")) { "READY"->"已知历史验证完成，等待确认";"COMMITTED"->"本机端点已切换；本地数据保留";"CANCELLED"->"预检已取消，原绑定保留";else->"预检进度已保存，可继续" }
+                    output.text="$text\n网络 / TLS / 认证：${if(value.optBoolean("networkAndAuthenticationVerified"))"已验证" else "未确认"}\nDescriptor 精确匹配：${if(value.optBoolean("descriptorExact"))"是" else "未确认"}\n已知历史回读：${if(value.optBoolean("knownHistoryComplete"))"完成" else "尚未完成"}\n${value.optJSONObject("binding")?.optString("datasetId").orEmpty()}\n旧端点新变化与其他设备接收未知。"+
+                        if(value.has("failure"))"\n验证暂停：${value.optString("failure")}" else ""
+                }
+                job?.let(::display)
+                fun action(label:String,call:()->Unit) { form.addView(Button(context).apply { text=label;setOnClickListener { if(!sync.busy)call() } }) }
+                action("开始独立只读预检") {
+                    runCatching {
+                        val candidate=WebDavAccount(target.text.toString(),name.text.toString(),secret.text.toString().ifBlank { old?.password.orEmpty() },cert.text.toString().trim().ifBlank { null })
+                        candidate.certificatePem?.let { WebDavTls.fingerprint(it) }
+                        val inspect={ sync.endpointPreview(candidate,dir.text.toString(),::display) }
+                        if(candidate.certificatePem!=null) AlertDialog.Builder(context).setTitle("独立核对证书指纹")
+                            .setMessage("SHA-256:\n${WebDavTls.fingerprint(candidate.certificatePem)}\n请确认来自可信渠道；未知证书不能作为身份验证。")
+                            .setNegativeButton("取消",null).setPositiveButton("已独立核对，预检") { _,_->inspect() }.show()
+                        else inspect()
+                    }.onFailure { output.text="候选地址、密码或证书无效；原绑定保留" }
+                }
+                action("继续上次预检") { job?.optString("token")?.let { sync.endpointContinue(it,::display) } }
+                action("取消尚未提交的预检") { job?.optString("token")?.let { sync.endpointCancel(it,::display) } }
+                action("确认更换同一数据集访问端点") {
+                    val p=job
+                    if(p?.optString("status")!="READY")output.text="请先继续预检，直到已知历史验证完成"
+                    else AlertDialog.Builder(context).setTitle("确认本机端点切换")
+                        .setMessage("数据集：${p.getJSONObject("binding").getString("datasetId")}\nDescriptor SHA-256：${p.getJSONObject("binding").getString("descriptorHash")}\n\n保留 Writer、本地编辑、冲突与回执。仅 v3 使用独立账号，不改变全局导入账号。最终确认会复查身份和前沿；新历史或本地编辑会使预览过期。")
+                        .setNegativeButton("取消",null).setPositiveButton("确认切换") { _,_->sync.endpointConfirm(p.getString("token"),::display) }.show()
+                }
+                AlertDialog.Builder(context).setTitle("安全端点更换与恢复").setView(ScrollView(context).apply { addView(form) }).setNegativeButton("关闭（保留预检）",null).show()
+            }
+        }
         button("HTTPS 自签名证书（仅此连接）",false) {
             val old=sync.accounts.account()
             if(old==null) status.text="请先保存 HTTPS WebDAV 帐号，再配置证书"

@@ -1,0 +1,83 @@
+TAP version 13
+# (node:14337) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 cli: read-only preview and resume, independent admin approval, stale and repeated decision
+ok 1 - PR57 cli: read-only preview and resume, independent admin approval, stale and repeated decision
+  ---
+  duration_ms: 1875.212353
+  type: 'test'
+  ...
+# Subtest: PR57 mcp: read-only preview and resume, independent admin approval, stale and repeated decision
+ok 2 - PR57 mcp: read-only preview and resume, independent admin approval, stale and repeated decision
+  ---
+  duration_ms: 1195.531745
+  type: 'test'
+  ...
+# (node:14338) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 read-only candidate, atomic manifest switch, original Writer/RAW/error and idempotence
+ok 3 - PR57 read-only candidate, atomic manifest switch, original Writer/RAW/error and idempotence
+  ---
+  duration_ms: 1059.400596
+  type: 'test'
+  ...
+# Subtest: PR57 rejects changed/missing known object and different Descriptor without altering active state
+ok 4 - PR57 rejects changed/missing known object and different Descriptor without altering active state
+  ---
+  duration_ms: 1113.14637
+  type: 'test'
+  ...
+# Subtest: PR57 stale local edit, owner mismatch, cancel and attempted PUT retain all evidence
+ok 5 - PR57 stale local edit, owner mismatch, cancel and attempted PUT retain all evidence
+  ---
+  duration_ms: 596.524552
+  type: 'test'
+  ...
+# Subtest: PR57 STAGED candidate/capture retained, edits after capture replay through original receipt
+ok 6 - PR57 STAGED candidate/capture retained, edits after capture replay through original receipt
+  ---
+  duration_ms: 874.110848
+  type: 'test'
+  ...
+# Subtest: PR57 extra concurrent branch verified separately, normal sync conflicts after move
+ok 7 - PR57 extra concurrent branch verified separately, normal sync conflicts after move
+  ---
+  duration_ms: 1315.477552
+  type: 'test'
+  ...
+# Subtest: PR57 all eight RAW collections, original global connection users and expired candidate
+ok 8 - PR57 all eight RAW collections, original global connection users and expired candidate
+  ---
+  duration_ms: 978.423289
+  type: 'test'
+  ...
+# Subtest: PR57 Catalog interruption before durable decision, reopen repeats same result
+ok 9 - PR57 Catalog interruption before durable decision, reopen repeats same result
+  ---
+  duration_ms: 650.941711
+  type: 'test'
+  ...
+# Subtest: PR57 Catalog interruption after durable decision, reopen repeats same result
+ok 10 - PR57 Catalog interruption after durable decision, reopen repeats same result
+  ---
+  duration_ms: 596.932226
+  type: 'test'
+  ...
+# Subtest: PR57 real HTTPS: independently provided certificates, bad pin, changed URL/account and inaccessible old endpoint
+ok 11 - PR57 real HTTPS: independently provided certificates, bad pin, changed URL/account and inaccessible old endpoint
+  ---
+  duration_ms: 2002.851827
+  type: 'test'
+  ...
+1..11
+# tests 11
+# suites 0
+# pass 11
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 9336.898993
+Could not chdir to home directory /home/w: No such file or directory
+
+{"remote": "/tmp/dormpanel-pr57-fea14ac2-e6c5-4711-b1be-cd28b55c24d7", "exitCode": 0, "sourceSha256": "89c5e8c36e2750b9c4cac5c0f19c18cf19ab87db1a9fdabe13f6a19e3e2834a6"}

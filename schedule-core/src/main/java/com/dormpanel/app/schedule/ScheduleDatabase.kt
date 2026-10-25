@@ -409,6 +409,30 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
         return runtime.synchronize(account)
     }
+    fun v3Account(settings:WebDavSettings):WebDavAccount = workerCall { v3().endpointAccount(settings) { requireNotNull(settings.account()) { "请配置 WebDAV 帐号" } } }
+    private fun endpointSummary(job:org.json.JSONObject)=org.json.JSONObject().also { out ->
+        listOf("token","status","binding","after","ceiling","descriptorExact","networkAndAuthenticationVerified","knownHistoryComplete","failure").forEach { if(job.has(it))out.put(it,job.get(it)) }
+        out.put("oldEndpointNewChanges","UNPROVEN").put("completeDirectoryView",false).put("otherDevicesReceived","UNKNOWN")
+    }
+    fun previewV3Endpoint(account:WebDavAccount,folder:String,settings:WebDavSettings):org.json.JSONObject {
+        val job=workerCall { requireV3EndpointAllowed();v3().endpointStart(account,folder,settings.sealEndpoint(account)) }
+        return continueV3Endpoint(job.getString("token"),settings)
+    }
+    fun continueV3Endpoint(token:String,settings:WebDavSettings):org.json.JSONObject {
+        val runtime=workerCall { requireV3EndpointAllowed();v3() };val job=runtime.endpointJob(token)
+        return endpointSummary(runtime.endpointContinue(token,settings.openEndpoint(job.getString("endpointAccount"))))
+    }
+    fun confirmV3Endpoint(token:String,settings:WebDavSettings):org.json.JSONObject {
+        val runtime=workerCall { requireV3EndpointAllowed();v3() };val job=runtime.endpointJob(token)
+        return endpointSummary(runtime.endpointConfirm(token,settings.openEndpoint(job.getString("endpointAccount"))))
+    }
+    fun cancelV3Endpoint(token:String):org.json.JSONObject = workerCall { endpointSummary(v3().endpointCancel(token)) }
+    private fun requireV3EndpointAllowed() { check(ActiveScheduleV3.active(database) && !database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "需要活动 v3 且无迁移恢复保护" } }
+    fun latestV3Endpoint():org.json.JSONObject? = workerCall {
+        if(!ActiveScheduleV3.active(database))null else v3().journal.meta.localOperation {
+            v3().journal.meta.page("endpointJob",0,64).lastOrNull()?.value?.let(::endpointSummary)
+        }
+    }
     internal fun synchronizeV3(remote: V3ObjectStore, publication: V3PublicationStore, budget: V3Budget, source: CommitStore? = null): String {
         val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
         val proof = if(runtime.binding().has("migrationId")) ScheduleV3MigrationPreview.restore(runtime.migrationEvidence()) else null

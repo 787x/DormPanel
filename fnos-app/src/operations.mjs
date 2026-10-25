@@ -47,6 +47,10 @@ for (const kind of ['entry','event','profile','date','source','override']) for (
 }
 for (const [name, fixed] of [['run', {}], ['create', { create:true }], ['bind', { bind:true }]]) add('sync.' + name, '检查、发布并回读确认；保留恢复和数据集身份保护', { ...write, descriptorPath:text.optional(), descriptorHash:text.optional() }, '/api/sync', 'edit', { fixed });
 add('sync.discover', '只读发现 v3 Descriptor；必须明确选择身份，不能自动绑定', workspace, '/api/sync/discover');
+add('endpoint.preview', '只读预检同一 v3 数据集的新访问位置；候选凭据从 stdin 输入，不改活动连接', {...workspace,candidate:z.strictObject(fields)}, '/api/endpoint','read',{method:'POST',fixed:{action:'preview'}});
+for(const action of ['resume','status'])add('endpoint.'+action,'继续或查询持久端点预检；状态查询不提供 token 时读取本身份上次任务',{...workspace,token:action==='status'?id.optional():id},'/api/endpoint','read',{method:'POST',fixed:{action}});
+add('endpoint.cancel','取消尚未提交的端点预检，保留原绑定和恢复证据',{...write,token:id},'/api/endpoint','admin',{fixed:{action:'cancel'}});
+add('endpoint.confirm','确认同一数据集的访问端点变更；仅目标工作区使用独立连接',{...write,token:id,confirm:id},'/api/endpoint','admin',{fixed:{action:'confirm'},approval:true});
 add('conflicts.resolve', '在当前冲突 token 下明确选择 local 或 remote', { ...write, token:text, choice:z.enum(['local','remote']) }, '/api/resolve', 'edit');
 add('import.preview', '有界 ICS/CSV/XLS 字节预览；不得提供 NAS 文件路径', { ...write, filename:text, base64:z.string().max(1800000) }, '/api/import/preview', 'edit');
 add('import.rows', '分页查看未过期导入预览', { ...workspace, id, ...paging }, '/api/import/rows');

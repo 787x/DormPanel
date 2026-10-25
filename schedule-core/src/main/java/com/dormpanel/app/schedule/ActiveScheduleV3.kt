@@ -89,6 +89,63 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
         return engine.local().copy(sync = b?.let { SnapshotIdentity(it.getString("datasetId"), s.optString("baselinePath", "待验证"),
             !s.has("baseline") || !ScheduleMerge.same(engine.local(), requireNotNull(SyncV3Codec.decode(Base64.getDecoder().decode(s.getString("baseline"))).state))) })
     }
+    fun endpointAccount(settings:WebDavSettings,fallback:()->WebDavAccount):WebDavAccount = binding().optString("endpointAccount").ifBlank { null }?.let(settings::openEndpoint) ?: fallback()
+    private fun endpointFingerprint():String = journal.meta.localOperation {
+        SyncV3Codec.hash((journal.snapshot().toString()+binding().toString()+journal.meta.lastSeq("node")+":"+journal.meta.lastSeq("observed")+journal.meta.page("frontier",0,65).joinToString { it.key }).toByteArray(Charsets.UTF_8))
+    }
+    private fun endpointProtection() = journal.meta.localOperation {
+        val s=journal.snapshot();check(binding().optString("phase")=="ACTIVE" && s.has("binding") && !s.has("rotation") && (s.optJSONArray("initialization")?.length()?:0)==0) { "初始化、迁移或换代恢复未完成" }
+        check(s.optJSONObject("pending")?.optString("phase") in listOf(null,"STAGED","RECEIPTED")) { "存在未回执 PUT；请先恢复原端点并完成只读恢复及回执，新地址 404 不能证明旧 PUT 未发生" }
+        check(journal.meta.count("todo")==0L && journal.meta.count("error")==0L && journal.meta.get("control","walk")==null) { "已知历史未验证或异常，请先恢复原端点继续验证" }
+    }
+    fun endpointJob(token:String):JSONObject = journal.meta.localOperation { requireNotNull(journal.meta.get("endpointJob",token)) { "端点预检不存在" } }
+    fun endpointStart(account:WebDavAccount,folder:String,sealed:String):JSONObject {
+        endpointProtection();val budget=V3Budget();val remote=V3WebDavStore(account,folder,budget)
+        val token=UUID.randomUUID().toString()
+        val job=journal.meta.localOperation {
+            check(journal.meta.count("endpointJob")<64) { "端点预检保留上限" }
+            JSONObject().put("token",token).put("folder",folder).put("endpointAccount",sealed).put("endpointKey",endpointKey(remote,account))
+                .put("binding",journal.snapshot().getJSONObject("binding")).put("fingerprint",endpointFingerprint()).put("status","VALIDATING")
+                .put("ceiling",journal.meta.lastSeq("node")).put("observedCeiling",journal.meta.lastSeq("observed")).put("after",0).put("observedAfter",0)
+        }
+        journal.meta.localOperation { journal.meta.atomic { journal.meta.put("endpointJob",token,job) } };return job
+    }
+    private fun endpointDirectory(token:String):File { ScheduleCommitCodec.uuid(token);return File(directory,"endpoint-$token") }
+    fun endpointContinue(token:String,account:WebDavAccount,budget:V3Budget=V3Budget()):JSONObject {
+        val job=endpointJob(token);check(job.optString("status") !in listOf("CANCELLED","STALE")) { "预检已取消或过期，请新建预检" }
+        if(job.optString("status")=="COMMITTED")return job
+        check(job.getString("fingerprint")==endpointFingerprint()) { "端点预览过期：本地修改或已知历史变化，请重新预检" };endpointProtection()
+        val remote=V3WebDavStore(account,job.getString("folder"),budget)
+        check(endpointKey(remote,account)==job.getString("endpointKey")) { "候选访问身份变化" }
+        try { V3EndpointInspection.step(endpointDirectory(token),journal,job,remote,budget) }
+        catch(e:Exception) { job.put("failure",if(!job.optBoolean("networkAndAuthenticationVerified"))"ACCESS_TLS_OR_AUTH_UNVERIFIED" else if(!job.optBoolean("descriptorExact"))"DESCRIPTOR_IDENTITY" else "HISTORY_UNVERIFIED");throw e }
+        finally { journal.meta.localOperation { journal.meta.atomic { journal.meta.put("endpointJob",token,job) } } }
+        return job
+    }
+    fun endpointConfirm(token:String,account:WebDavAccount):JSONObject = synchronized(journal.networkGate) {
+        val job=endpointJob(token)
+        if(job.optString("status")=="COMMITTED")return@synchronized job
+        check(job.optString("status")=="READY" && System.currentTimeMillis()-job.getLong("readyAt")<600000) { "端点预览尚未完成或过期" }
+        val nodes=job.getLong("candidateNodes");val tips=job.getJSONArray("frontier").toString()
+        val budget=V3Budget();val current=endpointContinue(token,account,budget)
+        if(current.optString("status")!="READY" || current.getLong("candidateNodes")!=nodes || current.getJSONArray("frontier").toString()!=tips) {
+            current.put("status","STALE");journal.meta.localOperation { journal.meta.atomic { journal.meta.put("endpointJob",token,current) } };error("候选新历史导致预览过期，请新建预检并重新确认")
+        }
+        V3EndpointInspection.recheck(endpointDirectory(token),current,V3WebDavStore(account,current.getString("folder"),budget))
+        journal.localTransaction {
+            check(current.getString("fingerprint")==endpointFingerprint()) { "确认期间本地状态变化，预览过期" };endpointProtection()
+            val mode=binding().put("folder",current.getString("folder")).put("endpointKey",current.getString("endpointKey"))
+                .put("endpointAccount",current.getString("endpointAccount")).put("endpointDecision",token)
+            database.dao().checkpoint(ScheduleSyncCheckpoint(MODE,mode.toString().toByteArray(Charsets.UTF_8)))
+            current.put("status","COMMITTED");journal.meta.put("endpointJob",token,current)
+        }
+        current
+    }
+    fun endpointCancel(token:String):JSONObject {
+        val job=endpointJob(token);check(job.optString("status")!="COMMITTED") { "切换已提交，不能取消" }
+        job.put("status","CANCELLED");job.remove("endpointAccount")
+        journal.meta.localOperation { journal.meta.atomic { journal.meta.put("endpointJob",token,job) } };return job
+    }
     fun prepare(seed: ScheduleState, folder: String, descriptor: ByteArray? = null,
         migration: ScheduleV3MigrationPreview? = null, validateBefore: () -> Unit = {}) {
         check(!active(database)) { "已有活动协议；禁止重复切换" }
@@ -111,7 +168,7 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
             frame.put("writerId", writer).put("local", encoded).put("revision", 0)
         }
     }
-    fun synchronize(account: WebDavAccount): String {
+    fun synchronize(account: WebDavAccount): String = synchronized(journal.networkGate) {
         val b = binding(); val budget = V3Budget(); val remote = V3WebDavStore(account, b.getString("folder"), budget)
         val accessKey=endpointKey(remote,account)
         if(!b.has("endpointKey")) {
@@ -123,7 +180,7 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
             val old = WebDavCommitStore(account, p.sourceFolder)
             ScheduleV3Migration.unchanged(p, ScheduleV3Migration.inspect(p.frame, p.hashes, old, p.sourceFolder, p.transactionId))
         } }
-        return synchronize(remote, remote, budget, recheck)
+        synchronize(remote, remote, budget, recheck)
     }
     fun synchronize(remote: V3ObjectStore, publication: V3PublicationStore, budget: V3Budget, recheck: (() -> Unit)? = null): String {
         val b = binding()

@@ -45,7 +45,7 @@ export async function verifyV3Backup(root,id,identity,files) {
       ensure(sha(Buffer.from(row.ns+'\0'+row.k+'\0'+row.v))===row.sum,'v3 元数据校验失败');
       const value=unpack(JSON.parse(row.v));
       if(row.ns==='snapshot')ensure(sha(Buffer.from(value.bytes,'base64'))===row.k,'快照身份损坏');
-      if(row.ns==='node' || /^archiveVerify:[0-9a-f]{64}:node$/.test(row.ns)) {
+      if(row.ns==='node' || /^archiveVerify:[0-9a-f]{64}:node$/.test(row.ns) || /^endpoint:[0-9a-f-]{36}:node$/.test(row.ns)) {
         const prefix=row.ns.slice(0,-4);
         ensure(raw(prefix+'identity',value.objectId).path===row.k,'历史身份索引损坏');
         for(const ref of value.refs) {

@@ -1,0 +1,74 @@
+TAP version 13
+# (node:12130) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 cli: read-only preview and resume, independent admin approval, stale and repeated decision
+ok 1 - PR57 cli: read-only preview and resume, independent admin approval, stale and repeated decision
+  ---
+  duration_ms: 2235.603804
+  type: 'test'
+  ...
+# Subtest: PR57 mcp: read-only preview and resume, independent admin approval, stale and repeated decision
+ok 2 - PR57 mcp: read-only preview and resume, independent admin approval, stale and repeated decision
+  ---
+  duration_ms: 1501.001256
+  type: 'test'
+  ...
+# (node:12131) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 read-only candidate, atomic manifest switch, original Writer/RAW/error and idempotence
+ok 3 - PR57 read-only candidate, atomic manifest switch, original Writer/RAW/error and idempotence
+  ---
+  duration_ms: 1190.028077
+  type: 'test'
+  ...
+# Subtest: PR57 rejects changed/missing known object and different Descriptor without altering active state
+ok 4 - PR57 rejects changed/missing known object and different Descriptor without altering active state
+  ---
+  duration_ms: 1153.691292
+  type: 'test'
+  ...
+# Subtest: PR57 stale local edit, owner mismatch, cancel and attempted PUT retain all evidence
+ok 5 - PR57 stale local edit, owner mismatch, cancel and attempted PUT retain all evidence
+  ---
+  duration_ms: 633.369733
+  type: 'test'
+  ...
+# Subtest: PR57 extra concurrent branch verified separately, normal sync conflicts after move
+ok 6 - PR57 extra concurrent branch verified separately, normal sync conflicts after move
+  ---
+  duration_ms: 1343.693204
+  type: 'test'
+  ...
+# Subtest: PR57 Catalog interruption before durable decision, reopen repeats same result
+ok 7 - PR57 Catalog interruption before durable decision, reopen repeats same result
+  ---
+  duration_ms: 669.374032
+  type: 'test'
+  ...
+# Subtest: PR57 Catalog interruption after durable decision, reopen repeats same result
+ok 8 - PR57 Catalog interruption after durable decision, reopen repeats same result
+  ---
+  duration_ms: 598.976527
+  type: 'test'
+  ...
+# Subtest: PR57 real HTTPS: independently provided certificates, bad pin, changed URL/account and inaccessible old endpoint
+ok 9 - PR57 real HTTPS: independently provided certificates, bad pin, changed URL/account and inaccessible old endpoint
+  ---
+  duration_ms: 2214.577367
+  type: 'test'
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8024.191993
+{"result":"PASS","probeFolder":"/dormpanel/pr57-endpoint-ff67e1b1-b589-40bd-9da3-e62d7521886f/","datasetId":"72d00913-9bb1-4826-bf12-ce7c8ee6b9c3","descriptorHash":"b8699b2370e6263907e86e54d33f639025b9fb4a3440bd79e201e6dcf5656678","objectsUnchanged":2,"sameWriter":true,"offlineRawPreserved":true,"reopenIdempotent":true,"oldEndpointNewChanges":"UNPROVEN","completeDirectoryView":false}
+Could not chdir to home directory /home/w: No such file or directory
+(node:12266) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+{"remote": "/tmp/dormpanel-pr57-1c045bc2-bc01-49ec-a91c-b2e1824606d0", "exitCode": 0, "sourceSha256": "0d99d767206856fbe1415d4b59f0aac693e79765ec5b761a10b0a4535f16ead3"}

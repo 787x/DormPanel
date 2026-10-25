@@ -275,7 +275,8 @@ export class V3Maintenance {
     const visit=v=>{if(typeof v==='string' && /^[0-9a-f]{64}$/.test(v))refs.add(v);else if(Array.isArray(v))v.forEach(visit);else if(v && typeof v==='object')Object.values(v).forEach(visit);};
     // Every durable namespace participates, including unknown extensions. No age heuristics.
     for(const r of this.meta.db.prepare("SELECT ns,k,v,sum FROM v3_records WHERE ns NOT IN ('snapshot','cleanupPreview','cleanupAudit') ORDER BY seq").iterate()) {
-      const namespace=r.ns.replace(/^archiveVerify:[0-9a-f]{64}:/,'');
+      const namespace=r.ns.replace(/^archiveVerify:[0-9a-f]{64}:/,'').replace(/^endpoint:[0-9a-f-]{36}:/,'');
+      known.add('endpointJob');
       ensure(known.has(namespace) || namespace==='input' && namespace!==r.ns || /^(?:members:[0-9a-f-]{36}|epochFrontier:[0-9a-f-]{36}(?::covered)?|proof:[0-9a-f]{64}(?::(?:queue|seen|tips|covered))?|(?:stack|visiting):[0-9a-f-]{36})$/.test(namespace),'未知元数据命名空间，保护全部快照');
       ensure(++rows<=20000,'清理分析预算耗尽；不产生可删除候选');ensure(sha(Buffer.from(r.ns+'\0'+r.k+'\0'+r.v))===r.sum,'损坏引用，拒绝整理');
       this.meta.budget.charge(Buffer.byteLength(r.v),0);const value=JSON.parse(r.v);visit(value);sums.push(r.ns+'\0'+r.k+'\0'+r.sum);

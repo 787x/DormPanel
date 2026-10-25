@@ -34,7 +34,7 @@ class ScheduleSyncJobService : JobService() {
             try {
                 val settings = SharedScheduleSettings(this)
                 if (store is RoomScheduleStore && store.isV3()) {
-                    val result = synchronized(SharedScheduleRunLock) { store.synchronizeV3(requireNotNull(WebDavSettings(this).account())) }
+                    val result = synchronized(SharedScheduleRunLock) { store.synchronizeV3(store.v3Account(WebDavSettings(this))) }
                     retry = result in listOf("BUDGET", "DISCOVERING", "ROTATED") && settings.retryAllowed()
                     settings.result(v3StatusMessage(result), result in listOf("OBSERVED","PUBLISHED"))
                     return@execute
