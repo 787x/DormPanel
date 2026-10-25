@@ -375,11 +375,15 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     fun endpointConfirm(token:String,done:(org.json.JSONObject)->Unit) = endpointOperation(done) { source.syncStore!!.confirmV3Endpoint(token,accounts) }
     fun endpointCancel(token:String,done:(org.json.JSONObject)->Unit) = endpointOperation(done) { source.syncStore!!.cancelV3Endpoint(token) }
     private fun endpointOperation(done:(org.json.JSONObject)->Unit,operation:()->org.json.JSONObject) = run({
-        synchronized(SharedScheduleRunLock) { operation() }
+        synchronized(SharedScheduleRunLock) { runCatching(operation).getOrElse {
+            org.json.JSONObject().put("status","OPERATION_FAILED").put("failure","端点操作未完成；绑定、本地数据及恢复证据保留，请关闭后重新查询")
+        } }
     }) { result -> busy=false;status=when(result.optString("status")) {
         "READY"->"候选身份及已知历史验证完成，尚未切换"
         "COMMITTED"->"本机 v3 访问端点已原子切换；本地修改保留，其他设备接收未知"
         "CANCELLED"->"端点预检已取消，原绑定保留"
+        "EXPIRED","STALE"->"端点预检已到期或失效，请开始新预检；原绑定保留"
+        "OPERATION_FAILED"->"端点操作已安全停止，请关闭后重新查询；原绑定和证据保留"
         else->"端点只读预检进度已保存，可继续"
     };settings.result(status,false);notifyChanged();done(result) }
     private fun finishV2(outcome: ScheduleSyncEngine.Outcome, baseline: ScheduleState?) {

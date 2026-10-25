@@ -1,0 +1,607 @@
+TAP version 13
+# (node:16752) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 cli: read-only preview and resume, independent admin approval, stale and repeated decision
+ok 1 - PR57 cli: read-only preview and resume, independent admin approval, stale and repeated decision
+  ---
+  duration_ms: 2024.452735
+  type: 'test'
+  ...
+# Subtest: PR57 mcp: read-only preview and resume, independent admin approval, stale and repeated decision
+ok 2 - PR57 mcp: read-only preview and resume, independent admin approval, stale and repeated decision
+  ---
+  duration_ms: 1153.721462
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle cli: default reader can cancel failed private preview; pending approval pins evidence
+ok 3 - PR57 lifecycle cli: default reader can cancel failed private preview; pending approval pins evidence
+  ---
+  duration_ms: 1589.113525
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle mcp: default reader can cancel failed private preview; pending approval pins evidence
+ok 4 - PR57 lifecycle mcp: default reader can cancel failed private preview; pending approval pins evidence
+  ---
+  duration_ms: 1060.097698
+  type: 'test'
+  ...
+# Subtest: PR56 approval cli: v3 回退完整独立批准、当前父引用与重复请求
+ok 5 - PR56 approval cli: v3 回退完整独立批准、当前父引用与重复请求
+  ---
+  duration_ms: 1486.555914
+  type: 'test'
+  ...
+# Subtest: PR56 approval mcp: v3 回退完整独立批准、当前父引用与重复请求
+ok 6 - PR56 approval mcp: v3 回退完整独立批准、当前父引用与重复请求
+  ---
+  duration_ms: 1075.891585
+  type: 'test'
+  ...
+# Subtest: PR56 approval ownership: 缺失归属的旧预览、错误用户/目标/Workspace 及过期输入均拒绝
+ok 7 - PR56 approval ownership: 缺失归属的旧预览、错误用户/目标/Workspace 及过期输入均拒绝
+  ---
+  duration_ms: 961.091687
+  type: 'test'
+  ...
+# Subtest: PR56 approval stale rollback: 批准后的新编辑或新远端前沿不触发业务回退
+ok 8 - PR56 approval stale rollback: 批准后的新编辑或新远端前沿不触发业务回退
+  ---
+  duration_ms: 1043.128226
+  type: 'test'
+  ...
+# Subtest: PR56 approval cli: 256 个真实快照候选在 16 KiB 内批准并完整整理
+ok 9 - PR56 approval cli: 256 个真实快照候选在 16 KiB 内批准并完整整理
+  ---
+  duration_ms: 1961.52622
+  type: 'test'
+  ...
+# 256 候选审批记录：1277 / 16384 字节
+# Subtest: PR56 approval mcp: 256 个真实快照候选在 16 KiB 内批准并完整整理
+ok 10 - PR56 approval mcp: 256 个真实快照候选在 16 KiB 内批准并完整整理
+  ---
+  duration_ms: 1287.535825
+  type: 'test'
+  ...
+# 256 候选审批记录：1277 / 16384 字节
+# Subtest: PR56 approval cleanup protected: 批准后 pin 变化不删除快照
+ok 11 - PR56 approval cleanup protected: 批准后 pin 变化不删除快照
+  ---
+  duration_ms: 525.663268
+  type: 'test'
+  ...
+# Subtest: PR56 approval cleanup protected: 批准后 reference 变化不删除快照
+ok 12 - PR56 approval cleanup protected: 批准后 reference 变化不删除快照
+  ---
+  duration_ms: 497.093268
+  type: 'test'
+  ...
+# Subtest: PR56 approval cleanup protected: 批准后 candidate 变化不删除快照
+ok 13 - PR56 approval cleanup protected: 批准后 candidate 变化不删除快照
+  ---
+  duration_ms: 508.762094
+  type: 'test'
+  ...
+# Subtest: PR56 approval cleanup protected: 批准后 edit 变化不删除快照
+ok 14 - PR56 approval cleanup protected: 批准后 edit 变化不删除快照
+  ---
+  duration_ms: 529.383589
+  type: 'test'
+  ...
+# Subtest: PR56 approval cleanup protected: 批准后 pending 变化不删除快照
+ok 15 - PR56 approval cleanup protected: 批准后 pending 变化不删除快照
+  ---
+  duration_ms: 521.526635
+  type: 'test'
+  ...
+# Subtest: PR56 approval cleanup protected: 批准后 permission 变化不删除快照
+ok 16 - PR56 approval cleanup protected: 批准后 permission 变化不删除快照
+  ---
+  duration_ms: 511.971381
+  type: 'test'
+  ...
+# Subtest: PR56 approval cleanup recovery: 提交后故障保留原子回执，新批准仅续做压缩且不重复删除
+ok 17 - PR56 approval cleanup recovery: 提交后故障保留原子回执，新批准仅续做压缩且不重复删除
+  ---
+  duration_ms: 545.249463
+  type: 'test'
+  ...
+# Subtest: v3 正式 Agent/网页：同一 Writer、revision、权限、历史摘要及 v2 能力拒绝
+ok 18 - v3 正式 Agent/网页：同一 Writer、revision、权限、历史摘要及 v2 能力拒绝
+  ---
+  duration_ms: 1377.471495
+  type: 'test'
+  ...
+# Subtest: CLI help/schema/version、JSON、退出码、参数和分页边界
+ok 19 - CLI help/schema/version、JSON、退出码、参数和分页边界
+  ---
+  duration_ms: 866.94008
+  type: 'test'
+  ...
+# Subtest: 服务端默认只读、CSRF 隔离、伪造 header/身份和无权限写入不改变数据
+ok 20 - 服务端默认只读、CSRF 隔离、伪造 header/身份和无权限写入不改变数据
+  ---
+  duration_ms: 151.131933
+  type: 'test'
+  ...
+# Subtest: 网页与 Agent 共用 applyEdit；并发过期请求拒绝，重复 ID 与重启回执不重复新增
+ok 21 - 网页与 Agent 共用 applyEdit；并发过期请求拒绝，重复 ID 与重启回执不重复新增
+  ---
+  duration_ms: 160.339063
+  type: 'test'
+  ...
+# Subtest: 已落盘意图但响应未知或进程中断时不重新执行业务
+ok 22 - 已落盘意图但响应未知或进程中断时不重新执行业务
+  ---
+  duration_ms: 63.034879
+  type: 'test'
+  ...
+# Subtest: 恢复/回退/精简/迁移必须独立管理员批准，批准绑定参数且不能由两次工具调用伪造
+ok 23 - 恢复/回退/精简/迁移必须独立管理员批准，批准绑定参数且不能由两次工具调用伪造
+  ---
+  duration_ms: 120.551132
+  type: 'test'
+  ...
+# Subtest: 课程/覆盖/来源/学期/日期/事件/导入共用领域校验，读取与输出不泄露凭据
+ok 24 - 课程/覆盖/来源/学期/日期/事件/导入共用领域校验，读取与输出不泄露凭据
+  ---
+  duration_ms: 397.463916
+  type: 'test'
+  ...
+# Subtest: 官方 MCP SDK stdio auto 发现 Tools/Resources/Prompts 并与 CLI 一致
+ok 25 - 官方 MCP SDK stdio auto 发现 Tools/Resources/Prompts 并与 CLI 一致
+  ---
+  duration_ms: 887.673209
+  type: 'test'
+  ...
+# Subtest: 官方 MCP SDK stdio legacy 发现 Tools/Resources/Prompts 并与 CLI 一致
+ok 26 - 官方 MCP SDK stdio legacy 发现 Tools/Resources/Prompts 并与 CLI 一致
+  ---
+  duration_ms: 885.443575
+  type: 'test'
+  ...
+# Subtest: 操作 schema 完整确定，拒绝任意 SQL/shell/路径与错误工作区或数据集
+ok 27 - 操作 schema 完整确定，拒绝任意 SQL/shell/路径与错误工作区或数据集
+  ---
+  duration_ms: 177.698437
+  type: 'test'
+  ...
+# Subtest: CLI/MCP 本地快照创建 v3 与迁移恢复必须独立批准，批准后复用同一业务 Workspace
+ok 28 - CLI/MCP 本地快照创建 v3 与迁移恢复必须独立批准，批准后复用同一业务 Workspace
+  ---
+  duration_ms: 402.765288
+  type: 'test'
+  ...
+# Subtest: Agent 实际本地连接、工作区、共享数据集、同步回执、历史快照/比较/回退/归档/精简闭环
+ok 29 - Agent 实际本地连接、工作区、共享数据集、同步回执、历史快照/比较/回退/归档/精简闭环
+  ---
+  duration_ms: 3604.994953
+  type: 'test'
+  ...
+# Subtest: Agent 加密备份回读、预览、取消和独立批准恢复；Catalog 重开、权限及幂等账本不被恢复覆盖
+ok 30 - Agent 加密备份回读、预览、取消和独立批准恢复；Catalog 重开、权限及幂等账本不被恢复覆盖
+  ---
+  duration_ms: 1349.617728
+  type: 'test'
+  ...
+# Subtest: XLS Agent 预览、取消、确认和 CSV 来源替换保留身份
+ok 31 - XLS Agent 预览、取消、确认和 CSV 来源替换保留身份
+  ---
+  duration_ms: 770.273196
+  type: 'test'
+  ...
+# (node:16753) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: 多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复
+ok 32 - 多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复
+  ---
+  duration_ms: 2683.595585
+  type: 'test'
+  ...
+# Subtest: 拒绝 password，有效数据完全不变
+ok 33 - 拒绝 password，有效数据完全不变
+  ---
+  duration_ms: 1318.833427
+  type: 'test'
+  ...
+# Subtest: 拒绝 truncated，有效数据完全不变
+ok 34 - 拒绝 truncated，有效数据完全不变
+  ---
+  duration_ms: 1326.362421
+  type: 'test'
+  ...
+# Subtest: 拒绝 ciphertext，有效数据完全不变
+ok 35 - 拒绝 ciphertext，有效数据完全不变
+  ---
+  duration_ms: 1313.709888
+  type: 'test'
+  ...
+# Subtest: 拒绝 identity，有效数据完全不变
+ok 36 - 拒绝 identity，有效数据完全不变
+  ---
+  duration_ms: 1255.216994
+  type: 'test'
+  ...
+# Subtest: 私有提交 UUID 已有不同字节时恢复在决策前拒绝，不覆盖不可变历史
+ok 37 - 私有提交 UUID 已有不同字节时恢复在决策前拒绝，不覆盖不可变历史
+  ---
+  duration_ms: 1499.404986
+  type: 'test'
+  ...
+# Subtest: 回执已保存而 observe 尚未完成的合法帧也能完整备份和恢复
+ok 38 - 回执已保存而 observe 尚未完成的合法帧也能完整备份和恢复
+  ---
+  duration_ms: 2478.846525
+  type: 'test'
+  ...
+# Subtest: 授权 NAS 历史仅记录为外部依赖，撤销授权后恢复本地视图但拒绝发布
+ok 39 - 授权 NAS 历史仅记录为外部依赖，撤销授权后恢复本地视图但拒绝发布
+  ---
+  duration_ms: 2101.941131
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-precommit 注入故障，重启确定选择完整旧状态或新状态
+ok 40 - 恢复在 restore-precommit 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 1665.036624
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-committed 注入故障，重启确定选择完整旧状态或新状态
+ok 41 - 恢复在 restore-committed 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 2245.073581
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-file 注入故障，重启确定选择完整旧状态或新状态
+ok 42 - 恢复在 restore-file 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 1933.961658
+  type: 'test'
+  ...
+# Subtest: 恢复在 restore-complete 注入故障，重启确定选择完整旧状态或新状态
+ok 43 - 恢复在 restore-complete 注入故障，重启确定选择完整旧状态或新状态
+  ---
+  duration_ms: 2641.790003
+  type: 'test'
+  ...
+# Subtest: 备份失败没有有效半成品；只使用授权目录，拒绝遍历/链接/私有目录
+ok 44 - 备份失败没有有效半成品；只使用授权目录，拒绝遍历/链接/私有目录
+  ---
+  duration_ms: 1186.843322
+  type: 'test'
+  ...
+# Subtest: 恢复确认绑定管理员和预览，预览后编辑/切换拒绝；并发操作相互隔离
+ok 45 - 恢复确认绑定管理员和预览，预览后编辑/切换拒绝；并发操作相互隔离
+  ---
+  duration_ms: 3674.153694
+  type: 'test'
+  ...
+# Subtest: 实际 Socket 备份 API：管理员、CSRF、版本、口令、敏感响应与确认恢复
+ok 46 - 实际 Socket 备份 API：管理员、CSRF、版本、口令、敏感响应与确认恢复
+  ---
+  duration_ms: 2810.578704
+  type: 'test'
+  ...
+# Subtest: 0.5.0 兼容 0.4.1 版本元数据并精确恢复，备份格式保持不变
+ok 47 - 0.5.0 兼容 0.4.1 版本元数据并精确恢复，备份格式保持不变
+  ---
+  duration_ms: 2421.143542
+  type: 'test'
+  ...
+# Subtest: 0.5.0 兼容 0.4.2 版本元数据并精确恢复，备份格式保持不变
+ok 48 - 0.5.0 兼容 0.4.2 版本元数据并精确恢复，备份格式保持不变
+  ---
+  duration_ms: 2399.779446
+  type: 'test'
+  ...
+# Subtest: 0.5.0 兼容 0.4.3 版本元数据并精确恢复，备份格式保持不变
+ok 49 - 0.5.0 兼容 0.4.3 版本元数据并精确恢复，备份格式保持不变
+  ---
+  duration_ms: 2907.862967
+  type: 'test'
+  ...
+# Subtest: 0.5.0 兼容 0.4.4 版本元数据并精确恢复，备份格式保持不变
+ok 50 - 0.5.0 兼容 0.4.4 版本元数据并精确恢复，备份格式保持不变
+  ---
+  duration_ms: 2220.593691
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 traversal
+ok 51 - 认证归档仍拒绝恶意 traversal
+  ---
+  duration_ms: 1779.237002
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 duplicate
+ok 52 - 认证归档仍拒绝恶意 duplicate
+  ---
+  duration_ms: 2346.995837
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 size
+ok 53 - 认证归档仍拒绝恶意 size
+  ---
+  duration_ms: 1111.661948
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 count
+ok 54 - 认证归档仍拒绝恶意 count
+  ---
+  duration_ms: 955.908868
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 missing
+ok 55 - 认证归档仍拒绝恶意 missing
+  ---
+  duration_ms: 938.502444
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 checksum
+ok 56 - 认证归档仍拒绝恶意 checksum
+  ---
+  duration_ms: 870.818045
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 version
+ok 57 - 认证归档仍拒绝恶意 version
+  ---
+  duration_ms: 836.002768
+  type: 'test'
+  ...
+# Subtest: 认证归档仍拒绝恶意 appVersion
+ok 58 - 认证归档仍拒绝恶意 appVersion
+  ---
+  duration_ms: 856.516037
+  type: 'test'
+  ...
+# Subtest: 0.4.0 旧源码生成的真实加密归档在 0.5.0 验证并精确恢复，安装身份边界不变
+ok 59 - 0.4.0 旧源码生成的真实加密归档在 0.5.0 验证并精确恢复，安装身份边界不变
+  ---
+  duration_ms: 1501.002986
+  type: 'test'
+  ...
+# Subtest: 预览无后续 API 或重启也按到期定时器释放，且空闲时无清理定时器
+ok 60 - 预览无后续 API 或重启也按到期定时器释放，且空闲时无清理定时器
+  ---
+  duration_ms: 1614.406613
+  type: 'test'
+  ...
+# Subtest: 取消只释放当前管理员选定的预览，不影响其他仍有效预览
+ok 61 - 取消只释放当前管理员选定的预览，不影响其他仍有效预览
+  ---
+  duration_ms: 1533.020113
+  type: 'test'
+  ...
+# Subtest: 认证后注册预览失败及认证失败均交回明文目录，不留无主暂存
+ok 62 - 认证后注册预览失败及认证失败均交回明文目录，不留无主暂存
+  ---
+  duration_ms: 1372.929913
+  type: 'test'
+  ...
+# Subtest: 清理失败撤销令牌但保留待清理所有权，自动重试成功后停止定时器
+ok 63 - 清理失败撤销令牌但保留待清理所有权，自动重试成功后停止定时器
+  ---
+  duration_ms: 1402.628366
+  type: 'test'
+  ...
+# Subtest: 保护引用读取失败时不猜测删除，后续定时重试安全释放
+ok 64 - 保护引用读取失败时不猜测删除，后续定时重试安全释放
+  ---
+  duration_ms: 1454.881302
+  type: 'test'
+  ...
+# Subtest: 清理持续失败后关服，启动重试仅清理无主预览并保留恢复前快照
+ok 65 - 清理持续失败后关服，启动重试仅清理无主预览并保留恢复前快照
+  ---
+  duration_ms: 1383.783738
+  type: 'test'
+  ...
+# Subtest: 恢复使用中越过预览到期点也不清理输入；成功后释放预览并保留旧快照
+ok 66 - 恢复使用中越过预览到期点也不清理输入；成功后释放预览并保留旧快照
+  ---
+  duration_ms: 1661.322583
+  type: 'test'
+  ...
+# Subtest: 已提交恢复中断后到期和关服不删除日志输入，启动清理也保留新旧状态
+ok 67 - 已提交恢复中断后到期和关服不删除日志输入，启动清理也保留新旧状态
+  ---
+  duration_ms: 1707.254742
+  type: 'test'
+  ...
+# (node:16754) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR56 Descriptor 发现成功及失败：所有持久行、revision、错误与远端逐字不变
+ok 68 - PR56 Descriptor 发现成功及失败：所有持久行、revision、错误与远端逐字不变
+  ---
+  duration_ms: 712.280761
+  type: 'test'
+  ...
+# Subtest: PR56 v3 UNCERTAIN/capture 备份恢复中断 restore-precommit 后重入同一决策
+ok 69 - PR56 v3 UNCERTAIN/capture 备份恢复中断 restore-precommit 后重入同一决策
+  ---
+  duration_ms: 1829.549358
+  type: 'test'
+  ...
+# Subtest: PR56 v3 UNCERTAIN/capture 备份恢复中断 restore-committed 后重入同一决策
+ok 70 - PR56 v3 UNCERTAIN/capture 备份恢复中断 restore-committed 后重入同一决策
+  ---
+  duration_ms: 1949.044259
+  type: 'test'
+  ...
+# Subtest: PR56 v3 UNCERTAIN/capture 备份恢复中断 restore-file 后重入同一决策
+ok 71 - PR56 v3 UNCERTAIN/capture 备份恢复中断 restore-file 后重入同一决策
+  ---
+  duration_ms: 2028.084135
+  type: 'test'
+  ...
+# Subtest: PR56 v3 UNCERTAIN/capture 备份恢复中断 restore-complete 后重入同一决策
+ok 72 - PR56 v3 UNCERTAIN/capture 备份恢复中断 restore-complete 后重入同一决策
+  ---
+  duration_ms: 1987.560233
+  type: 'test'
+  ...
+# Subtest: PR56 WAL 一致性快照：全部行及 Pending/capture 精确保留
+ok 73 - PR56 WAL 一致性快照：全部行及 Pending/capture 精确保留
+  ---
+  duration_ms: 395.988667
+  type: 'test'
+  ...
+# Subtest: PR56 audit: 预算中断后重开从持久游标继续，业务和远端对象不变
+ok 74 - PR56 audit: 预算中断后重开从持久游标继续，业务和远端对象不变
+  ---
+  duration_ms: 619.12612
+  type: 'test'
+  ...
+# Subtest: PR56 rollback: 审计观察到新前沿但业务未接收时拒绝预览，不能漏掉远端修改
+ok 75 - PR56 rollback: 审计观察到新前沿但业务未接收时拒绝预览，不能漏掉远端修改
+  ---
+  duration_ms: 715.804968
+  type: 'test'
+  ...
+# Subtest: PR56 清理保护所有持久引用，候选变化拒绝；原子回执及业务不变
+ok 76 - PR56 清理保护所有持久引用，候选变化拒绝；原子回执及业务不变
+  ---
+  duration_ms: 483.928656
+  type: 'test'
+  ...
+# Subtest: PR56 partial-index: 身份索引缺失时保护全部快照，不生成删除决策
+ok 77 - PR56 partial-index: 身份索引缺失时保护全部快照，不生成删除决策
+  ---
+  duration_ms: 411.014288
+  type: 'test'
+  ...
+# Subtest: PR56 八类 RAW 历史详情与差异保留完整稳定身份和 null/空字符串
+ok 78 - PR56 八类 RAW 历史详情与差异保留完整稳定身份和 null/空字符串
+  ---
+  duration_ms: 556.006146
+  type: 'test'
+  ...
+# Subtest: PR56 清理事务中断：提交前不删除，提交后重开返回同一决策并继续压缩
+ok 79 - PR56 清理事务中断：提交前不删除，提交后重开返回同一决策并继续压缩
+  ---
+  duration_ms: 425.638888
+  type: 'test'
+  ...
+# Subtest: PR56 archive: 独立归档分批实际回读、重入及缓存恢复，不写远端
+ok 80 - PR56 archive: 独立归档分批实际回读、重入及缓存恢复，不写远端
+  ---
+  duration_ms: 780.887197
+  type: 'test'
+  ...
+# Subtest: PR56 archive: 只有绑定而未索引 Descriptor 时拒绝生成空成功归档
+ok 81 - PR56 archive: 只有绑定而未索引 Descriptor 时拒绝生成空成功归档
+  ---
+  duration_ms: 73.630609
+  type: 'test'
+  ...
+# Subtest: PR56 混合 v2/v3 加密备份实际创建、验证、恢复及旧状态拒绝
+ok 82 - PR56 混合 v2/v3 加密备份实际创建、验证、恢复及旧状态拒绝
+  ---
+  duration_ms: 3868.819861
+  type: 'test'
+  ...
+# Subtest: PR56 私有本地 v3 的完整深层 Epoch 路径可备份恢复，预览字段完整
+ok 83 - PR56 私有本地 v3 的完整深层 Epoch 路径可备份恢复，预览字段完整
+  ---
+  duration_ms: 3954.217612
+  type: 'test'
+  ...
+# Subtest: PR56 分页无累计 100 限制；稳定 ID 差异、可恢复新因果回退及过期预览
+ok 84 - PR56 分页无累计 100 限制；稳定 ID 差异、可恢复新因果回退及过期预览
+  ---
+  duration_ms: 13205.693149
+  type: 'test'
+  ...
+# (node:17441) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 read-only candidate, atomic manifest switch, original Writer/RAW/error and idempotence
+ok 85 - PR57 read-only candidate, atomic manifest switch, original Writer/RAW/error and idempotence
+  ---
+  duration_ms: 1198.607177
+  type: 'test'
+  ...
+# Subtest: PR57 rejects changed/missing known object and different Descriptor without altering active state
+ok 86 - PR57 rejects changed/missing known object and different Descriptor without altering active state
+  ---
+  duration_ms: 1603.467946
+  type: 'test'
+  ...
+# Subtest: PR57 stale local edit, owner mismatch, cancel and attempted PUT retain all evidence
+ok 87 - PR57 stale local edit, owner mismatch, cancel and attempted PUT retain all evidence
+  ---
+  duration_ms: 699.762984
+  type: 'test'
+  ...
+# Subtest: PR57 STAGED candidate/capture retained, edits after capture replay through original receipt
+ok 88 - PR57 STAGED candidate/capture retained, edits after capture replay through original receipt
+  ---
+  duration_ms: 877.818916
+  type: 'test'
+  ...
+# Subtest: PR57 extra concurrent branch verified separately, normal sync conflicts after move
+ok 89 - PR57 extra concurrent branch verified separately, normal sync conflicts after move
+  ---
+  duration_ms: 1463.092454
+  type: 'test'
+  ...
+# Subtest: PR57 all eight RAW collections, original global connection users and expired candidate
+ok 90 - PR57 all eight RAW collections, original global connection users and expired candidate
+  ---
+  duration_ms: 1166.523337
+  type: 'test'
+  ...
+# Subtest: PR57 Catalog interruption before durable decision, reopen repeats same result
+ok 91 - PR57 Catalog interruption before durable decision, reopen repeats same result
+  ---
+  duration_ms: 759.011807
+  type: 'test'
+  ...
+# Subtest: PR57 Catalog interruption after durable decision, reopen repeats same result
+ok 92 - PR57 Catalog interruption after durable decision, reopen repeats same result
+  ---
+  duration_ms: 550.744796
+  type: 'test'
+  ...
+# Subtest: PR57 real HTTPS: independently provided certificates, bad pin, changed URL/account and inaccessible old endpoint
+ok 93 - PR57 real HTTPS: independently provided certificates, bad pin, changed URL/account and inaccessible old endpoint
+  ---
+  duration_ms: 2389.582065
+  type: 'test'
+  ...
+# (node:17454) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: PR57 lifecycle: >64 cancelled graphs free slots, active history and shared witnesses preserved
+ok 94 - PR57 lifecycle: >64 cancelled graphs free slots, active history and shared witnesses preserved
+  ---
+  duration_ms: 11036.334368
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle: fixed expiry, protected approvals and owner quota; cleanup crash cannot revive READY
+ok 95 - PR57 lifecycle: fixed expiry, protected approvals and owner quota; cleanup crash cannot revive READY
+  ---
+  duration_ms: 527.09741
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle: partially cleaned graph survives backup/maintenance and Catalog reopen
+ok 96 - PR57 lifecycle: partially cleaned graph survives backup/maintenance and Catalog reopen
+  ---
+  duration_ms: 582.273959
+  type: 'test'
+  ...
+# Subtest: PR57 lifecycle: unknown graph namespace stops collection; live tasks are not evicted to satisfy quota
+ok 97 - PR57 lifecycle: unknown graph namespace stops collection; live tasks are not evicted to satisfy quota
+  ---
+  duration_ms: 1490.992018
+  type: 'test'
+  ...
+1..97
+# tests 97
+# suites 0
+# pass 97
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 63643.991588
+Could not chdir to home directory /home/w: No such file or directory
+
+{"remote": "/tmp/dormpanel-pr57-69a1aa61-9a8f-4eda-b16c-5b9887fb50e1", "exitCode": 0, "sourceSha256": "9fd5ebe9dba5a2648f3f5e91bdd629aa45a905a92717754e7d853c1ef6e28e8a"}

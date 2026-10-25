@@ -194,8 +194,9 @@ export async function createApp({
           ensure(!catalog.maintenance && !catalog.configuring && !catalog.invalidated && !writes && !historyLock && !catalog.busy.size,'存在并发操作或恢复保护');
           const db=await catalog.load(input.workspaceId);await db.queue;
           ensure(!writes && !historyLock && !catalog.configuring,'存在并发操作');
-          historyLock=true;catalog.busy.add(input.workspaceId);
+          historyLock=true;catalog.busy.add(input.workspaceId);catalog.endpointTaskOwner=input.workspaceId;
           try {
+            catalog.endpointApprovalState=()=>agents.state;
             const service=new V3EndpointMove(catalog,input.workspaceId);
             let result;
             if(input.action==='preview')result=await service.preview(input.candidate,user);
@@ -206,7 +207,7 @@ export async function createApp({
               catalog.busy.delete(input.workspaceId);result=await service.confirm(input,user);
             } else throw Error('未知端点操作');
             send(200,result);return;
-          } finally {historyLock=false;catalog.busy.delete(input.workspaceId);}
+          } finally {historyLock=false;catalog.busy.delete(input.workspaceId);delete catalog.endpointTaskOwner;}
         }
         if ((path === '/api/sync' && input.discover === true) || (path === '/api/migration' && input.action === 'v3.discover')) {
           ensure(!input.bind && !input.create, '发现不可同时创建或绑定');

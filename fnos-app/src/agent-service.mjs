@@ -79,7 +79,7 @@ export class AgentService {
           p.consumed = true;
         }
         if (this.state.receipts.length >= 512) fail('LIMIT');
-        const receipt = { operationId, digest, time:now };
+        const receipt = { operationId, digest, time:now, ...(op.name==='endpoint.confirm'?{operation:op.name,workspaceId:input.workspaceId,endpointToken:input.token}:{}) };
         this.state.receipts.push(receipt);
         // 先保存意图：崩溃后为 unknown，不重新执行可能已提交的业务操作。
         await this.save(); intentSaved = true;

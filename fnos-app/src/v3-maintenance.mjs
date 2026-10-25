@@ -6,6 +6,7 @@ import { Budget, match, V3LocalStore, epochScope } from './v3-store.mjs';
 import { IndexedV3Cache } from './v3-index.mjs';
 import { V3History, V3Discovery } from './v3-history.mjs';
 import { remoteV3 } from './active-v3.mjs';
+import { endpointNamespace } from './v3-endpoint-lifecycle.mjs';
 import { statSync, statfsSync, readdirSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -276,11 +277,13 @@ export class V3Maintenance {
     // Every durable namespace participates, including unknown extensions. No age heuristics.
     for(const r of this.meta.db.prepare("SELECT ns,k,v,sum FROM v3_records WHERE ns NOT IN ('snapshot','cleanupPreview','cleanupAudit') ORDER BY seq").iterate()) {
       const namespace=r.ns.replace(/^archiveVerify:[0-9a-f]{64}:/,'').replace(/^endpoint:[0-9a-f-]{36}:/,'');
-      known.add('endpointJob');
+      for(const ns of ['endpointJob','endpointReceipt','endpointRetired'])known.add(ns);
       ensure(known.has(namespace) || namespace==='input' && namespace!==r.ns || /^(?:members:[0-9a-f-]{36}|epochFrontier:[0-9a-f-]{36}(?::covered)?|proof:[0-9a-f]{64}(?::(?:queue|seen|tips|covered))?|(?:stack|visiting):[0-9a-f-]{36})$/.test(namespace),'未知元数据命名空间，保护全部快照');
       ensure(++rows<=20000,'清理分析预算耗尽；不产生可删除候选');ensure(sha(Buffer.from(r.ns+'\0'+r.k+'\0'+r.v))===r.sum,'损坏引用，拒绝整理');
       this.meta.budget.charge(Buffer.byteLength(r.v),0);const value=JSON.parse(r.v);visit(value);sums.push(r.ns+'\0'+r.k+'\0'+r.sum);
-      if(namespace==='node') {
+      const endpoint=endpointNamespace(r.ns),owner=endpoint&&this.meta.get('endpointJob',endpoint.token),cleaning=owner?.status==='CLEANING';
+      if(cleaning)ensure(owner.token===endpoint.token&&owner.workspaceId===this.id,'候选清理归属异常');
+      if(namespace==='node'&&!cleaning) {
         const prefix=r.ns.slice(0,-4);ensure(this.meta.get(prefix+'identity',value.objectId)?.path===r.k,'历史身份索引缺失，保护全部快照');
         for(const ref of value.refs){const target=this.meta.get(prefix+'identity',ref.objectId);ensure(target?.hash===ref.hash && this.meta.get(prefix+'node',target.path)?.hash===ref.hash,'历史引用索引缺失，保护全部快照');}
       }

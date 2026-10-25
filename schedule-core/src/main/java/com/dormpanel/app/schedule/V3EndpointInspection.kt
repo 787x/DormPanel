@@ -16,7 +16,7 @@ internal object V3EndpointInspection {
         job.put("descriptorExact",true).put("networkAndAuthenticationVerified",true).put("status","VALIDATING")
         V3Journal(directory).use { candidate ->
             val meta=candidate.meta;meta.budget=budget
-            val cache=V3IndexedCache(directory,budget,requireRemoteReadback=true)
+            val cache=V3IndexedCache(source.directory,budget,requireRemoteReadback=true)
             try {
                 val rows=source.meta.localOperation { source.meta.page("node",job.optLong("after"),16,job.getLong("ceiling")) }
                 for(row in rows) {

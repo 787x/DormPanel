@@ -990,22 +990,23 @@ function v3EndpointDialog(w) {
   dialog('安全更换 v3 访问端点', form=>{
     const select=el('select');select.setAttribute('aria-label','候选访问连接');
     for(const c of management.connections){const o=el('option',c.name);o.value=c.id;select.append(o);}
-    const output=el('pre'), controls=el('nav');let preview=null;
+    const output=el('pre'), controls=el('nav');let preview=null,resumeButton,cancelButton,confirmButton;
     const display=p=>{
       preview=p;if(p.token)sessionStorage.setItem(key,p.token);
-      const status={NOT_STARTED:'尚未开始',VALIDATING:'验证中，进度已保存，可继续',READY:'候选已通过已知历史验证，等待确认',CANCELLED:'已取消，原绑定保留',COMMITTED:'本机访问端点已切换，原 Writer 和本地数据保留'}[p.status]??p.status;
-      output.textContent=`${status}\n数据集：${p.datasetId??'尚未选择'}\n`+(p.facts?`网络可达：${p.facts.networkReachable?'已验证':'未确认'}；TLS / 认证：${p.facts.tlsAndAuthenticationValid?'已验证':'未确认'}\nDescriptor 精确匹配：${p.facts.descriptorExact?'是':'未确认'}\n已知历史完整回读：${p.facts.knownHistoryComplete?'完成':'尚未完成'}；额外对象：${p.facts.extraObjects??'待验证'}\n`:'')+
+      resumeButton.disabled=!['VALIDATING','READY'].includes(p.status);cancelButton.disabled=!['VALIDATING','READY','EXPIRED','STALE'].includes(p.status);confirmButton.disabled=p.status!=='READY';
+      const status={NOT_STARTED:'尚未开始',VALIDATING:'验证中，进度已保存，可继续',READY:'候选已通过已知历史验证，等待确认',CANCELLED:'已取消，原绑定保留',EXPIRED:'预检已到期，请新建预检',STALE:'预检已失效，请新建预检',COMMITTED:'本机访问端点已切换，原 Writer 和本地数据保留'}[p.status]??p.status;
+      output.textContent=`${status}\n数据集：${p.datasetId??'见当前工作区绑定'}\n`+(p.facts?`网络可达：${p.facts.networkReachable?'已验证':'未确认'}；TLS / 认证：${p.facts.tlsAndAuthenticationValid?'已验证':'未确认'}\nDescriptor 精确匹配：${p.facts.descriptorExact?'是':'未确认'}\n已知历史完整回读：${p.facts.knownHistoryComplete?'完成':'尚未完成'}；额外对象：${p.facts.extraObjects??'待验证'}\n`:'')+
         (p.failure?`本次验证暂停：${p.failure.stage} / ${p.failure.code}\n`:'')+'旧端点新变化与未知 Writer 未能证明；其他设备接收未知。';
     };
     const call=async(action,extra={})=>{try{const result=await post('/api/endpoint',{workspaceId:w.id,action,token:preview?.token??sessionStorage.getItem(key),...extra});display(result);}catch(e){output.textContent=e.message;}};
-    controls.append(button('只读预检所选连接',()=>call('preview',{candidate:{connectionId:select.value}})),button('继续上次预检',()=>call('resume')),button('查询状态',()=>call('status')),button('取消预检',()=>call('cancel')),
-      button('确认更换此工作区端点',async()=>{
+    controls.append(button('只读预检所选连接',()=>call('preview',{candidate:{connectionId:select.value}})),resumeButton=button('继续上次预检',()=>call('resume')),button('查询状态',()=>call('status')),cancelButton=button('取消预检',()=>call('cancel')),
+      confirmButton=button('确认更换此工作区端点',async()=>{
         if(preview?.status!=='READY')return notifyUser('请先继续预检，直到已知历史验证完成');
         if(!await confirmAction(`仅工作区 ${w.name} 改用独立连接；保留旧连接和其他工作区。本地课程、Writer、冲突和回执保留。旧端点新写入未能证明，其他设备接收未知。数据集 ${preview.datasetId}`,'确认安全切换'))return;
         await call('confirm',{confirm:preview.datasetId,version:preview.version,catalogVersion:preview.catalogVersion});
       }));
-    $('fields').append(el('p','先添加候选连接，填入新地址、凭据或经独立核对的证书。本预检只读取；不初始化、不上传、不改变绑定。验证进度持久保存，重开后可继续。共享连接不会被隐式修改。'),select,controls,output);
-    void call('status');return ()=>({});
+    $('fields').append(el('p','先添加候选连接，填入新地址、凭据或经独立核对的证书。本预检只读取；不初始化、不上传、不改变绑定。验证进度持久保存，创建后 24 小时固定到期；重开和继续不延长到期时间。共享连接不会被隐式修改。'),select,controls,output);
+    resumeButton.disabled=cancelButton.disabled=confirmButton.disabled=true;void call('status');return ()=>({});
   });
 }
 function connectionDialog(type, c = null) {

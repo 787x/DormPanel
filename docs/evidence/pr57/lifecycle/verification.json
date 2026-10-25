@@ -1,0 +1,58 @@
+{
+  "base": "d0d3aebaa4414d2645a0288657c0bf75d8016ba9",
+  "nodeSourceSha256": "719a5d3b06f8c08fb13dc489917255bb9f280461daf50bf736ce1d82cda2f889",
+  "nasRegression": {
+    "passed": 97,
+    "failed": 0,
+    "node": "22.18.0",
+    "user": "dormpanel-schedule-manager"
+  },
+  "nasFinal": {
+    "passed": 20,
+    "failed": 0,
+    "covers": "70 task cancellations, commit deduplication, stale/expiry, quota, default read CLI/MCP cancellation, approval/uncertain-intent protection, cleanup interruption, backup/maintenance; stored RAW reference guard and owner-scoped latest beyond 128 receipts"
+  },
+  "jvm": {
+    "tests": 6,
+    "failed": 0
+  },
+  "devices": {
+    "Phone MIX 2S": {
+      "passed": 3,
+      "skipped": 1,
+      "extraFinalUiPassed": 1,
+      "extraFinalLifecyclePassed": 1
+    },
+    "X08E": {
+      "passed": 3,
+      "skipped": 1,
+      "extraFinalUiPassed": 1,
+      "extraFinalLifecyclePassed": 1
+    }
+  },
+  "retention": {
+    "activePerOwner": 8,
+    "fnosActivePerWorkspace": 64,
+    "tasksIncludingCleanup": 128,
+    "ttlHours": 24,
+    "recentTerminalRecords": 32,
+    "confirmedReceipts": "protected, retained for idempotence",
+    "legacyAndroidCaches": "protected, paths and logical bytes registered; no future duplicate candidate caches"
+  },
+  "safety": {
+    "dailyApkInstalled": false,
+    "dailyFpkInstalled": false,
+    "remoteObjectsDeleted": false,
+    "sharedCacheOrRawDeleted": false
+  },
+  "notRun": [
+    "fresh direct-NAS Android interoperability (probe absent; one skipped on each device)",
+    "real power loss",
+    "long growth or soak",
+    "daily APK/FPK installation"
+  ],
+  "earlierTargetSourceSha256": "5ec2399e0254f47473aadf4d12d54fb82e192d2e16734814dbdefefa077c80b8",
+  "date": "2026-10-26",
+  "fnosBuild": "npm project build/check; no new FPK installation",
+  "gitCanonicalSourceSha256": "03534f74e6a2d4ddeb1bcd654b5f005ed44ac17199e286de01a69e2b386ee394"
+}

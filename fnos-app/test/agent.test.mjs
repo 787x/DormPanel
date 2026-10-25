@@ -93,6 +93,23 @@ for(const kind of ['cli','mcp'])test(`PR57 ${kind}: read-only preview and resume
   const status=await call('endpoint.status',{workspaceId,token});assert(status.ok);assert.equal(status.data.status,'COMMITTED');
 });
 const snapshotRows=f=>f.app.db.activeV3.journal.meta.db.prepare("SELECT * FROM v3_records WHERE ns='snapshot' ORDER BY seq").all();
+for(const kind of ['cli','mcp'])test(`PR57 lifecycle ${kind}: default reader can cancel failed private preview; pending approval pins evidence`,async t=>{
+  const f=await maintenanceV3(t),call=await maintenanceTransport(t,f,kind),workspaceId=f.context().workspaceId;
+  await f.grant([]);const factory=f.app.catalog.v3RemoteFactory;
+  f.app.catalog.v3RemoteFactory=()=>({read:async()=>{throw Error('offline');}});
+  assert.equal((await call('endpoint.preview',{workspaceId,candidate:{type:'webdav',name:'offline',url:'https://offline.test/',username:'u',password:'do-not-leak'}})).ok,false);
+  let latest=await call('endpoint.status',{workspaceId});assert(latest.ok);assert.equal(latest.data.status,'VALIDATING');
+  const token=latest.data.token;const cancelled=await call('endpoint.cancel',{workspaceId,token});assert(cancelled.ok,JSON.stringify(cancelled));assert.equal(cancelled.data.status,'CANCELLED');
+  assert(!JSON.stringify(cancelled).includes('do-not-leak'));
+  assert.equal((await f.webCall('POST','/api/endpoint',{workspaceId,action:'status',token},{'X-DormPanel-CSRF':f.csrf})).status,400);
+  f.app.catalog.v3RemoteFactory=factory;await f.grant();
+  latest=await call('endpoint.preview',{workspaceId,candidate:{type:'webdav',name:'pinned',url:'https://new.test/',username:'u',password:'secret'}});
+  for(let n=0;n<20&&latest.data.status!=='READY';n++)latest=await call('endpoint.resume',{workspaceId,token:latest.data.token});
+  const input={...f.context(),token:latest.data.token,confirm:latest.data.datasetId},id=operationId();
+  const requested=await call('approvals.request',{operation:'endpoint.confirm',input,targetOperationId:id},{operationId:operationId()});assert(requested.ok,JSON.stringify(requested));
+  await f.admin({action:'approve',id:requested.data.approvalId});assert.equal((await call('endpoint.cancel',{workspaceId,token:input.token})).ok,false);
+  assert((await call('endpoint.confirm',input,{operationId:id,approvalId:requested.data.approvalId})).ok);
+});
 
 for(const kind of ['cli','mcp'])test(`PR56 approval ${kind}: v3 回退完整独立批准、当前父引用与重复请求`,async t=>{
   const f=await maintenanceV3(t),call=await maintenanceTransport(t,f,kind);

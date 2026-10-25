@@ -1,0 +1,165 @@
+Reusing configuration cache.
+> Task :app:preBuild UP-TO-DATE
+> Task :schedule-core:generateDebugAssets UP-TO-DATE
+> Task :schedule-core:generateDebugAndroidTestAssets UP-TO-DATE
+> Task :phone-app:preBuild UP-TO-DATE
+> Task :schedule-core:preBuild UP-TO-DATE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :phone-app:generateDebugAssets UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :phone-app:preDebugBuild UP-TO-DATE
+> Task :phone-app:extractDeepLinksDebug UP-TO-DATE
+> Task :phone-app:javaPreCompileDebug UP-TO-DATE
+> Task :phone-app:validateSigningDebug UP-TO-DATE
+> Task :phone-app:writeDebugAppMetadata UP-TO-DATE
+> Task :phone-app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :phone-app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :phone-app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :schedule-core:preDebugBuild UP-TO-DATE
+> Task :schedule-core:preDebugUnitTestBuild UP-TO-DATE
+> Task :schedule-core:generateDebugResources UP-TO-DATE
+> Task :schedule-core:preDebugAndroidTestBuild UP-TO-DATE
+> Task :schedule-core:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :schedule-core:processDebugNavigationResources UP-TO-DATE
+> Task :schedule-core:javaPreCompileDebugAndroidTest UP-TO-DATE
+> Task :schedule-core:javaPreCompileDebug UP-TO-DATE
+> Task :schedule-core:generateDebugAndroidTestResources UP-TO-DATE
+> Task :schedule-core:mapDebugAndroidTestSourceSetPaths UP-TO-DATE
+> Task :schedule-core:mapDebugSourceSetPaths UP-TO-DATE
+> Task :schedule-core:extractDeepLinksDebug UP-TO-DATE
+> Task :phone-app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :schedule-core:mergeDebugJniLibFolders UP-TO-DATE
+> Task :schedule-core:mergeDebugAndroidTestJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :schedule-core:writeDebugAndroidTestSigningConfigVersions UP-TO-DATE
+> Task :schedule-core:mergeDebugAssets UP-TO-DATE
+> Task :schedule-core:packageDebugAndroidTestResources UP-TO-DATE
+> Task :schedule-core:processDebugManifest UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:generateDebugGlobalSynthetics UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :phone-app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :schedule-core:mergeDebugAndroidTestAssets UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :phone-app:generateDebugResources UP-TO-DATE
+> Task :phone-app:generateDebugGlobalSynthetics UP-TO-DATE
+> Task :phone-app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :phone-app:desugarDebugFileDependencies UP-TO-DATE
+> Task :schedule-core:processDebugAndroidTestNavigationResources UP-TO-DATE
+> Task :schedule-core:generateDebugAndroidTestGlobalSynthetics UP-TO-DATE
+> Task :schedule-core:writeDebugAarMetadata UP-TO-DATE
+> Task :schedule-core:validateSigningDebugAndroidTest UP-TO-DATE
+> Task :schedule-core:mergeDebugNativeLibs NO-SOURCE
+> Task :phone-app:mergeDebugAssets UP-TO-DATE
+> Task :schedule-core:checkDebugAndroidTestDuplicateClasses UP-TO-DATE
+> Task :schedule-core:desugarDebugAndroidTestFileDependencies UP-TO-DATE
+> Task :schedule-core:mergeDebugAndroidTestManifest UP-TO-DATE
+> Task :schedule-core:compileDebugAndroidTestNavigationResources UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :schedule-core:processDebugAndroidTestManifest UP-TO-DATE
+> Task :schedule-core:packageDebugResources UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :phone-app:processDebugNavigationResources UP-TO-DATE
+> Task :schedule-core:compileDebugLibraryResources UP-TO-DATE
+> Task :schedule-core:parseDebugLocalResources UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :schedule-core:compressDebugAndroidTestAssets UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :phone-app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :phone-app:compressDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :schedule-core:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :schedule-core:parseDebugAndroidTestLocalResources UP-TO-DATE
+> Task :schedule-core:checkDebugAndroidTestAarMetadata UP-TO-DATE
+> Task :phone-app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :phone-app:packageDebugResources UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :schedule-core:mergeDebugAndroidTestResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :phone-app:mergeDebugResources UP-TO-DATE
+> Task :schedule-core:generateDebugAndroidTestRFile UP-TO-DATE
+> Task :schedule-core:generateDebugRFile UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :phone-app:mergeExtDexDebug UP-TO-DATE
+> Task :app:generateDebugRFile UP-TO-DATE
+> Task :phone-app:parseDebugLocalResources UP-TO-DATE
+> Task :schedule-core:mergeDebugAndroidTestNativeLibs NO-SOURCE
+> Task :phone-app:mergeDebugNativeLibs NO-SOURCE
+> Task :schedule-core:stripDebugAndroidTestDebugSymbols NO-SOURCE
+> Task :phone-app:generateDebugRFile UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :phone-app:stripDebugDebugSymbols NO-SOURCE
+> Task :schedule-core:generateDebugUnitTestStubRFile UP-TO-DATE
+> Task :schedule-core:mergeExtDexDebugAndroidTest UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeDebugNativeLibs NO-SOURCE
+> Task :app:stripDebugDebugSymbols NO-SOURCE
+> Task :phone-app:processDebugMainManifest UP-TO-DATE
+> Task :phone-app:processDebugManifest UP-TO-DATE
+> Task :phone-app:processDebugManifestForPackage UP-TO-DATE
+> Task :schedule-core:processDebugAndroidTestResources UP-TO-DATE
+> Task :phone-app:processDebugResources UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :schedule-core:kspDebugKotlin
+> Task :schedule-core:compileDebugKotlin
+> Task :schedule-core:compileDebugJavaWithJavac NO-SOURCE
+> Task :schedule-core:processDebugJavaRes UP-TO-DATE
+> Task :schedule-core:bundleLibRuntimeToDirDebug
+> Task :schedule-core:bundleLibRuntimeToJarDebug
+> Task :schedule-core:bundleLibCompileToJarDebug
+> Task :schedule-core:kspDebugUnitTestKotlin SKIPPED
+> Task :schedule-core:kspDebugAndroidTestKotlin SKIPPED
+> Task :phone-app:compileDebugKotlin
+> Task :phone-app:compileDebugJavaWithJavac NO-SOURCE
+> Task :phone-app:processDebugJavaRes UP-TO-DATE
+> Task :phone-app:dexBuilderDebug UP-TO-DATE
+> Task :phone-app:mergeProjectDexDebug UP-TO-DATE
+> Task :phone-app:mergeDebugJavaResource UP-TO-DATE
+> Task :schedule-core:compileDebugAndroidTestKotlin
+> Task :schedule-core:compileDebugAndroidTestJavaWithJavac NO-SOURCE
+> Task :schedule-core:processDebugAndroidTestJavaRes UP-TO-DATE
+> Task :schedule-core:dexBuilderDebugAndroidTest UP-TO-DATE
+> Task :schedule-core:mergeProjectDexDebugAndroidTest UP-TO-DATE
+> Task :schedule-core:mergeDebugAndroidTestJavaResource UP-TO-DATE
+> Task :app:mergeLibDexDebug
+> Task :phone-app:mergeLibDexDebug
+> Task :schedule-core:mergeLibDexDebugAndroidTest
+> Task :phone-app:packageDebug
+> Task :phone-app:assembleDebug
+> Task :phone-app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :schedule-core:packageDebugAndroidTest
+> Task :schedule-core:assembleDebugAndroidTest
+> Task :schedule-core:createDebugAndroidTestApkListingFileRedirect UP-TO-DATE
+> Task :schedule-core:compileDebugUnitTestKotlin
+> Task :schedule-core:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :schedule-core:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :app:kspDebugKotlin
+> Task :app:compileDebugKotlin
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:dexBuilderDebug UP-TO-DATE
+> Task :app:mergeProjectDexDebug UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:packageDebug
+> Task :app:assembleDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.sqlite.SQLiteJDBCLoader in an unnamed module (file:/C:/Users/34530/.gradle/caches/modules-2/files-2.1/org.xerial/sqlite-jdbc/3.41.2.2/ddeb8d3a3004f412ed19b4c98b3aec11d9452ab5/sqlite-jdbc-3.41.2.2.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+> Task :schedule-core:testDebugUnitTest
+
+BUILD SUCCESSFUL in 7s
+124 actionable tasks: 17 executed, 107 up-to-date
+Configuration cache entry reused.

@@ -5,14 +5,14 @@
 ## 实现与操作
 
 - fnOS「数据源管理 → 工作区 → 更多操作 → 选择访问端点」：先添加候选连接，再只读预检、继续、查询、取消或确认。服务端保存进度，重开页面可查询本管理员的上次任务。候选配置冻结为独立连接；原共享连接及其他工作区不变。
-- CLI/MCP 共用 `/api/endpoint` 与 `V3EndpointMove`。`endpoint.preview/resume/status` 仅需 read（POST 用于避免凭据进入查询串）；`endpoint.cancel` 需 admin；`endpoint.confirm` 需 admin，Agent 还必须申请独立网页批准。批准摘要只含身份、目标地址、账号名、精确信任指纹、验证事实及影响范围，不含密码或证书。
+- CLI/MCP 共用 `/api/endpoint` 与 `V3EndpointMove`。`endpoint.preview/resume/status` 仅需 read（POST 用于避免凭据进入查询串）；追加生命周期修复后，read 也可取消本身份私有预检，独立批准/未决操作期间保留材料；`endpoint.confirm` 需 admin，Agent 还必须申请独立网页批准。批准摘要只含身份、目标地址、账号名、精确信任指纹、验证事实及影响范围，不含密码或证书。
 - Android 的 X08E/Phone 共用「共享课表 → 安全更换 v3 访问端点 / 继续预检」。候选账号整体由现有 Keystore 密钥加密；确认后仅此 v3 课表采用独立账号，全局 WebDAV 导入账号保留。前台和 JobService 从同一活动 Room Store 读取已提交凭据。
 
 预检只进行 GET/PROPFIND/授权本地读取；没有 publication port，不调用同步 round，不创建远端 Descriptor、Genesis、Commit 或目录。持久记录只落在私有检查任务与候选图中，不改业务、前沿、错误、冲突、Pending/capture 或回执。
 
 每次先直接回读绑定的 Descriptor 路径、datasetId 和完整 RAW SHA-256；再分页回读全部已知 node，保留全部 observed 路径，复用既有 `V3History` 验证祖先、继承、Checkpoint、Transition 与迟到分支。候选图与活动图隔离；候选缓存命中不能代替候选端点实际读取。额外前沿不在端点操作中应用，切换后的普通 round 负责三方合并与冲突。
 
-每轮至多推进 16 个源对象、16 个已观察路径、32 次 scope 发现和 16 项待验证任务，仍共享现有请求、字节、时间和闭包预算。进度逐页持久化。`READY` 表示已知引用及本次发现范围通过验证，不代表全目录一致或未知旧 Writer 停写。任务保留上限为 64，不做远端或缓存 GC。
+每轮至多推进 16 个源对象、16 个已观察路径、32 次 scope 发现和 16 项待验证任务，仍共享现有请求、字节、时间和闭包预算。进度逐页持久化。`READY` 表示已知引用及本次发现范围通过验证，不代表全目录一致或未知旧 Writer 停写。追加修复将累计 64 个任务改为固定到期的有效任务管理及有界候选图清理；不做远端或共享缓存 GC。有效任务、最小回执和旧缓存的保留规则见 [生命周期追加修复](pr57-endpoint-lifecycle.md)。
 
 确认绑定源 Workspace 状态、Catalog revision、活动前沿及已知 node/observed 输入；再次读取 Descriptor、候选前沿并列举当前前沿 Epoch。新本地编辑或已知证据变化拒绝旧确认；最终复查发现额外候选历史会使任务过期，必须重新预检。相同决策重复确认返回原回执。
 

@@ -29,7 +29,7 @@ class V3EndpointAndroidTest {
         val executor=Executors.newSingleThreadExecutor();val db=Room.databaseBuilder(context,ScheduleDatabase::class.java,name).build();val store=RoomScheduleStore(db,executor,profiles=TermScheduleProfileStore(context))
         val remote=Remote();var source:ScheduleSource?=null;var controller:SharedScheduleController?=null;var dialog:android.app.AlertDialog?=null
         try {
-            store.prepareV3("https://isolated.invalid/");repeat(6){store.synchronizeV3(remote,remote,V3Budget())}
+            store.prepareV3("https://isolated.invalid/shared/course/");repeat(6){store.synchronizeV3(remote,remote,V3Budget())}
             V3HttpsProbeActivity.resumed=java.util.concurrent.CountDownLatch(1)
             val launch=instrumentation.uiAutomation.executeShellCommand("am start -n ${context.packageName}/com.dormpanel.app.schedule.V3HttpsProbeActivity")
             android.os.ParcelFileDescriptor.AutoCloseInputStream(launch).use { it.readBytes() };assertTrue(V3HttpsProbeActivity.resumed.await(15,TimeUnit.SECONDS))
@@ -40,8 +40,22 @@ class V3EndpointAndroidTest {
                 fun find(view:View):Button? { if(view is Button && view.text.toString().startsWith("安全更换 v3"))return view;if(view is ViewGroup)for(n in 0 until view.childCount)find(view.getChildAt(n))?.let{return it};return null }
                 assertTrue(requireNotNull(find(dialog!!.window!!.decorView)).performClick())
             };instrumentation.waitForIdleSync();android.os.SystemClock.sleep(600) // finish Window animation before visual evidence
+            val bound="https://isolated.invalid/shared/course/"
+            assertTrue(instrumentation.uiAutomation.rootInActiveWindow.findAccessibilityNodeInfosByText(bound).any { it.text?.toString()==bound })
+            val baseField=instrumentation.uiAutomation.rootInActiveWindow.findAccessibilityNodeInfosByText("https://isolated.invalid/").single { it.text?.toString()=="https://isolated.invalid/" }
+            assertTrue(baseField.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,android.os.Bundle().apply { putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"https://new.invalid:8443/account/") }))
+            instrumentation.waitForIdleSync()
+            // Editing the account server alone does not silently alter the bound path.
+            assertTrue(instrumentation.uiAutomation.rootInActiveWindow.findAccessibilityNodeInfosByText(bound).any { it.text?.toString()==bound })
+            assertTrue(instrumentation.uiAutomation.rootInActiveWindow.findAccessibilityNodeInfosByText("按新服务器地址保留当前共享目录路径").single().performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+            instrumentation.waitForIdleSync()
+            val suggested="https://new.invalid:8443/shared/course/"
+            assertTrue(instrumentation.uiAutomation.rootInActiveWindow.findAccessibilityNodeInfosByText(suggested).any { it.text?.toString()==suggested })
             val bitmap=requireNotNull(instrumentation.uiAutomation.takeScreenshot());val out=java.io.File(context.getExternalFilesDir(null),"pr57-endpoint-ui.png")
             out.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) };bitmap.recycle()
+            val rejected=CompletableFuture<JSONObject>()
+            instrumentation.runOnMainSync { controller!!.endpointCancel(UUID.randomUUID().toString()) { rejected.complete(it) } }
+            assertEquals("OPERATION_FAILED",rejected.get(20,TimeUnit.SECONDS).getString("status"));assertFalse(controller!!.busy)
         } finally {
             instrumentation.runOnMainSync { dialog?.dismiss();controller?.close();source?.close();V3HttpsProbeActivity.current.get()?.finish() }
             store.close();assertTrue(executor.awaitTermination(20,TimeUnit.SECONDS));WebDavSettings.overrideNamespace=null;SharedScheduleSettings.overrideNamespace=null
@@ -111,8 +125,8 @@ class V3EndpointAndroidTest {
         try {
             store.prepareV3("https://old.invalid/");repeat(6){store.synchronizeV3(remote,remote,V3Budget())};edit("offline edit")
             val before=store.v3Information().toString();val puts=remote.puts
-            val candidate=WebDavAccount(server.url("/new/").toString(),"new","new secret")
-            var p=store.previewV3Endpoint(candidate,candidate.baseUrl,settings);val token=p.getString("token")
+            val candidate=WebDavAccount(server.url("/").toString(),"new","new secret");val newFolder=server.url("/new/").toString()
+            var p=store.previewV3Endpoint(candidate,newFolder,settings);val token=p.getString("token")
             reopen() // Progress and sealed candidate survive; global account unchanged.
             repeat(15){if(p.optString("status")!="READY")p=store.continueV3Endpoint(token,settings)}
             assertEquals("READY",p.getString("status"));assertEquals(before,store.v3Information().toString());assertEquals(global!!.password,settings.account()!!.password);assertEquals(global.baseUrl,settings.account()!!.baseUrl)
@@ -124,7 +138,8 @@ class V3EndpointAndroidTest {
             val result=store.confirmV3Endpoint(token,settings);assertEquals("COMMITTED",result.getString("status"))
             assertEquals(result.toString(),store.confirmV3Endpoint(token,settings).toString());assertEquals(candidate.password,store.v3Account(settings).password);assertEquals(candidate.baseUrl,store.v3Account(settings).baseUrl);assertEquals(global!!.password,settings.account()!!.password);assertEquals(global.baseUrl,settings.account()!!.baseUrl)
             assertEquals(before,store.v3Information().toString());assertEquals(puts,remote.puts)
-            var next=store.previewV3Endpoint(candidate,candidate.baseUrl,settings)
+            assertEquals(newFolder,store.v3EndpointFolder())
+            var next=store.previewV3Endpoint(candidate,store.v3EndpointFolder(),settings)
             repeat(15){if(next.optString("status")!="READY")next=store.continueV3Endpoint(next.getString("token"),settings)}
             edit("after preview");assertThrows(Exception::class.java){store.confirmV3Endpoint(next.getString("token"),settings)}
             assertEquals("after preview",await<ScheduleState>(store::load).entries.single().title)

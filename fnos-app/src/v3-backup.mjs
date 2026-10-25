@@ -7,6 +7,7 @@ import { decode, sha } from './v3-protocol.mjs';
 import { match } from './v3-store.mjs';
 import { canonical, Workspace } from './workspace.mjs';
 import { createHash } from 'node:crypto';
+import { endpointNamespace } from './v3-endpoint-lifecycle.mjs';
 
 export const v3File = name => /^workspaces\/[0-9a-f-]{36}\/v3\/(?:v3-state-v2.sqlite|sync-v3-index-v2\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{60}\/(?:witness.json|object.dpv|damaged-[0-9a-f-]{36}.dpv))$/.test(name);
 export const v3Directory = name => /^workspaces\/[0-9a-f-]{36}\/v3(?:\/sync-v3-index-v2(?:\/[0-9a-f]{2}(?:\/[0-9a-f]{2}(?:\/[0-9a-f]{60})?)?)?)?$/.test(name);
@@ -45,7 +46,9 @@ export async function verifyV3Backup(root,id,identity,files) {
       ensure(sha(Buffer.from(row.ns+'\0'+row.k+'\0'+row.v))===row.sum,'v3 元数据校验失败');
       const value=unpack(JSON.parse(row.v));
       if(row.ns==='snapshot')ensure(sha(Buffer.from(value.bytes,'base64'))===row.k,'快照身份损坏');
-      if(row.ns==='node' || /^archiveVerify:[0-9a-f]{64}:node$/.test(row.ns) || /^endpoint:[0-9a-f-]{36}:node$/.test(row.ns)) {
+      const endpoint=endpointNamespace(row.ns),owner=endpoint&&raw('endpointJob',endpoint.token),cleaning=owner?.status==='CLEANING';
+      if(cleaning)ensure(owner.token===endpoint.token&&owner.workspaceId===id,'候选清理归属异常');
+      if(!cleaning&&(row.ns==='node' || /^archiveVerify:[0-9a-f]{64}:node$/.test(row.ns) || /^endpoint:[0-9a-f-]{36}:node$/.test(row.ns))) {
         const prefix=row.ns.slice(0,-4);
         ensure(raw(prefix+'identity',value.objectId).path===row.k,'历史身份索引损坏');
         for(const ref of value.refs) {
