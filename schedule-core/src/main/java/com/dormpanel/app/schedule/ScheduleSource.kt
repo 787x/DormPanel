@@ -63,6 +63,7 @@ interface ScheduleStore {
 class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock = DeviceScheduleClock,
     private val profileResolver: (String) -> TermScheduleProfile? = { BuiltInProfiles.builtIn(it) }) {
     var applyingSnapshot = false; private set
+    var retryingLocalRead = false; private set
     /** A readable cached snapshot does not admit writes after a failed read. Conflicts alone remain editable. */
     val readOnly get() = !closed && (error || ((store as? RoomScheduleStore)?.businessPaused() ?: ((store as? ScheduleV2Store)?.v2DatasetPaused() == true)))
     val editBlockReason get() = if (error) ScheduleLocalReadFailed().message else
@@ -81,6 +82,18 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
             result.onSuccess { state = ordered(if (it.sync == null) it.copy(profiles = effectiveProfiles(it.sources)) else it); ready = true; error = false }.onFailure { error = true }
             applyingSnapshot = false; refresh(); callback(result.map { })
         }
+    }
+    /** Error-only UI admission; no view callback or remote action is captured here. */
+    fun retryLocalRead(): Boolean {
+        if (closed || !error || applyingSnapshot || retryingLocalRead) return false
+        retryingLocalRead = true
+        reload {
+            retryingLocalRead = false
+            // reload already notified views with applyingSnapshot=false, under the local-only marker.
+            // Do not emit a second normal-ready event which could start remote subscribers.
+        }
+        if (retryingLocalRead) refresh() // Async read: render progress after reload has gated edits.
+        return true
     }
     fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) = store.exportSnapshot(datasetId, parent, generation, callback)
     fun applySnapshot(bytes: ByteArray, callback: (Result<Unit>) -> Unit) {

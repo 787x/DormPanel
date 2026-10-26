@@ -8,9 +8,10 @@ class ScheduleMigrationUiGuardTest {
         var paused = false
         var refuseQueued = false
         var writes = 0
+        var failLoad = false
         var data = ScheduleState(entries = listOf(TimetableEntry("existing", "原课程", 1, 480, 530, "")))
         override fun v2DatasetPaused() = paused
-        override fun load(callback: (Result<ScheduleState>) -> Unit) = callback(Result.success(data))
+        override fun load(callback: (Result<ScheduleState>) -> Unit) = callback(if (failLoad) Result.failure(IllegalStateException("read failed")) else Result.success(data))
         override fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit) {
             if (refuseQueued) { paused = true; callback(Result.failure(ScheduleDatasetWriteProtected())); return }
             writes++; data = data.copy(entries = data.entries + entry); callback(Result.success(Unit))
@@ -48,5 +49,14 @@ class ScheduleMigrationUiGuardTest {
         store.refuseQueued = true
         source.saveEntry("不可持久化的临时视图", 2, 480, 530)
         assertEquals(original, source.state); assertEquals(0, store.writes); assertFalse(source.error); assertTrue(source.readOnly)
+    }
+    @Test fun successfulLocalRetryDoesNotReleaseExistingMigrationProtection() {
+        val store = Store(); val source = ScheduleSource(store); val original = source.state
+        store.paused = true; store.failLoad = true; source.reload()
+        store.failLoad = false; assertTrue(source.retryLocalRead())
+        assertFalse(source.error); assertTrue(source.readOnly); assertFalse(source.editable)
+        assertFalse(source.saveEntry("still protected", 2, 480, 530))
+        assertEquals(original, source.state); assertEquals(0, store.writes)
+        source.close()
     }
 }

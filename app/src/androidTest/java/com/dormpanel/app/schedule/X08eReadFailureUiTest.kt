@@ -5,6 +5,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.*
 import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.assertion.ViewAssertions.doesNotExist
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.IsolatedDashboardRule
@@ -43,6 +44,7 @@ class X08eReadFailureUiTest {
                 s.onActivity { ViewModelProvider(it)[DashboardViewModel::class.java].schedule.reload() }
                 waitFor(s) { it.schedule.error && !it.schedule.applyingSnapshot }
                 onView(withText(containsString("暂不可编辑"))).check(matches(isDisplayed()))
+                onView(withText("重新读取本机课表")).check(matches(isDisplayed()))
                 onView(withText("+ Add event")).check(matches(not(isEnabled())))
                 onView(withText("Timetable")).perform(click())
                 for (label in listOf("+ Add class", "Import timetable", "Receive from phone/computer")) onView(withText(label)).check(matches(not(isEnabled())))
@@ -51,13 +53,44 @@ class X08eReadFailureUiTest {
                     assertFalse(source.saveEntry("不应新增", 1, 480, 530)); source.deleteEntry(original.single().id)
                 }
                 assertEquals(original, f.entries())
-                restore(); s.onActivity { ViewModelProvider(it)[DashboardViewModel::class.java].schedule.reload() }
+                onView(withText("重新读取本机课表")).perform(click())
+                waitFor(s) { it.schedule.error && !it.schedule.retryingLocalRead && !it.schedule.applyingSnapshot }
+                onView(withText("重新读取本机课表")).check(matches(isEnabled()))
+                assertEquals(original, f.entries())
+                val checkpoints = f.checkpoints().minus(1); val requestCount = f.requests.size
+                restore(); onView(withText("重新读取本机课表")).perform(click())
                 waitFor(s) { it.schedule.editable }
+                onView(withText("重新读取本机课表")).check(doesNotExist())
+                assertEquals(checkpoints, f.checkpoints()); assertEquals(requestCount, f.requests.size)
                 onView(withText("+ Add class")).check(matches(isEnabled()))
                 s.onActivity { assertTrue(ViewModelProvider(it)[DashboardViewModel::class.java].schedule.saveEntry("恢复后课程", 1, 480, 530)) }
                 val savedEnd = System.currentTimeMillis() + 10000
                 while (f.entries().size != 2) { check(System.currentTimeMillis() < savedEnd); Thread.sleep(40) }
                 assertTrue(f.entries().any { it.title == "原课程" })
+            }
+        }
+    }
+    @Test fun initialFailureRetryIsAccessibleAndDoesNotRunStartupSync() {
+        V3UiFixture(InstrumentationRegistry.getInstrumentation().targetContext, initialReadFailure = true).use { f ->
+            ActivityScenario.launch(MainActivity::class.java).use { s ->
+                waitFor(s) { it.schedule.error && !it.schedule.ready }
+                s.onActivity {
+                    val vm = ViewModelProvider(it)[DashboardViewModel::class.java]
+                    it.setContentView(SchedulePageView(it, vm.schedule, ScheduleSession(vm.schedule.clock), vm.appearance, {}))
+                }
+                onView(withText("重新读取本机课表")).check(matches(isDisplayed()))
+                onView(withText("Timetable")).perform(click())
+                onView(withText("重新读取本机课表")).check(matches(isDisplayed()))
+                f.repairInitialReadFailure()
+                val before = f.checkpoints(); val count = f.requests.size
+                val settings = SharedScheduleSettings(InstrumentationRegistry.getInstrumentation().targetContext)
+                val history = settings.lastResult to settings.lastSuccess
+                onView(withText("重新读取本机课表")).perform(click())
+                waitFor(s) { it.schedule.ready && !it.schedule.error && !it.schedule.retryingLocalRead && !it.sharedSchedule.busy }
+                onView(withText("重新读取本机课表")).check(doesNotExist())
+                assertEquals("首次读取后可见课程", f.entries().single().title)
+                assertEquals(before, f.checkpoints()); assertEquals(count, f.requests.size)
+                assertEquals(history, settings.lastResult to settings.lastSuccess)
             }
         }
     }

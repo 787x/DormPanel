@@ -1,5 +1,7 @@
 # PR60 第二轮审查收尾
 
+随后补充的页面手动重读入口及定向验证见 [pr60-local-read-retry.md](pr60-local-read-retry.md)，本页保留此前写保护与安全拒绝记录。
+
 基线：`e870af012fb25c83246c058f5854c9b95cfb0c84`。继续更新原 PR60；[前轮修复](pr60-review-fixes.md)及[初始 UX 验证](pr60-shared-schedule-ux.md)保留，不重复全套矩阵。
 
 ## 本机读取错误与业务写保护

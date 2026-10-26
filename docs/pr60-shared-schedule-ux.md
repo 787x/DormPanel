@@ -6,6 +6,8 @@
 
 第二轮写保护与安全拒绝收尾见 [pr60-review-round2.md](pr60-review-round2.md)。
 
+本机读取失败后的页面重试入口见 [pr60-local-read-retry.md](pr60-local-read-retry.md)。
+
 ## 状态—界面—动作
 
 X08E 与 Phone 共用 `SharedSchedulePresentation` 和对话框。控制器在工作线程读取持久状态；页面按枚举模式、冲突、待发布阶段、保护状态及机器结果码决定操作，不解析中文日志来决定按钮。

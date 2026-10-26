@@ -24,7 +24,7 @@ class WebDavSyncController(private val context: Context, private val source: Sch
     private var started = false
     private val active = mutableSetOf<String>()
     private val listeners = linkedSetOf<() -> Unit>()
-    private val sourceListener: () -> Unit = { if (source.ready) {
+    private val sourceListener: () -> Unit = { if (source.ready && !source.error && !source.retryingLocalRead) {
         cleanup()
         if (!started) { started = true }
         schedule()

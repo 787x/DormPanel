@@ -42,8 +42,12 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         header.addView(button("Home", returnHome))
         addView(header)
         if (!source.ready || source.error || source.state.invalidRecords > 0) addView(context.scheduleLabel(
-            if (source.error) source.editBlockReason.orEmpty()
+            if (source.error && source.retryingLocalRead && source.applyingSnapshot) "正在重新读取…已有数据保留。"
+            else if (source.error) source.editBlockReason.orEmpty()
             else if (!source.ready) "Loading local schedule…" else "Some invalid stored records are hidden and preserved.", 16f))
+        if (source.error) addView(button("重新读取本机课表") { source.retryLocalRead() }.apply {
+            isEnabled = !source.applyingSnapshot
+        })
         if (session.mode == ScheduleMode.CALENDAR) calendar() else timetable()
         applyAppearance(appearance.state)
     }

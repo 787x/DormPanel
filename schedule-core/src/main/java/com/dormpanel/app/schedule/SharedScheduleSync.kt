@@ -224,7 +224,13 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     private val automatic = Runnable { if (source.state.sync != null) synchronize(false) }
     private var initialChecked = false
     private val readyListener: () -> Unit = {
-        if (!closed && source.ready && !source.error && !initialChecked) { initialChecked = true; refreshPresentation(); sync() }
+        if (!closed && source.retryingLocalRead) {
+            // A manually recovered first load is not a request to contact the server.
+            if (source.ready && !source.error) initialChecked = true
+            if (!busy) status = settings.lastResult
+            notifyChanged()
+        }
+        else if (!closed && source.ready && !source.error && !initialChecked) { initialChecked = true; refreshPresentation(); sync() }
         else if (!closed) { if (!busy) status = settings.lastResult; notifyChanged() }
     }
     init {

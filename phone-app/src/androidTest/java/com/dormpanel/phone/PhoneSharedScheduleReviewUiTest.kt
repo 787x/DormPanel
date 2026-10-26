@@ -64,6 +64,10 @@ class PhoneSharedScheduleReviewUiTest {
                 s.onActivity { it.source.reload() }
                 waitFor(s) { it.source.error && !it.source.applyingSnapshot }
                 onView(withText(containsString("暂不可编辑"))).check(matches(isDisplayed()))
+                onView(withText("重新读取本机课表")).check(matches(isDisplayed()))
+                onView(withText("周视图")).perform(click())
+                onView(withText("重新读取本机课表")).check(matches(isDisplayed()))
+                onView(withText("日视图")).perform(click())
                 onView(withText("＋ 课程")).check(doesNotExist())
                 onView(withText("日期调整")).check(doesNotExist())
                 s.onActivity {
@@ -71,13 +75,38 @@ class PhoneSharedScheduleReviewUiTest {
                     it.source.deleteEntry(original.single().id)
                 }
                 assertEquals(original, f.entries())
-                restore(); s.onActivity { it.source.reload() }
+                onView(withText("重新读取本机课表")).perform(click())
+                waitFor(s) { it.source.error && !it.source.retryingLocalRead && !it.source.applyingSnapshot }
+                onView(withText("重新读取本机课表")).check(matches(isEnabled()))
+                assertEquals(original, f.entries())
+                val checkpoints = f.checkpoints().minus(1); val requestCount = f.requests.size
+                restore(); onView(withText("重新读取本机课表")).perform(click())
                 waitFor(s) { it.source.editable && !it.sharedSync.busy }
+                onView(withText("重新读取本机课表")).check(doesNotExist())
+                assertEquals(checkpoints, f.checkpoints()); assertEquals(requestCount, f.requests.size)
                 onView(withText("＋ 课程")).check(matches(isDisplayed()))
                 s.onActivity { assertTrue(it.source.saveEntry("恢复后课程", 1, 480, 530)) }
                 val savedEnd = System.currentTimeMillis() + 10000
                 while (f.entries().size != 2) { check(System.currentTimeMillis() < savedEnd); Thread.sleep(40) }
                 assertTrue(f.entries().any { it.title == "原课程" })
+            }
+        }
+    }
+    @Test fun initialFailureRetryDoesNotContactTheBoundServerOrChangeEvidence() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        V3UiFixture(context, initialReadFailure = true).use { f ->
+            launchPhoneTestActivity().use { s ->
+                waitFor(s) { it.source.error && !it.source.ready }
+                onView(withText("重新读取本机课表")).check(matches(isDisplayed()))
+                f.repairInitialReadFailure()
+                val before = f.checkpoints(); val count = f.requests.size
+                val settings = SharedScheduleSettings(context); val history = settings.lastResult to settings.lastSuccess
+                onView(withText("重新读取本机课表")).perform(click())
+                waitFor(s) { it.source.ready && !it.source.error && !it.source.retryingLocalRead && !it.sharedSync.busy }
+                onView(withText("重新读取本机课表")).check(doesNotExist())
+                assertEquals("首次读取后可见课程", f.entries().single().title)
+                assertEquals(before, f.checkpoints()); assertEquals(count, f.requests.size)
+                assertEquals(history, settings.lastResult to settings.lastSuccess)
             }
         }
     }

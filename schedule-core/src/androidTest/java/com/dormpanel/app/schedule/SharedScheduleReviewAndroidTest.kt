@@ -257,4 +257,32 @@ class SharedScheduleReviewAndroidTest {
             assertTrue(h.store.isV3())
         }
     }
+    @Test fun normalStartupStillChecksTheBoundServer() {
+        Harness().use { h ->
+            val root = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            h.files["/dormpanel-sync-v2/commit-${root.commitId}.dpc"] = ScheduleCommitCodec.encode(root)
+            h.store.v2Start(root, true); h.reload()
+            main { h.sync.close(); h.sync = SharedScheduleController(h.context, h.source, h.accounts, h.settings) }
+            h.result("VERIFIED")
+            assertTrue(h.requests.any { it.startsWith("GET ") })
+        }
+    }
+    @Test fun successfulManualRetryKeepsMigrationPauseAndAllEvidence() {
+        Harness().use { h ->
+            val root = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            h.store.v2Start(root, true); h.reload()
+            h.store.v2BeginDatasetInspection(h.settings.folder, h.server.url("/candidate/").toString(), id())
+            val original = requireNotNull(h.db.dao().syncRecord(21))
+            h.db.dao().checkpoint(ScheduleSyncCheckpoint(21, byteArrayOf(1))); h.reload()
+            assertTrue(main { h.source.error })
+            h.db.dao().checkpoint(original)
+            val before = h.checkpoints(); val count = h.requests.size
+            val history = h.settings.lastResult to h.settings.lastSuccess
+            main { assertTrue(h.source.retryLocalRead()) }
+            until { main { !h.source.error && !h.source.retryingLocalRead } }
+            main { assertTrue(h.source.readOnly); assertFalse(h.source.editable) }
+            assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size)
+            assertEquals(history, h.settings.lastResult to h.settings.lastSuccess)
+        }
+    }
 }

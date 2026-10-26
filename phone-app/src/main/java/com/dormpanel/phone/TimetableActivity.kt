@@ -43,7 +43,12 @@ class TimetableActivity : AppCompatActivity() {
     private var replacement: String? = null
     internal var busy = false; private set
     private val worker = Executors.newSingleThreadExecutor()
-    private val listener: () -> Unit = { render(); checkOnResume() }
+    private val listener: () -> Unit = {
+        render()
+        if (source.retryingLocalRead) {
+            if (source.ready && !source.error) resumeCheckPending = false
+        } else checkOnResume()
+    }
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && !source.readOnly && !source.applyingSnapshot) {
             val target = replacement
@@ -83,7 +88,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
     private fun checkOnResume() {
-        if (resumeCheckPending && source.ready && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
+        if (resumeCheckPending && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
             resumeCheckPending = false; sharedSync.sync()
         }
     }
@@ -120,6 +125,13 @@ class TimetableActivity : AppCompatActivity() {
                 sharedStatusView = this
                 setPadding(dp(4), 0, dp(4), 0)
                 setOnClickListener { AlertDialog.Builder(this@TimetableActivity).setMessage(sharedSync.presentation.summary()).setPositiveButton("关闭", null).show() }
+            })
+        }
+        // Above either view and the first-load early return, so failure never hides retry.
+        if (source.error) {
+            root.addView(scheduleLabel(if (source.retryingLocalRead && source.applyingSnapshot) "正在重新读取…已有数据保留。" else source.editBlockReason.orEmpty(), 16f))
+            root.addView(scheduleButton("重新读取本机课表") { source.retryLocalRead() }.apply {
+                isEnabled = !source.applyingSnapshot
             })
         }
         val week = profile?.let { ChronoUnit.WEEKS.between(it.week1Monday, monday()) + 1 }
@@ -165,8 +177,8 @@ class TimetableActivity : AppCompatActivity() {
         val list = scheduleColumn()
         scroll = ScrollView(this).apply { tag = "timetable-scroll"; addView(list); isFillViewport = true }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        if (!source.ready) { list.addView(scheduleLabel(if (source.error) "读取失败，请重新打开应用。原有数据未清除。" else "正在读取课程…", 16f)); return }
-        if (source.error || source.state.invalidRecords > 0) list.addView(scheduleLabel(source.editBlockReason ?: "存在无效记录，请检查。", 16f))
+        if (!source.ready) { if (!source.error) list.addView(scheduleLabel("正在读取课程…", 16f)); return }
+        if (!source.error && source.state.invalidRecords > 0) list.addView(scheduleLabel("存在无效记录，请检查。", 16f))
         if (busy) list.addView(scheduleLabel("正在处理文件…", 16f))
         val projected = ScheduleProjection.week(source.state, monday(), source.clock.zone())
         if (weekView) {
