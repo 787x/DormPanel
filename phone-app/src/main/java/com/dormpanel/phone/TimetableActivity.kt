@@ -39,10 +39,16 @@ class TimetableActivity : AppCompatActivity() {
         super.onPause()
     }
     private var activeTerm: String? = null
+    private var sharedStatusView: TextView? = null
     private var replacement: String? = null
     internal var busy = false; private set
     private val worker = Executors.newSingleThreadExecutor()
-    private val listener: () -> Unit = { render(); checkOnResume() }
+    private val listener: () -> Unit = {
+        render()
+        if (source.retryingLocalRead) {
+            if (source.ready && !source.error) resumeCheckPending = false
+        } else checkOnResume()
+    }
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && !source.readOnly && !source.applyingSnapshot) {
             val target = replacement
@@ -65,8 +71,8 @@ class TimetableActivity : AppCompatActivity() {
         activeTerm = savedInstanceState?.getString("term") ?: getPreferences(MODE_PRIVATE).getString("term", null)
         profiles = TermScheduleProfileStore(this)
         source = ScheduleSource(ScheduleStores.create(this, profiles), profileResolver = profiles::get)
-        profiles.editable = { source.ready && !source.readOnly && !source.applyingSnapshot && !isDestroyed }
-        sharedSync = SharedScheduleController(this, source).also { it.changed = { render() } }
+        profiles.editable = { source.editable && !isDestroyed }
+        sharedSync = SharedScheduleController(this, source).also { it.changed = { sharedStatusView?.text = it.presentation.summary() } }
         editors = PhoneEditors(this, source) { !busy }
         root = scheduleColumn().apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
         setContentView(root)
@@ -82,7 +88,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
     private fun checkOnResume() {
-        if (resumeCheckPending && source.ready && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
+        if (resumeCheckPending && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
             resumeCheckPending = false; sharedSync.sync()
         }
     }
@@ -109,19 +115,27 @@ class TimetableActivity : AppCompatActivity() {
         renderedKey = key
         restoringScroll = true
         root.removeAllViews()
+        sharedStatusView = null
         if (source.state.sync != null && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
-        val profile = activeTerm?.let(profiles::get)
+        // A failed load must render cached data without querying the unreadable catalog again.
+        val profile = if (source.error) activeTerm?.let(source.state.profiles::get) else activeTerm?.let(profiles::get)
         val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         if (::sharedSync.isInitialized && (!landscape || source.state.sync != null)) {
-            val stale = sharedSync.settings.lastSuccess.let { it > 0 && System.currentTimeMillis() - it > 86_400_000L }
-            root.addView(scheduleLabel(sharedSync.status + if (stale) " · 数据过期，显示缓存" else "", 12f).apply {
-                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            root.addView(scheduleLabel(sharedSync.presentation.summary(), 12f).apply {
+                sharedStatusView = this
                 setPadding(dp(4), 0, dp(4), 0)
-                setOnClickListener { AlertDialog.Builder(this@TimetableActivity).setMessage(sharedSync.status).setPositiveButton("关闭", null).show() }
+                setOnClickListener { AlertDialog.Builder(this@TimetableActivity).setMessage(sharedSync.presentation.summary()).setPositiveButton("关闭", null).show() }
+            })
+        }
+        // Above either view and the first-load early return, so failure never hides retry.
+        if (source.error) {
+            root.addView(scheduleLabel(if (source.retryingLocalRead && source.applyingSnapshot) "正在重新读取…已有数据保留。" else source.editBlockReason.orEmpty(), 16f))
+            root.addView(scheduleButton("重新读取本机课表") { source.retryLocalRead() }.apply {
+                isEnabled = !source.applyingSnapshot
             })
         }
         val week = profile?.let { ChronoUnit.WEEKS.between(it.week1Monday, monday()) + 1 }
-        root.addView(scheduleLabel("${if (source.state.sync == null) "离线 · " else ""}${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f).apply { tag = "week-range"
+        root.addView(scheduleLabel("${if (source.state.sync == null) "本机课表 · " else ""}${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f).apply { tag = "week-range"
             if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
                 textSize = 12f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(8), 0, dp(8), 0)
@@ -163,8 +177,8 @@ class TimetableActivity : AppCompatActivity() {
         val list = scheduleColumn()
         scroll = ScrollView(this).apply { tag = "timetable-scroll"; addView(list); isFillViewport = true }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        if (!source.ready) { list.addView(scheduleLabel(if (source.error) "读取失败，请重新打开应用。原有数据未清除。" else "正在读取课程…", 16f)); return }
-        if (source.error || source.state.invalidRecords > 0) list.addView(scheduleLabel("存储异常或存在无效记录，请检查。更改可能尚未保存。", 16f))
+        if (!source.ready) { if (!source.error) list.addView(scheduleLabel("正在读取课程…", 16f)); return }
+        if (!source.error && source.state.invalidRecords > 0) list.addView(scheduleLabel("存在无效记录，请检查。", 16f))
         if (busy) list.addView(scheduleLabel("正在处理文件…", 16f))
         val projected = ScheduleProjection.week(source.state, monday(), source.clock.zone())
         if (weekView) {
@@ -176,7 +190,7 @@ class TimetableActivity : AppCompatActivity() {
         val adjustment = source.state.daysByDate[selected.toString()]
         list.addView(scheduleLabel("$selected${adjustment?.let { " · ${if (it.mode == "none") "无课" else "使用星期 ${it.weekday} 课表"}" }.orEmpty()}", 16f))
         val classes = projected.filter { it.start < selected.plusDays(1).atStartOfDay(source.clock.zone()).toInstant() && it.end > selected.atStartOfDay(source.clock.zone()).toInstant() }
-        if (classes.isEmpty()) list.addView(scheduleLabel(if (source.readOnly) "课表正在验证或受迁移保护；本地数据保留，请从共享课表入口继续恢复。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV、XLS。", 18f))
+        if (classes.isEmpty() && !source.error) list.addView(scheduleLabel(if (source.readOnly) source.editBlockReason ?: "课表正在验证或受迁移保护；本地数据保留，请从共享课表入口继续恢复。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV、XLS。", 18f))
         classes.forEach { item ->
             list.addView(scheduleButton(buildString {
                 append(item.entry.title).append("\n")
@@ -191,10 +205,15 @@ class TimetableActivity : AppCompatActivity() {
     private fun management() {
         if (source.applyingSnapshot) return
         AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）")) { _, i ->
+            if (i < 3 && source.error) { message(source.editBlockReason.orEmpty()); return@setItems }
             when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) } }
         }.setNegativeButton("关闭", null).show()
     }
-    private fun chooseFile(target: String?) { replacement = target; picker.launch(arrayOf("*/*")) }
+    private fun chooseFile(target: String?) {
+        source.editBlockReason?.let { message(it); return }
+        if (!source.editable) return
+        replacement = target; picker.launch(arrayOf("*/*"))
+    }
     private fun sources() {
         val items = source.state.sources
         if (items.isEmpty()) { message("还没有导入来源。"); return }
@@ -232,6 +251,8 @@ class TimetableActivity : AppCompatActivity() {
             .setView(ScrollView(this).apply { addView(fields) }).setNegativeButton("取消", null).setPositiveButton("确认导入", null).create()
         dialog.show()
         dialog.getButton(-1).setOnClickListener {
+            source.editBlockReason?.let { name.error = it; return@setOnClickListener }
+            if (!source.editable) return@setOnClickListener
             if (name.text.isBlank()) { name.error = "请输入来源名称"; return@setOnClickListener }
             dialog.getButton(-1).isEnabled = false
             source.import(preview, name.text.toString(), target) { result ->

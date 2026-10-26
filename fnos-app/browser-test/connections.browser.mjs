@@ -641,3 +641,27 @@ test('审查修复：编辑 WebDAV 从原路径浏览，取消和失败不扩大
   await expect(f.page.getByLabel('共享父目录完整 URL',{exact:true})).toHaveValue('https://nas.test/dav/中文%20a/');
   await f.page.locator('#cancel').click();assert.deepEqual(f.app.catalog.manifest,before);assert.deepEqual(f.errors,[]);
 });
+
+
+test('PR60 首页按结构化状态显示共享事实，保留异常与写保护', async t => {
+  const f = await fixture(t);
+  let sample = { status: 'OBSERVED', protocol: 'v3', datasetId: 'fixture-only', dirty: false, pending: false };
+  await f.page.route('**/api/schedule?*', async route => {
+    const response = await route.fetch();
+    const value = await response.json();
+    await route.fulfill({ json: { ...value, ...sample } });
+  });
+  await f.open();
+  for (const [status, expected] of [['OBSERVED', '服务器检查成功'], ['PUBLISHED', '回读确认'], ['CONFLICT', '修改冲突'], ['BUDGET', '尚未完成'], ['DISCOVERING', '尚未完成'], ['RECOVERY_REQUIRED', '恢复未完成'], ['error', '检查失败']]) {
+    sample = { ...sample, status };
+    await f.page.reload();
+    await expect(f.page.locator('#status')).toContainText(expected);
+    assert.doesNotMatch(await f.page.locator('#status').textContent(), /Epoch|Writer|DAG|Descriptor|所有设备同步完成/);
+  }
+  sample = { ...sample, status: 'OBSERVED', dirty: true };
+  await f.page.reload(); await expect(f.page.locator('#status')).toContainText('待发布');
+  sample = { ...sample, pending: true, writeProtection: '管理员已禁止写入' };
+  await f.page.reload(); await expect(f.page.locator('#status')).toContainText('待服务器回读确认');
+  await expect(f.page.locator('#status')).toContainText('管理员已禁止写入');
+  assert.deepEqual(f.errors, []);
+});

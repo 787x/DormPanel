@@ -97,7 +97,8 @@ class PhoneSharedScheduleTest {
                     waitFor(scenario) { it.source.ready && it.hasWindowFocus() && !it.sharedSync.busy && !controller!!.busy }
                     scenario.onActivity { dialog = SharedScheduleDialog.show(it, writer!!, controller!!, true) }
                     waitFor(scenario) { dialog?.window?.decorView?.hasWindowFocus() == true }
-                    onView(withText("创建新的共享课表")).perform(scrollTo(), click())
+                    com.dormpanel.app.schedule.testing.FolderUiChecks.manage("旧版兼容与升级", "兼容旧客户端：创建 v2 课表")
+                    onView(withText("创建旧版课表")).perform(click())
                     waitFor(scenario) { !controller!!.busy }
                     assertNotNull(writerStore.v2Frame().baseline?.commitId)
                     onView(withText("关闭")).perform(click())
@@ -108,6 +109,7 @@ class PhoneSharedScheduleTest {
 
                     onView(withText("管理")).perform(click())
                     onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
+                    onView(withText("连接设置")).perform(scrollTo(), click())
                     onView(withHint("WebDAV 服务地址")).perform(scrollTo(), replaceText(account.baseUrl), closeSoftKeyboard())
                     onView(withHint("用户名")).perform(scrollTo(), replaceText("user"), closeSoftKeyboard())
                     onView(withHint("密码（留空保留已保存密码）")).perform(scrollTo(), replaceText("secret"), closeSoftKeyboard())
@@ -118,7 +120,10 @@ class PhoneSharedScheduleTest {
                     Thread.sleep(300); instrumentation.waitForIdleSync()
                     onView(withText("选择此文件夹")).perform(click())
                     onView(withHint("共享目录完整 URL")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check(matches(withText(publisherSettings.folder)))
-                    onView(withText("测试连接 / 检查远端快照")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(scrollTo(), click())
+                    onView(withText("保存连接配置")).perform(scrollTo(), click())
+                    onView(withText("确认保存连接")).perform(click())
+                    waitFor(scenario) { it.sharedSync.presentation.mode == SharedMode.UNBOUND }
+                    com.dormpanel.app.schedule.testing.FolderUiChecks.manage("旧版兼容与升级", "预览并加入旧版课表（v2）")
                     // Transport finishes asynchronously; wait for its confirmation dialog without accepting it early.
                     val deadline = System.currentTimeMillis() + 20000
                     while (System.currentTimeMillis() < deadline) {
@@ -129,9 +134,7 @@ class PhoneSharedScheduleTest {
                     scenario.onActivity { assertFalse(it.source.readOnly); assertTrue(it.source.state.entries.isEmpty()) }
                     onView(withText("确认下载并绑定")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
                     waitFor(scenario) { it.source.state.sync != null && !it.source.applyingSnapshot && !it.sharedSync.busy }
-                    onView(withText("浏览共享目录")).perform(scrollTo(), click())
-                    onView(withText("已绑定，请使用安全换库入口")).check(matches(isDisplayed()))
-                    onView(withText("更换共享课表数据集 / 恢复换库")).perform(scrollTo(), click())
+                    com.dormpanel.app.schedule.testing.FolderUiChecks.manage("更换课表与恢复", "更换课表 / 继续换库验收")
                     val switchDeadline = System.currentTimeMillis() + 10000
                     while (true) { try { onView(withText("浏览新共享目录")).perform(click()); break }
                         catch (e: androidx.test.espresso.NoMatchingViewException) { if (System.currentTimeMillis() > switchDeadline) throw e; Thread.sleep(40) } }

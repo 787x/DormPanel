@@ -5,6 +5,10 @@ package com.dormpanel.app.schedule
  * No secret is inherited until this rule has passed. Fully supplied accounts keep the
  * existing transport's origin/TLS checks and encrypted persistence unchanged. */
 object WebDavCredentials {
+    /** Compare values without exposing secrets through WebDavAccount.toString(). */
+    fun sameConfiguration(a: WebDavAccount?, b: WebDavAccount?): Boolean =
+        a != null && b != null && a.baseUrl.trim() == b.baseUrl.trim() && a.username == b.username &&
+            a.password == b.password && a.certificatePem == b.certificatePem
     private fun sameOrigin(a: String, b: String): Boolean {
         val client=WebDavClient();val x=client.url(a);val y=client.url(b)
         return x.scheme==y.scheme && x.host==y.host && x.port==y.port

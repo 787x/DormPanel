@@ -173,7 +173,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         if (webDavSettings != null) {
             right.addView(section("WebDAV"))
             right.addView(webDavStatus)
-            right.addView(Button(context).apply { text = "WebDAV settings"; minimumHeight = dp(48)
+            right.addView(Button(context).apply { text = "WebDAV 连接设置"; minimumHeight = dp(48)
                 setOnClickListener { onGestureClaimed(); showWebDavSettings() } })
             updateWebDavStatus()
         }
@@ -270,18 +270,18 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
             }
             fields.addView(this)
         }
-        val url = field("WebDAV server URL", oldUrl)
-        val user = field("Username", oldUser)
-        val password = field("Password (blank keeps saved password)", "", true)
-        val status = TextView(context).apply { textSize = 16f; text = "Use HTTPS when possible. Saved passwords are never displayed." }
+        val url = field("WebDAV 服务地址", oldUrl)
+        val user = field("用户名", oldUser)
+        val password = field("密码（仅同一访问身份可留空复用）", "", true)
+        val status = TextView(context).apply { textSize = 16f; text = "建议使用 HTTPS，已保存密码不会回显。" }
         val phoneEntry = PhoneEntryUi(context, SettingsEntryForm.WEBDAV,
             { values ->
                 url.setText(values.getValue("url")); user.setText(values.getValue("username"))
                 password.setText(values.getValue("password"))
-                status.text = "Received from phone — review, test, then Save."
+                status.text = "已接收手机填写内容，请检查、测试后保存。"
             }, { status.text = it })
         fields.addView(Button(context).apply {
-            text = "Fill from phone"
+            text = "用手机填写"
             setOnClickListener { phoneEntry.start(mapOf("url" to url.text.toString(), "username" to user.text.toString())) }
         })
         fields.addView(status)
@@ -293,15 +293,15 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
                 WebDavCredentials.inheritedCertificate(saved,entered,username)) }
                 .onFailure { status.text = it.message }.getOrNull()
         }
-        val test = Button(context).apply { text = "Test connection"; setOnClickListener {
+        val test = Button(context).apply { text = "测试连接"; setOnClickListener {
             val account = candidate() ?: return@setOnClickListener
-            status.text = "Testing…"
-            sync.test(account) { result -> status.text = result.fold({ "Connection successful." }, { it.message ?: "Connection failed." }) }
+            status.text = "正在测试…"
+            sync.test(account) { result -> status.text = result.fold({ "连接成功。" }, { it.message ?: "连接失败。" }) }
         } }
         fields.addView(test)
-        val dialog = AlertDialog.Builder(context).setTitle("Shared WebDAV account").setView(fields)
-            .setNegativeButton("Close", null).setNeutralButton("Clear credentials", null)
-            .setPositiveButton("Save", null).create()
+        val dialog = AlertDialog.Builder(context).setTitle("全局 WebDAV 导入账号").setView(fields)
+            .setNegativeButton("关闭", null).setNeutralButton("清除凭据", null)
+            .setPositiveButton("保存", null).create()
         dialog.setOnDismissListener { phoneEntry.close(); password.text.clear() }
         dialog.show()
         dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -315,16 +315,16 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
             val originChanged = previous != null && (previous.scheme != next.scheme || previous.host != next.host || previous.port != next.port)
             val bindings = settings.bindings()
             if (originChanged && bindings.isNotEmpty()) {
-                AlertDialog.Builder(context).setTitle("WebDAV server changed")
-                    .setMessage("${bindings.size} timetable bindings point to the previous server. Remove those bindings? Imported timetable content stays on this screen; choose a new remote ICS source later.")
-                    .setNegativeButton("Keep current account", null)
-                    .setPositiveButton("Remove bindings and save") { _, _ -> sync.clearBindingsForAccountChange(); save() }.show()
+                AlertDialog.Builder(context).setTitle("WebDAV 服务器已改变")
+                    .setMessage("有 ${bindings.size} 个文件导入绑定指向旧服务器。是否移除这些绑定？本机课程内容保留，之后可重新选择导入来源。独立 v3 访问端点不通过此处切换。")
+                    .setNegativeButton("保留当前账号", null)
+                    .setPositiveButton("移除导入绑定并保存") { _, _ -> sync.clearBindingsForAccountChange(); save() }.show()
             } else save()
         }
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-            AlertDialog.Builder(context).setTitle("Clear WebDAV credentials?")
-                .setMessage("Saved account credentials will be removed. Imported timetables stay intact.")
-                .setNegativeButton("Cancel", null).setPositiveButton("Clear") { _, _ ->
+            AlertDialog.Builder(context).setTitle("清除 WebDAV 凭据？")
+                .setMessage("将移除已保存的账号凭据，已导入的课程内容保留。")
+                .setNegativeButton("取消", null).setPositiveButton("清除") { _, _ ->
                     settings.clearAccount(); updateWebDavStatus(); dialog.dismiss()
                 }.show()
         }

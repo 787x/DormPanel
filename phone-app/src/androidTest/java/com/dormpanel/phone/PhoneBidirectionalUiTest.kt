@@ -96,16 +96,17 @@ class PhoneBidirectionalUiTest {
                             scenario.onActivity { assertEquals("A301", it.source.state.entries.single().location) }
                             offline.set(false)
                         }
+                        waitFor(scenario) { it.source.ready && !it.source.applyingSnapshot && !it.sharedSync.busy && it.sharedSync.presentation.conflict && it.hasWindowFocus() }
                         onView(withText("管理")).perform(click())
                         onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
-                        onView(withText("查看 / 处理同步冲突")).perform(scrollTo(), click())
+                        onView(withText("查看并处理修改冲突")).perform(scrollTo(), click())
                         waitFor(scenario) { !it.sharedSync.busy }
                         instrumentation.waitForIdleSync()
                         val bitmap = instrumentation.uiAutomation.takeScreenshot()
                         java.io.File(context.getExternalFilesDir(null), "pr32-conflict-${if (keepLocal) "local" else "remote"}.png").outputStream().use {
                             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
                         }; bitmap.recycle()
-                        onView(withText(if (keepLocal) "保留本地" else "采用远端")).perform(click())
+                        onView(withText(if (keepLocal) "全部保留本机修改" else "全部采用远端方案")).perform(click())
                         waitFor(scenario) { !it.sharedSync.busy && it.sharedSync.conflicts.isEmpty() && it.sharedSync.status.startsWith("已检查观察到的版本") }
                         scenario.onActivity {
                             assertFalse(it.source.readOnly)

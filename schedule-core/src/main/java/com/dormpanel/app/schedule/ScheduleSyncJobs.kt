@@ -30,12 +30,18 @@ class ScheduleSyncJobService : JobService() {
         stopped = false
         worker.execute {
             var retry = false
+            var checkScope: String? = null
             val store = ScheduleStores.create(this)
             try {
                 val settings = SharedScheduleSettings(this)
                 if (store is RoomScheduleStore && store.isV3()) {
-                    val result = synchronized(SharedScheduleRunLock) { store.synchronizeV3(store.v3Account(WebDavSettings(this))) }
+                    val result = synchronized(SharedScheduleRunLock) {
+                        val account = store.v3Account(WebDavSettings(this))
+                        checkScope = sharedCheckScope(account, store.v3EndpointFolder())
+                        store.synchronizeV3(account)
+                    }
                     retry = result in listOf("BUDGET", "DISCOVERING", "ROTATED") && settings.retryAllowed()
+                    settings.recordCheck(checkScope, result, result in listOf("OBSERVED", "PUBLISHED"))
                     settings.result(v3StatusMessage(result), result in listOf("OBSERVED","PUBLISHED"))
                     return@execute
                 }
@@ -43,10 +49,13 @@ class ScheduleSyncJobService : JobService() {
                     val result = synchronized(SharedScheduleRunLock) {
                         val local = store as ScheduleV2Store
                         if (local.v2DatasetPaused()) return@synchronized null
+                        if (store is RoomScheduleStore && !store.sharedPresentation(true).bound) return@synchronized null
                         val frame = local.v2Frame()
                         if (frame.baseline == null && frame.pending == null) null else {
                             val account = requireNotNull(WebDavSettings(this).account())
-                            val folder = WebDavClient().url(SharedScheduleTransport().folder(account, settings.folder)).newBuilder()
+                            val parent = SharedScheduleTransport().folder(account, settings.folder)
+                            checkScope = sharedCheckScope(account, parent)
+                            val folder = WebDavClient().url(parent).newBuilder()
                                 .addPathSegment("dormpanel-sync-v2").addPathSegment("").build().toString()
                             val visible = object : ScheduleV2Store by local {
                                 override fun v2Apply(plan: ScheduleV2Plan) = SharedScheduleViews.changing { local.v2Apply(plan) }
@@ -56,14 +65,21 @@ class ScheduleSyncJobService : JobService() {
                         }
                     }
                     result?.let {
+                        settings.recordCheck(checkScope, if (it.conflicts.isNotEmpty()) "CONFLICT" else it.checkState, it.checkState == "VERIFIED")
                         val needsRetry = it.message.startsWith("有待上传") || it.message.contains("暂不可验证")
                         retry = needsRetry && settings.retryAllowed()
                         settings.result(it.message + if (needsRetry && !retry) " · 自动重试已暂停" else "",
                             it.conflicts.isEmpty() && it.message.startsWith("已检查观察到的版本"))
                     }
                 }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
                 val settings = SharedScheduleSettings(this)
+                settings.recordCheck(checkScope, when (error) {
+                    is ScheduleHistoryPending -> "DISCOVERING"
+                    is java.net.UnknownHostException, is java.net.SocketTimeoutException -> "NETWORK"
+                    is WebDavException -> if (error.reason.startsWith("Network")) "NETWORK" else "ERROR"
+                    else -> "ERROR"
+                })
                 retry = settings.retryAllowed()
                 settings.result(if (retry) "离线 / 同步失败，等待重试；本地修改已保留" else "同步失败；自动重试已暂停，请立即同步检查。所有本地修改已保留")
             } finally {

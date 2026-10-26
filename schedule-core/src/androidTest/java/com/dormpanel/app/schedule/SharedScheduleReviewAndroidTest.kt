@@ -1,0 +1,288 @@
+package com.dormpanel.app.schedule
+
+import androidx.room.Room
+import androidx.test.platform.app.InstrumentationRegistry
+import okhttp3.mockwebserver.*
+import okio.Buffer
+import org.junit.Assert.*
+import org.junit.Test
+import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+
+/** Review regressions only: random private Room/preferences and a read-only fake server. */
+class SharedScheduleReviewAndroidTest {
+    private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    private fun id() = UUID.randomUUID().toString()
+    private fun <T> main(call: () -> T): T {
+        val result = AtomicReference<Result<T>>()
+        instrumentation.runOnMainSync { result.set(runCatching(call)) }
+        return result.get().getOrThrow()
+    }
+    private fun until(check: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 20000
+        while (System.currentTimeMillis() < deadline) { if (check()) return; Thread.sleep(40) }
+        error("Review state did not settle")
+    }
+    private inner class Harness : AutoCloseable {
+        val context = instrumentation.targetContext
+        val name = "pr60-review-${id()}"
+        val executor = Executors.newSingleThreadExecutor()
+        val db = Room.databaseBuilder(context, ScheduleDatabase::class.java, "$name.db").build()
+        val server = MockWebServer()
+        val files = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+        val requests = CopyOnWriteArrayList<String>()
+        @Volatile var disconnect = false
+        lateinit var source: ScheduleSource
+        lateinit var sync: SharedScheduleController
+        val accounts: WebDavSettings
+        val settings: SharedScheduleSettings
+        val store: RoomScheduleStore
+        val account get() = WebDavAccount(server.url("/").toString(), "fixture-user", "fixture-secret")
+        init {
+            SharedScheduleSettings.overrideNamespace = name; WebDavSettings.overrideNamespace = name; TermScheduleProfileStore.overrideNamespace = name
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    requests += "${request.method} ${request.path}"
+                    if (disconnect) return MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)
+                    val path = request.path!!
+                    if (request.method == "GET") return files[path]?.let { MockResponse().setBody(Buffer().write(it)) } ?: MockResponse().setResponseCode(404)
+                    if (request.method != "PROPFIND") return MockResponse().setResponseCode(405)
+                    val dirs = mutableSetOf("/")
+                    for (key in files.keys) for (index in key.indices) if (key[index] == '/') dirs += key.substring(0, index + 1)
+                    if (path !in dirs) return MockResponse().setResponseCode(404)
+                    val rows = (dirs + files.keys).filter { it.startsWith(path) && '/' !in it.removePrefix(path).trimEnd('/') }
+                    return MockResponse().setResponseCode(207).setBody("<d:multistatus xmlns:d=\"DAV:\">" + rows.joinToString("") {
+                        "<d:response><d:href>$it</d:href><d:propstat><d:prop><d:resourcetype>" +
+                            (if (it in dirs) "<d:collection/>" else "") + "</d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+                    } + "</d:multistatus>")
+                }
+            }
+            server.start()
+            accounts = WebDavSettings(context).also { it.saveAccount(account) }
+            settings = SharedScheduleSettings(context).also { it.folder = account.baseUrl }
+            store = RoomScheduleStore(db, executor, profiles = TermScheduleProfileStore(context))
+            main { source = ScheduleSource(store); sync = SharedScheduleController(context, source, accounts, settings) }
+            until { main { source.ready && !sync.busy && sync.presentation.mode == SharedMode.UNBOUND } }
+        }
+        fun result(code: String) = until { main { !sync.busy && sync.presentation.result == code } }
+        fun reload() {
+            main { source.reload() }
+            until { main { !source.applyingSnapshot } }
+        }
+        fun checkpoints() = db.dao().syncRecords().associate { it.id to digest(it.payload) }
+        fun verifiedEvidence(): () -> Unit {
+            val scope = sharedCheckScope(account, settings.folder)
+            settings.recordCheck(scope, "VERIFIED", true); settings.result("服务器先前检查成功", true)
+            main { sync.refreshPresentation() }
+            val check = settings.checkFor(scope); val diagnostic = settings.lastResult to settings.lastSuccess
+            return {
+                assertEquals(check, settings.checkFor(scope)); assertEquals(diagnostic, settings.lastResult to settings.lastSuccess)
+                assertTrue(main { sync.presentation.confirmationRejected })
+                assertTrue(main { sync.presentation.summary().contains("原操作未执行") })
+                assertFalse(main { sync.presentation.summary().contains("上次检查未成功") })
+            }
+        }
+        override fun close() {
+            main { sync.close(); source.close() }
+            check(executor.awaitTermination(10, TimeUnit.SECONDS))
+            server.shutdown()
+            SharedScheduleSettings.overrideNamespace = null; WebDavSettings.overrideNamespace = null; TermScheduleProfileStore.overrideNamespace = null
+        }
+    }
+    @Test fun reloadFailureCannotReuseOldHealthyBindingAndSuccess() {
+        Harness().use { h ->
+            val entry = TimetableEntry("stable", "原课程", 1, 480, 530, "")
+            h.db.dao().put(TimetableRow(entry.id, entry.title, entry.day, entry.startMinute, entry.endMinute, entry.location))
+            val snapshot = ScheduleSnapshot(id(), id(), null, 1, ScheduleState(entries = listOf(entry)), 1)
+            h.db.dao().checkpoint(ScheduleSyncCheckpoint(1, ScheduleSnapshotCodec.encode(snapshot)))
+            h.reload()
+            h.settings.recordCheck(sharedCheckScope(h.account, h.settings.folder), "VERIFIED", true)
+            main { h.sync.refreshPresentation() }; h.result("VERIFIED")
+            assertTrue(main { h.sync.presentation.summary().contains("检查成功") })
+            h.db.dao().checkpoint(ScheduleSyncCheckpoint(1, byteArrayOf(1)))
+            val original = main { h.source.state }; val rows = h.db.dao().entries()
+            h.reload()
+            until { main { h.sync.presentation.localRead == SharedLocalRead.FAILED } }
+            main {
+                assertTrue(h.source.ready); assertTrue(h.source.error)
+                val text = h.sync.presentation.summary()
+                assertTrue(text.contains("读取失败")); assertFalse(text.contains("课表已保存")); assertFalse(text.contains("检查成功"))
+                assertTrue(h.source.readOnly); assertFalse(h.source.editable)
+                assertFalse(h.source.saveEntry("幽灵新增", 1, 480, 530))
+                assertFalse(h.source.saveEntry("幽灵编辑", 1, 480, 530, id = entry.id))
+                h.source.deleteEntry(entry.id); assertEquals(original, h.source.state)
+            }
+            assertEquals(rows, h.db.dao().entries())
+            h.db.dao().checkpoint(ScheduleSyncCheckpoint(1, ScheduleSnapshotCodec.encode(snapshot)))
+            h.reload()
+            until { main { h.sync.presentation.localRead == SharedLocalRead.LOADED && h.sync.presentation.mode == SharedMode.V1 && h.sync.presentation.result == "VERIFIED" } }
+            assertTrue(main { h.sync.presentation.summary().contains("检查成功") })
+            assertEquals(snapshot.datasetId, main { h.source.state.sync!!.datasetId })
+            assertTrue(main { h.source.editable && h.source.saveEntry("恢复后编辑", 1, 480, 530, id = entry.id) })
+            until { h.db.dao().entries().single().title == "恢复后编辑" }
+        }
+    }
+    @Test fun connectionBRequiresItsOwnCheckAndPreservesDiagnosticA() {
+        Harness().use { h ->
+            h.settings.presentationResult = "VERIFIED"; h.settings.result("旧版未绑定位置的诊断", true)
+            main { h.sync.refreshPresentation() }; h.result("UNCHECKED")
+            assertEquals(0L, main { h.sync.presentation.lastSuccess })
+            val rootA = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            val rootB = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            h.files["/A/dormpanel-sync-v2/commit-${rootA.commitId}.dpc"] = ScheduleCommitCodec.encode(rootA)
+            h.files["/B/dormpanel-sync-v2/commit-${rootB.commitId}.dpc"] = ScheduleCommitCodec.encode(rootB)
+            h.settings.folder = h.server.url("/A/").toString()
+            main { h.sync.inspect {} }; h.result("VERIFIED")
+            val rawSuccess = h.settings.lastSuccess; val rawResult = h.settings.lastResult
+            h.settings.folder = h.server.url("/B/").toString()
+            main { h.sync.connectionSaved() }
+            assertEquals("UNCHECKED", main { h.sync.presentation.result })
+            assertEquals(0L, main { h.sync.presentation.lastSuccess })
+            assertEquals(rawResult, h.settings.lastResult); assertEquals(rawSuccess, h.settings.lastSuccess)
+            main { h.sync.inspect {} }; h.result("VERIFIED")
+            assertTrue(main { h.sync.presentation.lastSuccess > 0 })
+            assertTrue(h.requests.any { it.startsWith("GET /B/") })
+            assertTrue(h.requests.all { it.startsWith("GET ") || it.startsWith("PROPFIND ") })
+        }
+    }
+    @Test fun staleV2CreationNeverTurnsIntoV3SyncAndStaleV3CreationNeverWritesV2() {
+        Harness().use { h ->
+            val confirmation = main { h.sync.confirmation(SharedAction.CREATE_V2) }
+            h.store.prepareV3(h.settings.folder); h.reload()
+            val assertEvidence = h.verifiedEvidence()
+            val before = h.checkpoints(); val count = h.requests.size
+            main { h.sync.publish(confirmation) }
+            until { main { !h.sync.busy && h.sync.status.contains("状态已变化") } }
+            assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size); assertTrue(h.store.isV3())
+            assertEvidence()
+        }
+        Harness().use { h ->
+            val confirmation = main { h.sync.confirmation(SharedAction.CREATE) }
+            val root = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            h.store.v2Start(root, true); h.reload()
+            val assertEvidence = h.verifiedEvidence()
+            val before = h.checkpoints(); val count = h.requests.size
+            main { h.sync.createV3(confirmation) }
+            until { main { !h.sync.busy && h.sync.status.contains("状态已变化") } }
+            assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size); assertFalse(h.store.isV3())
+            assertEvidence()
+        }
+    }
+    @Test fun joinFindsV3OrVerifiedV2AndSeparatesEmptyInvalidAndNetworkWithoutWrites() {
+        Harness().use { h ->
+            val found = AtomicReference<SharedScheduleController.ExistingCandidates?>()
+            fun discover(code: String) { found.set(null); main { h.sync.discoverExisting { found.set(it) } }; h.result(code) }
+            val before = h.checkpoints()
+            discover("NO_CANDIDATE"); assertNotNull(found.get()); assertNull(found.get()!!.v2)
+            assertTrue(main { h.sync.status.contains("没有创建") })
+            val root = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            val v2Path = "/dormpanel-sync-v2/commit-${root.commitId}.dpc"
+            h.files[v2Path] = ScheduleCommitCodec.encode(root)
+            discover("CANDIDATE_V2"); assertEquals(root.datasetId, found.get()!!.v2!!.head.datasetId)
+            val descriptor = V3Object(1, id(), id(), id())
+            val v3Path = "/dormpanel-sync-v3/" + V3Paths.path(descriptor)
+            h.files[v3Path] = SyncV3Codec.encode(descriptor)
+            val offset = h.requests.size
+            discover("CANDIDATE_V3"); assertEquals(descriptor.datasetId, found.get()!!.v3.single().descriptor.datasetId)
+            assertNull(found.get()!!.v2); assertFalse(h.requests.drop(offset).any { "dormpanel-sync-v2/" in it })
+            h.files[v3Path] = byteArrayOf(1)
+            val invalidOffset = h.requests.size
+            discover("VALIDATION_FAILED"); assertNull(found.get())
+            assertFalse("新版验证失败不能静默改选旧版", h.requests.drop(invalidOffset).any { "dormpanel-sync-v2/" in it })
+            h.files.remove(v3Path); h.files[v2Path] = byteArrayOf(1)
+            discover("VALIDATION_FAILED"); assertNull(found.get())
+            assertFalse(main { h.sync.presentation.summary().contains("检查成功") })
+            h.disconnect = true
+            discover("NETWORK"); assertNull(found.get())
+            assertEquals(before, h.checkpoints())
+            assertTrue(h.requests.all { it.startsWith("GET ") || it.startsWith("PROPFIND ") })
+        }
+    }
+    @Test fun verifiedJoinConfirmationsExpireWhenAnotherProtocolBecomesActive() {
+        Harness().use { h ->
+            val root = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            h.files["/dormpanel-sync-v2/commit-${root.commitId}.dpc"] = ScheduleCommitCodec.encode(root)
+            val verified = AtomicReference<SharedScheduleRemote?>()
+            val confirmation = main { h.sync.confirmation(SharedAction.JOIN_V2) }
+            main { h.sync.inspect { verified.set(it) } }; h.result("VERIFIED")
+            h.store.prepareV3(h.settings.folder); h.reload()
+            val assertEvidence = h.verifiedEvidence()
+            val before = h.checkpoints(); val count = h.requests.size
+            main { h.sync.bind(verified.get()!!, confirmation) }
+            until { main { !h.sync.busy && h.sync.status.contains("状态已变化") } }
+            assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size)
+            assertEvidence()
+        }
+        Harness().use { h ->
+            val d = V3Object(1, id(), id(), id())
+            val bytes = SyncV3Codec.encode(d)
+            val genesis = V3Object(2, d.datasetId, id(), d.writerId, id(), 1, SyncV3Codec.hash(bytes), state = ScheduleState())
+            h.files["/dormpanel-sync-v3/" + V3Paths.path(d)] = bytes
+            h.files["/dormpanel-sync-v3/" + V3Paths.path(genesis)] = SyncV3Codec.encode(genesis)
+            val confirmation = main { h.sync.confirmation(SharedAction.JOIN) }
+            val preview = AtomicReference<UnboundV3JoinPreview?>()
+            for (round in 0..7) {
+                main { h.sync.previewJoinV3(bytes) { preview.set(it) } }
+                until { main { !h.sync.busy } }
+                if (preview.get() != null) break
+            }
+            assertNotNull(preview.get())
+            h.store.v2Start(ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState()), true); h.reload()
+            val assertEvidence = h.verifiedEvidence()
+            val before = h.checkpoints(); val count = h.requests.size
+            main { h.sync.joinV3(preview.get()!!, confirmation) }
+            until { main { !h.sync.busy && h.sync.status.contains("状态已变化") } }
+            assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size)
+            assertEvidence()
+        }
+    }
+    @Test fun migrationConfirmationDoesNotResumeAnAlreadyPreparedV3Task() {
+        Harness().use { h ->
+            val root = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            h.files["/dormpanel-sync-v2/commit-${root.commitId}.dpc"] = ScheduleCommitCodec.encode(root)
+            h.store.v2Start(root, true); h.reload()
+            val confirmation = main { h.sync.confirmation(SharedAction.MIGRATE_V3) }
+            val preview = AtomicReference<ScheduleV3MigrationPreview?>()
+            main { h.sync.previewV3Migration { preview.set(it) } }
+            until { main { !h.sync.busy } }; assertNotNull(preview.get())
+            h.store.prepareV3Migration(preview.get()!!, WebDavCommitStore(h.account, h.server.url("/dormpanel-sync-v2/").toString()), h.settings.folder)
+            h.reload()
+            val before = h.checkpoints(); val count = h.requests.size
+            main { h.sync.migrateV3(preview.get()!!, confirmation) }
+            until { main { !h.sync.busy && h.sync.status.contains("状态已变化") } }
+            assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size)
+            assertTrue(h.store.isV3())
+        }
+    }
+    @Test fun normalStartupStillChecksTheBoundServer() {
+        Harness().use { h ->
+            val root = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            h.files["/dormpanel-sync-v2/commit-${root.commitId}.dpc"] = ScheduleCommitCodec.encode(root)
+            h.store.v2Start(root, true); h.reload()
+            main { h.sync.close(); h.sync = SharedScheduleController(h.context, h.source, h.accounts, h.settings) }
+            h.result("VERIFIED")
+            assertTrue(h.requests.any { it.startsWith("GET ") })
+        }
+    }
+    @Test fun successfulManualRetryKeepsMigrationPauseAndAllEvidence() {
+        Harness().use { h ->
+            val root = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
+            h.store.v2Start(root, true); h.reload()
+            h.store.v2BeginDatasetInspection(h.settings.folder, h.server.url("/candidate/").toString(), id())
+            val original = requireNotNull(h.db.dao().syncRecord(21))
+            h.db.dao().checkpoint(ScheduleSyncCheckpoint(21, byteArrayOf(1))); h.reload()
+            assertTrue(main { h.source.error })
+            h.db.dao().checkpoint(original)
+            val before = h.checkpoints(); val count = h.requests.size
+            val history = h.settings.lastResult to h.settings.lastSuccess
+            main { assertTrue(h.source.retryLocalRead()) }
+            until { main { !h.source.error && !h.source.retryingLocalRead } }
+            main { assertTrue(h.source.readOnly); assertFalse(h.source.editable) }
+            assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size)
+            assertEquals(history, h.settings.lastResult to h.settings.lastSuccess)
+        }
+    }
+}

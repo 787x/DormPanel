@@ -11,9 +11,21 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 
 /** Shared by the two real Activity test APKs. All DBs and preferences are random. */
-class V3UiFixture(private val context: Context) : AutoCloseable {
+class V3UiFixture(private val context: Context, private val initialReadFailure: Boolean = false) : AutoCloseable {
     val server = MockWebServer()
     val files = linkedMapOf<String, ByteArray>()
+    val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private val databases = mutableListOf<ScheduleDatabase>()
+    private var initialRepair: (() -> Unit)? = null
+    fun repairInitialReadFailure() { requireNotNull(initialRepair).invoke(); initialRepair = null }
+    fun checkpoints() = databases.last().dao().syncRecords().associate { it.id to digest(it.payload) }
+    fun entries() = databases.last().dao().entries()
+    /** Only a synthetic checkpoint is damaged; restoring it never deletes course rows. */
+    fun injectReadFailure(): () -> Unit {
+        val dao = databases.last().dao(); val previous = dao.syncRecord(1)
+        dao.checkpoint(ScheduleSyncCheckpoint(1, byteArrayOf(1)))
+        return { if (previous == null) dao.deleteSyncRecord(1) else dao.checkpoint(previous) }
+    }
     private val directories = linkedSetOf("/")
     private val executors = mutableListOf<ExecutorService>()
     val account get() = WebDavAccount(server.url("/").toString(), "test", "test")
@@ -24,6 +36,7 @@ class V3UiFixture(private val context: Context) : AutoCloseable {
         check(context.packageName.endsWith(".testbed")) { "UI verification requires isolated testbed applicationId" }
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = synchronized(files) {
+                requests += "${request.method} ${request.path}"
                 val path = request.path!!.substringBefore('?')
                 when (request.method) {
                     "MKCOL" -> { directories += path; MockResponse().setResponseCode(201) }
@@ -51,7 +64,21 @@ class V3UiFixture(private val context: Context) : AutoCloseable {
         WebDavSettings(context).saveAccount(account); SharedScheduleSettings(context).folder = account.baseUrl
         ScheduleStores.overrideFactory = { c ->
             val executor = Executors.newSingleThreadExecutor().also { executors += it }
-            RoomScheduleStore(Room.databaseBuilder(c, ScheduleDatabase::class.java, "$namespace.db").build(), executor, profiles = TermScheduleProfileStore(c))
+            val db = Room.databaseBuilder(c, ScheduleDatabase::class.java, "$namespace.db").build().also { databases += it }
+            RoomScheduleStore(db, executor, profiles = TermScheduleProfileStore(c)).also { store ->
+                if (initialReadFailure) {
+                    val root = ScheduleCommit(UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString(), emptyList(),
+                        ScheduleState(entries = listOf(TimetableEntry("stable-first", "首次读取后可见课程", 1, 480, 530, ""))))
+                    store.v2Start(root, true)
+                    directories += "/dormpanel-sync-v2/"
+                    files["/dormpanel-sync-v2/commit-${root.commitId}.dpc"] = ScheduleCommitCodec.encode(root)
+                    val previous = executor.submit<ScheduleSyncCheckpoint> {
+                        val row = requireNotNull(db.dao().syncRecord(21))
+                        db.dao().checkpoint(ScheduleSyncCheckpoint(21, byteArrayOf(1))); row
+                    }.get()
+                    initialRepair = { db.dao().checkpoint(previous) }
+                }
+            }
         }
     }
     override fun close() {

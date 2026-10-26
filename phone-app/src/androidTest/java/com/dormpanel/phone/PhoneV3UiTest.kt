@@ -41,7 +41,7 @@ class PhoneV3UiTest {
                 stage("first Activity launched")
                 waitFor(scenario) { it.source.ready && !it.sharedSync.busy }
                 onView(withText("管理")).perform(click()); onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
-                onView(withText("创建 Sync v3 数据集（保留本地课程）")).perform(scrollTo(),click()); onView(withText("创建")).perform(click())
+                onView(withText("创建新的共享课表")).perform(scrollTo(),click()); onView(withText("创建")).perform(click())
                 waitFor(scenario) { !it.sharedSync.busy && it.source.state.sync != null }
                 stage("v3 created")
                 scenario.onActivity { dataset=it.source.state.sync!!.datasetId }
@@ -63,7 +63,7 @@ class PhoneV3UiTest {
                 stage("second Activity launched")
                 waitFor(scenario) { it.source.ready && !it.sharedSync.busy }
                 onView(withText("管理")).perform(click()); onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
-                onView(withText("发现并加入 Sync v3 数据集")).perform(scrollTo(),click())
+                onView(withText("加入已有共享课表")).perform(scrollTo(),click())
                 stage("discovery requested")
                 waitFor(scenario) { !it.sharedSync.busy }
                 onView(withText(containsString(dataset))).perform(click())
@@ -74,6 +74,21 @@ class PhoneV3UiTest {
                     onView(withText("继续预检")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
                 }
                 scenario.onActivity { assertFalse(it.source.syncStore!!.isV3());assertTrue(it.source.state.entries.isEmpty()) }
+                val checkpointsAfterPreview = fixture.checkpoints()
+                assertNull("只读加入预览不分配本机 Writer", checkpointsAfterPreview[20])
+                assertNull(checkpointsAfterPreview[205])
+                val accountBeforeCancel = WebDavSettings(instrumentation.targetContext).account()
+                val folderBeforeCancel = SharedScheduleSettings(instrumentation.targetContext).folder
+                onView(withText("取消")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
+                assertEquals(checkpointsAfterPreview, fixture.checkpoints())
+                assertTrue(WebDavCredentials.sameConfiguration(accountBeforeCancel, WebDavSettings(instrumentation.targetContext).account()))
+                assertEquals(folderBeforeCancel, SharedScheduleSettings(instrumentation.targetContext).folder)
+                onView(withText("关闭")).perform(click())
+                onView(withText("管理")).perform(click()); onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
+                onView(withText("加入已有共享课表")).perform(scrollTo(), click())
+                waitFor(scenario) { !it.sharedSync.busy }
+                onView(withText(containsString(dataset))).perform(click())
+                waitFor(scenario) { !it.sharedSync.busy }
                 onView(withText("加入并继续验证")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
                 stage("join confirmed")
                 waitFor(scenario) {

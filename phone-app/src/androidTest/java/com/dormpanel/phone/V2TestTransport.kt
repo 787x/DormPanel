@@ -7,8 +7,12 @@ import java.util.UUID
 internal fun v2Listing(files: Map<String, ByteArray>, request: RecordedRequest): MockResponse? {
     if (request.method == "MKCOL") return MockResponse().setResponseCode(201)
     if (request.method != "PROPFIND") return null
-    val rows = files.keys.filter { it.startsWith(request.path!!) && !it.removePrefix(request.path!!).contains('/') }.joinToString("") {
-        "<d:response><d:href>$it</d:href><d:propstat><d:prop><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+    // Parent directory inspection must expose collections, like a real Depth-1 WebDAV response.
+    val directories = mutableSetOf("/")
+    for (path in files.keys) for (index in path.indices) if (path[index] == '/') directories += path.substring(0, index + 1)
+    val rows = (directories + files.keys).filter { it.startsWith(request.path!!) && '/' !in it.removePrefix(request.path!!).trimEnd('/') }.joinToString("") {
+        "<d:response><d:href>$it</d:href><d:propstat><d:prop><d:resourcetype>" +
+            (if (it in directories) "<d:collection/>" else "") + "</d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
     }
     return MockResponse().setResponseCode(207).setBody("<d:multistatus xmlns:d=\"DAV:\">$rows</d:multistatus>")
 }

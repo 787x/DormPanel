@@ -27,7 +27,7 @@ class X08eV3UiTest {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 waitFor(scenario) { it.schedule.ready && !it.sharedSchedule.busy }
                 scenario.onActivity { activity -> val vm=ViewModelProvider(activity)[DashboardViewModel::class.java]; SharedScheduleDialog.show(activity,vm.schedule,vm.sharedSchedule,true) }
-                onView(withText("创建 Sync v3 数据集（保留本地课程）")).perform(scrollTo(),click()); onView(withText("创建")).perform(click())
+                onView(withText("创建新的共享课表")).perform(scrollTo(),click()); onView(withText("创建")).perform(click())
                 waitFor(scenario) { !it.sharedSchedule.busy && it.schedule.state.sync!=null }
                 onView(withText("关闭")).perform(click())
                 var editors:ScheduleEditors?=null
@@ -43,7 +43,7 @@ class X08eV3UiTest {
                     assertTrue(vm.schedule.state.entries.any { it.title=="PR55 X08E UI" }); assertTrue(vm.schedule.syncStore!!.isV3()); editors?.close()
                     SharedScheduleDialog.show(activity,vm.schedule,vm.sharedSchedule,true)
                 }
-                onView(withText("共享课表 · WebDAV")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+                onView(withText("共享课表")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
                     .check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
                 instrumentation.waitForIdleSync()
                 val bitmap=instrumentation.uiAutomation.takeScreenshot()

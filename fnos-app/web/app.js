@@ -1,3 +1,4 @@
+import { scheduleStatus } from './sync-status.js';
 import { notifyUser, confirmAction, requestText } from './feedback.js';
 const $ = (id) => document.getElementById(id),
   base = "/app/dormpanel-schedule-manager";
@@ -42,37 +43,11 @@ async function load() {
     catalogVersion = s.catalogVersion;
     token = s.csrf;
     version = s.version;
-    const statuses = {
-      OBSERVED: '本轮观察到的 v3 DAG 已合并。',
-      PUBLISHED: 'v3 对象已由指定远端回读确认。',
-      CONFLICT: '存在 v3 冲突，双方内容已保留。',
-      DISCOVERING: 'v3 历史发现与验证尚未完成，请继续同步。',
-      BUDGET: '本轮资源预算已用完，进度已保存，请继续同步。',
-      ROTATED: 'v3 Epoch 已换代；旧 Epoch 巡检仍需继续。',
-      unbound: "未关联连接；可以离线编辑。请在数据源管理中配置。",
-      unchecked: "尚未检查远端。",
-      empty: "指定目录未发现 v2 课程数据。",
-      verified: "已检查本轮观察到的版本。",
-      incomplete: "存在暂不可验证历史，尚未完成全部版本检查。",
-      branches: "已观察多个并发分支。",
-      conflict: "存在待处理冲突；请在管理中查看。",
-      error: "连接或同步检查失败；请在数据源管理查看详情。",
-    };
-    $("status").textContent =
-      (statuses[s.status] ?? '同步状态待检查') +
-      "\n本地已保存" +
-      (s.pending
-        ? " · 提交待回读确认"
-        : s.dirty
-          ? " · 有待发布修改"
-          : " · 无待发布本地修改") +
-      (s.published ? "\n上次发布对象已回读确认；当前待发布修改另计，其他设备接收情况未知" : "");
-    if (activeProtocol === 'v3') $('status').textContent += '\nSync v3 · ' + (s.datasetId ?? '未绑定') + '\n旧 Epoch 巡检未完成；未知旧客户端与服务端停写情况未确认。';
-    if (s.writeProtection) $('status').textContent += '\n' + s.writeProtection;
+    $("status").textContent = scheduleStatus(s);
     $('managerStatus').textContent = $('status').textContent;
     $('welcome').dataset.unbound = String(s.status === 'unbound');
     $('welcome').hidden = s.status !== 'unbound' || !$('manager').hidden;
-    $("status").dataset.error = ["incomplete", "conflict", "error"].includes(
+    $("status").dataset.error = ["incomplete", "conflict", "CONFLICT", "RECOVERY_REQUIRED", "error"].includes(
       s.status,
     );
     $("range").textContent = `${s.first} — ${add(s.first, 6)}`;

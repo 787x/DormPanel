@@ -16,34 +16,46 @@ import javax.crypto.SecretKey
 /** Process-owned scheduler; source commits and callbacks return through the main thread. */
 class WebDavSyncController(private val context: Context, private val source: ScheduleSource,
     val settings: WebDavSettings = WebDavSettings(context.applicationContext), private val client: WebDavClient = WebDavClient(),
-    private val profiles: TermScheduleProfileStore = TermScheduleProfileStore(context)) {
+    private val profiles: TermScheduleProfileStore = TermScheduleProfileStore(context),
+    private val automaticIntervalMillis: Long = INTERVAL.toLong()) {
     companion object { const val INTERVAL = 60 * 60 * 1000L }
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private var closed = false
     private var started = false
     private val active = mutableSetOf<String>()
+    // Runtime scheduling only: never rewrite lastAttempt merely to postpone an overdue update.
+    private val deferredAutomatic = mutableMapOf<String, Long>()
     private val listeners = linkedSetOf<() -> Unit>()
-    private val sourceListener: () -> Unit = { if (source.ready) {
-        cleanup()
-        if (!started) { started = true }
-        schedule()
-    } }
+    private val sourceListener: () -> Unit = {
+        if (!canReadLocal()) main.removeCallbacks(tick)
+        else {
+            if (source.retryingLocalRead) {
+                val now = System.currentTimeMillis()
+                settings.bindings().filter { it.autoSync && it.lastAttempt + automaticIntervalMillis <= now }
+                    .forEach { deferredAutomatic[it.sourceId] = now + automaticIntervalMillis }
+            } else cleanup()
+            if (!started) { started = true }
+            schedule()
+        }
+    }
     private val tick = Runnable { if (!closed) { due(); schedule() } }
-    init { source.subscribe(sourceListener); if (source.ready) sourceListener() }
+    init { require(automaticIntervalMillis > 0); source.subscribe(sourceListener); if (source.ready) sourceListener() }
     fun observe(listener: () -> Unit) { listeners += listener }
     fun unobserve(listener: () -> Unit) { listeners -= listener }
     private fun notifyChanged() { listeners.toList().forEach { it() } }
     fun binding(id: String) = settings.bindings().firstOrNull { it.sourceId == id }
     fun isSyncing(id: String) = id in active
-    fun bind(value: WebDavBinding) { if (closed) return; update(value); schedule() }
+    fun bind(value: WebDavBinding) { if (closed) return; deferredAutomatic.remove(value.sourceId); update(value); schedule() }
     fun remove(id: String) {
         if (closed) return
+        deferredAutomatic.remove(id)
         settings.saveBindings(settings.bindings().filterNot { it.sourceId == id })
         notifyChanged(); schedule()
     }
     fun clearBindingsForAccountChange() {
         if (closed) return
+        deferredAutomatic.clear()
         settings.saveBindings(emptyList())
         notifyChanged(); schedule()
     }
@@ -53,21 +65,25 @@ class WebDavSyncController(private val context: Context, private val source: Sch
     }
     private fun cleanup() {
         val valid = source.state.sources.map { it.id }.toSet()
+        deferredAutomatic.keys.retainAll(valid)
         val old = settings.bindings()
         if (old.any { it.sourceId !in valid }) {
             settings.saveBindings(old.filter { it.sourceId in valid }); notifyChanged()
         }
     }
     private fun due() {
+        if (!canReadLocal() || source.retryingLocalRead) return
         val now = System.currentTimeMillis()
-        settings.bindings().filter { it.autoSync && now - it.lastAttempt >= INTERVAL }.forEach { sync(it.sourceId) }
+        settings.bindings().filter { it.autoSync && nextAutomatic(it) <= now }.forEach { sync(it.sourceId) }
     }
+    private fun canReadLocal() = !closed && source.ready && !source.error && !source.applyingSnapshot
+    private fun nextAutomatic(binding: WebDavBinding) = maxOf(binding.lastAttempt + automaticIntervalMillis, deferredAutomatic[binding.sourceId] ?: 0L)
     private fun schedule() {
         main.removeCallbacks(tick)
-        if (closed || !source.ready) return
+        if (!canReadLocal()) return
         val now = System.currentTimeMillis()
         val next = settings.bindings().filter { it.autoSync && it.sourceId !in active }
-            .minOfOrNull { (it.lastAttempt + INTERVAL - now).coerceAtLeast(0) } ?: return
+            .minOfOrNull { (nextAutomatic(it) - now).coerceAtLeast(0) } ?: return
         main.postDelayed(tick, next)
     }
     fun <T> background(action: () -> T, callback: (Result<T>) -> Unit) {
@@ -92,12 +108,13 @@ class WebDavSyncController(private val context: Context, private val source: Sch
         }, callback)
     fun sync(id: String, callback: ((Result<Boolean>) -> Unit)? = null) {
         val binding = binding(id)
-        if (closed || binding == null || !source.ready) {
+        if (!canReadLocal() || source.retryingLocalRead || binding == null) {
             callback?.invoke(Result.failure(WebDavException("Timetable source is unavailable."))); return
         }
         if (!active.add(id)) {
             callback?.invoke(Result.failure(WebDavException("Sync already in progress."))); return
         }
+        deferredAutomatic.remove(id)
         val account = settings.account()
         val attempt = System.currentTimeMillis()
         if (account == null) { fail(id, attempt, WebDavException("WebDAV credentials unavailable."), callback); return }

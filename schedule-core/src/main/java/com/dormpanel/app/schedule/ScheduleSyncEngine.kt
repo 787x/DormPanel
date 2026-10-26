@@ -9,7 +9,7 @@ class ScheduleSyncEngine(private val store: ScheduleSyncStore, private val trans
     private val account: WebDavAccount, private val folder: String) {
     data class Legacy(val dataset: String, val revision: String?, val generation: Long,
         val pendingRevision: String? = null, val pendingHash: String? = null, val pendingGeneration: Long = 0)
-    data class Outcome(val message: String, val conflicts: List<ScheduleMerge.Conflict> = emptyList())
+    data class Outcome(val message: String, val conflicts: List<ScheduleMerge.Conflict> = emptyList(), val checkState: String = "UNCHECKED")
 
     /** Bounded history traversal proves ancestry, including a committed but unacknowledged publication. */
     private fun history(remote: SharedScheduleRemote, revision: String, generation: Long): Pair<ByteArray, ScheduleSnapshot>? {
