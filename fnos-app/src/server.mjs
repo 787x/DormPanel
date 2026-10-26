@@ -3,7 +3,7 @@ import { V3EndpointMove } from './v3-endpoint.mjs';
 import http from "node:http";
 import { Readable } from "node:stream";
 import { AgentService } from "./agent-service.mjs";
-import { HistoryManager, cachedGraph, historySummary, commitAt, versionDifferences } from './history.mjs';
+import { HistoryManager, cachedGraph, historySummary, commitAt, versionDifferences, differences } from './history.mjs';
 import { DatasetMigration } from './migration.mjs';
 import { V3DatasetMigration } from './v3-migration.mjs';
 import { BackupManager, recoverRestore } from "./backup.mjs";
@@ -457,7 +457,12 @@ export async function createApp({
           if (catalog.restoreGuards[workspaceId]) { result.blockers.push('恢复后尚未验证远端历史，请先检查并同步'); result.rollbackEnabled = false; }
         }
         else if (path.endsWith('/preview-diff')) result = history.previewDiff(db, { workspaceId, token:u.searchParams.get('token'), offset:Number(u.searchParams.get('offset') ?? 0) }, user);
-        else if (path.endsWith('/diff')) result = versionDifferences(g, u.searchParams.get('from'), u.searchParams.get('to'), Number(u.searchParams.get('offset') ?? 0));
+        else if (path.endsWith('/diff')) {
+          const from=u.searchParams.get('from'), to=u.searchParams.get('to'), offset=Number(u.searchParams.get('offset') ?? 0);
+          result = from==='current' || to==='current'
+            ? differences(from==='current' ? db.frame.local : commitAt(g,from).state,to==='current' ? db.frame.local : commitAt(g,to).state,offset)
+            : versionDifferences(g,from,to,offset);
+        }
         else {
           const state = commitAt(g, u.searchParams.get('id')).state, table = u.searchParams.get('table') ?? 'entries', offset = Number(u.searchParams.get('offset') ?? 0);
           ensure(Object.hasOwn(state, table) && Number.isSafeInteger(offset) && offset >= 0, '快照分页无效');

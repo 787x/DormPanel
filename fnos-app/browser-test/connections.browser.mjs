@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { V3Maintenance } from '../src/v3-maintenance.mjs';
+import { encode as encodeV3, decode as decodeV3 } from '../src/v3-protocol.mjs';
+import { objectPath } from '../src/v3-store.mjs';
+import { reference } from '../src/v3-history.mjs';
 import { chromium } from 'playwright';
 import { expect } from 'playwright/test';
 import { createApp, PREFIX } from '../src/server.mjs';
@@ -19,9 +23,9 @@ before(async () => { browser = await chromium.launch({ channel: process.env.BROW
 after(async () => { await browser?.close(); });
 
 // 只在独立临时实例中注入网关身份；生产服务仍拒绝 TCP 和伪造的客户端身份。
-async function fixture(t, { authorized = false, proxyHost = null, remoteFactory } = {}) {
+async function fixture(t, { authorized = false, proxyHost = null, remoteFactory, v3RemoteFactory } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'dp-connection-ui-'));
-  const app = await createApp({ dataDir: dir, configPath: join(dir, 'config.json'), remoteFactory,
+  const app = await createApp({ dataDir: dir, configPath: join(dir, 'config.json'), remoteFactory, v3RemoteFactory,
     authorizedRoots: authorized ? [{ id: 'approved', name: 'fnOS 已授权测试目录', path: dir }] : [] });
   const socketPath = process.platform === 'win32' ? '\\\\.\\pipe\\dp-ui-' + randomUUID() : join(dir, 'app.sock');
   await new Promise(r => app.server.listen(socketPath, r));
@@ -39,7 +43,7 @@ async function fixture(t, { authorized = false, proxyHost = null, remoteFactory 
   await page.route('**/api/directories?*', route => route.fulfill({ json: { directories: ['测试子目录'] } }));
   t.after(async () => {
     await context.close();
-    await new Promise(r => proxy.close(r)); await new Promise(r => app.server.close(r));
+    await new Promise(r => proxy.close(r)); await new Promise(r => app.server.close(r)); await app.catalog.close();
     await rm(dir, { recursive: true, force: true });
   });
   const open = async () => { await page.goto(`http://127.0.0.1:${proxy.address().port}${PREFIX}/`); await page.locator('#sourcesPage').click(); };
@@ -150,15 +154,15 @@ test('WebDAV 保存、新建与切换工作区及课程表单继续工作', asyn
   await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
   await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://example.test/schedule/');
   await f.save.click(); await expect(f.page.locator('#connectionRows')).toContainText('WebDAV 课程');
-  await f.page.getByRole('button', { name: '新建工作区', exact: true }).click();
-  await f.page.locator('#feedbackAccept').click();
-  await f.page.getByRole('button',{name:'Sync v2（兼容现有工作区）',exact:true}).click();
+  await f.page.getByRole('button', { name: '新建课程表', exact: true }).click();
+  await expect(f.page.getByLabel('共享协议')).toHaveValue('v3');
+  await f.page.getByLabel('共享协议').selectOption('v2'); await f.save.click();
   await expect(f.page.locator('#workspaceRows')).toContainText('WebDAV 课程');
   const id = f.app.catalog.manifest.workspaces.find(w => w.connectionId)?.id; assert(id);
   await f.page.locator('#workspaceSelect').selectOption(id);
   await expect(f.page.locator('#workspaceSelect')).toBeEnabled();
   await expect(f.page.locator('#workspaceSelect')).toHaveValue(id);
-  await f.page.locator('#sourcesPage').click(); await f.page.locator('#newCourse').click();
+  await f.page.locator('#schedulePage').click(); await f.page.locator('#newCourse').click();
   await expect(f.page.locator('#editorTitle')).toHaveText('新增本地课程');
   await f.page.getByLabel('课程名', { exact: true }).fill('回归测试课程');
   await f.save.click(); await expect(f.page.locator('#week')).toContainText('回归测试课程');
@@ -211,7 +215,7 @@ test('XLS 网页预览确认与 CSV 来源替换保留身份', async t => {
   assert.deepEqual(f.app.db.frame.local.imported, before); assert.deepEqual(f.errors, []);
 });
 async function openImport(f) {
-  await f.open(); await f.page.locator('#sourcesPage').click();
+  await f.open(); await f.page.locator('#schedulePage').click();
   await f.page.locator('#manage').click(); await f.page.locator('#importFile').click();
 }
 async function configureTerm(f) {
@@ -263,7 +267,7 @@ test('快速改选 CSV 时清空旧预览，迟到响应不能覆盖新文件', 
 });
 
 test('首次本地编辑、常用管理与高级诊断入口清晰可达', async t => {
-  const f = await fixture(t); await f.open(); await f.page.locator('#sourcesPage').click();
+  const f = await fixture(t); await f.open(); await f.page.locator('#schedulePage').click();
   await expect(f.page.locator('#welcome')).toBeVisible();
   await f.page.locator('#manage').click();
   for (const id of ['managerCourse', 'importFile', 'newProfile', 'adjustDate', 'config']) await expect(f.page.locator('#' + id)).toBeVisible();
@@ -341,7 +345,7 @@ test('编辑本地连接回显原目录；浏览后必须重新确认，取消�
 test('窄窗口目录按钮可触达，管理页面截图可核对', async t => {
   const f = await fixture(t, { authorized: true }); await f.open();
   if (process.env.UX_SCREENSHOTS) await f.page.screenshot({ path: process.env.UX_SCREENSHOTS + '/sources-desktop.png', fullPage: true });
-  await f.page.locator('#sourcesPage').click(); await f.page.locator('#manage').click();
+  await f.page.locator('#schedulePage').click(); await f.page.locator('#manage').click();
   if (process.env.UX_SCREENSHOTS) await f.page.screenshot({ path: process.env.UX_SCREENSHOTS + '/manage-desktop.png', fullPage: true });
   await f.page.setViewportSize({ width: 390, height: 640 }); await f.page.locator('#config').click(); await f.page.locator('#addLocal').click();
   await choosePrivate(f); await expect(f.save).toBeInViewport();
@@ -377,20 +381,20 @@ test('数据源高级操作保持可达，重命名生效，创建和绑定仍�
   await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
   await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://example.test/schedule/');
   await f.save.click(); await expect(f.page.locator('#connectionRows')).toContainText('WebDAV 课程');
-  await f.page.getByRole('button', { name: '新建工作区', exact: true }).click(); await f.page.locator('#feedbackAccept').click();
-  await f.page.getByRole('button',{name:'Sync v2（兼容现有工作区）',exact:true}).click();
+  await f.page.getByRole('button', { name: '新建课程表', exact: true }).click(); await expect(f.page.getByLabel('共享协议')).toHaveValue('v3');
+  await f.page.getByLabel('共享协议').selectOption('v2'); await f.save.click();
   await expect(f.page.locator('#workspaceRows')).toContainText('WebDAV 课程');
   const id = f.app.catalog.manifest.workspaces.find(w => w.connectionId).id;
   await f.page.locator('#workspaceSelect').selectOption(id); await expect(f.page.locator('#workspaceSelect')).toBeEnabled();
   let card = f.page.locator('#workspaceRows article').filter({ hasText: 'WebDAV 课程' });
-  await card.getByText('更多操作', { exact: true }).click();
+  await card.getByText('高级操作：端点、迁移与移除', { exact: true }).click();
   await card.getByRole('button', { name: '修改名称', exact: true }).click();
   await f.page.locator('#feedbackInput').fill('重命名后的课程表'); await f.page.locator('#feedbackAccept').click();
   card = f.page.locator('#workspaceRows article').filter({ hasText: '重命名后的课程表' }); await expect(card).toBeVisible();
-  await card.getByText('更多操作', { exact: true }).click();
+  await card.getByText('高级操作：端点、迁移与移除', { exact: true }).click();
   await card.getByRole('button', { name: '选择访问端点', exact: true }).click(); await expect(f.page.locator('#editorTitle')).toHaveText('工作区访问端点');
   await f.page.keyboard.press('Escape');
-  for (const [label, text] of [['接收已有课表…', '确认接收此目录已有数据集'], ['在空目录创建共享课表…', '确认在已配置的空目录创建独立数据集']]) {
+  for (const [label, text] of [['加入已有共享课表…', '确认加入此目录已有共享课表'], ['创建新的共享课表…', '将当前课程表内容发布为新的独立共享课表']]) {
     await card.getByRole('button', { name: label, exact: true }).click(); await expect(f.page.locator('#feedbackMessage')).toContainText(text);
     await f.page.locator('#feedbackCancel').click();
   }
@@ -411,7 +415,7 @@ test('历史中心完整快照分页、稳定身份比较、回退预览确认�
   manifest.connections.push({id,name:'测试连接',type:'webdav',config:{url:'https://example.com/test/',username:'test',password:'test'}});manifest.workspaces[0].connectionId=id;
   await f.app.catalog.commit(manifest);
   await f.app.db.tx(frame=>{ frame.graph=graph;frame.local=graph.state;frame.baseline=graph.state;frame.frontier=graph.tips;frame.datasetId=datasetId;frame.bindingKey='test';frame.checkpoint={hashes:graph.hashes,datasetId}; });
-  await f.open(); await f.page.locator('#historyPage').click();
+  await f.open(); await f.page.locator('#historyPage').click(); await f.page.locator('#advancedHistory').evaluate(e=>e.open=true);
   await expect(f.page.locator('#historyStatus')).toContainText('2 / 256');
   await f.page.locator('#historyRows button').first().click();
   await f.page.getByRole('button',{name:'展开此集合',exact:true}).first().click();
@@ -449,7 +453,7 @@ test('换库向导显示真实来源、人工设备清单与零物理回收；�
   manifest.connections.push({ id: connectionId, name: '目标地址', type: 'webdav', config: { url: 'https://example.test/compact/', username: 'synthetic', password: 'synthetic' } });
   manifest.workspaces[0].connectionId = connectionId; await f.app.catalog.commit(manifest);
   await f.app.db.tx(frame => { frame.graph = graph; frame.datasetId = root.datasetId; frame.local = root.state; frame.baseline = root.state; frame.frontier = graph.tips; frame.checkpoint = { datasetId: root.datasetId, hashes: graph.hashes }; });
-  await f.open(); await f.page.locator('#historyPage').click();
+  await f.open(); await f.page.locator('#historyPage').click(); await f.page.locator('#advancedHistory').evaluate(e=>e.open=true);
   await expect(f.page.locator('#datasetMigration')).toContainText('迁移到精简数据集');
   await f.page.getByRole('button',{name:'选择精简候选目录',exact:true}).click();
   await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();
@@ -459,7 +463,7 @@ test('换库向导显示真实来源、人工设备清单与零物理回收；�
   assert.equal(f.app.catalog.migrations.length, 0); assert.equal(rows.size, 1);
   const m = { id: randomUUID(), revision: 0, sourceId: manifest.activeId, targetId: randomUUID(), phase: 'frozen', sourceDatasetId: root.datasetId, targetDatasetId: randomUUID(), oldCount: 2, newCount: 1, reclaimEstimateBytes: 1024, archive: { relative: 'history-synthetic' }, sourceWriters: [root.writerId], lastCheck: 'FPK 实际验证（浏览器合成展示夹具）', failure: '离线，已保留保护', devices: [{ name: '床头', type: 'X08E', stopped: true, accepted: false, evidence: '尚未执行本机迁移', origin: '管理员登记 / 确认' }] };
   f.app.catalog.migrations = [m]; await f.app.catalog.store.save('dataset-migrations.json', [m]);
-  await f.page.locator('#historyPage').click();
+  await f.page.locator('#historyPage').click(); await f.page.locator('#advancedHistory').evaluate(e=>e.open=true);
   await expect(f.page.locator('#datasetMigration')).toContainText('实际已回收 0 字节');
   await expect(f.page.locator('#datasetMigration')).toContainText('管理员登记 / 确认');
   await expect(f.page.locator('#datasetMigration')).toContainText('尚未执行本机迁移');
@@ -519,7 +523,7 @@ test('PR58 v3 端点确认后刷新 Catalog revision，随后备份读取不要�
   });
   await f.open();
   const card = f.page.locator('#workspaceRows article').first();
-  await card.getByText('更多操作', { exact: true }).click();
+  await card.getByText('高级操作：端点、迁移与移除', { exact: true }).click();
   await card.getByRole('button', { name: '选择访问端点', exact: true }).click();
   await f.page.getByRole('button', { name: '只读预检所选连接', exact: true }).click();
   await expect(f.page.getByRole('button', { name: '确认更换此工作区端点', exact: true })).toBeEnabled();
@@ -594,7 +598,7 @@ test('PR59 备份共用选择器保留目录身份与文件名；切换位置撤
 });
 
 test('PR59 历史导出及迁移候选通过同一授权浏览器选择，取消不改表单',async t=>{
-  const f=await fixture(t,{authorized:true});await f.open();await f.page.locator('#historyPage').click();
+  const f=await fixture(t,{authorized:true});await f.open();await f.page.locator('#historyPage').click(); await f.page.locator('#advancedHistory').evaluate(e=>e.open=true);
   await f.page.locator('#historyChoose').click();await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();
   await expect(f.page.locator('#historyRelative')).toHaveValue('测试子目录');
   await f.page.getByRole('button',{name:'选择精简候选目录',exact:true}).click();await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();
@@ -607,7 +611,7 @@ test('PR59 历史导出及迁移候选通过同一授权浏览器选择，取消
 test('PR59 重开历史页可发现现有 compact 目录；名称不是验证结论',async t=>{
   const f=await fixture(t,{authorized:true});
   await f.page.route('**/api/directories?*',route=>route.fulfill({json:{directories:['compact-existing','history-existing']}}));
-  await f.open();await f.page.locator('#historyPage').click();await f.page.getByRole('button',{name:'选择精简候选目录',exact:true}).click();
+  await f.open();await f.page.locator('#historyPage').click(); await f.page.locator('#advancedHistory').evaluate(e=>e.open=true);await f.page.getByRole('button',{name:'选择精简候选目录',exact:true}).click();
   await f.page.getByRole('button',{name:'compact-existing（待后端验证）',exact:true}).click();
   await expect(f.page.locator('#migrationCandidate')).toHaveValue('compact-existing');assert.deepEqual(f.errors,[]);
 });
@@ -618,7 +622,7 @@ test('PR59 独立归档从授权目录选择，仍由恢复 API 验证清单',as
   await f.page.route('**/api/schedule?*',async route=>{const response=await route.fetch(),data=await response.json();await route.fulfill({response,json:{...data,protocol:'v3'}});});
   await f.page.route('**/api/history?*',route=>route.fulfill({json:{version:0,count:0,frontier:[],blockers:[],rows:[],next:null,rollbackEnabled:false}}));
   await f.page.route('**/api/history/archive-restore',route=>{input=route.request().postDataJSON();return route.fulfill({status:400,json:{error:'归档清单验证失败；原始缓存保留'}});});
-  await f.open();await f.page.locator('#historyPage').click();await f.page.getByRole('button',{name:'从独立归档恢复缺失缓存',exact:true}).click();
+  await f.open();await f.page.locator('#historyPage').click(); await f.page.locator('#advancedHistory').evaluate(e=>e.open=true);await f.page.getByRole('button',{name:'从独立归档恢复缺失缓存',exact:true}).click();
   await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();await f.page.locator('dialog[open]').getByRole('button',{name:'取消',exact:true}).click();assert.equal(input,null);
   await f.page.getByRole('button',{name:'从独立归档恢复缺失缓存',exact:true}).click();await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();
   await expect(f.page.locator('#historyStatus')).toContainText('归档清单验证失败');await expect(f.page.getByRole('button',{name:'从独立归档恢复缺失缓存',exact:true})).toBeEnabled();assert.equal(input.rootId,'approved');assert.equal(input.relative,'测试子目录');assert(input.workspaceId);assert.deepEqual(f.errors,[]);
@@ -664,4 +668,227 @@ test('PR60 首页按结构化状态显示共享事实，保留异常与写保护
   await f.page.reload(); await expect(f.page.locator('#status')).toContainText('待服务器回读确认');
   await expect(f.page.locator('#status')).toContainText('管理员已禁止写入');
   assert.deepEqual(f.errors, []);
+});
+
+// PR61: real protocol history in isolated local servers; credentials and all writes are synthetic.
+function memoryV3() {
+  const objects=new Map();
+  return {objects,read:async p=>objects.get(p)??null,putOnce:async(p,b)=>{assert(!objects.has(p));objects.set(p,Buffer.from(b));},
+    list:async prefix=>[...new Set([...objects.keys()].filter(p=>p.startsWith(prefix)).map(p=>{const tail=p.slice(prefix.length),i=tail.indexOf('/');return prefix+(i<0?tail:tail.slice(0,i+1));}))].sort()};
+}
+async function seedV3(f,remote) {
+  const catalog=f.app.catalog,manage=input=>catalog.manage({catalogVersion:catalog.manifest.revision,...input});
+  const {connectionId}=await manage({action:'connection.save',name:'隔离共享连接',type:'webdav',url:'https://isolated.test/',username:'synthetic',password:'synthetic'});
+  const {workspaceId:id}=await manage({action:'workspace.add',connectionId,name:'隔离 v3 课程表',protocol:'v3'});
+  await manage({action:'workspace.switch',targetId:id});
+  const sync=options=>catalog.network(id,e=>e.synchronize(options));
+  await sync({create:true});for(let i=0;i<4;i++)await sync();
+  const db=catalog.db(id), maintenance=new V3Maintenance(catalog,id), root=maintenance.list().rows.find(r=>r.type===2);
+  await db.edit({kind:'entry',action:'upsert',value:{id:'stable',title:'历史验证课程',day:1,startMinute:480,endMinute:540,location:'测试'}});
+  await sync();for(let i=0;i<4;i++)await sync();
+  return {id,db,root,sync,maintenance};
+}
+
+test('PR61 管理服务单独失败不覆盖成功读取的课表，四页均可直接返回',async t=>{
+  const f=await fixture(t);await f.app.db.edit({kind:'entry',action:'upsert',value:{id:'local',title:'保留本地课程',day:1,startMinute:480,endMinute:540,location:''}});
+  await f.page.route('**/api/manage?*',route=>route.fulfill({status:503,json:{error:'管理接口独立故障'}}));
+  await f.open();await expect(f.page.locator('#managementStatus')).toContainText('管理接口独立故障');
+  await expect(f.page.locator('#status')).not.toContainText('管理接口独立故障');
+  await f.page.locator('#schedulePage').click();await expect(f.page.locator('#week')).toContainText('保留本地课程');
+  for(const id of ['historyPage','backupsPage','sourcesPage']){
+    await f.page.locator('#'+id).click();await f.page.locator('#schedulePage').click();await expect(f.page.locator('#week')).toBeVisible();
+    await expect(f.page.locator('#schedulePage')).toHaveAttribute('aria-current','page');
+  }
+  assert.deepEqual(f.errors,[]);
+});
+
+test('PR61 默认 v3 创建引导保留本地课程，取消新建不改变绑定，空白配置不写远端',async t=>{
+  const remote=memoryV3(),f=await fixture(t,{v3RemoteFactory:()=>remote});
+  await f.app.db.edit({kind:'entry',action:'upsert',value:{id:'local',title:'原本地课程',day:1,startMinute:480,endMinute:540,location:''}});
+  await f.open();await f.page.locator('#addWebDav').click();
+  await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）',{exact:true}).fill('https://isolated.test/');
+  await f.page.getByLabel('用户名',{exact:true}).fill('synthetic');await f.page.getByLabel('密码（仅同一访问身份可留空保留）',{exact:true}).fill('synthetic');
+  await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
+  await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://isolated.test/');await f.save.click();
+  await expect(f.page.locator('#connectionNext')).toContainText('没有创建或加入共享数据');
+  const before=structuredClone(f.app.catalog.manifest);
+  await f.page.getByRole('button',{name:'继续：新建空白课程表',exact:true}).click();
+  await expect(f.page.getByLabel('共享协议')).toHaveValue('v3');await expect(f.page.locator('#fields')).toContainText('不包含当前本地课程');
+  await f.page.locator('#cancel').click();assert.deepEqual(f.app.catalog.manifest,before);assert.equal(remote.objects.size,0);
+  await f.page.getByRole('button',{name:'新建课程表',exact:true}).click();await f.save.click();
+  await expect(f.page.locator('#workspaceSelect')).not.toHaveValue(before.activeId);
+  assert.equal(f.app.catalog.row(f.app.catalog.manifest.activeId).protocol,'v3');assert.equal(remote.objects.size,0);
+  assert.equal((await f.app.catalog.load(before.activeId)).frame.local.entries[0].title,'原本地课程');await f.app.catalog.load(f.app.catalog.manifest.activeId);
+  const card=f.page.locator('#workspaceRows article').filter({hasText:'当前使用'});
+  await card.getByRole('button',{name:'加入已有共享课表…',exact:true}).click();
+  await expect(f.page.locator('#feedbackMessage')).toContainText('没有可加入');await f.page.locator('#feedbackAccept').click();assert.equal(remote.objects.size,0);
+  await card.getByRole('button',{name:'创建新的共享课表…',exact:true}).click();
+  await expect(f.page.locator('#feedbackAccept')).toHaveText('创建并发布共享课表');await f.page.locator('#feedbackCancel').click();assert.equal(remote.objects.size,0);
+  assert.deepEqual(f.errors,[]);
+});
+
+test('PR61 真实 v3 业务版本、RAW、比较方向、回退取消和确认保留历史',async t=>{
+  const remote=memoryV3(),f=await fixture(t,{authorized:true,v3RemoteFactory:()=>remote}),v=await seedV3(f,remote);
+  await f.open();await f.page.locator('#historyPage').click();
+  await expect(f.page.locator('#historyRows article')).toHaveCount(2);
+  assert.doesNotMatch(await f.page.locator('#historyStatus').innerText(),/Epoch|Writer|Descriptor|停写|审计未完成/);
+  await f.page.locator('#historyView').selectOption('evidence');await expect(f.page.locator('#historyFilters')).toBeVisible();
+  await expect(f.page.locator('#historyRows')).toContainText('Descriptor');
+  await f.page.locator('#historyView').selectOption('business');
+  const row=f.page.locator('#historyRows article').filter({hasText:'版本 '+v.root.id.slice(0,8)}).first();
+  await row.getByText('查看完整诊断证据（RAW 身份与引用）',{exact:true}).click();await expect(row.locator('pre')).toContainText(v.root.hash);
+  await row.getByRole('button',{name:'查看版本内容',exact:true}).click();await expect(f.page.locator('#historyOutput h4')).toHaveText(['本地课程','日历事件','课程来源','导入原始实例','全周与指定周课程覆盖','停课与补课','学期与作息','自定义身份信息']);
+  await row.getByRole('button',{name:'与当前课程表比较',exact:true}).click();await expect(f.page.locator('#historyOutput')).toContainText('新增 1');
+  await expect(f.page.locator('#historyOutput')).toContainText('→ 当前课程表');
+  await row.getByRole('button',{name:'预览恢复到此版本',exact:true}).click();await expect(f.page.locator('#historyOutput')).toContainText('删除 1');
+  const original=new Map(remote.objects);await f.page.locator('#historyCancel').click();assert.deepEqual(remote.objects,original);assert.equal(v.db.frame.local.entries.length,1);
+  await row.getByRole('button',{name:'预览恢复到此版本',exact:true}).click();await f.page.locator('#historyConfirm').click();
+  await expect(f.page.locator('#feedbackAccept')).toHaveText('确认回退');await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#historyRows article')).toHaveCount(3);assert.equal(v.db.frame.local.entries.length,0);
+  for(const [path,bytes] of original)assert(remote.objects.get(path).equals(bytes));
+  assert.deepEqual(f.errors,[]);
+});
+
+test('PR61 真实 v3 多父关系分别比较，分页不解码全部快照，宽窄窗口无横向溢出',async t=>{
+  const remote=memoryV3(),f=await fixture(t,{v3RemoteFactory:()=>remote}),v=await seedV3(f,remote);
+  const tip=v.maintenance.list().rows.find(r=>r.type===3),parent=decodeV3(remote.objects.get(tip.path));
+  const child=title=>({...parent,objectId:randomUUID(),writerId:randomUUID(),refs:[reference(parent,tip.hash,1)],state:{...parent.state,events:[{id:title,title,start:1,end:2,location:'',note:''}]}});
+  const left=child('左分支'),right=child('右分支');for(const o of [left,right])remote.objects.set(objectPath(o),encodeV3(o));
+  const {sha}=await import('../src/v3-protocol.mjs');
+  const merged={...parent,objectId:randomUUID(),refs:[reference(left,sha(encodeV3(left)),1),reference(right,sha(encodeV3(right)),1)],state:{...parent.state,events:[...left.state.events,...right.state.events]}};
+  remote.objects.set(objectPath(merged),encodeV3(merged));for(let i=0;i<5;i++)await v.sync();
+  await f.open();await f.page.locator('#historyPage').click();
+  const row=f.page.locator('#historyRows article').filter({hasText:'版本 '+merged.objectId.slice(0,8)}).first();
+  await expect(row).toContainText('多父合并版本');await expect(row.getByRole('button',{name:/比较父版本/})).toHaveCount(2);
+  await row.getByRole('button',{name:/比较父版本/}).first().click();await expect(f.page.locator('#historyOutput')).toContainText('新增 1');
+  for(const width of [1280,390]){
+    await f.page.setViewportSize({width,height:800});assert(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    if(process.env.UX_SCREENSHOTS){await f.page.screenshot({path:process.env.UX_SCREENSHOTS+`/pr61-v3-${width}.png`,fullPage:true});await f.page.screenshot({path:process.env.UX_SCREENSHOTS+`/pr61-v3-${width}-viewport.png`});}
+    await f.page.locator('#schedulePage').click();await expect(f.page.locator('#week')).toBeVisible();await f.page.locator('#historyPage').click();
+  }
+  // Same verified metadata API, with a small page limit injected to exercise sparse cursor pages.
+  let snapshots=0;await f.page.route('**/api/history/snapshot?*',route=>{snapshots++;return route.continue();});
+  await f.page.route('**/api/history?*',route=>{const u=new URL(route.request().url());u.searchParams.set('limit','1');return route.continue({url:u.href});});
+  await f.page.locator('#historyPage').click();let pages=0;
+  while(await f.page.getByRole('button',{name:'继续下一页',exact:true}).count()){
+    assert(++pages<15);const old=await f.page.locator('#historyRows').getAttribute('data-after');await f.page.getByRole('button',{name:'继续下一页',exact:true}).click();await expect(f.page.locator('#historyRows')).not.toHaveAttribute('data-after',old);
+    assert(await f.page.locator('#historyRows article').count()<=1);
+  }
+  assert(pages>1);assert.equal(snapshots,0);assert.deepEqual(f.errors,[]);
+});
+
+test('PR61 历史列表失败可重试；页面切换后迟到版本和回退预览不能生效',async t=>{
+  const remote=memoryV3(),f=await fixture(t,{v3RemoteFactory:()=>remote}),v=await seedV3(f,remote);await f.open();
+  let fail=true;await f.page.route('**/api/history?*',route=>fail?route.fulfill({status:503,json:{error:'列表暂不可读'}}):route.continue());
+  await f.page.locator('#historyPage').click();await expect(f.page.locator('#historyStatus')).toContainText('列表暂不可读');fail=false;
+  await f.page.getByRole('button',{name:'重试版本列表',exact:true}).click();await expect(f.page.locator('#historyRows article')).toHaveCount(2);
+  let release,started;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  await f.page.route('**/api/history/preview',async route=>{const response=await route.fetch();started();await gate;await route.fulfill({response}).catch(()=>{});});
+  try{
+    await f.page.locator('#historyTo').selectOption(v.root.id);await f.page.locator('#historyPreview').click();await pending;
+    await f.page.locator('#schedulePage').click();release();await expect(f.page.locator('#historyConfirm')).toBeDisabled();
+    assert.equal(v.db.frame.local.entries.length,1);await expect(f.page.locator('#week')).toContainText('历史验证课程');
+  }finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+
+test('PR61 过期回退被原后端拒绝，重复点击不重复提交，刷新后显示阻塞下一步',async t=>{
+  const remote=memoryV3(),f=await fixture(t,{v3RemoteFactory:()=>remote}),v=await seedV3(f,remote);
+  await f.open();await f.page.locator('#historyPage').click();await f.page.locator('#historyTo').selectOption(v.root.id);await f.page.locator('#historyPreview').click();
+  await expect(f.page.locator('#historyConfirm')).toBeEnabled();
+  const original=new Map(remote.objects);await v.db.edit({kind:'entry',action:'upsert',value:{id:'new-edit',title:'预览后的新编辑',day:1,startMinute:500,endMinute:550,location:''}});
+  let attempts=0;f.page.on('request',r=>{if(r.url().endsWith('/api/history/rollback'))attempts++;});
+  await f.page.locator('#historyConfirm').click();await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#historyStatus')).toContainText('过期');await expect(f.page.locator('#historyConfirm')).toBeDisabled();
+  assert.equal(attempts,1);assert.deepEqual(remote.objects,original);assert.equal(v.db.frame.local.entries.length,2);
+  await f.page.getByRole('button',{name:'刷新当前课表与历史',exact:true}).click();await expect(f.page.locator('#historyRows article')).toHaveCount(2);assert.deepEqual(f.errors,[]);
+});
+
+test('PR61 归档继续入口、本机整理预览取消与确认，以及真实测量文案',async t=>{
+  const remote=memoryV3(),f=await fixture(t,{authorized:true,v3RemoteFactory:()=>remote});await seedV3(f,remote);
+  let cleanup=0,archive=0;await f.page.route('**/api/history/cleanup-preview',route=>route.fulfill({json:{token:'cleanup-token',candidates:[{key:'synthetic'}],estimatedReusableBytes:2048}}));
+  await f.page.route('**/api/history/cleanup',route=>{cleanup++;assert.equal(route.request().postDataJSON().confirm,'整理本地冗余快照');return route.fulfill({json:{status:'COMPLETED',reclaimedFileBytes:0,estimatedReusableBytes:2048}});});
+  await f.page.route('**/api/history/archive',route=>{archive++;return route.fulfill({json:{id:'archive-only',status:'VERIFIED',location:{rootId:'approved',relative:'history-isolated'},message:'冻结范围已实际回读验证'}});});
+  await f.open();await f.page.locator('#historyPage').click();await expect(f.page.locator('#advancedHistory')).not.toHaveAttribute('open','');
+  await f.page.locator('#advancedHistory > summary').click();await f.page.getByRole('button',{name:'预览本机冗余快照整理',exact:true}).click();
+  await expect(f.page.locator('#feedbackAccept')).toHaveText('整理本机冗余快照');await expect(f.page.locator('#feedbackMessage')).toContainText('2 KiB');await f.page.locator('#feedbackCancel').click();assert.equal(cleanup,0);
+  await f.page.getByRole('button',{name:'预览本机冗余快照整理',exact:true}).click();await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#historyOutput')).toContainText('实测文件空间释放：0 B');assert.equal(cleanup,1);
+  await f.page.locator('#historyArchive').click();await expect(f.page.locator('#feedbackAccept')).toHaveText('确认导出');await f.page.locator('#feedbackCancel').click();assert.equal(archive,0);
+  await f.page.locator('#historyArchive').click();await f.page.locator('#feedbackAccept').click();await expect(f.page.locator('#historyOutput')).toContainText('history-isolated');assert.equal(archive,1);
+  assert.deepEqual(f.errors,[]);
+});
+
+test('PR61 备份口令失败撤销旧恢复能力，外部依赖和替换范围可见，离页后失效',async t=>{
+  const f=await fixture(t,{authorized:true});let fail=false,verified=0,cancelled=0;
+  await f.page.route('**/api/backups/list',route=>route.fulfill({json:{directoryIdentity:'isolated-directory',backups:[{name:'isolated.dpbk',size:4096,modifiedAt:0,status:'未验证'}]}}));
+  await f.page.route('**/api/backups/verify',route=>{verified++;return route.fulfill(fail?{status:400,json:{error:'口令认证失败'}}:{json:{token:'backup-'+verified,createdAt:0,appVersion:'test',formatVersion:'DPBK0002',workspaceCount:1,fileCount:3,bytes:4096,coverage:'应用状态、连接和凭据；外部目录不包含',dependencies:[{workspaceId:'other',workspaceName:'共享课程',courseCount:3,type:'webdav',included:false,endpoint:'https://isolated.test/'}]}});});
+  await f.page.route('**/api/backups/cancel',route=>{cancelled++;return route.fulfill({json:{ok:true}});});
+  await f.open();await f.page.locator('#backupsPage').click();await f.page.locator('#backupPassword').fill('synthetic-long-passphrase');await f.page.getByRole('button',{name:'验证并预览恢复',exact:true}).click();
+  await expect(f.page.locator('#backupRestore')).toBeEnabled();await expect(f.page.locator('#backupPreview')).toContainText('需外部访问：https://isolated.test/');await expect(f.page.locator('#backups')).toContainText('全部课程表、连接和凭据');
+  fail=true;await f.page.getByRole('button',{name:'验证并预览恢复',exact:true}).click();await expect(f.page.locator('#backupStatus')).toContainText('口令认证失败');await expect(f.page.locator('#backupRestore')).toBeDisabled();await expect(f.page.locator('#backupPreview')).toBeEmpty();assert(cancelled>0);
+  fail=false;await f.page.getByRole('button',{name:'验证并预览恢复',exact:true}).click();await expect(f.page.locator('#backupRestore')).toBeEnabled();
+  await f.page.locator('#backupRestore').click();await f.page.locator('#feedbackCancel').click();await expect(f.page.locator('#backupRestore')).toBeDisabled();
+  await f.page.getByRole('button',{name:'验证并预览恢复',exact:true}).click();await expect(f.page.locator('#backupRestore')).toBeEnabled();await f.page.locator('#schedulePage').click();await expect(f.page.locator('#backupRestore')).toBeDisabled();assert.deepEqual(f.errors,[]);
+});
+
+
+test('PR61 从另一安装加入真实已验证 v3 共享课表，不新建第二份共享数据',async t=>{
+  const remote=memoryV3(),publisher=await fixture(t,{v3RemoteFactory:()=>remote});await seedV3(publisher,remote);
+  const f=await fixture(t,{v3RemoteFactory:()=>remote}),catalog=f.app.catalog,manage=input=>catalog.manage({catalogVersion:catalog.manifest.revision,...input});
+  const {connectionId}=await manage({action:'connection.save',name:'加入测试连接',type:'webdav',url:'https://isolated.test/',username:'synthetic',password:'synthetic'});
+  const {workspaceId:id}=await manage({action:'workspace.add',name:'加入现有课程',protocol:'v3',connectionId});await manage({action:'workspace.switch',targetId:id});
+  const original=new Map(remote.objects);await f.open();const card=f.page.locator('#workspaceRows article').filter({hasText:'当前使用'});
+  await card.getByRole('button',{name:'加入已有共享课表…',exact:true}).click();await f.page.getByRole('button',{name:/^共享课表 /}).click();
+  await expect(f.page.locator('#feedbackAccept')).toHaveText('加入此共享课表');await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#bind')).toBeEnabled();await f.page.locator('#schedulePage').click();
+  for(let i=0;i<5 && !f.app.catalog.db(id).frame.local.entries.length;i++){await f.page.locator('#refresh').click();await expect(f.page.locator('#refresh')).toBeEnabled();}
+  await expect(f.page.locator('#week')).toContainText('历史验证课程');
+  assert.deepEqual(remote.objects,original);assert.deepEqual(f.errors,[]);
+});
+
+test('PR61 快速切换工作区后迟到的旧 state 不覆盖新课表或预览资格',async t=>{
+  const remote=memoryV3(),f=await fixture(t,{v3RemoteFactory:()=>remote}),v=await seedV3(f,remote),other=f.app.catalog.manifest.workspaces.find(w=>w.id!==v.id);
+  await f.open();let release,started;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  await f.page.route('**/api/state?*',async route=>{
+    if(new URL(route.request().url()).searchParams.get('workspaceId')===v.id){const response=await route.fetch();started();await gate;return route.fulfill({response}).catch(()=>{});}return route.continue();
+  });
+  try{
+    await f.page.locator('#refreshSources').click();await pending;await f.page.locator('#workspaceSelect').selectOption(other.id);
+    await expect(f.page.locator('#workspaceSelect')).toHaveValue(other.id);await expect(f.page.locator('#workspaceSelect')).toBeEnabled();release();
+    await expect(f.page.locator('#currentContext')).toContainText(other.name);await expect(f.page.locator('#week')).not.toContainText('历史验证课程');await expect(f.page.locator('#historyConfirm')).toBeDisabled();
+  }finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+
+test('PR61 中断的历史归档能从持久任务继续，使用原归档目录身份',async t=>{
+  const remote=memoryV3(),f=await fixture(t,{authorized:true,v3RemoteFactory:()=>remote});await seedV3(f,remote);
+  await f.page.route('**/api/history?*',async route=>{const response=await route.fetch(),data=await response.json();data.archiveJobs=[{id:'saved-job',status:'COPYING',location:{rootId:'approved',relative:'history-existing'},after:7,ceiling:12}];return route.fulfill({response,json:data});});
+  let input;await f.page.route('**/api/history/archive',route=>{input=route.request().postDataJSON();return route.fulfill({json:{status:'VERIFIED',pageCount:3,buffer:[],location:{rootId:'approved',relative:'history-existing'},message:'冻结范围已实际回读验证'}});});
+  await f.open();await f.page.locator('#historyPage').click();await f.page.locator('#advancedHistory > summary').click();
+  await f.page.getByRole('button',{name:'继续归档 saved-jo',exact:true}).click();await expect(f.page.locator('#historyOutput')).toContainText('history-existing');await expect(f.page.locator('#historyOutput')).toContainText('3 页归档清单');
+  assert.equal(input.jobId,'saved-job');assert.equal(input.rootId,'approved');assert.deepEqual(f.errors,[]);
+});
+
+
+test('PR61 管理卡片按正常、未发布、待确认、冲突、断线与恢复状态突出动作',async t=>{
+  const f=await fixture(t),connectionId=randomUUID();let sample={};
+  await f.page.route('**/api/manage?*',async route=>{const response=await route.fetch(),data=await response.json();data.connections=[{id:connectionId,name:'合成连接',type:'webdav',url:'https://isolated.test/'}];data.workspaces[0]={...data.workspaces[0],protocol:'v3',datasetId:'synthetic',connectionId,...sample};return route.fulfill({response,json:data});});
+  for(const [flags,action,description] of [[{},'检查并同步','本地已保存'],[{dirty:true},'检查并同步','有本地修改待发布'],[{pending:true},'继续检查远端回执','待回读确认'],[{conflict:true},'查看和处理冲突','存在冲突'],[{error:'offline'},'重试连接并同步','连接或同步异常'],[{recovery:true},'继续原操作 / 查看恢复信息','有恢复信息']]){
+    sample=flags;await f.open();const card=f.page.locator('#workspaceRows article').first();await expect(card).toContainText(description);await expect(card.getByRole('button',{name:action,exact:true})).toBeVisible();
+    if(!flags.recovery)await expect(card.getByRole('button',{name:'继续原操作 / 查看恢复信息',exact:true})).toHaveCount(0);
+  }assert.deepEqual(f.errors,[]);
+});
+
+test('PR61 首次读取 state 期间打开管理页仍完成课程表和管理数据加载',async t=>{
+  const f=await fixture(t);let release,started;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  await f.page.route('**/api/state?*',async route=>{const response=await route.fetch();started();await gate;return route.fulfill({response}).catch(()=>{});});
+  try{await f.open();await pending;release();await expect(f.page.locator('#workspaceRows')).toContainText('默认工作区');await expect(f.page.locator('#workspaceSelect option')).toHaveCount(1);await expect(f.page.locator('#managementStatus')).toBeEmpty();}finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+
+test('PR61 离开正在读取的备份页再返回，旧请求不锁死新页面按钮',async t=>{
+  const f=await fixture(t,{authorized:true});let release,started,first=true;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  await f.page.route('**/api/backups/list',async route=>{if(first){first=false;started();await gate;}return route.fulfill({json:{directoryIdentity:'isolated',backups:[]}}).catch(()=>{});});
+  try{await f.open();await f.page.locator('#backupsPage').click();await pending;await f.page.locator('#schedulePage').click();await f.page.locator('#backupsPage').click();await expect(f.page.locator('#backupStatus')).toContainText('0 个加密备份');release();await expect(f.page.locator('#backupBrowse')).toBeEnabled();await expect(f.page.locator('#backupCreate')).toBeEnabled();await expect(f.page.locator('#backupRestore')).toBeDisabled();}finally{release();}assert.deepEqual(f.errors,[]);
 });
