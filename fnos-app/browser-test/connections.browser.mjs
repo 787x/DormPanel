@@ -146,7 +146,7 @@ test('WebDAV 保存、新建与切换工作区及课程表单继续工作', asyn
   await f.page.locator('#addWebDav').click();
   await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）', { exact: true }).fill('https://example.test/schedule/');
   await f.page.getByLabel('用户名', { exact: true }).fill('test');
-  await f.page.getByLabel('密码（留空保留已保存密码）', { exact: true }).fill('test-only');
+  await f.page.getByLabel('密码（仅同一访问身份可留空保留）', { exact: true }).fill('test-only');
   await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
   await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://example.test/schedule/');
   await f.save.click(); await expect(f.page.locator('#connectionRows')).toContainText('WebDAV 课程');
@@ -172,7 +172,7 @@ test('公网同源代理改写 Host 时仍能初始化，并用完整公网 Orig
   await f.page.locator('#addWebDav').click();
   await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）', { exact: true }).fill('https://example.test/schedule/');
   await f.page.getByLabel('用户名', { exact: true }).fill('test');
-  await f.page.getByLabel('密码（留空保留已保存密码）', { exact: true }).fill('test-only');
+  await f.page.getByLabel('密码（仅同一访问身份可留空保留）', { exact: true }).fill('test-only');
   await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
   await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://example.test/schedule/');
   await f.save.click(); await expect(f.page.locator('#connectionRows')).toContainText('WebDAV 课程');
@@ -373,7 +373,7 @@ test('数据源高级操作保持可达，重命名生效，创建和绑定仍�
   await f.page.locator('#addWebDav').click();
   await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）', { exact: true }).fill('https://example.test/schedule/');
   await f.page.getByLabel('用户名', { exact: true }).fill('test');
-  await f.page.getByLabel('密码（留空保留已保存密码）', { exact: true }).fill('test-only');
+  await f.page.getByLabel('密码（仅同一访问身份可留空保留）', { exact: true }).fill('test-only');
   await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
   await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://example.test/schedule/');
   await f.save.click(); await expect(f.page.locator('#connectionRows')).toContainText('WebDAV 课程');
@@ -543,7 +543,7 @@ test('PR59 WebDAV 草稿只读浏览、编码路径、明确选择与高级退�
   await f.open();await f.page.locator('#addWebDav').click();
   await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）',{exact:true}).fill('https://nas.test/dav/');
   await f.page.getByLabel('用户名',{exact:true}).fill('synthetic');
-  await f.page.getByLabel('密码（留空保留已保存密码）',{exact:true}).fill('test-only');
+  await f.page.getByLabel('密码（仅同一访问身份可留空保留）',{exact:true}).fill('test-only');
   await f.page.getByRole('button',{name:'浏览服务器文件夹',exact:true}).click();
   await f.page.getByRole('button',{name:'📁 课表 📚',exact:true}).click();
   await expect(f.page.locator('#fields')).toContainText('此文件夹没有子目录');await expect(f.save).toBeDisabled();
@@ -622,4 +622,22 @@ test('PR59 独立归档从授权目录选择，仍由恢复 API 验证清单',as
   await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();await f.page.locator('dialog[open]').getByRole('button',{name:'取消',exact:true}).click();assert.equal(input,null);
   await f.page.getByRole('button',{name:'从独立归档恢复缺失缓存',exact:true}).click();await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();
   await expect(f.page.locator('#historyStatus')).toContainText('归档清单验证失败');await expect(f.page.getByRole('button',{name:'从独立归档恢复缺失缓存',exact:true})).toBeEnabled();assert.equal(input.rootId,'approved');assert.equal(input.relative,'测试子目录');assert(input.workspaceId);assert.deepEqual(f.errors,[]);
+});
+
+
+test('审查修复：编辑 WebDAV 从原路径浏览，取消和失败不扩大范围或改连接',async t=>{
+  const f=await fixture(t),id=randomUUID();
+  const manifest=structuredClone(f.app.catalog.manifest);
+  manifest.connections.push({id,name:'原路径连接',type:'webdav',config:{url:'https://nas.test/dav/中文%20a/',username:'u',password:'synthetic-secret'}});
+  await f.app.catalog.commit(manifest);const before=structuredClone(f.app.catalog.manifest);let request;
+  await f.page.route('**/api/connections/browse',route=>{request=route.request().postDataJSON();return route.fulfill({status:403,json:{error:'无权读取此目录'}});});
+  await f.open();const card=f.page.locator('#connectionRows article').filter({hasText:'原路径连接'});
+  await card.getByText('连接操作',{exact:true}).click();await card.getByRole('button',{name:'编辑连接',exact:true}).click();
+  await expect(f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）',{exact:true})).toHaveValue('https://nas.test/dav/中文%20a/');
+  await f.page.getByRole('button',{name:'浏览服务器文件夹',exact:true}).click();
+  await expect(f.page.locator('#fields')).toContainText('目录加载失败');
+  assert.equal(new URL(request.url).pathname,'/dav/%E4%B8%AD%E6%96%87%20a/');assert.equal(request.url,request.browseUrl);assert.equal(request.password,'');assert.equal(request.connectionId,id);
+  await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
+  await expect(f.page.getByLabel('共享父目录完整 URL',{exact:true})).toHaveValue('https://nas.test/dav/中文%20a/');
+  await f.page.locator('#cancel').click();assert.deepEqual(f.app.catalog.manifest,before);assert.deepEqual(f.errors,[]);
 });

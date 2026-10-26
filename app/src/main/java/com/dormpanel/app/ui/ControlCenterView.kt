@@ -21,6 +21,7 @@ import com.dormpanel.app.schedule.WebDavSettings
 import com.dormpanel.app.schedule.WebDavSyncController
 import com.dormpanel.app.schedule.WebDavClient
 import com.dormpanel.app.schedule.WebDavAccount
+import com.dormpanel.app.schedule.WebDavCredentials
 import com.dormpanel.app.R
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.AppearanceState
@@ -288,11 +289,8 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
             val entered = url.text.toString().trim()
             val username = user.text.toString()
             val saved = settings.account()
-            val secret = password.text.toString().ifBlank {
-                if (saved?.baseUrl == entered && saved.username == username) saved.password else ""
-            }
-            if (secret.isBlank()) { status.text = "Enter the account password."; return null }
-            return runCatching { WebDavClient().url(entered); WebDavAccount(entered, username, secret,saved?.certificatePem?.takeIf { saved.baseUrl==entered && saved.username==username }) }
+            return runCatching { WebDavCredentials.candidate(saved,entered,username,password.text.toString(),
+                WebDavCredentials.inheritedCertificate(saved,entered,username)) }
                 .onFailure { status.text = it.message }.getOrNull()
         }
         val test = Button(context).apply { text = "Test connection"; setOnClickListener {

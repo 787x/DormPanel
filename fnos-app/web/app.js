@@ -1079,8 +1079,8 @@ function connectionDialog(type, c = null) {
     const name = field('连接名称', c?.name ?? (type === 'local' ? '本地课程' : 'WebDAV 课程'));
     let read;
     if (type === 'webdav') {
-      const server = field('WebDAV 服务器访问地址（可含起始路径）', c?.url ? new URL(c.url).origin+'/' : '');
-      const username = field('用户名', c?.username ?? ''), password = field('密码（留空保留已保存密码）', '', 'password');
+      const server = field('WebDAV 服务器访问地址（可含起始路径）', c?.url ?? '');
+      const username = field('用户名', c?.username ?? ''), password = field('密码（仅同一访问身份可留空保留）', '', 'password');
       const insecure = field('允许 HTTP 明文内网连接（帐号、密码和课表不加密）', '', 'checkbox'); insecure.checked = c?.allowInsecureHttp === true;
       const cert = field('独立信任的服务器公钥证书 PEM（留空保留）', '', 'textarea'), system = field('恢复系统 CA / 清除独立证书', '', 'checkbox');
       const selectedText=el('p',c ? '已选择：'+c.url : '尚未选择共享父目录','folder-location'), host=el('div'); let selectedUrl=c?.url ?? '', picker=null;

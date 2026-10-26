@@ -18,9 +18,12 @@ class PhoneFolderUiTest {
                 launched.set(true)
                 val end=System.currentTimeMillis()+20000
                 while(true) { var ready=false;s.onActivity { ready=it.source.ready };if(ready)break;check(System.currentTimeMillis()<end);Thread.sleep(80) }
+                FolderUiChecks.firstDirectoryRequired(f,{ action->s.onActivity { action(it) } },SharedScheduleSettings(i.targetContext),{
+                    onView(withText("管理")).perform(click());onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
+                },{a->(a as TimetableActivity).sharedSync},"phone")
                 FolderUiChecks.sharedDraft(f,{ action->s.onActivity { action(it) } },SharedScheduleSettings(i.targetContext),{
                     onView(withText("管理")).perform(click());onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
-                },{a->(a as TimetableActivity).source},{a->(a as TimetableActivity).sharedSync},"phone")
+                },{a->(a as TimetableActivity).source},{a->(a as TimetableActivity).sharedSync},"phone",{ repeat(5) { dismissTestPasswordPrompt();Thread.sleep(100) } })
             }
         }
     }
