@@ -1,4 +1,4 @@
-# DormPanel Schedule Manager 0.7.6（PR55 测试候选）
+# DormPanel Schedule Manager 0.8.1（PR58 发布候选）
 
 显式 v3 工作区与 v2→v3 迁移复用同一 Catalog / Workspace / Writer 和管理员边界。PR56 增加无副作用的只读 Descriptor 发现、游标分页历史、八类 RAW 版本详情与差异、新提交式回退、可续做审计和独立历史归档。v3 完整应用备份使用 DPBK0002 一致性 SQLite 快照，继续读取 DPBK0001；恢复后先隔离发布并核验已知引用。支持明确预览与确认的私有无引用 RAW 快照整理；缓存身份、未知恢复材料和全部远端历史均不自动删除。普通 WebDAV 远端 GC 保持 NOT_ELIGIBLE，v2 精简候选不适用于 v3。实际范围、预算和验收见 [PR56 记录](../docs/pr56-sync-v3-maintenance.md)，此前接入边界见 [PR55 记录](../docs/pr55-sync-v3-verification.md)。
 
@@ -15,6 +15,8 @@ fnOS Native 通过 Catalog 管理显式 v2 / v3 工作区；原 v2 默认行为�
 HTTP WebDAV 须在连接中显式允许明文传输；HTTPS 推荐使用系统 CA，fnOS 自签名证书可通过连接表单独立信任已核对的 PEM 公钥证书，不关闭全局 TLS 校验。
 
 ## 使用
+
+0.8.1 当前为 [PR58 RC ACCEPTED 候选](../docs/pr58-sync-v3-rc.md)，不是稳定发布。更新已有应用应使用官方应用中心较高版本原位升级。不要以 `appcenter-cli install-local` 绕过同版本检查：该命令在本次实测先卸载旧包；事故恢复不计为原位升级验收。
 
 0.4.4 安装时不再填写 WebDAV。打开后可以直接本地编辑；需要共享时，再到“数据源管理”添加 NAS 本地目录或 WebDAV。添加连接只保存存储位置，不会创建课程数据集：随后新建课程表（工作区），切换到它，再从“更多操作”接收已有课表或在空目录创建共享课表。切换不会迁移或合并原课程，移除配置不会删除远端文件。
 

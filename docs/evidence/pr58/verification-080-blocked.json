@@ -1,0 +1,234 @@
+{
+  "verdict": "RC BLOCKED",
+  "date": "2026-10-26",
+  "timezone": "Asia/Shanghai",
+  "base": "54ab0a52fc6966af8b7a431ac756cc6a5563bc69",
+  "runtimeSourceCommits": {
+    "android": "0bd001bd8148b3e722c0ba297f5d6383dce80d60",
+    "fpk": "455e5598ac3d0845ba90edae33dd2585427155a2",
+    "ha": "unchanged from base; 0.1.2"
+  },
+  "candidate": "artifacts/pr58/candidate-2",
+  "artifacts": [
+    {
+      "file": "DormPanel-HA-0.1.2.zip",
+      "bytes": 12001,
+      "sha256": "23f0fa350121b4a689c53ed78f5d5e76df6379e11bded6e948caad6a3694c8f7"
+    },
+    {
+      "file": "DormPanel-Phone-0.1.8.apk",
+      "bytes": 10278955,
+      "sha256": "f424afa2108bd4e9a0574083d8d05dc79a35def7c117ec80ed6dbc4bc45a1320"
+    },
+    {
+      "file": "dormpanel-schedule-manager-0.8.0.fpk",
+      "bytes": 4599954,
+      "sha256": "cd5c1dd77c7e511032f400344cb093c0b7b8d697c5276af0ef92c7e5607ff39e"
+    },
+    {
+      "file": "DormPanel-X08E-0.1.9.apk",
+      "bytes": 16558448,
+      "sha256": "a14c75d88206482e69b8ce1411c672d8a5dc6736f3c7e152f723492ebe1895c4"
+    }
+  ],
+  "androidSignerSha256": "32d68b5c6ad0bfd1b87aa0d54514ef71c33838e7643eb038488af7ca2add17f7",
+  "versions": {
+    "x08e": {
+      "package": "com.dormpanel.app",
+      "name": "0.1.9",
+      "code": 12,
+      "minSdk": 28,
+      "targetSdk": 37,
+      "debuggable": false,
+      "installedBytesMatch": true
+    },
+    "phone": {
+      "package": "com.dormpanel.timetable",
+      "name": "0.1.8",
+      "code": 10,
+      "minSdk": 28,
+      "targetSdk": 37,
+      "debuggable": false,
+      "installedBytesMatch": true
+    },
+    "fpk": {
+      "package": "dormpanel-schedule-manager",
+      "name": "0.8.0",
+      "installedSourceFilesVerified": 44,
+      "sourceMismatches": [],
+      "officialInPlaceUpgradeOfFinalBytes": "BLOCKED",
+      "initialSupersededCandidateUpgradeFrom": "0.7.6"
+    },
+    "ha": {
+      "name": "0.1.2",
+      "sourceFilesVerified": 10,
+      "deployed": false
+    }
+  },
+  "build": {
+    "android": "Gradle assembleRelease; release lint; existing approved keystore",
+    "java": "OpenJDK 25.0.3",
+    "androidBuildTools": "37.0.0",
+    "fpk": "NAS official fnpack build; npm ci --ignore-scripts; verify-package",
+    "node": "22.18.0",
+    "fnpackSha256": "f72be623ad650057a079ce11d1b9a220a41795b2f5baff7c6ba5874fa45686d5"
+  },
+  "checks": [
+    {
+      "name": "mock independent-version/signature/debug/SDK/hash guards",
+      "result": "PASS",
+      "count": 39,
+      "scope": "mock tool output, not signature evidence"
+    },
+    {
+      "name": "native APK negative/frozen/stale artifact gates",
+      "result": "PASS",
+      "count": 9
+    },
+    {
+      "name": "HA real ZIP content, extra entry, duplicate, case-sensitive path and sidecar guards",
+      "result": "PASS",
+      "count": 6
+    },
+    {
+      "name": "NAS backup and PR56 maintenance backend regression",
+      "result": "PASS",
+      "passed": 53,
+      "failed": 0,
+      "skipped": 0,
+      "sourceCommit": "0bd001bd8148b3e722c0ba297f5d6383dce80d60",
+      "note": "final web-only fix leaves fnos-app/src identical; not rerun as final full suite"
+    },
+    {
+      "name": "endpoint UI revision regression before fix",
+      "result": "EXPECTED_FAIL",
+      "count": 1,
+      "observed": "management revision expired after committed endpoint"
+    },
+    {
+      "name": "endpoint UI revision regression after fix",
+      "result": "PASS",
+      "count": 1,
+      "sourceCommit": "455e5598ac3d0845ba90edae33dd2585427155a2"
+    },
+    {
+      "name": "final installed CLI/MCP read equality",
+      "result": "PASS",
+      "tools": 86,
+      "protocol": "2026-07-28",
+      "permissions": [
+        "read"
+      ]
+    },
+    {
+      "name": "final installed remote GC eligibility",
+      "result": "PASS",
+      "status": "NOT_ELIGIBLE",
+      "automaticDelete": false
+    },
+    {
+      "name": "final installed DPBK0002 create and authenticated readback",
+      "result": "PASS",
+      "appVersion": "0.8.0",
+      "workspaces": 15,
+      "files": 73,
+      "archiveBytes": 2640798,
+      "archiveSha256": "1100a307d6adf69159cb708c0c92c3d4a84a1f166612dc3bdf668d430b768b48"
+    },
+    {
+      "name": "Android in-place upgrades, final installed byte hashes and original-store restoration",
+      "result": "PASS"
+    },
+    {
+      "name": "Phone signed product UI v3 join, local edit and exact remote receipt",
+      "result": "PASS",
+      "writerId": "feaef44a-03af-440e-a614-86ebd96ae020"
+    },
+    {
+      "name": "Phone Wi-Fi-off save and process reopen",
+      "result": "PASS",
+      "localCourseRetainedInArchivedStore": true
+    },
+    {
+      "name": "final three-client bidirectional/concurrent/Epoch matrix",
+      "result": "BLOCKED"
+    },
+    {
+      "name": "final installed rollback, multi-page diff, archive, private cleanup and DPBK protected restore",
+      "result": "SKIP"
+    },
+    {
+      "name": "X08E native Home and return to DormPanel",
+      "result": "PASS",
+      "nativeActivity": "com.xiaomi.micolauncher/.Launcher"
+    },
+    {
+      "name": "X08E HA live control / XiaoAI and Mesh behavior / actual boot recovery",
+      "result": "SKIP"
+    }
+  ],
+  "network": {
+    "setup": "3 synthetic immutable objects copied to a second random directory; every object GET verified after PUT",
+    "paths": [
+      {
+        "alias": "HTTPS-A",
+        "tls": "system CA",
+        "computer": "PROPFIND 207",
+        "nasInitialCandidate": "v2 create, v3 migration, endpoint preview/confirm observed",
+        "android": "TCP timeout observed"
+      },
+      {
+        "alias": "HTTPS-B",
+        "tls": "system CA",
+        "computer": "PROPFIND 207",
+        "phone": "actual v2 bind, existing v3 target join, publication receipt",
+        "nasLater": "package-user DNS resolution failed; Web UI network failure"
+      }
+    ],
+    "adbUsedForDataTransportToWebDav": false,
+    "globalDnsOrTlsChanged": false
+  },
+  "syntheticDataset": {
+    "v2": "138ab693-fe57-47f6-b4da-83d0ab4d6241",
+    "v3": "7d3d4110-56ed-48ce-baf8-1ab7cb29dab0",
+    "descriptorSha256": "a8e90bd9d5893e8cbb214b8257ea0e4d66c2fd8b003a2098af9bdcea314fbcaa",
+    "threeClientAcceptance": false
+  },
+  "recovery": {
+    "incident": "official install-local unexpectedly uninstalled the existing package before install failed with 10237; not counted as an in-place upgrade",
+    "method": "official final FPK install, stop service, restore verified stopped-state tar backups, verify, start service",
+    "stateAndConfigFilesRestoredExactly": 96,
+    "writerIdRestored": "815bc368-1ba9-4848-91ff-db4f02953e2a",
+    "oldWorkspaceAndConnectionDefinitionsPreserved": 13,
+    "originalStateFilesComparedExactlyAtRecoveryVerification": 80,
+    "originalSharedSubdirectoriesStillPresent": 6,
+    "androidOriginalBusinessTablesUnchangedAfterRestoration": true,
+    "androidOriginalV2WritersAndSelectedEncryptedPreferencesPreserved": true,
+    "testStoresRetained": true,
+    "dpbkRestoreTested": false
+  },
+  "invalidated": {
+    "candidate": "candidate-1",
+    "fpkSha256": "3584fb8476b5d98d139db85dd76e8a36a63e2dea1f6aa9aa45a1230c7ff137f1",
+    "reason": "endpoint UI stale Catalog revision; final FPK rebuilt, APK/HA bytes reused by exact hash"
+  },
+  "notPerformed": [
+    "merge",
+    "tag",
+    "GitHub Release",
+    "daily v2 to v3 migration",
+    "remote GC",
+    "full growth/70-cycle/long soak rerun"
+  ],
+  "remoteObservation": {
+    "scope": "one observed recursive listing of the owned random HTTPS-B fixture; no global consistency claim",
+    "directories": 21,
+    "initialObjectsUnchanged": true,
+    "dpvTypeCounts": {
+      "1": 1,
+      "2": 1,
+      "3": 2,
+      "4": 0
+    }
+  }
+}

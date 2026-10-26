@@ -16,7 +16,7 @@ DormPanel 是面向 Xiaomi Redmi 小爱触屏音箱 Pro 8（X08E）的轻量 And
 - 课程业务与同步主要涉及 `schedule-core/`、Android App/Phone、`fnos-app/`。fnOS FPK 是独立、可选的课程编辑 Writer；不安装 FPK 时，Android 客户端也应能通过普通 WebDAV 共享课表。
 - fnOS 的网页、CLI/MCP 必须复用后端业务规则、同一 Writer/事务保护和现有管理员权限边界；不得新建绕过 revision、鉴权、目录授权、迁移保护或冲突决策的写入通道。
 - 本地课表包含事件、本地课程、导入来源与实例、课程覆盖、日期调整及学期配置。稳定业务身份、`null` 与空字符串的差别、原始导入和人工覆盖的分层语义必须保留；不按课程名称、时间戳或文件名猜测是否为同一记录。
-- Sync v2 已投入使用。`docs/sync-v2-protocol.md`、`ScheduleCommit.kt`、`AppendOnlyScheduleSync.kt`、`ScheduleMerge.kt`、fnOS `protocol.mjs` / `graph.mjs` / `sync.mjs` 及历史、迁移文档是核对现有行为的主要入口。Sync v3 在明确实施和验收前均是规划中的独立新协议，不能写成已发布能力。
+- Sync v2 已投入使用。`docs/sync-v2-protocol.md`、`ScheduleCommit.kt`、`AppendOnlyScheduleSync.kt`、`ScheduleMerge.kt`、fnOS `protocol.mjs` / `graph.mjs` / `sync.mjs` 及历史、迁移文档是核对现有行为的主要入口。Sync v3（DPV3/3）已在 PR53–57 实现并完成专项验证；PR58 准备统一发布候选，候选验收和公开稳定发布须分别记录，不能将已实现等同于已发布。
 
 ## 同步、数据安全与恢复不变量
 
@@ -32,9 +32,9 @@ DormPanel 是面向 Xiaomi Redmi 小爱触屏音箱 Pro 8（X08E）的轻量 And
 8. **历史回收**：不得仅按数量或时间删除已有父提交。Sync v3 的 Epoch/Checkpoint 可用于有界活跃历史，但纯 WebDAV 不意味着旧分代已停止接收迟到提交；没有可验证的停写与归档条件，不自动物理删除旧历史。
 9. **证据分级**：区分本机已保存、远端回读确认、已观察的活跃历史同步、旧历史审计完成、已知设备确认及服务器实际禁止写入，UI、API 和报告都不能混称为“全部同步完成”。
 
-## Sync v3 的长期方向
+## Sync v3 的实现与后续方向
 
-Sync v3 计划使用独立协议目录、不可变对象、按 Epoch 划分的有界 DAG、跨代继承证明、长期离线重放、迟到提交整合和持久化对象缓存，以突破 v2 的**全数据集累计 256 提交限制**。这不等于取消每轮资源预算，也不意味着可以无条件清除旧历史。
+Sync v3 已实现独立协议目录、不可变对象、按 Epoch 划分的有界 DAG、跨代继承证明、长期离线重放、迟到提交整合和持久化对象缓存，通过分代避免 v2 的**全数据集累计 256 提交限制**。这不等于取消每轮资源预算，也不意味着可以无条件清除旧历史。
 
 - 保留成熟的课程模型与现有 `ScheduleMerge` 作为第一版业务合并基础。字段组合并、压缩、内容寻址分片及签名只能在协议语义、兼容性和相关测试具备后启用。
 - 将协议编解码、历史验证、对象缓存、持久事务、网络/文件存储和 UI 解耦。跨语言 Kotlin/Node 对同一协议输入必须得到一致的合法性和业务结果。

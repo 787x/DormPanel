@@ -20,12 +20,13 @@ function Invoke-AndroidReleaseTool([string]$Tool, [string[]]$ToolArguments) {
         return $line
     }
     $app = $script:currentApp
-    $badging = "package: name='$($app.Package)' versionCode='$($app.Code)' versionName='$releaseVersion'`nsdkVersion:'28'`ntargetSdkVersion:'37'`n"
+    $badging = "package: name='$($app.Package)' versionCode='$($app.Code)' versionName='$($app.Version)'`nsdkVersion:'28'`ntargetSdkVersion:'37'`n"
     switch ($script:case) {
         'modern minSdk label' { $badging = $badging.Replace("sdkVersion:'28'", "minSdkVersion:'28'") }
         'wrong package' { $badging = $badging.Replace($app.Package, 'other.package') }
         'wrong code' { $badging = $badging.Replace("versionCode='$($app.Code)'", "versionCode='999'") }
-        'wrong name' { $badging = $badging.Replace($releaseVersion, '0.1.1') }
+        'wrong name' { $badging = $badging.Replace($app.Version, '0.1.1') }
+        'other app version' { $other = $releaseApps | Where-Object Device -ne $app.Device; $badging = $badging.Replace("versionName='$($app.Version)'", "versionName='$($other.Version)'") }
         'debuggable' { $badging += 'application-debuggable' }
         'wrong minSdk' { $badging = $badging.Replace("sdkVersion:'28'", "sdkVersion:'29'") }
         'wrong targetSdk' { $badging = $badging.Replace("targetSdkVersion:'37'", "targetSdkVersion:'36'") }
@@ -50,7 +51,7 @@ try {
         $script:case = 'modern minSdk label'
         Assert-ReleaseApk $apk $app $tools
         $script:count++
-        foreach ($badCase in @('native failure', 'unsigned', 'wrong signer', 'multiple signers', 'no signer', 'wrong package', 'wrong code', 'wrong name', 'debuggable', 'wrong minSdk', 'wrong targetSdk', 'missing SDK', 'missing package')) {
+        foreach ($badCase in @('native failure', 'unsigned', 'wrong signer', 'multiple signers', 'no signer', 'wrong package', 'wrong code', 'wrong name', 'other app version', 'debuggable', 'wrong minSdk', 'wrong targetSdk', 'missing SDK', 'missing package')) {
             $script:case = $badCase
             Expect-Rejected "$($app.Device) $badCase" { Assert-ReleaseApk $apk $app $tools }
         }

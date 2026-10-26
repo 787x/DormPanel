@@ -1,6 +1,6 @@
 // 三个入口共用的操作目录。业务写入仍全部进入 server 的原事务/互斥处理器。
 import { z } from 'zod';
-export const VERSION = '0.7.6';
+export const VERSION = '0.8.1';
 export const BUDGET = 2 * 1024 * 1024;
 const text = z.string().max(4096), id = z.uuid(), number = z.number().int().nonnegative();
 const workspace = { workspaceId: id };
