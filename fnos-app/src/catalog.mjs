@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, json } from './store.mjs';
 import { Workspace, workspaceSummary, workspaceStamp } from './workspace.mjs';
-import { binding, WebDav } from './webdav.mjs';
+import { binding, WebDav, sameAccessIdentity } from './webdav.mjs';
 import { LocalGrants, LocalCommitStore, segments } from './local.mjs';
 import { ensure, uuid, decode } from './protocol.mjs';
 import { loadGraph } from './graph.mjs';
@@ -160,8 +160,12 @@ export class Catalog {
     let config;
     if (type === 'webdav') {
       config = { url: input.url ?? old?.config.url, username: input.username ?? old?.config.username,
-        password: input.password || old?.config.password, certificatePem: input.certificatePem ?? old?.config.certificatePem,
+        password: input.password, certificatePem: input.certificatePem ?? old?.config.certificatePem,
         ...(input.allowInsecureHttp === true || input.allowInsecureHttp === undefined && old?.config.allowInsecureHttp === true ? {allowInsecureHttp:true} : {}) };
+      if (!input.password && old) {
+        ensure(sameAccessIdentity(old.config, config), '服务器、用户名或证书信任已变化，请重新输入密码');
+        config.password = old.config.password;
+      }
       this.validateWebDav(config);
     } else {
       const rootId = input.rootId ?? old?.config.rootId;

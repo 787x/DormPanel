@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { randomBytes, timingSafeEqual, randomUUID, createHash } from "node:crypto";
 import { Store, json } from "./store.mjs";
 import { Catalog } from "./catalog.mjs";
+import { browseFolders } from './folder-browser.mjs';
 import { date, ensure, zone } from "./protocol.mjs";
 import { projectWeek, monday, addDays } from "./projection.mjs";
 import { mergePlan } from "./merge.mjs";
@@ -116,7 +117,7 @@ export async function createApp({
     previews.clear(); tokens.clear(); history.tokens.clear();
   } });
   await backups.cleanupStages();
-  let requests = 0, writes = 0, historyLock = false;
+  let requests = 0, writes = 0, historyLock = false, folderReads = 0;
   const v3Previews = new Map();
   const history = new HistoryManager(catalog);
   const tokens = new Map(),
@@ -173,6 +174,7 @@ export async function createApp({
           "/api/import/confirm",
           "/api/manage",
           "/api/connections/test",
+          '/api/connections/browse',
         ];
         if (!routes.includes(path)) {
           send(405, { error: "不支持的写入路由" });
@@ -189,6 +191,16 @@ export async function createApp({
           return;
         }
         const input = await body(req);
+        if (path === '/api/connections/browse') {
+          ensure(!internal && !catalog.maintenance, '仅管理员页面可浏览；恢复期间请稍后重试');
+          const old = input.connectionId ? catalog.connection(input.connectionId) : null;
+          const candidate = await catalog.candidate({ ...input, type:'webdav', name:input.name || old?.name || '目录预览' }, old);
+          ensure(folderReads < 4, '目录读取繁忙，请稍后重试');
+          folderReads++;
+          try { send(200, await browseFolders(candidate.config, input.browseUrl ?? candidate.config.url)); }
+          finally { folderReads--; }
+          return;
+        }
         if (path === '/api/agent') { ensure(!internal, 'Agent 不能批准自身'); send(200, await agents.admin(input, user)); return; }
         if (path === '/api/endpoint') {
           ensure(!catalog.maintenance && !catalog.configuring && !catalog.invalidated && !writes && !historyLock && !catalog.busy.size,'存在并发操作或恢复保护');

@@ -112,7 +112,7 @@ export class LocalGrants {
     const { fd } = await this.directory(id, relative);
     try {
       const rows = await entries(fd, 2048);
-      return rows.filter(x => x.isDirectory() && !x.name.startsWith('.') && x.name !== 'dormpanel-sync-v2').map(x => x.name).sort();
+      return rows.filter(x => x.isDirectory() && !x.name.startsWith('.') && !['dormpanel-sync-v2','dormpanel-sync-v3'].includes(x.name)).map(x => x.name).sort();
     } finally { await fd.close(); }
   }
   async privateFolder(id) {

@@ -31,4 +31,14 @@ class WebDavFoldersTest {
             }
         }
     }
+    @Test fun importUsesSameBoundaryAndHidesProtocolDirectories() {
+        val root="https://example.org/dav/"
+        fun item(path:String,folder:Boolean)=WebDavItem(root+path,path,folder,null,null,null,null,null)
+        val rows=WebDavFolders.entries(client,root,root,listOf(item("",true),item("%E4%B8%AD%E6%96%87%20a/",true),item("a.ics",false),item("b.CSV",false),item("c.xls",false),item("secret.txt",false),item("dormpanel-sync-v3/",true)),true)
+        assertEquals(listOf("中文 a","a.ics","b.CSV","c.xls"),rows.map { it.name })
+        assertEquals(root+"a.ics",rows[1].url)
+        for(bad in listOf(root+"%2e%2e/dav/",root+"a/../b/",root+"%00/",root+"%255c/"))assertThrows(IllegalArgumentException::class.java) { WebDavFolders.checked(client,root,bad) }
+        assertThrows(IllegalArgumentException::class.java) { WebDavFolders.entries(client,root,root,listOf(item("../outside/",true)),true) }
+    }
+
 }

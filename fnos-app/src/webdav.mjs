@@ -82,6 +82,13 @@ export function binding(config) {
   tlsOptions(config);
   return { base, key: base.href };
 }
+// Password reuse is scoped to an access identity, not a connection ID or path.
+// Call before any candidate reaches browsing, testing, endpoint inspection or save.
+export function sameAccessIdentity(a, b) {
+  binding(a); binding(b);
+  const trust = c => c.certificatePem ? new X509Certificate(c.certificatePem).fingerprint256 : 'SYSTEM_CA';
+  return new URL(a.url).origin === new URL(b.url).origin && a.username === b.username && trust(a) === trust(b);
+}
 export function parseListing(xml, base) {
   ensure(
     Buffer.byteLength(xml) <= 512 * 1024 && !/<!DOCTYPE|<!ENTITY/i.test(xml),

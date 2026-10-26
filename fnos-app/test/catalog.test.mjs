@@ -147,7 +147,7 @@ test('连接更新日志中断后自动完成，迁移不能清空课程或恢�
   await f.catalog.network(a.id, e => e.synchronize({ create: true }));
   const key = 'https://new.test/'; f.remotes.set(key, remote(key + 'dormpanel-sync-v2/', a.remote.rows));
   const save = a.db.store.save; a.db.store.save = async () => { throw Error('磁盘中断'); };
-  await assert.rejects(f.manage({ action: 'connection.save', connectionId: a.c.id, url: key }), /磁盘/);
+  await assert.rejects(f.manage({ action: 'connection.save', connectionId: a.c.id, url: key, password:'secret-a' }), /磁盘/);
   assert(f.catalog.manifest.transition); a.db.store.save = save;
   const restarted = await Catalog.open(f.options);
   assert(!restarted.manifest.transition);
@@ -169,7 +169,7 @@ test('已观察但尚未确认绑定的数据集也不能通过改凭据或 URL 
   const f = await setup(t), a = await f.add('a');
   await a.db.tx(frame => { frame.checkpoint.datasetId = randomUUID(); frame.checkpoint.hashes = { [randomUUID()]: 'a'.repeat(64) }; });
   const before = json(f.catalog.connection(a.c.id));
-  await assert.rejects(f.manage({ action: 'connection.save', connectionId: a.c.id, url: 'https://other.test/' }), /观察数据集/);
+  await assert.rejects(f.manage({ action: 'connection.save', connectionId: a.c.id, url: 'https://other.test/', password:'secret-a' }), /观察数据集/);
   await assert.rejects(f.manage({ action: 'connection.save', connectionId: a.c.id, password: 'rotated' }), /观察数据集/);
   assert.equal(json(f.catalog.connection(a.c.id)), before);
 });
