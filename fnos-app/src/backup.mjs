@@ -147,7 +147,7 @@ async function snapshot(root, config, target) {
   return files;
 }
 function validateManifest(m) {
-  ensure(m?.format === 'DormPanel FPK backup' && [1,2].includes(m.version) && ['0.4.0', '0.4.1', '0.4.2', '0.4.3', '0.4.4', '0.5.0', '0.6.0', '0.6.1', '0.7.0', '0.7.1', '0.7.2', '0.7.3', '0.7.4', '0.7.5', '0.7.6', '0.8.0'].includes(m.appVersion), '不支持备份格式或版本');
+  ensure(m?.format === 'DormPanel FPK backup' && [1,2].includes(m.version) && ['0.4.0', '0.4.1', '0.4.2', '0.4.3', '0.4.4', '0.5.0', '0.6.0', '0.6.1', '0.7.0', '0.7.1', '0.7.2', '0.7.3', '0.7.4', '0.7.5', '0.7.6', '0.8.0', '0.8.1'].includes(m.appVersion), '不支持备份格式或版本');
   uuid(m.identity?.writerId); uuid(m.identity?.installationId);
   ensure(Array.isArray(m.files) && m.files.length > 0 && m.files.length <= LIMITS.files, '备份文件数量超限');
   const names = new Set(); let total = 0;
@@ -355,7 +355,7 @@ export class BackupManager {
         const db = await Workspace.open(child), f = db.frame, connection = row.connectionId ? c.connection(row.connectionId) : null;
         dependencies.push(dependency(row, connection, f));
       }
-      const m = { format: 'DormPanel FPK backup', version: files.some(f=>v3File(f.name) || privateV3File(f.name) || f.name.startsWith('.backup-') || f.name==='v3-migrations.json' || f.name==='restore-result.json') ? 2 : 1, appVersion: '0.8.0', createdAt: new Date().toISOString(), identity: c.store.identity, files, workspaceCount: c.manifest.workspaces.length, dependencies };
+      const m = { format: 'DormPanel FPK backup', version: files.some(f=>v3File(f.name) || privateV3File(f.name) || f.name.startsWith('.backup-') || f.name==='v3-migrations.json' || f.name==='restore-result.json') ? 2 : 1, appVersion: '0.8.1', createdAt: new Date().toISOString(), identity: c.store.identity, files, workspaceCount: c.manifest.workspaces.length, dependencies };
       await verifyFiles(stage, m, c.store.identity);
       const manifest = Buffer.from(json(m)); ensure(manifest.length <= LIMITS.manifest, '备份清单超限');
       const header = Buffer.alloc(HEADER); (m.version===2?MAGIC2:MAGIC).copy(header); randomBytes(16).copy(header, 8); randomBytes(12).copy(header, 24);
