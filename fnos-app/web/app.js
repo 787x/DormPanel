@@ -829,10 +829,8 @@ $("bind").onclick = async () => {
       await load();
       const candidates = discovery.candidates.filter(c => c.state === 'DESCRIPTOR_VERIFIED');
       if (!candidates.length) return notifyUser('未发现可验证的 Descriptor；未绑定，原数据保留。');
-      const selected = await requestText('请选择数据集序号（仅 Descriptor 已验证，完整历史在加入后继续验证）：\n' + candidates.map((c, i) => `${i+1}. ${c.datasetId}\nDescriptor SHA-256: ${c.descriptorHash}`).join('\n'), '1');
-      if (selected === null) return;
-      const candidate = candidates[Number(selected) - 1];
-      if (!candidate) return notifyUser('请选择有效序号');
+      const candidate = await chooseOption('选择数据集（仅 Descriptor 已验证，加入后继续验证历史）',candidates.map(c=>({label:c.datasetId+' · Descriptor SHA-256: '+c.descriptorHash,value:c})));
+      if(!candidate)return;
       if (await confirmAction(`确认加入 ${candidate.datasetId}？本地必须为空；未知设备情况无法由普通 WebDAV 自动证明。`))
         await runSync({ workspaceId, version, bind:true, descriptorPath:candidate.descriptorPath, descriptorHash:candidate.descriptorHash });
     } catch (e) { await notifyUser(e.message); }
@@ -904,7 +902,7 @@ async function loadManagement(epoch = loadEpoch) {
     row.append(el('p', owners.length ? '用于：' + owners.map(w => w.name).join('、') : '尚未关联课程表；可新建工作区后接收或创建共享课表。'));
     row.append(button('新建工作区', async () => {
       const name = await requestText('新课程表名称（独立工作区，不会迁移或合并已有课程）', c.name); if (!name) return;
-      const protocol = await requestText('同步协议：输入 v2 或 v3。现有 v2 用户无需切换；创建 v3 工作区不迁移已有工作区。', 'v2');
+      const protocol = await chooseOption('选择工作区协议（不迁移已有工作区）',[{label:'Sync v2（兼容现有工作区）',value:'v2'},{label:'Sync v3',value:'v3'}]);
       if (!['v2','v3'].includes(protocol)) return;
       await manageAction({ ...context, action: 'workspace.add', connectionId: c.id, name, protocol });
     }));
@@ -923,15 +921,14 @@ async function loadManagement(epoch = loadEpoch) {
 async function migrateToV3() {
   try {
     const p = await post('/api/migration', { action:'v3.preview' });
-    const targetMode=await requestText('输入 create 为首台设备创建唯一新目标；输入 join 加入首台设备已经迁移出的目标。后续设备必须选择 join。','create');
+    const targetMode=await chooseOption('选择迁移目标',[{label:'首台设备：创建唯一新目标',value:'create'},{label:'后续设备：加入已迁移目标',value:'join'}]);
     if(!['create','join'].includes(targetMode))return;
     let selected=null;
     if(targetMode==='join') {
       const discovery=await post('/api/migration',{action:'v3.discover'});
       const candidates=discovery.candidates.filter(c=>c.state==='DESCRIPTOR_VERIFIED');
       if(!candidates.length)return notifyUser('未发现可验证的已有 v3 目标；没有创建第二个数据集。');
-      const choice=await requestText('请选择已有目标序号：\n'+candidates.map((c,i)=>`${i+1}. ${c.datasetId}\nDescriptor: ${c.descriptorHash}`).join('\n'),'1');
-      if(choice===null)return; selected=candidates[Number(choice)-1]; if(!selected)return notifyUser('请选择有效序号。');
+      selected=await chooseOption('选择已有迁移目标',candidates.map(c=>({label:c.datasetId+' · Descriptor: '+c.descriptorHash,value:c})));if(!selected)return;
     }
     const message = `源 ${p.sourceProtocol === 'LOCAL' ? '本地未绑定课表' : p.sourceDatasetId}\n已验证 ${p.commits} 个提交，${p.tips.length} 个前沿。\n八类 RAW: ${JSON.stringify(p.counts)}\nRAW SHA-256: ${p.rawHash}\n\n保留未发布本地修改及原 v2 基线，不新增 v2 提交。确认后本机源 Writer 持久暂停；${selected ? '只读验证既有目标，完整 RAW 等价后加入，不创建新 Genesis' : '精确回读新 Genesis 并再次验证源后激活 v3'}。${p.sourceProtocol === 'LOCAL' ? '保留原本地完整快照' : '原 v2 远端历史仍保留'}；这不是独立验证的备份。\n\n请先停止其他已知旧客户端。普通 WebDAV 无法证明未知设备已经停写，旧目录没有被服务端禁止写入。后续设备须加入此目标，不要各自再次迁移。`;
     if (!await confirmAction(message, '已停止已知旧客户端，准备迁移')) return;
@@ -1014,74 +1011,114 @@ function v3EndpointDialog(w) {
     resumeButton.disabled=cancelButton.disabled=confirmButton.disabled=true;void call('status');return ()=>({});
   });
 }
+// One read-only navigator for authorized local roots and WebDAV drafts.
+// A location is typed; callers never construct paths from display labels.
+function folderBrowser(host, { roots, initial, current = () => host.isConnected, list, select, changed = () => {}, chooseLabel }) {
+  host.classList.add('folder-browser');
+  const scope = el('select'); scope.setAttribute('aria-label', '存储范围');
+  for (const r of roots) { const o = el('option', r.name); o.value = r.id; scope.append(o); }
+  scope.value = initial.rootId ?? roots[0]?.id ?? '';
+  let location = { ...initial }, epoch = 0, ready = false;
+  const crumbs = el('nav'), status = el('p'), rows = el('div', null, 'folder-list');
+  crumbs.setAttribute('aria-label', '文件夹路径'); status.setAttribute('role', 'status');
+  const up = button('上一级', () => navigate(parent())), retry = button('重试读取目录', () => navigate(location));
+  const choose = button('选择此文件夹', () => { if (ready && current()) select({ ...location }); }); choose.className = 'primary';
+  const rootLocation = () => location.kind === 'webdav' ? { ...location, url:location.root } : { kind:'local', rootId:scope.value, relative:'' };
+  const parts = () => location.kind === 'webdav' ? new URL(location.url).pathname.slice(new URL(location.root).pathname.length).split('/').filter(Boolean).map(decodeURIComponent) : location.relative.split('/').filter(Boolean);
+  const ancestor = count => {
+    if (location.kind === 'local') return { ...location, relative:parts().slice(0,count).join('/') };
+    const u = new URL(location.root); u.pathname += parts().slice(0,count).map(encodeURIComponent).join('/') + (count ? '/' : ''); return { ...location, url:u.href };
+  };
+  const parent = () => ancestor(Math.max(0, parts().length-1));
+  async function navigate(next, restore = false) {
+    location = { ...next }; const ticket = ++epoch, captured = { ...location };
+    const active = () => current() && ticket === epoch;
+    ready = false; choose.disabled = true; changed(); rows.replaceChildren(); retry.hidden = true;
+    up.disabled = !parts().length; status.textContent = '正在读取目录…';
+    crumbs.replaceChildren(button(scope.selectedOptions[0]?.textContent ?? '服务器起始目录', () => navigate(rootLocation())));
+    parts().forEach((name,i) => crumbs.append(el('span','/'),button(name,()=>navigate(ancestor(i+1)))));
+    try {
+      const result = await list(captured); if (!active()) return;
+      for (const dir of result.directories) {
+        const name = typeof dir === 'string' ? dir : dir.name;
+        const child = captured.kind === 'webdav' ? { ...captured, url:dir.url } : { ...captured, relative:[captured.relative,name].filter(Boolean).join('/') };
+        rows.append(button('📁 '+name,()=>navigate(child)));
+      }
+      if (!result.directories.length) rows.append(el('p','此文件夹没有子目录，可以选择当前文件夹。'));
+      status.textContent = '当前路径：' + (captured.kind === 'webdav' ? decodeURI(captured.url) : (scope.selectedOptions[0]?.textContent ?? '')+' / '+(captured.relative || '根目录'));
+      ready = true; choose.disabled = false; choose.textContent = chooseLabel?.(captured) ?? '选择此文件夹';
+      if (restore) choose.click();
+    } catch (e) { if (active()) { status.textContent = '目录加载失败：'+e.message; retry.hidden = false; } }
+  }
+  scope.onchange = () => navigate({ kind:'local',rootId:scope.value,relative:'' });
+  const label = el('label','存储范围'); label.append(scope); label.hidden = initial.kind === 'webdav';
+  host.append(label,crumbs,up,status,rows,retry,choose);
+  return { navigate, invalidate() { ++epoch; ready=false; choose.disabled=true; changed(); }, location:()=>({...location}) };
+}
+const localListing = l => get('/api/directories?'+new URLSearchParams({rootId:l.rootId,relative:l.relative}));
+function pickLocalFolder(title, initial, roots = management.roots.filter(r=>r.id!=='private')) {
+  return new Promise(resolve => {
+    const scope = workspaceId, modal = el('dialog'), heading = el('h2',title), content = el('div');
+    let result = null; modal.append(heading,content,button('取消',()=>modal.close())); document.body.append(modal);
+    const picker = folderBrowser(content,{roots,initial:{kind:'local',rootId:initial.rootId ?? roots[0]?.id,relative:initial.relative ?? ''},
+      current:()=>modal.open && workspaceId===scope,list:localListing,select:l=>{result=l;modal.close();}});
+    modal.addEventListener('close',()=>{picker.invalidate();modal.remove();resolve(workspaceId===scope?result:null);},{once:true});
+    modal.showModal(); void picker.navigate(picker.location());
+  });
+}
+function chooseOption(title, choices) {
+  return new Promise(resolve => {
+    const modal=el('dialog');modal.append(el('h2',title));let result=null;
+    for(const c of choices)modal.append(button(c.label,()=>{result=c.value;modal.close();}));
+    modal.append(button('取消',()=>modal.close()));document.body.append(modal);
+    modal.addEventListener('close',()=>{modal.remove();resolve(result);},{once:true});modal.showModal();
+  });
+}
 function connectionDialog(type, c = null) {
   dialog(c ? '编辑连接' : (type === 'local' ? '添加本地目录连接' : '添加 WebDAV 连接'), async form => {
     const name = field('连接名称', c?.name ?? (type === 'local' ? '本地课程' : 'WebDAV 课程'));
     let read;
     if (type === 'webdav') {
-      const url = field('WebDAV 共享父目录（末尾 /，推荐 HTTPS）', c?.url ?? ''), username = field('用户名', c?.username ?? ''), password = field('密码（留空保留已保存密码）', '', 'password'), insecure = field('允许 HTTP 明文内网连接（帐号、密码和课表不加密）', '', 'checkbox'), cert = field('独立信任的服务器公钥证书 PEM（留空保留）', '', 'textarea'), system = field('恢复系统 CA / 清除独立证书', '', 'checkbox');
-      insecure.checked = c?.allowInsecureHttp === true;
-      $('fields').append(el('p', `独立证书信任：${c?.hasTrustedCertificate ? '已设置' : '未设置'}。修改地址、凭据或信任配置时，已绑定工作区须重新验证完整历史。`));
-      read = () => ({ type, name: name.value, connectionId: c?.id, url: url.value, username: username.value, password: password.value, allowInsecureHttp: insecure.checked, certificatePem: system.checked ? '' : cert.value || undefined });
+      const server = field('WebDAV 服务器访问地址（可含起始路径）', c?.url ? new URL(c.url).origin+'/' : '');
+      const username = field('用户名', c?.username ?? ''), password = field('密码（留空保留已保存密码）', '', 'password');
+      const insecure = field('允许 HTTP 明文内网连接（帐号、密码和课表不加密）', '', 'checkbox'); insecure.checked = c?.allowInsecureHttp === true;
+      const cert = field('独立信任的服务器公钥证书 PEM（留空保留）', '', 'textarea'), system = field('恢复系统 CA / 清除独立证书', '', 'checkbox');
+      const selectedText=el('p',c ? '已选择：'+c.url : '尚未选择共享父目录','folder-location'), host=el('div'); let selectedUrl=c?.url ?? '', picker=null;
+      const advanced=el('details'); advanced.append(el('summary','高级：手动输入完整 URL（服务器不支持目录列举时使用）'));
+      const manual=el('input'); manual.setAttribute('aria-label','共享父目录完整 URL'); manual.value=c?.url ?? ''; advanced.append(manual);
+      const config = () => ({ type, name:name.value, connectionId:c?.id, username:username.value, password:password.value, allowInsecureHttp:insecure.checked, certificatePem:system.checked ? '' : cert.value || undefined });
+      const invalidate = () => { selectedUrl=''; selectedText.textContent='访问配置已变化，请重新浏览选择或使用高级地址'; picker?.invalidate(); host.replaceChildren(); picker=null; manual.value=''; form.setReady(false); };
+      for(const input of [server,username,password,insecure,cert,system])input.addEventListener('input',invalidate);
+      manual.oninput=()=>{selectedUrl=manual.value;selectedText.textContent='手动目录：'+selectedUrl;form.setReady(!!selectedUrl);};
+      $('fields').append(el('p','先配置服务器与信任，再只读浏览共享父目录。浏览不创建数据集。证书须独立核对；已绑定 v3 的连接仍须通过安全端点更换。'),
+        button('浏览服务器文件夹',()=>{
+          try {
+            const u=new URL(server.value);if(!u.pathname.endsWith('/'))u.pathname+='/'; const root=u.href, snapshot={...config(),url:root};
+            host.replaceChildren();
+            picker=folderBrowser(host,{roots:[{id:'server',name:'服务器起始目录'}],initial:{kind:'webdav',root,url:root},current:form.current,
+              list:l=>post('/api/connections/browse',{...snapshot,browseUrl:l.url}),select:l=>{selectedUrl=l.url;manual.value=l.url;selectedText.textContent='已选择：'+decodeURI(l.url);form.setReady(true);}});
+            let initial=root;try { const old=new URL(selectedUrl);if(old.origin===u.origin && old.pathname.startsWith(u.pathname))initial=old.href; }catch{}
+            void picker.navigate({kind:'webdav',root,url:initial});
+          }catch { $('formError').textContent='请输入有效的服务器访问地址'; }
+        }),host,selectedText,advanced);
+      form.setReady(!!selectedUrl);
+      read=()=>{if(!selectedUrl)throw Error('请浏览并选择共享父目录，或使用高级完整 URL');return {...config(),url:selectedUrl};};
     } else {
-      const root = el('select'); root.setAttribute('aria-label', '存储范围'); root.disabled = true;
-      let relative = c?.relative ?? '', browseEpoch = 0, directoryReady = false, selected = null;
-      const current = el('p', '正在加载授权目录…'); current.setAttribute('role', 'status');
-      const chosen = el('p', '尚未选择文件夹'), crumbs = el('nav'), list = el('div', null, 'folder-list');
-      chosen.id = 'selectedFolder'; crumbs.setAttribute('aria-label', '文件夹路径');
-      const up = button('上一级', () => { relative = relative.split('/').slice(0, -1).join('/'); void browse(); }); up.disabled = true;
-      const retry = button('重试读取目录', () => { void browse(); }); retry.hidden = true;
-      const choose = button('选择此文件夹', () => {
-        if (!directoryReady) return;
-        selected = { rootId: root.value, relative };
-        chosen.textContent = '已选择：' + locationText() + (privateFolder() ? '（保存时自动创建专用文件夹）' : '');
-        form.setReady(true);
-      }); choose.disabled = true; choose.className = 'primary';
-      const privateFolder = () => !c && root.value === 'private' && !relative;
-      const locationText = () => (root.selectedOptions[0]?.textContent ?? '') + ' / ' + (relative || '根目录');
       form.setReady(false);
-      const browse = async (restore = false) => {
-        const request = ++browseEpoch, selectedRoot = root.value, selectedPath = relative;
-        const active = () => form.current() && request === browseEpoch;
-        directoryReady = false; selected = null; form.setReady(false); choose.disabled = true;
-        chosen.textContent = '尚未选择文件夹'; list.replaceChildren(); retry.hidden = true;
-        up.disabled = !selectedPath;
-        crumbs.replaceChildren(button(root.selectedOptions[0]?.textContent ?? '根目录', () => { relative = ''; void browse(); }));
-        const parts = selectedPath.split('/').filter(Boolean);
-        parts.forEach((part, i) => crumbs.append(el('span', '/'), button(part, () => { relative = parts.slice(0, i + 1).join('/'); void browse(); })));
-        current.textContent = '正在读取目录：' + locationText(); $('formError').textContent = '';
-        try {
-          const result = await get('/api/directories?rootId=' + encodeURIComponent(selectedRoot) + '&relative=' + encodeURIComponent(selectedPath));
-          if (!active()) return;
-          for (const dir of result.directories) list.append(button('📁 ' + dir, () => { relative = selectedPath ? selectedPath + '/' + dir : dir; void browse(); }));
-          if (!result.directories.length) list.append(el('p', '此文件夹没有子目录，可以选择当前文件夹。'));
-          current.textContent = '当前路径：' + locationText();
-          directoryReady = true; choose.disabled = false;
-          choose.textContent = privateFolder() ? '使用私有目录（自动创建专用文件夹）' : '选择此文件夹';
-          if (restore) choose.click();
-        } catch (e) {
-          if (!active()) return;
-          current.textContent = '目录加载失败：' + e.message;
-          $('formError').textContent = '请重试、选择其他授权目录或关闭。权限不足时请检查 fnOS 应用设置。'; retry.hidden = false;
-        }
-      };
-      root.onchange = () => { relative = ''; void browse(); };
-      const rootLabel = el('label', '存储范围'); rootLabel.append(root);
-      $('fields').append(el('p', '私有目录仅供本应用使用；选择其根目录时，保存连接会自动创建专用文件夹。NAS 目录只显示 fnOS 已授权范围，请选择专用空文件夹或已有共享课表的父文件夹。'), rootLabel, crumbs, up, current, list, retry, choose, chosen);
-      const m = await loadManagement();
-      if (!form.current()) return;
-      if (!m || !workspaceId || !token) throw Error('工作区尚未就绪，请重试');
-      if (!Array.isArray(m.roots) || !m.roots.length) throw Error('没有可用的授权目录');
-      for (const r of m.roots) { const o = el('option', r.name); o.value = r.id; root.append(o); }
-      root.value = c?.rootId ?? 'private'; root.disabled = false;
-      if (!root.value) throw Error('原目录未授权或授权已撤销，请关闭并重新配置');
-      form.captureVersion();
-      void browse(!!c);
-      read = () => {
-        if (!directoryReady) throw Error('请先成功读取所选目录');
-        if (!selected) throw Error('请点击“选择此文件夹”确认位置');
-        return { type, name: name.value, connectionId: c?.id, ...selected, createPrivate: privateFolder() };
-      };
+      const host=el('div'), chosen=el('p','正在加载授权目录…');chosen.id='selectedFolder';$('fields').append(host,chosen);
+      const m=await loadManagement();if(!form.current())return;
+      if(!m || !workspaceId || !token)throw Error('工作区尚未就绪，请重试');
+      if(!m.roots.length)throw Error('没有可用的授权目录');
+      const initial={kind:'local',rootId:c?.rootId ?? 'private',relative:c?.relative ?? ''};
+      if(!m.roots.some(r=>r.id===initial.rootId))throw Error('原目录未授权或授权已撤销');
+      let selected=null;
+      const privateFolder=l=>!c && l.rootId==='private' && !l.relative;
+      const picker=folderBrowser(host,{roots:m.roots,initial,current:form.current,list:localListing,
+        changed:()=>{selected=null;form.setReady(false);chosen.textContent='尚未选择文件夹';},
+        chooseLabel:l=>privateFolder(l)?'使用私有目录（自动创建专用文件夹）':'选择此文件夹',
+        select:l=>{selected=l;chosen.textContent='已选择：'+m.roots.find(r=>r.id===l.rootId).name+' / '+(l.relative||'根目录');form.setReady(true);}});
+      form.captureVersion();void picker.navigate(initial,!!c);
+      read=()=>{if(!selected)throw Error('请先成功读取所选目录并点击“选择此文件夹”');return {type,name:name.value,connectionId:c?.id,rootId:selected.rootId,relative:selected.relative,createPrivate:privateFolder(selected)};};
     }
     $('fields').append(el('p', '保存连接不会创建课程数据集；之后可在存储位置中新建工作区。'), button('测试（不保存）', async () => {
       try {
@@ -1108,7 +1145,13 @@ $('sourcesPage').onclick = () => showSources($('dataSources').hidden);
 $('addWebDav').onclick = () => connectionDialog('webdav');
 $('addLocal').onclick = () => connectionDialog('local');
 $('refreshSources').onclick = () => load();
-let backupToken = null, backupDirectoryIdentity = null;
+let backupToken = null, backupDirectoryIdentity = null, backupEpoch = 0;
+function invalidateBackup() {
+  ++backupEpoch; const old=backupToken; backupToken=null;backupDirectoryIdentity=null;
+  $('backupPreview').replaceChildren();$('backupRows').replaceChildren();$('backupRestore').disabled=true;
+  if(old)void post('/api/backups/cancel',{token:old}).catch(()=>{});
+}
+$('workspaceSelect').addEventListener('change',invalidateBackup);
 const backupLocation = () => ({ rootId: $('backupRoot').value, relative: $('backupRelative').value, directoryIdentity: backupDirectoryIdentity });
 async function backupJob(action) {
   const buttons = [...$('backups').querySelectorAll('button')];
@@ -1130,17 +1173,16 @@ function renderBackupPreview(p) {
   if (p.externalStatus) root.append(el('p', p.externalStatus));
 }
 async function browseBackups() {
-  backupDirectoryIdentity = null; backupToken = null; $('backupPreview').textContent = '';
-  const dirs = await get('/api/directories?rootId=' + encodeURIComponent($('backupRoot').value) + '&relative=' + encodeURIComponent($('backupRelative').value));
-  $('backupChild').replaceChildren(el('option', '选择子目录…'));
-  $('backupChild').firstChild.value = '';
-  for (const name of dirs.directories) { const o = el('option', name); o.value = name; $('backupChild').append(o); }
-  const result = await post('/api/backups/list', backupLocation()); backupDirectoryIdentity = result.directoryIdentity;
+  invalidateBackup(); const ticket=backupEpoch, scope=workspaceId, location=backupLocation();
+  const current=()=>ticket===backupEpoch && scope===workspaceId;
+  const result = await post('/api/backups/list', location); if(!current())return;
+  backupDirectoryIdentity = result.directoryIdentity; location.directoryIdentity=result.directoryIdentity;
   $('backupRows').replaceChildren(...result.backups.map(b => {
     const row = el('article', null, 'course');
     row.append(el('strong', b.name), el('p', `${b.size} 字节 · 文件时间 ${new Date(b.modifiedAt).toLocaleString()} · ${b.status}`), button('验证并预览恢复', () => backupJob(async () => {
-      backupToken = null;
-      const preview = await post('/api/backups/verify', { ...backupLocation(), name: b.name, password: $('backupPassword').value });
+      if(!current())return; backupToken = null;
+      const preview = await post('/api/backups/verify', { ...location, name: b.name, password: $('backupPassword').value });
+      if(!current()){void post('/api/backups/cancel',{token:preview.token}).catch(()=>{});return;}
       backupToken = preview.token;
       renderBackupPreview(preview);
       $('backupStatus').textContent = '认证解密、文件 SHA-256 和应用状态验证通过。请检查覆盖范围与外部依赖。';
@@ -1155,29 +1197,42 @@ $('backupsPage').onclick = () => backupJob(async () => {
   const old = $('backupRoot').value;
   $('backupRoot').replaceChildren(...management.roots.filter(r => r.id !== 'private').map(r => { const o = el('option', r.name); o.value = r.id; return o; }));
   if ([...$('backupRoot').options].some(o => o.value === old)) $('backupRoot').value = old;
+  else $('backupRelative').value='';
   await browseBackups();
 });
-$('backupRoot').onchange = () => backupJob(async () => { $('backupRelative').value = ''; await browseBackups(); });
-$('backupChild').onchange = () => backupJob(async () => { if ($('backupChild').value) { $('backupRelative').value = [$('backupRelative').value, $('backupChild').value].filter(Boolean).join('/'); await browseBackups(); } });
-$('backupUp').onclick = () => backupJob(async () => { $('backupRelative').value = $('backupRelative').value.split('/').slice(0, -1).join('/'); await browseBackups(); });
+$('backupRoot').onchange = () => backupJob(async () => { invalidateBackup(); $('backupRelative').value = ''; await browseBackups(); });
+$('backupChoose').onclick = async () => {
+  const chosen=await pickLocalFolder('选择备份文件夹',backupLocation());if(!chosen)return;
+  invalidateBackup();$('backupRoot').value=chosen.rootId;$('backupRelative').value=chosen.relative;await backupJob(browseBackups);
+};
 $('backupBrowse').onclick = () => backupJob(browseBackups);
 $('backupCreate').onclick = () => backupJob(async () => {
+  const ticket=backupEpoch,scope=workspaceId;
   const result = await post('/api/backups/create', { ...backupLocation(), password: $('backupPassword').value });
+  if(ticket!==backupEpoch || scope!==workspaceId)return;
   await browseBackups(); renderBackupPreview(result); $('backupStatus').textContent = '备份已保存并从实际文件重新认证验证。请妥善保管口令。';
 });
 $('backupRestore').onclick = () => backupJob(async () => {
-  const token = backupToken;
+  const token = backupToken, ticket=backupEpoch, scope=workspaceId;
+  if(!token)return;
   const confirm = await requestText('将用已验证备份替换当前全部应用工作区和连接。恢复前状态会保留，外部历史不会改写。输入“恢复应用数据”确认：');
   if (confirm !== '恢复应用数据') {
     await post('/api/backups/cancel', { token }); backupToken = null;
     $('backupStatus').textContent = '已取消恢复并撤销预览'; return;
   }
+  if(ticket!==backupEpoch || scope!==workspaceId || token!==backupToken)throw Error('目录或工作区已变化，请重新验证备份');
   const result = await post('/api/backups/restore', { token, confirm });
   backupToken = null; workspaceId = undefined; await load(); $('backupStatus').textContent = result.result;
 });
 await load();
 
 let historyPreview = null, historyScope = null, historyEligible = false;
+const generatedLocations=[];
+$('historyChoose').onclick=async()=>{
+  const chosen=await pickLocalFolder('选择历史导出目标目录',{rootId:$('historyRoot').value,relative:$('historyRelative').value});
+  if(chosen){$('historyRoot').value=chosen.rootId;$('historyRelative').value=chosen.relative;}
+};
+$('historyRoot').onchange=()=>{$('historyRelative').value='';};
 async function historyJob(action) {
   const scope = workspaceId;
   const buttons = [...$('history').querySelectorAll('button')];
@@ -1246,9 +1301,11 @@ async function historyReadV3() {
         const r=await post('/api/history/cleanup',{token:p.token,confirm:'整理本地冗余快照'});$('historyOutput').replaceChildren(historyJSON(r));
       }
     })),button('从独立归档恢复缺失缓存',()=>historyJob(async()=>{
-      const relative=await requestText('授权目录中的完整归档相对路径（不会写入远端）','');if(!relative)return;
+      const scope=workspaceId;
+      const chosen=await pickLocalFolder('选择包含 verified.json 的独立归档目录',{rootId:$('historyRoot').value,relative:$('historyRelative').value});if(!chosen)return;
       const restore=async()=>{
-        const result=await post('/api/history/archive-restore',{rootId:$('historyRoot').value,relative});$('historyOutput').replaceChildren(historyJSON(result));
+        if(scope!==workspaceId)throw Error('工作区已变化，请重新选择和验证归档');
+        const result=await post('/api/history/archive-restore',{rootId:chosen.rootId,relative:chosen.relative});$('historyOutput').replaceChildren(historyJSON(result));
         if(!result.complete)$('historyOutput').append(button('继续恢复并验证此归档',()=>historyJob(restore)));
       };await restore();
     })));
@@ -1323,7 +1380,9 @@ async function historyRead() {
 $('historyPage').onclick = () => historyJob(async () => {
   $('history').hidden = false; $('backups').hidden = true; $('dataSources').hidden = true; $('dashboard').hidden = true; $('dashboardActions').hidden = true; $('pageTitle').textContent = '历史与版本';
   await loadManagement();
+  const oldRoot=$('historyRoot').value;
   $('historyRoot').replaceChildren(...management.roots.filter(r => r.id !== 'private').map(r => { const o = el('option',r.name); o.value = r.id; return o; }));
+  if([...$('historyRoot').options].some(o=>o.value===oldRoot))$('historyRoot').value=oldRoot;else $('historyRelative').value='';
   await historyRead();
 });
 $('historyCheck').onclick = () => historyJob(async () => { await post('/api/history/check'); await historyRead(); });
@@ -1352,6 +1411,8 @@ for (const [id, action] of [['historyArchive','archive'],['historyCompact','comp
   historyPreview = null;
   if (!await confirmAction(action === 'compact' ? '将先完整归档，再在另一个新目录准备单根数据集。不会切换客户端或删除旧库。' : activeProtocol === 'v3' ? '将冻结索引中已验证的对象及已知引用复制到独立目录并实际回读。未知路径、旧 Writer 和服务端封存仍未证明。' : '将完整课程历史复制到受保护的新目录，请保护 NAS 授权。', '确认导出')) return;
   const result = await post('/api/history/' + action, { rootId:$('historyRoot').value, relative:$('historyRelative').value });
+  if(result.candidate)generatedLocations.push({rootId:$('historyRoot').value,relative:result.candidate});
+  if(result.candidate)await migrationRead();
   if(activeProtocol==='v3'){v3ArchiveJob=result; if(result.status!=='VERIFIED')await historyReadV3();}
   $('historyOutput').replaceChildren(historyJSON(result)); $('historyStatus').textContent = result.message;
 });
@@ -1362,7 +1423,27 @@ async function migrationRead() {
   const result = await get('/api/migration');
   panel.replaceChildren(el('h3', '迁移到精简数据集'), el('p', result.warning));
   const form = el('div');
-  const candidate = el('input'); candidate.placeholder = 'PR46 compact-UUID 相对目录'; candidate.id = 'migrationCandidate'; candidate.setAttribute('aria-label', '精简候选相对目录');
+  const candidate = el('input'); candidate.readOnly=true; candidate.placeholder = '选择已生成的精简候选目录'; candidate.id = 'migrationCandidate'; candidate.setAttribute('aria-label', '精简候选相对目录');
+  let candidateLocation=null;
+  const chooseCandidate=button('选择精简候选目录',async()=>{
+    const scope=workspaceId;
+    const parent={kind:'local',rootId:$('historyRoot').value,relative:$('historyRelative').value};
+    const recent=generatedLocations.filter(l=>management.roots.some(r=>r.id===l.rootId));
+    // Rediscover immediate compact directories after reload; names are suggestions,
+    // never verification evidence. No recursive scan or manifest writes.
+    try {
+      const listing=await localListing(parent);
+      for(const name of listing.directories.filter(n=>/^compact-/.test(n)).slice(0,64)) {
+        const location={rootId:parent.rootId,relative:[parent.relative,name].filter(Boolean).join('/')};
+        if(!recent.some(l=>l.rootId===location.rootId && l.relative===location.relative))recent.push(location);
+      }
+    }catch { /* The authorized browser offers retry and other roots below. */ }
+    if(scope!==workspaceId || !candidate.isConnected)return;
+    let chosen=recent.length?await chooseOption('选择已生成候选或浏览授权目录',[
+      ...recent.map(l=>({label:l.relative+'（待后端验证）',value:l})),{label:'浏览其他授权目录',value:'browse'}]):'browse';
+    if(chosen==='browse')chosen=await pickLocalFolder('选择 compact 候选目录（后端仍会验证归档和身份）',{rootId:$('historyRoot').value,relative:$('historyRelative').value});
+    if(chosen && scope===workspaceId && candidate.isConnected){candidateLocation=chosen;candidate.value=chosen.relative;}
+  });
   const connection = el('select'); connection.id = 'migrationConnection'; connection.setAttribute('aria-label', 'Android 实际使用的目标 WebDAV 连接');
   const management = await get('/api/manage');
   connection.append(...management.connections.filter(c => c.type === 'webdav').map(c => { const o = el('option', `${c.name} · ${c.url}`); o.value = c.id; return o; }));
@@ -1373,8 +1454,8 @@ async function migrationRead() {
     await load();
     await historyRead();
   };
-  form.append(el('p', '1. 先用上方功能归档并准备候选，再添加指向该候选的独立 WebDAV 连接。选择 Android 实际使用的地址，后端将通过它读取全图。准备成功即保护新旧工作区；重启后从本页继续。'), candidate, connection,
-    button('检查归档与候选，准备换库', () => historyJob(() => job({ action: 'prepare', rootId: $('historyRoot').value, candidateRelative: candidate.value, targetConnectionId: connection.value }))));
+  form.append(el('p', '1. 先用上方功能归档并准备候选，再添加指向该候选的独立 WebDAV 连接。选择 Android 实际使用的地址，后端将通过它读取全图。准备成功即保护新旧工作区；重启后从本页继续。'), candidate, chooseCandidate, connection,
+    button('检查归档与候选，准备换库', () => historyJob(() => { if(!candidateLocation)throw Error('请先选择精简候选目录'); return job({ action:'prepare',rootId:candidateLocation.rootId,candidateRelative:candidateLocation.relative,targetConnectionId:connection.value }); })));
   panel.append(form);
   for (const m of result.records) {
     const card = el('article'); card.append(el('h4', `阶段：${m.phase}`), el('p', `旧库 ${m.sourceDatasetId} → 新库 ${m.targetDatasetId}`), el('p', `旧 ${m.oldCount} 个提交 → 新 ${m.newCount} 个根。旧目录原始 DPC 可回收估算 ${m.reclaimEstimateBytes} 字节（仅旧副本，不含保留归档）；实际已回收 0 字节。`), el('p', `最后检查：${m.lastCheck}`));

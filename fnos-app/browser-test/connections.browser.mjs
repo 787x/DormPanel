@@ -96,7 +96,7 @@ test('目录失败禁止保存和测试，重试保留名称；保存失败不�
   await f.page.getByLabel('连接名称', { exact: true }).fill('保留名称');
   assert.equal(await f.save.isEnabled(), false);
   await f.page.getByRole('button', { name: '测试（不保存）' }).click();
-  await expect(f.page.locator('#formError')).toHaveText('请先成功读取所选目录');
+  await expect(f.page.locator('#formError')).toContainText('请先成功读取所选目录');
   fail = false; await f.page.getByRole('button', { name: '重试读取目录' }).click();
   await choosePrivate(f); await expect(f.save).toBeEnabled(); await expect(f.page.getByLabel('连接名称', { exact: true })).toHaveValue('保留名称');
   await f.page.route('**/api/manage', route => route.fulfill({ status: 409, json: { error: '管理版本过期' } }));
@@ -134,8 +134,8 @@ test('取消加载后迟到的响应不能污染重新打开的 WebDAV 表单', 
     await f.local(); await pending;
     await f.page.locator('#cancel').click(); await expect(f.page.locator('#editor')).not.toBeVisible();
     await f.page.locator('#addWebDav').click();
-    await expect(f.page.getByLabel('HTTPS 共享父目录（末尾 /）', { exact: true })).toBeVisible();
-    release(); await expect(f.save).toBeEnabled();
+    await expect(f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）', { exact: true })).toBeVisible();
+    release(); await expect(f.save).toBeDisabled();
     await expect(f.page.getByLabel('存储范围')).toHaveCount(0); assert.deepEqual(f.errors, []);
   } finally { release(); }
 });
@@ -144,12 +144,15 @@ test('WebDAV 保存、新建与切换工作区及课程表单继续工作', asyn
   const f = await fixture(t); await f.open();
   await expect(f.page.locator('#workspaceRows')).toContainText('默认工作区');
   await f.page.locator('#addWebDav').click();
-  await f.page.getByLabel('HTTPS 共享父目录（末尾 /）', { exact: true }).fill('https://example.test/schedule/');
+  await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）', { exact: true }).fill('https://example.test/schedule/');
   await f.page.getByLabel('用户名', { exact: true }).fill('test');
   await f.page.getByLabel('密码（留空保留已保存密码）', { exact: true }).fill('test-only');
+  await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
+  await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://example.test/schedule/');
   await f.save.click(); await expect(f.page.locator('#connectionRows')).toContainText('WebDAV 课程');
   await f.page.getByRole('button', { name: '新建工作区', exact: true }).click();
   await f.page.locator('#feedbackAccept').click();
+  await f.page.getByRole('button',{name:'Sync v2（兼容现有工作区）',exact:true}).click();
   await expect(f.page.locator('#workspaceRows')).toContainText('WebDAV 课程');
   const id = f.app.catalog.manifest.workspaces.find(w => w.connectionId)?.id; assert(id);
   await f.page.locator('#workspaceSelect').selectOption(id);
@@ -167,9 +170,11 @@ test('公网同源代理改写 Host 时仍能初始化，并用完整公网 Orig
   await f.open();
   await expect(f.page.locator('#workspaceRows')).toContainText('默认工作区', { timeout: 2000 });
   await f.page.locator('#addWebDav').click();
-  await f.page.getByLabel('HTTPS 共享父目录（末尾 /）', { exact: true }).fill('https://example.test/schedule/');
+  await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）', { exact: true }).fill('https://example.test/schedule/');
   await f.page.getByLabel('用户名', { exact: true }).fill('test');
   await f.page.getByLabel('密码（留空保留已保存密码）', { exact: true }).fill('test-only');
+  await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
+  await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://example.test/schedule/');
   await f.save.click(); await expect(f.page.locator('#connectionRows')).toContainText('WebDAV 课程');
   assert.deepEqual(f.errors, []);
 });
@@ -366,11 +371,14 @@ test('文件夹确认提交所选授权范围和相对路径，保存失败不�
 test('数据源高级操作保持可达，重命名生效，创建和绑定仍须确认', async t => {
   const f = await fixture(t); await f.open();
   await f.page.locator('#addWebDav').click();
-  await f.page.getByLabel('HTTPS 共享父目录（末尾 /）', { exact: true }).fill('https://example.test/schedule/');
+  await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）', { exact: true }).fill('https://example.test/schedule/');
   await f.page.getByLabel('用户名', { exact: true }).fill('test');
   await f.page.getByLabel('密码（留空保留已保存密码）', { exact: true }).fill('test-only');
+  await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
+  await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://example.test/schedule/');
   await f.save.click(); await expect(f.page.locator('#connectionRows')).toContainText('WebDAV 课程');
   await f.page.getByRole('button', { name: '新建工作区', exact: true }).click(); await f.page.locator('#feedbackAccept').click();
+  await f.page.getByRole('button',{name:'Sync v2（兼容现有工作区）',exact:true}).click();
   await expect(f.page.locator('#workspaceRows')).toContainText('WebDAV 课程');
   const id = f.app.catalog.manifest.workspaces.find(w => w.connectionId).id;
   await f.page.locator('#workspaceSelect').selectOption(id); await expect(f.page.locator('#workspaceSelect')).toBeEnabled();
@@ -429,7 +437,7 @@ test('历史中心完整快照分页、稳定身份比较、回退预览确认�
   await expect(mergeRow).toContainText('合并版本');
   await expect(mergeRow.locator('p').filter({hasText:/相对父版本.*1 条变化/})).toHaveCount(2);
   await expect(mergeRow).not.toContainText('空快照');
-  await f.page.screenshot({path:new URL('../../docs/evidence/pr47/history-1280x800.png',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),fullPage:true});
+  if(process.env.UX_SCREENSHOTS)await f.page.screenshot({path:process.env.UX_SCREENSHOTS+'/history-1280x800.png',fullPage:true});
   assert.deepEqual(f.errors,[]);
 });
 
@@ -443,7 +451,9 @@ test('换库向导显示真实来源、人工设备清单与零物理回收；�
   await f.app.db.tx(frame => { frame.graph = graph; frame.datasetId = root.datasetId; frame.local = root.state; frame.baseline = root.state; frame.frontier = graph.tips; frame.checkpoint = { datasetId: root.datasetId, hashes: graph.hashes }; });
   await f.open(); await f.page.locator('#historyPage').click();
   await expect(f.page.locator('#datasetMigration')).toContainText('迁移到精简数据集');
-  await f.page.getByLabel('精简候选相对目录').fill('compact-synthetic');
+  await f.page.getByRole('button',{name:'选择精简候选目录',exact:true}).click();
+  await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();
+  await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();
   await f.page.getByRole('button', { name: '检查归档与候选，准备换库', exact: true }).click();
   await expect(f.page.locator('#historyStatus')).toContainText('目标连接已有工作区');
   assert.equal(f.app.catalog.migrations.length, 0); assert.equal(rows.size, 1);
@@ -454,7 +464,7 @@ test('换库向导显示真实来源、人工设备清单与零物理回收；�
   await expect(f.page.locator('#datasetMigration')).toContainText('管理员登记 / 确认');
   await expect(f.page.locator('#datasetMigration')).toContainText('尚未执行本机迁移');
   await expect(f.page.getByRole('button', { name: '5. 切换 FPK（仍保持新旧停写）', exact: true })).toBeVisible();
-  await f.page.screenshot({ path: new URL('../../docs/evidence/pr47/migration-1280x800.png', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
+  if(process.env.UX_SCREENSHOTS)await f.page.screenshot({path:process.env.UX_SCREENSHOTS+'/migration-1280x800.png',fullPage:true});
   // 仅模拟后端已经成功切换；验证页面不再携带旧工作区身份请求历史。
   await f.page.route('**/api/migration', async route => {
     const data = route.request().postDataJSON();
@@ -520,4 +530,96 @@ test('PR58 v3 端点确认后刷新 Catalog revision，随后备份读取不要�
   await f.page.locator('#backupsPage').click();
   await expect(f.page.locator('#backupStatus')).toContainText('0 个加密备份');
   assert.equal(backupRevision, revision + 1); assert.deepEqual(f.errors, []);
+});
+
+
+test('PR59 WebDAV 草稿只读浏览、编码路径、明确选择与高级退路',async t=>{
+  const f=await fixture(t), before=structuredClone(f.app.catalog.manifest), calls=[];
+  await f.page.route('**/api/connections/browse',async route=>{
+    const data=route.request().postDataJSON();calls.push(data);
+    const url=data.browseUrl, child=new URL('%E8%AF%BE%E8%A1%A8%20%F0%9F%93%9A/',data.url).href;
+    await route.fulfill({json:{kind:'webdav',root:data.url,url,directories:url===data.url?[{name:'课表 📚',url:child}]:[]}});
+  });
+  await f.open();await f.page.locator('#addWebDav').click();
+  await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）',{exact:true}).fill('https://nas.test/dav/');
+  await f.page.getByLabel('用户名',{exact:true}).fill('synthetic');
+  await f.page.getByLabel('密码（留空保留已保存密码）',{exact:true}).fill('test-only');
+  await f.page.getByRole('button',{name:'浏览服务器文件夹',exact:true}).click();
+  await f.page.getByRole('button',{name:'📁 课表 📚',exact:true}).click();
+  await expect(f.page.locator('#fields')).toContainText('此文件夹没有子目录');await expect(f.save).toBeDisabled();
+  await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();await expect(f.save).toBeEnabled();
+  await expect(f.page.locator('#fields')).toContainText('已选择：https://nas.test/dav/课表 📚/');
+  if(process.env.UX_SCREENSHOTS)await f.page.screenshot({path:process.env.UX_SCREENSHOTS+'/webdav-desktop.png'});
+  await f.page.setViewportSize({width:420,height:800});
+  if(process.env.UX_SCREENSHOTS)await f.page.screenshot({path:process.env.UX_SCREENSHOTS+'/webdav-narrow.png'});
+  await f.page.getByLabel('用户名',{exact:true}).fill('changed');await expect(f.save).toBeDisabled();
+  await expect(f.page.locator('#fields .folder-list')).toHaveCount(0);
+  await f.page.locator('#cancel').click();assert.deepEqual(f.app.catalog.manifest,before);
+  assert(calls.every(c=>c.url==='https://nas.test/dav/'));assert.equal(calls.length,2);assert.deepEqual(f.errors,[]);
+});
+
+test('PR59 WebDAV 失败可重试；改凭据和关闭后迟到响应不改其他草稿',async t=>{
+  const f=await fixture(t);let fail=true,release,entered;
+  const gate=new Promise(r=>{release=r;}),pending=new Promise(r=>{entered=r;});
+  await f.page.route('**/api/connections/browse',async route=>{
+    if(fail)return route.fulfill({status:403,json:{error:'目录无权访问；可使用高级地址'}});
+    entered();await gate;await route.fulfill({json:{directories:[{name:'迟到文件夹',url:'https://nas.test/dav/late/'}]}}).catch(()=>{});
+  });
+  await f.open();await f.page.locator('#addWebDav').click();
+  await f.page.getByLabel('WebDAV 服务器访问地址（可含起始路径）',{exact:true}).fill('https://nas.test/dav/');
+  await f.page.getByRole('button',{name:'浏览服务器文件夹',exact:true}).click();
+  await expect(f.page.locator('#fields')).toContainText('目录加载失败：目录无权访问');await expect(f.save).toBeDisabled();
+  fail=false;await f.page.getByRole('button',{name:'重试读取目录',exact:true}).click();await pending;
+  await f.page.locator('#cancel').click();await f.page.locator('#addWebDav').click();
+  release();await expect(f.page.locator('#fields')).not.toContainText('迟到文件夹');await expect(f.save).toBeDisabled();
+  await f.page.getByText('高级：手动输入完整 URL（服务器不支持目录列举时使用）',{exact:true}).click();
+  await f.page.getByLabel('共享父目录完整 URL',{exact:true}).fill('https://manual.test/中文/');await expect(f.save).toBeEnabled();
+  await f.page.locator('#cancel').click();assert.deepEqual(f.errors,[]);
+});
+
+test('PR59 备份共用选择器保留目录身份与文件名；切换位置撤销恢复预览',async t=>{
+  const f=await fixture(t,{authorized:true});let verified,cancelled;
+  await f.page.route('**/api/backups/list',route=>route.fulfill({json:{directoryIdentity:'identity-'+route.request().postDataJSON().relative,backups:[{name:'synthetic.dpbk',size:42,modifiedAt:0,status:'未验证'}]}}));
+  await f.page.route('**/api/backups/verify',route=>{verified=route.request().postDataJSON();return route.fulfill({json:{token:'preview-only',createdAt:0,appVersion:'test',formatVersion:'DPBK0002',workspaceCount:0,fileCount:0,bytes:0,coverage:'合成测试',dependencies:[]}});});
+  await f.page.route('**/api/backups/cancel',route=>{cancelled=route.request().postDataJSON();return route.fulfill({json:{ok:true}});});
+  await f.open();await f.page.locator('#backupsPage').click();await f.page.getByRole('button',{name:'选择备份文件夹',exact:true}).click();
+  await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();
+  await expect(f.page.locator('#backupRelative')).toHaveValue('测试子目录');await f.page.getByRole('button',{name:'验证并预览恢复',exact:true}).click();
+  await expect(f.page.locator('#backupRestore')).toBeEnabled();assert.equal(verified.relative,'测试子目录');assert.equal(verified.directoryIdentity,'identity-测试子目录');assert.equal(verified.name,'synthetic.dpbk');
+  await f.page.locator('#backupChoose').click();await f.page.locator('dialog[open]').getByRole('button',{name:'取消',exact:true}).click();
+  await expect(f.page.locator('#backupRestore')).toBeEnabled();
+  await f.page.locator('#backupChoose').click();await f.page.locator('dialog[open]').getByRole('button',{name:'上一级',exact:true}).click();await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();
+  await expect(f.page.locator('#backupRestore')).toBeDisabled();await expect(f.page.locator('#backupPreview')).toBeEmpty();
+  assert.equal(cancelled.token,'preview-only');assert.deepEqual(f.errors,[]);
+});
+
+test('PR59 历史导出及迁移候选通过同一授权浏览器选择，取消不改表单',async t=>{
+  const f=await fixture(t,{authorized:true});await f.open();await f.page.locator('#historyPage').click();
+  await f.page.locator('#historyChoose').click();await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();
+  await expect(f.page.locator('#historyRelative')).toHaveValue('测试子目录');
+  await f.page.getByRole('button',{name:'选择精简候选目录',exact:true}).click();await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();
+  await f.page.locator('dialog[open]').getByRole('button',{name:'取消',exact:true}).click();await expect(f.page.locator('#migrationCandidate')).toHaveValue('');
+  await f.page.getByRole('button',{name:'选择精简候选目录',exact:true}).click();await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();
+  await expect(f.page.locator('#migrationCandidate')).toHaveValue('测试子目录');assert.deepEqual(f.errors,[]);
+});
+
+
+test('PR59 重开历史页可发现现有 compact 目录；名称不是验证结论',async t=>{
+  const f=await fixture(t,{authorized:true});
+  await f.page.route('**/api/directories?*',route=>route.fulfill({json:{directories:['compact-existing','history-existing']}}));
+  await f.open();await f.page.locator('#historyPage').click();await f.page.getByRole('button',{name:'选择精简候选目录',exact:true}).click();
+  await f.page.getByRole('button',{name:'compact-existing（待后端验证）',exact:true}).click();
+  await expect(f.page.locator('#migrationCandidate')).toHaveValue('compact-existing');assert.deepEqual(f.errors,[]);
+});
+
+
+test('PR59 独立归档从授权目录选择，仍由恢复 API 验证清单',async t=>{
+  const f=await fixture(t,{authorized:true});let input=null;
+  await f.page.route('**/api/schedule?*',async route=>{const response=await route.fetch(),data=await response.json();await route.fulfill({response,json:{...data,protocol:'v3'}});});
+  await f.page.route('**/api/history?*',route=>route.fulfill({json:{version:0,count:0,frontier:[],blockers:[],rows:[],next:null,rollbackEnabled:false}}));
+  await f.page.route('**/api/history/archive-restore',route=>{input=route.request().postDataJSON();return route.fulfill({status:400,json:{error:'归档清单验证失败；原始缓存保留'}});});
+  await f.open();await f.page.locator('#historyPage').click();await f.page.getByRole('button',{name:'从独立归档恢复缺失缓存',exact:true}).click();
+  await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();await f.page.locator('dialog[open]').getByRole('button',{name:'取消',exact:true}).click();assert.equal(input,null);
+  await f.page.getByRole('button',{name:'从独立归档恢复缺失缓存',exact:true}).click();await f.page.getByRole('button',{name:'📁 测试子目录',exact:true}).click();await f.page.getByRole('button',{name:'选择此文件夹',exact:true}).click();
+  await expect(f.page.locator('#historyStatus')).toContainText('归档清单验证失败');await expect(f.page.getByRole('button',{name:'从独立归档恢复缺失缓存',exact:true})).toBeEnabled();assert.equal(input.rootId,'approved');assert.equal(input.relative,'测试子目录');assert(input.workspaceId);assert.deepEqual(f.errors,[]);
 });

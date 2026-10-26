@@ -11,6 +11,7 @@ object SharedScheduleDialog {
     fun show(context: Context, source: ScheduleSource, sync: SharedScheduleController, publisher: Boolean): AlertDialog {
         var active = true
         var previewDialog: AlertDialog? = null
+        var folderDialog: AlertDialog? = null
         val fields = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 12, 24, 12) }
         fun label(text: String) = TextView(context).apply { this.text = text; textSize = 16f; fields.addView(this) }
         fun input(hint: String, value: String, secret: Boolean = false) = EditText(context).apply {
@@ -18,7 +19,7 @@ object SharedScheduleDialog {
             if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             fields.addView(this)
         }
-        label(if (publisher) "X08E 与手机双端可编辑。保存后自动同步，离线修改保留在本地。\n使用已配置的 WebDAV 账号；填写已有共享目录完整 URL。未绑定时可创建新课表，或预览并绑定已有课表（要求本地为空）。" else
+        label(if (publisher) "X08E 与手机双端可编辑。保存后自动同步，离线修改保留在本地。\n使用已配置的 WebDAV 账号；浏览选择已有共享父目录。未绑定时可创建新课表，或预览并绑定已有课表（要求本地为空）。" else
             "绑定后支持双端编辑与自动同步。真正冲突会保留双方数据并等待处理。首次绑定仍要求空课表，已有 v1 绑定请明确切换到 v2。")
         val public = sync.accounts.publicAccount()
         val url = if (!publisher) input("WebDAV 服务地址", public.first) else null
@@ -26,6 +27,15 @@ object SharedScheduleDialog {
         val password = if (!publisher) input("密码（留空保留已保存密码）", "", true) else null
         val folder = input("共享目录完整 URL", sync.settings.folder.ifBlank { public.first })
         fun bound() = source.syncStore?.isV3() == true || source.state.sync != null || sync.settings.publishedRevision != null || sync.settings.pendingRevision != null
+        folder.visibility=android.view.View.GONE
+        fun locationText(value:String)=android.net.Uri.parse(value).let { (it.host ?: "")+android.net.Uri.decode(it.encodedPath.orEmpty()) }
+        val folderLabel=label("共享位置："+locationText(folder.text.toString()))
+        folder.addTextChangedListener(object:android.text.TextWatcher {
+            override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+            override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { folderLabel.text="共享位置："+locationText(s.toString()) }
+            override fun afterTextChanged(s:android.text.Editable?) {}
+        })
+        fields.addView(Button(context).apply { text="高级：手动输入完整共享 URL";setOnClickListener { folder.visibility=if(folder.visibility==android.view.View.VISIBLE)android.view.View.GONE else android.view.View.VISIBLE } })
         folder.isEnabled = !bound()
         val status = label("")
         var publishButton: Button? = null
@@ -35,6 +45,7 @@ object SharedScheduleDialog {
         var conflictButton: Button? = null
         var recoveryButton:Button?=null
         fun refresh() {
+            if(source.syncStore?.isV3()==true)runCatching { source.syncStore!!.v3EndpointFolder() }.onSuccess { persisted->if(folder.text.toString()!=persisted)folder.setText(persisted) }
             val time = sync.settings.lastSuccess
             status.text = sync.status + (if (time > 0) "\n上次同步检查（本机）：${Instant.ofEpochMilli(time)}" else "") +
                 if (time > 0 && System.currentTimeMillis() - time > 24 * 60 * 60 * 1000L) "\n数据可能过期（超过 24 小时未验证）" else ""
@@ -63,7 +74,7 @@ object SharedScheduleDialog {
                 SharedScheduleTransport().folder(account, folder.text.toString())
                 sync.accounts.saveAccount(account)
             }
-            sync.settings.folder = folder.text.toString()
+            if(!bound()) sync.settings.folder = folder.text.toString()
         }.onFailure { status.text = "设置无效，请检查地址与凭据。" }.isSuccess
         fun button(text: String, saveRequired: Boolean = true, action: () -> Unit): Button {
             return Button(context).apply { this.text = text; isAllCaps = false; minHeight = (48 * context.resources.displayMetrics.density).toInt()
@@ -84,11 +95,30 @@ object SharedScheduleDialog {
                 val target=entry("新 WebDAV 服务地址",old?.baseUrl.orEmpty())
                 val name=entry("新用户名",old?.username.orEmpty())
                 val secret=entry("新密码（留空沿用当前 v3 密码）",secret=true)
-                val dir=entry("新共享父目录完整 URL",currentFolder)
+                val dir=entry("新共享父目录完整 URL",currentFolder).apply { visibility=android.view.View.GONE }
+                val targetLocation=TextView(context).apply { text="候选目录："+locationText(currentFolder);form.addView(this) }
+                dir.addTextChangedListener(object:android.text.TextWatcher {
+                    override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+                    override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { targetLocation.text="候选目录："+locationText(s.toString()) }
+                    override fun afterTextChanged(s:android.text.Editable?) {}
+                })
+                form.addView(Button(context).apply { text="高级：手动输入候选完整 URL";setOnClickListener { dir.visibility=if(dir.visibility==android.view.View.VISIBLE)android.view.View.GONE else android.view.View.VISIBLE } })
                 form.addView(Button(context).apply { text="按新服务器地址保留当前共享目录路径";setOnClickListener {
                     runCatching { V3EndpointForm.retarget(currentFolder,target.text.toString()) }.onSuccess { dir.setText(it) }.onFailure { status.text="服务器地址无效；共享目录未改变" }
                 } })
                 val cert=entry("经独立核对的单证书 PEM；留空使用系统 CA",old?.certificatePem.orEmpty()).apply { minLines=3 }
+                var endpointOpen=true;var candidateFolder:AlertDialog?=null
+                val candidateBrowse=Button(context).apply { text="浏览候选服务器文件夹";form.addView(this) }
+                candidateBrowse.setOnClickListener {
+                    runCatching {
+                        val candidate=WebDavAccount(target.text.toString(),name.text.toString(),secret.text.toString().ifBlank { old?.password.orEmpty() },cert.text.toString().trim().ifBlank { null })
+                        val browse={ candidateFolder?.dismiss();candidateFolder=WebDavFolderDialog.show(context,candidate,initialFolder=dir.text.toString()) { if(endpointOpen)dir.setText(it) }; Unit }
+                        if(candidate.certificatePem!=null) AlertDialog.Builder(context).setTitle("独立核对证书指纹")
+                            .setMessage("SHA-256:\n${WebDavTls.fingerprint(candidate.certificatePem)}\n请核对可信渠道证书后浏览。")
+                            .setNegativeButton("取消",null).setPositiveButton("已独立核对，浏览") { _,_->browse() }.show()
+                        else browse()
+                    }.onFailure { status.text="候选地址、凭据或证书无效；原绑定保留" }
+                }
                 val output=TextView(context).also { form.addView(it) };var job=runCatching { source.syncStore!!.latestV3Endpoint() }.getOrElse {
                     org.json.JSONObject().put("status","CLEANUP_BLOCKED").put("failure","候选私有材料无法安全清理；绑定和证据保留，请检查恢复状态")
                 }
@@ -124,7 +154,7 @@ object SharedScheduleDialog {
                         .setNegativeButton("取消",null).setPositiveButton("确认切换") { _,_->sync.endpointConfirm(p.getString("token"),::display) }.show()
                 }
                 continueAction.isEnabled=false;cancelAction.isEnabled=false;confirmAction.isEnabled=false;job?.let(::display)
-                AlertDialog.Builder(context).setTitle("安全端点更换与恢复").setView(ScrollView(context).apply { addView(form) }).setNegativeButton("关闭（保留预检）",null).show()
+                AlertDialog.Builder(context).setTitle("安全端点更换与恢复").setView(ScrollView(context).apply { addView(form) }).setNegativeButton("关闭（保留预检）",null).create().also { it.setOnDismissListener { endpointOpen=false;candidateFolder?.dismiss() };it.show() }
             }
         }
         button("HTTPS 自签名证书（仅此连接）",false) {
@@ -241,14 +271,16 @@ object SharedScheduleDialog {
                 previewDialog = preview.show()
             }
         }
-        if (!publisher) button("浏览共享目录", false) {
+        val browseButton=button("浏览共享目录", false) {
             if (bound()) { status.text = "已绑定，请使用安全换库入口" }
             else runCatching {
                 val old = sync.accounts.account()
-                val account = WebDavAccount(url!!.text.toString(), user!!.text.toString(), password!!.text.toString().ifBlank { old?.password.orEmpty() },old?.certificatePem?.takeIf { old.baseUrl==url.text.toString() && old.username==user.text.toString() })
-                WebDavFolderDialog.show(context, account) { if (active && !bound()) folder.setText(it) }
+                val account = if(publisher) old ?: error("请先配置 WebDAV 账号") else WebDavAccount(url!!.text.toString(), user!!.text.toString(), password!!.text.toString().ifBlank { old?.password.orEmpty() },old?.certificatePem?.takeIf { old.baseUrl==url.text.toString() && old.username==user.text.toString() })
+                folderDialog?.dismiss()
+                folderDialog=WebDavFolderDialog.show(context, account, initialFolder=folder.text.toString()) { if (active && !bound()) folder.setText(it) }
             }.onFailure { status.text = "请检查服务器地址与凭据" }
         }
+        fields.removeView(browseButton);fields.addView(browseButton,fields.indexOfChild(folderLabel)+1)
         if (publisher) {
             publishButton = button("创建新的共享课表") { sync.publish() }
             bindButton = button("绑定已有共享课表（预览）") { inspectAndConfirm() }
@@ -348,7 +380,7 @@ object SharedScheduleDialog {
         sync.changed = listener
         val dialog = AlertDialog.Builder(context).setTitle(if (publisher) "共享课表 · WebDAV" else "共享课表 · WebDAV")
             .setView(ScrollView(context).apply { addView(fields) }).setNegativeButton("关闭", null).create()
-        dialog.setOnDismissListener { active = false; previewDialog?.dismiss(); if (sync.changed === listener) sync.changed = previous; password?.text?.clear() }
+        dialog.setOnDismissListener { active = false; folderDialog?.dismiss(); previewDialog?.dismiss(); if (sync.changed === listener) sync.changed = previous; password?.text?.clear() }
         dialog.show()
         return dialog
     }

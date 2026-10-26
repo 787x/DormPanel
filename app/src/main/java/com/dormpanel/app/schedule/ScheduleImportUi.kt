@@ -33,6 +33,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     private var receiver: TemporaryLanUploadServer? = null
     private var receiveDialog: AlertDialog? = null
     private var receiveTick: Runnable? = null
+    private var folderDialog: android.app.AlertDialog? = null
     private var sharedDialog: android.app.AlertDialog? = null
     private val importer = TimetableImporter(profiles = profileStore)
     private val themeListener: (AppearanceState) -> Unit = { state -> dialogs.forEach { theme(it, state) } }
@@ -521,39 +522,11 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     }
     private fun browse(account: WebDavAccount, folder: String, targetId: String?) {
         if (closed) return
-        val fields = context.scheduleColumn().apply { setPadding(context.dp(16), 0, context.dp(16), 0) }
-        val status = context.scheduleLabel("Loading folder…", 16f)
-        fields.addView(status)
-        val dialog = show(AlertDialog.Builder(context).setTitle("WebDAV · ${android.net.Uri.parse(folder).encodedPath}")
-            .setView(ScrollView(context).apply { addView(fields) }).setNegativeButton("Close", null).create())
-        val client = WebDavClient()
-        val base = client.url(account.baseUrl)
-        val current = client.url(folder)
-        if (current != base) {
-            val parent = current.resolve("../")
-            if (parent != null && parent.scheme == base.scheme && parent.host == base.host && parent.port == base.port &&
-                parent.encodedPath.startsWith(base.encodedPath.trimEnd('/') + "/"))
-                fields.addView(context.scheduleButton("[..]") { dialog.dismiss(); browse(account, parent.toString(), targetId) })
-        }
-        fields.addView(context.scheduleButton("Follow newest ICS in this folder") {
-            dialog.dismiss(); remotePreview(account, WebDavMode.FOLDER_LATEST_ICS, folder, targetId)
-        })
-        fields.addView(context.scheduleButton("Follow newest CSV in this folder") {
-            dialog.dismiss(); remotePreview(account, WebDavMode.FOLDER_LATEST_CSV, folder, targetId)
-        })
-        fields.addView(context.scheduleButton("Follow newest XLS in this folder") {
-            dialog.dismiss(); remotePreview(account, WebDavMode.FOLDER_LATEST_XLS, folder, targetId)
-        })
-        webDav.browse(account, folder) { result -> if (!closed && dialog.isShowing) {
-            result.onSuccess { items ->
-                status.text = if (items.isEmpty()) "No folders or timetable files." else "Select a folder, .ics, or .csv / .xls file."
-                items.forEach { item -> fields.addView(context.scheduleButton("${if (item.folder) "📁" else "📄"} ${item.name}") {
-                    dialog.dismiss()
-                    if (item.folder) browse(account, item.url, targetId)
-                    else remotePreview(account, WebDavMode.FILE, item.url, targetId)
-                }) }
-            }.onFailure { status.text = errorText(it) }
-        } }
+        runCatching {
+            folderDialog?.dismiss()
+            folderDialog=WebDavFolderDialog.show(context,account,initialFolder=folder,
+                importSelected={ mode,remote -> if(!closed)remotePreview(account,mode,remote,targetId) }) {}
+        }.onFailure { message("WebDAV",errorText(it)) }
     }
     private fun remotePreview(account: WebDavAccount, mode: WebDavMode, remote: String, targetId: String?) {
         val progress = show(AlertDialog.Builder(context).setTitle("Reading WebDAV timetable")
@@ -592,5 +565,5 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         dialog.matchActivityBrightness()
         theme(dialog, appearance.state); return dialog
     }
-    fun close() { closed = true; sharedDialog?.dismiss(); stopReceiving(); dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow() }
+    fun close() { closed = true; folderDialog?.dismiss(); sharedDialog?.dismiss(); stopReceiving(); dialogs.toList().forEach { it.dismiss() }; dialogs.clear(); appearance.removeListener(themeListener); worker.shutdownNow() }
 }

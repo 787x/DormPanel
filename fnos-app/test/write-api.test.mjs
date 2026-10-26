@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import http from "node:http";
 import { createApp, PREFIX } from "../src/server.mjs";
-import { safeAddress, tlsOptions } from "../src/webdav.mjs";
+import { WebDav, safeAddress, tlsOptions } from "../src/webdav.mjs";
 import { X509Certificate } from "node:crypto";
 import { encode } from '../src/protocol.mjs';
 import { emptyState } from '../src/merge.mjs';
@@ -343,4 +343,27 @@ test('未绑定工作区历史检查的第一次列举直接持久化，不能�
   reads.length=0;
   assert.notEqual((await f.post('/api/history/preview',{target:root.commitId})).status,200);
   assert(reads.includes(broken));assert(f.app.db.frame.checkpoint.deferred.includes(broken));
+});
+
+
+test('PR59 浏览 API：候选不保存，已保存密码只留后端，管理员与 CSRF 边界保持',async t=>{
+  const f=await fixture(t), before=JSON.stringify(f.app.catalog.manifest), original=WebDav.prototype.request;
+  const calls=[];
+  WebDav.prototype.request=async function(method,url,max){
+    calls.push({method,url:url.href,password:this.config.password,max});
+    return Buffer.from('<d:multistatus xmlns:d="DAV:"><d:response><d:href>'+url.pathname+'</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>');
+  };
+  t.after(()=>{WebDav.prototype.request=original;});
+  const input={type:'webdav',name:'浏览候选',url:'https://nas.test/dav/',username:'user',password:'never-return-this'};
+  const preview=await f.post('/api/connections/browse',input);assert.equal(preview.status,200);assert.equal(preview.data.kind,'webdav');
+  assert.equal(JSON.stringify(f.app.catalog.manifest),before);assert(!preview.text.includes(input.password));
+  const saved=await f.post('/api/manage',{action:'connection.save',...input});assert.equal(saved.status,200);
+  const snapshot=JSON.stringify(f.app.catalog.manifest);
+  const selected=await f.post('/api/connections/browse',{connectionId:saved.data.connectionId});assert.equal(selected.status,200);
+  assert.equal(calls.at(-1).password,input.password);assert.equal(JSON.stringify(f.app.catalog.manifest),snapshot);
+  for(const extra of [{browseUrl:'https://evil.test/'},{browseUrl:'https://nas.test/other/'},{browseUrl:'https://nas.test/dav/%2e%2e/'}])assert.equal((await f.post('/api/connections/browse',{...input,...extra})).status,400);
+  assert.equal((await f.post('/api/connections/browse',input,{'X-DormPanel-CSRF':'wrong'})).status,403);
+  assert.equal((await f.post('/api/connections/browse',input,{'X-Trim-Isadmin':'false'})).status,403);
+  assert.equal((await f.post('/api/connections/browse',input,{Origin:'https://evil.test'})).status,403);
+  assert(calls.every(c=>c.method==='PROPFIND' && c.max===512*1024));assert.equal(calls.length,2);
 });
