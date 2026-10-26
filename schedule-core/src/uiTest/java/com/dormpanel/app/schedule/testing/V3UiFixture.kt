@@ -14,6 +14,9 @@ import java.util.concurrent.TimeUnit
 class V3UiFixture(private val context: Context) : AutoCloseable {
     val server = MockWebServer()
     val files = linkedMapOf<String, ByteArray>()
+    val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private val databases = mutableListOf<ScheduleDatabase>()
+    fun checkpoints() = databases.last().dao().syncRecords().associate { it.id to digest(it.payload) }
     private val directories = linkedSetOf("/")
     private val executors = mutableListOf<ExecutorService>()
     val account get() = WebDavAccount(server.url("/").toString(), "test", "test")
@@ -24,6 +27,7 @@ class V3UiFixture(private val context: Context) : AutoCloseable {
         check(context.packageName.endsWith(".testbed")) { "UI verification requires isolated testbed applicationId" }
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = synchronized(files) {
+                requests += "${request.method} ${request.path}"
                 val path = request.path!!.substringBefore('?')
                 when (request.method) {
                     "MKCOL" -> { directories += path; MockResponse().setResponseCode(201) }
@@ -51,7 +55,8 @@ class V3UiFixture(private val context: Context) : AutoCloseable {
         WebDavSettings(context).saveAccount(account); SharedScheduleSettings(context).folder = account.baseUrl
         ScheduleStores.overrideFactory = { c ->
             val executor = Executors.newSingleThreadExecutor().also { executors += it }
-            RoomScheduleStore(Room.databaseBuilder(c, ScheduleDatabase::class.java, "$namespace.db").build(), executor, profiles = TermScheduleProfileStore(c))
+            val db = Room.databaseBuilder(c, ScheduleDatabase::class.java, "$namespace.db").build().also { databases += it }
+            RoomScheduleStore(db, executor, profiles = TermScheduleProfileStore(c))
         }
     }
     override fun close() {

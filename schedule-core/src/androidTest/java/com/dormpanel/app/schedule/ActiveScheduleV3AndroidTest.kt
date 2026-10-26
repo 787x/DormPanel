@@ -187,10 +187,16 @@ class ActiveScheduleV3AndroidTest {
             await<Unit> { store.put(entry("before"),it) };store.prepareV3("https://isolated.test/");inject=true
             assertThrows(Exception::class.java) { store.synchronizeV3(target,target,V3Budget()) }
             assertTrue(store.businessPaused());assertEquals(0,target.puts);assertNotNull(expected)
+            val protected = store.sharedPresentation(true)
+            assertTrue(protected.recovery)
+            assertTrue(SharedAction.RECOVER in protected.primary)
+            assertFalse(SharedAction.CREATE in protected.actions)
             store.reopenV3Store();assertFalse(store.businessPaused())
+            assertFalse(store.sharedPresentation(true).recovery)
             assertEquals(expected,store.v3Control()!!.getJSONObject("binding").getString("datasetId"))
             await<Unit> { store.put(entry("after recovery"),it) }
             repeat(8) { store.synchronizeV3(target,target,V3Budget()) }
+            assertFalse("已确认回执不是待回读上传", store.sharedPresentation(true).confirming)
             assertEquals("after recovery",await<ScheduleState>(store::load).entries.single().title)
             assertEquals(setOf(expected),target.objects.values.map { SyncV3Codec.decode(it).datasetId }.toSet())
             assertEquals(1,target.objects.values.map(SyncV3Codec::decode).count { it.type==2 && it.epochNumber==1 })

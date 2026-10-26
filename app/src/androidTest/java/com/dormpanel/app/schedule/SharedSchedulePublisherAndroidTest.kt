@@ -64,13 +64,13 @@ class SharedSchedulePublisherAndroidTest {
                         dialog = SharedScheduleDialog.show(activity, vm.schedule, vm.sharedSchedule, true)
                     }
                     onView(withText("创建新的共享课表")).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
-                    onView(withText("绑定已有共享课表（预览）")).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
-                    onView(withText("绑定已有共享课表（预览）")).perform(scrollTo(), click())
+                    onView(withText("加入已有共享课表")).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
+                    com.dormpanel.app.schedule.testing.FolderUiChecks.manage("旧版兼容与升级", "预览并加入旧版课表（v2）")
                     waitFor(scenario) { !it.sharedSchedule.busy }
                     onView(withText("取消")).perform(click())
                     scenario.onActivity { assertNull(ViewModelProvider(it)[DashboardViewModel::class.java].schedule.state.sync) }
                     assertEquals(0, puts); assertEquals(1, files.size)
-                    onView(withText("绑定已有共享课表（预览）")).perform(scrollTo(), click())
+                    com.dormpanel.app.schedule.testing.FolderUiChecks.manage("旧版兼容与升级", "预览并加入旧版课表（v2）")
                     waitFor(scenario) { !it.sharedSchedule.busy }
                     val next = root.copy(commitId = UUID.randomUUID().toString(), parents = listOf(root.commitId))
                     files[path(next)] = ScheduleCommitCodec.encode(next)
@@ -81,12 +81,12 @@ class SharedSchedulePublisherAndroidTest {
                         assertNull(vm.schedule.state.sync); assertTrue(vm.sharedSchedule.status.contains("重新预览"))
                     }
                     assertEquals(0, puts)
-                    onView(withText("绑定已有共享课表（预览）")).perform(scrollTo(), click())
+                    com.dormpanel.app.schedule.testing.FolderUiChecks.manage("旧版兼容与升级", "预览并加入旧版课表（v2）")
                     waitFor(scenario) { !it.sharedSchedule.busy }
                     onView(withText("确认下载并绑定")).perform(click())
                     waitFor(scenario) { !it.sharedSchedule.busy && it.schedule.state.sync != null && !it.schedule.applyingSnapshot }
                     assertEquals(0, puts); assertEquals(2, files.size)
-                    onView(withText("绑定已有共享课表（预览）")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+                    onView(withText("加入已有共享课表")).check(matches(withEffectiveVisibility(Visibility.GONE)))
                     onView(withText("立即同步")).perform(scrollTo(), click())
                     waitFor(scenario) { !it.sharedSchedule.busy }
                     assertEquals(0, puts); assertEquals(2, files.size)
@@ -155,7 +155,8 @@ class SharedSchedulePublisherAndroidTest {
                     }
                     onView(withText("共享课表管理（WebDAV）")).perform(scrollTo(), click())
                     waitFor(scenario) { !it.sharedSchedule.busy }
-                    onView(withText("创建新的共享课表")).perform(scrollTo(), click())
+                    com.dormpanel.app.schedule.testing.FolderUiChecks.manage("旧版兼容与升级", "兼容旧客户端：创建 v2 课表")
+                    onView(withText("创建旧版课表")).perform(click())
                     waitFor(scenario) { !it.sharedSchedule.busy && files.isNotEmpty() }
                     scenario.onActivity { assertTrue("${ViewModelProvider(it)[DashboardViewModel::class.java].sharedSchedule.status}; files=${files.keys}", files.isNotEmpty()) }
                     val first = V2TestTransport().inspect(account, server.url("/shared/").toString())

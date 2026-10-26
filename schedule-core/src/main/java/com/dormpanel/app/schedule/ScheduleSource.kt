@@ -75,7 +75,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         if (closed) { callback(Result.failure(IllegalStateException("Schedule source closed"))); return }
         applyingSnapshot = true
         store.load { result ->
-            result.onSuccess { state = ordered(if (it.sync == null) it.copy(profiles = effectiveProfiles(it.sources)) else it); ready = true }.onFailure { error = true }
+            result.onSuccess { state = ordered(if (it.sync == null) it.copy(profiles = effectiveProfiles(it.sources)) else it); ready = true; error = false }.onFailure { error = true }
             applyingSnapshot = false; refresh(); callback(result.map { })
         }
     }

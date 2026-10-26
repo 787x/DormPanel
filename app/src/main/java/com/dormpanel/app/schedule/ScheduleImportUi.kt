@@ -467,12 +467,12 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
     fun sources() {
         if (closed || busy) return
         val fields = context.scheduleColumn()
-        val dialog = AlertDialog.Builder(context).setTitle("Imported timetables").setNegativeButton("Close", null)
+        val dialog = AlertDialog.Builder(context).setTitle("导入来源与共享课表").setNegativeButton("关闭", null)
             .setView(ScrollView(context).apply { addView(fields) }).create()
         fields.addView(context.scheduleButton("共享课表管理（WebDAV）") { dialog.dismiss(); sharedDialog = SharedScheduleDialog.show(context, source, sharedSync, true) })
-        fields.addView(context.scheduleButton("Add WebDAV timetable") { dialog.dismiss(); webDavSetup() })
-        fields.addView(context.scheduleButton("Term schedule profiles") { dialog.dismiss(); termProfiles() })
-        if (source.state.sources.isEmpty()) fields.addView(context.scheduleLabel("No imported timetables"))
+        fields.addView(context.scheduleButton("添加 WebDAV 文件课表") { dialog.dismiss(); webDavSetup() })
+        fields.addView(context.scheduleButton("学期与节次设置") { dialog.dismiss(); termProfiles() })
+        if (source.state.sources.isEmpty()) fields.addView(context.scheduleLabel("暂无导入来源"))
         source.state.sources.forEach { item ->
             fields.addView(context.scheduleLabel("${item.displayName} · ${item.filename}\nImported ${date(item.importedAt)} · ${item.occurrenceCount} classes\n${date(item.firstStart)} – ${date(item.lastEnd)}", 18f))
             webDav.binding(item.id)?.let { binding ->
@@ -517,7 +517,7 @@ class ScheduleImportUi(private val context: Context, private val source: Schedul
         if (closed) return
         val account = webDav.settings.account()
         if (account == null) {
-            message("WebDAV account needed", "Configure the shared WebDAV account in Control Center, then return to select an ICS file or folder.")
+            message("需要 WebDAV 账号", "请先在控制中心配置全局 WebDAV 导入账号，再返回选择课表文件或目录。")
         } else browse(account, account.baseUrl, targetId)
     }
     private fun browse(account: WebDavAccount, folder: String, targetId: String?) {

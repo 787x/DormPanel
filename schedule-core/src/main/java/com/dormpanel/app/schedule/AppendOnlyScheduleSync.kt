@@ -168,7 +168,7 @@ class AppendOnlyScheduleSync(private val local: ScheduleV2Store, backend: Commit
             if (tips.all { ScheduleMerge.same(graph.commits.getValue(it).state, frame.local) }) {
                 val unverifiable = (anomalies + graph.deferred.keys).size
                 return ScheduleSyncEngine.Outcome(if (unverifiable == 0) "已检查观察到的版本 · 已发布；其他设备接收情况未知"
-                    else "已发布有效课程 · $unverifiable 个文件暂不可验证/未确认；尚未完成全部版本同步")
+                    else "已发布有效课程 · $unverifiable 个文件暂不可验证/未确认；尚未完成全部版本同步", checkState = if (unverifiable == 0) "VERIFIED" else "PARTIAL")
             }
             check(graph.commits.size < 256) { "提交数量已达上限；保留本地修改" }
             val candidate = ScheduleCommit(baseline.datasetId, UUID.randomUUID().toString(), frame.writerId, tips, frame.local)

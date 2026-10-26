@@ -12,7 +12,19 @@ internal fun launchPhoneTestActivity(): ActivityScenario<TimetableActivity> {
         // Instrumentation-only watcher: MIUI can open its prompt after any dialog transition.
         repeat(6000) { runCatching { dismissTestPasswordPrompt() }; Thread.sleep(100) }
     }.apply { isDaemon = true; name = "test-password-prompt"; start() }
-    if (InstrumentationRegistry.getArguments().getString("pr35RootUi") != "true") return ActivityScenario.launch(TimetableActivity::class.java)
+    if (InstrumentationRegistry.getArguments().getString("pr35RootUi") != "true") {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val pkg = instrumentation.targetContext.packageName
+        require(pkg.endsWith(".testbed"))
+        val launched = java.util.concurrent.atomic.AtomicBoolean(false)
+        Thread {
+            Thread.sleep(750)
+            if (!launched.get()) ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(
+                "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10008000 -n $pkg/com.dormpanel.phone.TimetableActivity"
+            )).use { it.readBytes() }
+        }.apply { isDaemon = true; start() }
+        return ActivityScenario.launch(TimetableActivity::class.java).also { launched.set(true) }
+    }
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val pkg = instrumentation.targetContext.packageName
     require(pkg == "com.dormpanel.timetable.testbed") { "Root UI assist is restricted to the isolated test package" }

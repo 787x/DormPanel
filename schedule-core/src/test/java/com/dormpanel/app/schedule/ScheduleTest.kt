@@ -15,14 +15,26 @@ class ScheduleTest {
     private class Store(var data: ScheduleState = ScheduleState()) : ScheduleStore {
         var pending: ((Result<ScheduleState>) -> Unit)? = null
         var delayed = false
+        var loadFailure: Throwable? = null
         var writes = 0
         var closed = false
-        override fun load(callback: (Result<ScheduleState>) -> Unit) { if (delayed) pending = callback else callback(Result.success(data)) }
+        override fun load(callback: (Result<ScheduleState>) -> Unit) { if (delayed) pending = callback else callback(loadFailure?.let { Result.failure(it) } ?: Result.success(data)) }
         override fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit) { writes++; data = data.copy(events = data.events.filterNot { it.id == event.id } + event); callback(Result.success(Unit)) }
         override fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit) { writes++; data = data.copy(entries = data.entries.filterNot { it.id == entry.id } + entry); callback(Result.success(Unit)) }
         override fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit) { data = data.copy(events = data.events.filterNot { it.id == id }); callback(Result.success(Unit)) }
         override fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit) { data = data.copy(entries = data.entries.filterNot { it.id == id }); callback(Result.success(Unit)) }
         override fun close() { closed = true }
+    }
+    @Test fun successfulRecoveryReloadClearsErrorWithoutReplacingLocalRecords() {
+        val store = Store(); val source = ScheduleSource(store)
+        assertTrue(source.saveEntry("Saved before failure", 1, 540, 585))
+        val before = source.state
+        store.loadFailure = IllegalStateException("unconfirmed local transaction")
+        source.reload(); assertTrue(source.error)
+        store.loadFailure = null
+        source.reload(); assertFalse(source.error); assertTrue(source.ready)
+        assertEquals(before, source.state); assertEquals(1, store.writes)
+        source.close()
     }
     @Test fun eventCrudIdentityOrderingOverlapAndRoundTrip() {
         val store = Store(); val source = ScheduleSource(store)

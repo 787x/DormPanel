@@ -89,7 +89,10 @@ class PhoneSharedScheduleInspectionTest {
             onView(withText("管理")).perform(click())
             onView(withText("WebDAV 共享课表（双向同步）")).perform(click())
         }
-        fun inspect() = onView(withText("测试连接 / 检查远端快照")).perform(scrollTo(), click())
+        fun inspect() {
+            val bound = store.sharedPresentation(true).bound
+            com.dormpanel.app.schedule.testing.FolderUiChecks.manage(if (bound) "技术诊断" else "旧版兼容与升级", if (bound) "只读检查旧版远端课表（v2）" else "预览并加入旧版课表（v2）")
+        }
         override fun close() {
             gate.getAndSet(null)?.release?.countDown()
             store.close(); executors.forEach { check(it.awaitTermination(10, TimeUnit.SECONDS)) }; db.close()
@@ -102,7 +105,7 @@ class PhoneSharedScheduleInspectionTest {
     }
     @Test fun firstBindThenRepeatedBoundInspectionIsReadOnlyIncludingAllCheckpoints() {
         Fixture().use { f -> launchPhoneTestActivity().use { s ->
-            f.open(s); f.inspect(); waitFor(s) { !it.sharedSync.busy }; dismissTestPasswordPrompt()
+            f.open(s); onView(withText("加入已有共享课表")).perform(scrollTo(), click()); waitFor(s) { !it.sharedSync.busy }; dismissTestPasswordPrompt()
             val previewDeadline = System.currentTimeMillis() + 20000
             while (true) {
                 try { onView(withText("确认下载并绑定")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check(matches(isDisplayed())); break }
@@ -120,7 +123,6 @@ class PhoneSharedScheduleInspectionTest {
             f.files[f.path(next)] = ScheduleCommitCodec.encode(next)
             val remoteBefore = f.files.mapValues { digest(it.value) }
             repeat(2) {
-                onView(withText("测试连接 / 检查远端快照")).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
                 f.inspect(); waitFor(s) { !it.sharedSync.busy }; dismissTestPasswordPrompt()
                 onView(withText(containsString("Commit: ${next.commitId}"))).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check(matches(isDisplayed()))
                 onView(withText(containsString("远端历史：2 个已验证提交"))).check(matches(isDisplayed()))
@@ -161,6 +163,8 @@ class PhoneSharedScheduleInspectionTest {
             val gate = Gate(); f.gate.set(gate)
             try {
                 f.inspect(); assertTrue(gate.entered.await(10, TimeUnit.SECONDS))
+                onView(withText("创建新的共享课表")).check(matches(org.hamcrest.Matchers.not(isEnabled())))
+                onView(withText("加入已有共享课表")).check(matches(org.hamcrest.Matchers.not(isEnabled())))
                 onView(withText("关闭")).perform(click()); gate.release.countDown()
                 waitFor(s) { !it.sharedSync.busy && it.hasWindowFocus() }
                 onView(withText("已验证的远端课表")).check(doesNotExist())

@@ -9,6 +9,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WebDavCredentialsTest {
+    @Test fun savedDraftComparisonUsesValuesAndIncludesTrustAndSecret() {
+        val old = WebDavAccount("https://example.org/", "u", "secret")
+        assertTrue(WebDavCredentials.sameConfiguration(old, WebDavAccount(old.baseUrl, "u", "secret")))
+        assertTrue(WebDavCredentials.sameConfiguration(old, WebDavAccount(" ${old.baseUrl} ", "u", "secret")))
+        assertFalse(WebDavCredentials.sameConfiguration(old, WebDavAccount(old.baseUrl, "u", "changed")))
+        assertFalse(WebDavCredentials.sameConfiguration(old, WebDavAccount(old.baseUrl, "other", "secret")))
+        assertFalse(WebDavCredentials.sameConfiguration(old, WebDavAccount(old.baseUrl, "u", "secret", "different trust")))
+        assertFalse(WebDavCredentials.sameConfiguration(old, null))
+    }
     private fun listing()=MockResponse().setResponseCode(207).setBody("<d:multistatus xmlns:d=\"DAV:\"/>")
     @Test fun originAndUsernameChangesCannotInheritAuthorization() {
         MockWebServer().use { a->MockWebServer().use { b->

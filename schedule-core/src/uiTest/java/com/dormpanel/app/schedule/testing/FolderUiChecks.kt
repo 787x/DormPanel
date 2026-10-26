@@ -32,39 +32,46 @@ object FolderUiChecks {
         val end=System.currentTimeMillis()+15000
         while(System.currentTimeMillis()<end) {
             if(runCatching { onView(withText(text)).check(matches(isDisplayed())) }.isSuccess)return
+            runCatching { onView(withText(text)).perform(scrollTo()) }
             Thread.sleep(60)
         }
         onView(withText(text)).check(matches(isDisplayed()))
     }
     fun firstDirectoryRequired(f:V3UiFixture,onActivity:((Activity)->Unit)->Unit,settings:SharedScheduleSettings,open:()->Unit,sync:(Activity)->SharedScheduleController,label:String) {
-        onActivity { settings.folder="" };open()
+        onActivity { settings.folder="";sync(it).refreshPresentation() };open()
+        visible("连接设置")
+        onView(withText("连接设置")).perform(scrollTo(),click())
         onView(withText(containsString("尚未选择共享父目录"))).check(matches(isDisplayed()))
         val count=f.server.requestCount
-        for(action in listOf("创建 Sync v3 数据集（保留本地课程）","发现并加入 Sync v3 数据集")) {
-            onView(withText(action)).perform(scrollTo(),click())
-            onView(withText(containsString("请先浏览选择共享父目录"))).perform(scrollTo()).check(matches(isDisplayed()))
-            assertEquals("",settings.folder);assertEquals(count,f.server.requestCount);assertTrue(f.files.isEmpty())
-        }
+        val before=f.checkpoints()
+        onView(withText("创建新的共享课表")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+        onView(withText("加入已有共享课表")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+        onView(withText("保存连接配置")).perform(scrollTo(),click());onView(withText("确认保存连接")).perform(click())
+        onView(withText(containsString("请先浏览选择共享父目录"))).perform(scrollTo()).check(matches(isDisplayed()))
+        assertEquals("",settings.folder);assertEquals(count,f.server.requestCount);assertEquals(before,f.checkpoints())
         onView(withText("浏览共享目录")).perform(scrollTo(),click());visible("📁 中文 a");onView(withText("取消")).perform(click())
         assertEquals("",settings.folder);onView(withText("关闭")).perform(click());open()
-        onView(withText(containsString("尚未选择共享父目录"))).check(matches(isDisplayed()))
+        onView(withText("连接设置")).perform(scrollTo(),click())
         onView(withText("高级：手动输入完整共享 URL")).perform(scrollTo(),click())
         onView(withContentDescription("共享目录完整 URL")).perform(replaceText(f.account.baseUrl),closeSoftKeyboard())
-        onView(withText("创建 Sync v3 数据集（保留本地课程）")).perform(scrollTo(),click())
-        onView(withText(containsString("请先浏览选择共享父目录"))).perform(scrollTo()).check(matches(isDisplayed()));assertEquals("",settings.folder)
         onView(withText("确认使用此共享目录")).perform(scrollTo(),click());assertEquals("",settings.folder)
-        screenshot("pr59-$label-explicit-directory.png")
-        onView(withText("发现并加入 Sync v3 数据集")).perform(scrollTo(),click())
+        screenshot("pr60-$label-explicit-directory.png")
+        onView(withText("保存连接配置")).perform(scrollTo(),click());onView(withText("取消")).perform(click())
+        assertEquals("",settings.folder);assertEquals(before,f.checkpoints())
+        onView(withText("保存连接配置")).perform(scrollTo(),click());onView(withText("确认保存连接")).perform(click())
+        visible("加入已有共享课表")
+        onView(withText("加入已有共享课表")).perform(scrollTo(),click())
         val until=System.currentTimeMillis()+15000
         while(true) { var done=false;onActivity { done=!sync(it).busy };if(done)break;check(System.currentTimeMillis()<until);Thread.sleep(100) }
-        assertEquals(f.account.baseUrl,settings.folder);assertTrue(f.files.isEmpty());onView(withText("关闭")).perform(click())
+        assertEquals(f.account.baseUrl,settings.folder);assertTrue(f.files.isEmpty());assertEquals(before,f.checkpoints())
+        onView(withText("关闭")).perform(click())
         open();onView(withText(containsString("共享位置："))).check(matches(isDisplayed()));onView(withText("关闭")).perform(click())
     }
     fun sharedDraft(f:V3UiFixture, onActivity:((Activity)->Unit)->Unit, settings:SharedScheduleSettings, open:()->Unit, source:(Activity)->ScheduleSource, sync:(Activity)->SharedScheduleController, label:String, dismissSystemPrompt:()->Unit = {}) {
         val initial=settings.folder
-        open();onView(withText("浏览共享目录")).perform(scrollTo(),click());visible("📁 中文 a")
+        open();onView(withText("连接设置")).perform(scrollTo(),click());onView(withText("浏览共享目录")).perform(scrollTo(),click());visible("📁 中文 a")
         onView(withText("📁 中文 a")).perform(click());visible("当前目录为空")
-        screenshot("pr59-$label-folder.png")
+        screenshot("pr60-$label-folder.png")
         onView(withText("取消")).perform(click());assertEquals(initial,settings.folder)
         onView(withText("浏览共享目录")).perform(scrollTo(),click());visible("📁 中文 a")
         onView(withText("📁 中文 a")).perform(click());visible("当前目录为空")
@@ -75,18 +82,34 @@ object FolderUiChecks {
         onActivity { WebDavFolderDialog.show(it,f.account,importSelected={ mode,url->picked=mode.name+url }) {} }
         visible("📁 中文 a");onView(withText("📁 中文 a")).perform(click());visible("当前目录为空")
         onView(withText("上一级")).perform(click());visible("📁 中文 a");onView(withText("📄 sample.ics")).perform(scrollTo())
-        screenshot("pr59-$label-import.png")
+        screenshot("pr60-$label-import.png")
         assertNull(picked);onView(withText("📄 sample.ics")).perform(scrollTo(),click());assertTrue(picked!!.startsWith("FILE"))
         assertTrue(f.files.isEmpty())
-        open();onView(withText("创建 Sync v3 数据集（保留本地课程）")).perform(scrollTo(),click());onView(withText("创建")).perform(click())
+        val checkpointsBeforeCreate = f.checkpoints()
+        val accountBefore = WebDavSettings(InstrumentationRegistry.getInstrumentation().targetContext).account()
+        open();onView(withText("创建新的共享课表")).perform(scrollTo(),click());onView(withText("取消")).perform(click())
+        assertEquals(checkpointsBeforeCreate, f.checkpoints()); assertEquals(initial, settings.folder)
+        assertTrue(WebDavCredentials.sameConfiguration(accountBefore, WebDavSettings(InstrumentationRegistry.getInstrumentation().targetContext).account()))
+        onView(withText("创建新的共享课表")).perform(scrollTo(),click());onView(withText("创建")).perform(click())
         val until=System.currentTimeMillis()+30000
         while(true) { var bound=false;onActivity { bound=source(it).syncStore?.isV3()==true && runCatching { source(it).syncStore!!.v3EndpointFolder() }.isSuccess;if(!bound && !sync(it).busy)sync(it).sync() };if(bound)break;check(System.currentTimeMillis()<until);Thread.sleep(150) }
         var binding="";onActivity { binding=source(it).syncStore!!.v3EndpointFolder() }
         val remoteCount=f.files.size
-        onView(withText("安全更换 v3 访问端点 / 继续预检")).perform(scrollTo(),click())
+        visible("立即同步")
+        onView(withText("创建新的共享课表")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+        onView(withText("升级旧版共享课表（v2 → v3）")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+        onView(withText("恢复未完成的本机操作")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+        onView(withText("查看并处理修改冲突")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+        val requestOffset = f.requests.size
+        onView(withText("立即同步")).perform(scrollTo(),click())
+        val checkedUntil=System.currentTimeMillis()+30000
+        while(true) { var done=false;onActivity { done=!sync(it).busy };if(done)break;check(System.currentTimeMillis()<checkedUntil);Thread.sleep(100) }
+        assertFalse(f.requests.drop(requestOffset).any { "dormpanel-sync-v2" in it || "dormpanel-head-v1" in it })
+        screenshot("pr60-$label-normal-v3.png")
+        manage("连接与位置", "安全更换服务器或访问账号")
         onView(withText("浏览候选服务器文件夹")).perform(scrollTo(),click());visible("📁 中文 a")
         onView(withText("📁 中文 a")).perform(click());visible("当前目录为空");onView(withText("选择此文件夹")).perform(click())
-        screenshot("pr59-$label-endpoint.png")
+        screenshot("pr60-$label-endpoint.png")
         onActivity { assertEquals(binding,source(it).syncStore!!.v3EndpointFolder()) }
         assertEquals(remoteCount,f.files.size)
         // Both candidate browse and PR57 preview must reject inherited credentials
@@ -110,6 +133,14 @@ object FolderUiChecks {
         }
         dismissSystemPrompt()
         onView(withText("关闭（保留预检）")).perform(click());dismissSystemPrompt();onView(withText("关闭")).perform(click())
+    }
+    fun manage(group: String, action: String) {
+        onView(withText("管理与维护")).perform(scrollTo(), click())
+        onView(withText(group)).perform(click())
+        onView(withText(action)).filterDialogClick()
+    }
+    private fun androidx.test.espresso.ViewInteraction.filterDialogClick() {
+        inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
     }
     fun screenshot(name:String) {
         val i=InstrumentationRegistry.getInstrumentation();i.waitForIdleSync();val bitmap=i.uiAutomation.takeScreenshot()

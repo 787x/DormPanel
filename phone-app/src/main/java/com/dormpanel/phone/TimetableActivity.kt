@@ -39,6 +39,7 @@ class TimetableActivity : AppCompatActivity() {
         super.onPause()
     }
     private var activeTerm: String? = null
+    private var sharedStatusView: TextView? = null
     private var replacement: String? = null
     internal var busy = false; private set
     private val worker = Executors.newSingleThreadExecutor()
@@ -66,7 +67,7 @@ class TimetableActivity : AppCompatActivity() {
         profiles = TermScheduleProfileStore(this)
         source = ScheduleSource(ScheduleStores.create(this, profiles), profileResolver = profiles::get)
         profiles.editable = { source.ready && !source.readOnly && !source.applyingSnapshot && !isDestroyed }
-        sharedSync = SharedScheduleController(this, source).also { it.changed = { render() } }
+        sharedSync = SharedScheduleController(this, source).also { it.changed = { sharedStatusView?.text = it.presentation.summary() } }
         editors = PhoneEditors(this, source) { !busy }
         root = scheduleColumn().apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
         setContentView(root)
@@ -109,19 +110,19 @@ class TimetableActivity : AppCompatActivity() {
         renderedKey = key
         restoringScroll = true
         root.removeAllViews()
+        sharedStatusView = null
         if (source.state.sync != null && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
         val profile = activeTerm?.let(profiles::get)
         val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         if (::sharedSync.isInitialized && (!landscape || source.state.sync != null)) {
-            val stale = sharedSync.settings.lastSuccess.let { it > 0 && System.currentTimeMillis() - it > 86_400_000L }
-            root.addView(scheduleLabel(sharedSync.status + if (stale) " · 数据过期，显示缓存" else "", 12f).apply {
-                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            root.addView(scheduleLabel(sharedSync.presentation.summary(), 12f).apply {
+                sharedStatusView = this
                 setPadding(dp(4), 0, dp(4), 0)
-                setOnClickListener { AlertDialog.Builder(this@TimetableActivity).setMessage(sharedSync.status).setPositiveButton("关闭", null).show() }
+                setOnClickListener { AlertDialog.Builder(this@TimetableActivity).setMessage(sharedSync.presentation.summary()).setPositiveButton("关闭", null).show() }
             })
         }
         val week = profile?.let { ChronoUnit.WEEKS.between(it.week1Monday, monday()) + 1 }
-        root.addView(scheduleLabel("${if (source.state.sync == null) "离线 · " else ""}${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f).apply { tag = "week-range"
+        root.addView(scheduleLabel("${if (source.state.sync == null) "本机课表 · " else ""}${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f).apply { tag = "week-range"
             if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
                 textSize = 12f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(8), 0, dp(8), 0)

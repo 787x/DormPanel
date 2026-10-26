@@ -256,6 +256,31 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         catch (error: java.util.concurrent.ExecutionException) { throw (error.cause ?: error) }
     }
     fun isV3(): Boolean = workerCall { ActiveScheduleV3.active(database) }
+    /** Read-only UI projection; unlike v2Frame this must never allocate a Writer. */
+    fun sharedPresentation(configured: Boolean): SharedSchedulePresentation = workerCall {
+        val dao = database.dao()
+        if (ActiveScheduleV3.active(database)) {
+            val c = runCatching {
+                v3().journal.meta.assertWritable()
+                v3().journal.controlSummary().put("mode", v3().binding().optString("phase", "ACTIVE"))
+            }.getOrElse { org.json.JSONObject().put("mode", "RECOVERY_REQUIRED") }
+            val mode = c.optString("mode")
+            val state = if (mode == "RECOVERY_REQUIRED") null else readState()
+            SharedSchedulePresentation(mode = SharedMode.V3, ready = true,
+                pending = state?.sync?.pending == true, confirming = v3AwaitingReadback(c.optJSONObject("pending")?.optString("phase")),
+                receipting = c.optJSONObject("pending")?.optString("phase") == "READBACK_CONFIRMED", conflict = c.has("conflict"),
+                recovery = mode == "RECOVERY_REQUIRED", transition = mode in listOf("MIGRATING", "CREATING", "JOINING"),
+                migrated = runCatching { v3().binding().has("migrationId") }.getOrDefault(false))
+        } else {
+            val v2 = dao.hasSyncRecord(21) || dao.hasSyncRecord(23)
+            val v1 = dao.hasSyncRecord(1) || dao.hasSyncRecord(4)
+            SharedSchedulePresentation(mode = when { v2 -> SharedMode.V2; v1 -> SharedMode.V1; configured -> SharedMode.UNBOUND; else -> SharedMode.UNCONFIGURED },
+                ready = true, pending = readState().sync?.pending == true,
+                confirming = dao.hasSyncRecord(23) || dao.hasSyncRecord(4),
+                conflict = dao.hasSyncRecord(25) || dao.hasSyncRecord(3),
+                transition = dao.hasSyncRecord(200) || dao.hasSyncRecord(203), result = if (v2Problems().isNotEmpty()) "PARTIAL" else "UNCHECKED")
+        }
+    }
     fun businessPaused(): Boolean = workerCall {
         database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) ||
             ActiveScheduleV3.active(database) && !runCatching { v3().localWritesAllowed() }.getOrDefault(false)
@@ -306,7 +331,10 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
                 database.dao().checkpoint(ScheduleSyncCheckpoint(207,org.json.JSONObject().put("key",key).put("stageId",id).toString().toByteArray(Charsets.UTF_8)))
             }
             ScheduleCommitCodec.uuid(stage)
-            java.io.File(requireNotNull(database.openHelper.writableDatabase.path)+".v3-inspect-$stage") to v2Writer()
+            // A cancelled read-only preview must not allocate the installation Writer.
+            // Reuse an existing identity, otherwise use the private inspection stage only.
+            val inspectionWriter = database.dao().syncRecord(20)?.payload?.toString(Charsets.US_ASCII)?.also(ScheduleCommitCodec::uuid) ?: stage
+            java.io.File(requireNotNull(database.openHelper.writableDatabase.path)+".v3-inspect-$stage") to inspectionWriter
         }
         return V3DatasetInspection.inspect(directory,writer,remote,budget,descriptor,folder)
     }
