@@ -36,6 +36,7 @@ data class ScheduleState(val events: List<CalendarEvent> = emptyList(), val entr
     val editsByKey by lazy { classOverrides.associateBy { it.key } }
 }
 data class SnapshotIdentity(val datasetId: String, val revision: String, val pending: Boolean = false)
+class ScheduleLocalReadFailed : IllegalStateException("本机课表读取失败，暂不可编辑；原有数据保留，请重新读取成功后再操作")
 interface ScheduleStore {
     fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) { callback(Result.failure(UnsupportedOperationException())) }
     fun applySnapshot(bytes: ByteArray, callback: (Result<Unit>) -> Unit) { callback(Result.failure(UnsupportedOperationException())) }
@@ -62,9 +63,11 @@ interface ScheduleStore {
 class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock = DeviceScheduleClock,
     private val profileResolver: (String) -> TermScheduleProfile? = { BuiltInProfiles.builtIn(it) }) {
     var applyingSnapshot = false; private set
-    /** PR32 bindings are writable. Short transactional reloads use applyingSnapshot separately. */
-    val readOnly get() = !closed && ((store as? RoomScheduleStore)?.businessPaused() ?: ((store as? ScheduleV2Store)?.v2DatasetPaused() == true))
-    val editBlockReason get() = if (readOnly) (store as? RoomScheduleStore)?.businessBlockReason() ?: ScheduleDatasetWriteProtected().message else null
+    /** A readable cached snapshot does not admit writes after a failed read. Conflicts alone remain editable. */
+    val readOnly get() = !closed && (error || ((store as? RoomScheduleStore)?.businessPaused() ?: ((store as? ScheduleV2Store)?.v2DatasetPaused() == true)))
+    val editBlockReason get() = if (error) ScheduleLocalReadFailed().message else
+        if (readOnly) (store as? RoomScheduleStore)?.businessBlockReason() ?: ScheduleDatasetWriteProtected().message else null
+    val editable get() = !closed && ready && !applyingSnapshot && !readOnly
     val syncStore get() = store as? RoomScheduleStore
     var localCommitted: (() -> Unit)? = null
     internal fun markLocalPending() {
@@ -81,11 +84,12 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     }
     fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) = store.exportSnapshot(datasetId, parent, generation, callback)
     fun applySnapshot(bytes: ByteArray, callback: (Result<Unit>) -> Unit) {
+        if (error) { callback(Result.failure(ScheduleLocalReadFailed())); return }
         if (closed || !ready || applyingSnapshot) { callback(Result.failure(IllegalStateException("Timetable is busy"))); return }
         applyingSnapshot = true; refresh()
         store.applySnapshot(bytes) { result ->
             store.load { loaded ->
-                loaded.onSuccess { state = ordered(it); ready = true }.onFailure { error = true; ready = false }
+                loaded.onSuccess { state = ordered(it); ready = true; error = false }.onFailure { error = true }
                 applyingSnapshot = false; refresh()
                 callback(if (loaded.isFailure) Result.failure(loaded.exceptionOrNull()!!) else result)
             }
@@ -105,7 +109,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
                     profiles = if (loaded.sync != null) loaded.profiles else effectiveProfiles(loaded.sources),
                     invalidRecords = loaded.invalidRecords + loaded.events.count { !it.valid() } + loaded.entries.count { !it.valid() } +
                         loaded.dayAdjustments.count { !it.valid() } + loaded.classOverrides.count { !it.valid() }))
-                ready = true
+                ready = true; error = false
             }.onFailure { error = true }
             refresh()
         } }
@@ -185,6 +189,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         store.putClassOverride(item, key, completion); refresh(); return true
     }
     fun import(preview: ImportPreview, name: String, targetId: String?, callback: (Result<ImportCommit>) -> Unit) {
+        if (error) { callback(Result.failure(ScheduleLocalReadFailed())); return }
         if (readOnly) { callback(Result.failure(ScheduleDatasetWriteProtected())); return }
         if (closed || !ready || readOnly || applyingSnapshot) return
         IcsScheduleImporter().commit(preview, store, name, targetId, clock.instant().toEpochMilli()) { result ->
@@ -202,6 +207,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         }
     }
     fun deleteImport(id: String, callback: (Result<Unit>) -> Unit) {
+        if (error) { callback(Result.failure(ScheduleLocalReadFailed())); return }
         if (readOnly) { callback(Result.failure(ScheduleDatasetWriteProtected())); return }
         if (closed || !ready || readOnly || applyingSnapshot) return
         store.deleteImport(id) { result -> if (!closed) {

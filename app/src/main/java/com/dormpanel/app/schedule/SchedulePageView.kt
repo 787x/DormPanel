@@ -42,7 +42,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         header.addView(button("Home", returnHome))
         addView(header)
         if (!source.ready || source.error || source.state.invalidRecords > 0) addView(context.scheduleLabel(
-            if (source.error) "Schedule storage error. Some changes may not be saved."
+            if (source.error) source.editBlockReason.orEmpty()
             else if (!source.ready) "Loading local schedule…" else "Some invalid stored records are hidden and preserved.", 16f))
         if (session.mode == ScheduleMode.CALENDAR) calendar() else timetable()
         applyAppearance(appearance.state)
@@ -82,7 +82,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         body.addView(month, LayoutParams(0, LayoutParams.MATCH_PARENT, 1.05f))
         val agenda = context.scheduleColumn().apply { setPadding(context.dp(20), 0, 0, 0) }
         agenda.addView(context.scheduleLabel(scheduleDate(session.selectedDate), 24f))
-        agenda.addView(button("+ Add event") { editors.event(session.selectedDate) }.apply { isEnabled = source.ready })
+        agenda.addView(button("+ Add event") { editors.event(session.selectedDate) }.apply { isEnabled = source.editable })
         val events = context.scheduleColumn()
         val selected = ScheduleProjection.eventsOn(source.state, session.selectedDate, source.clock.zone())
         if (selected.isEmpty()) events.addView(context.scheduleLabel("No events on this day", 18f))
@@ -102,9 +102,9 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     }
     private fun timetable() {
         val actions = LinearLayout(context)
-        actions.addView(button("+ Add class") { editors.entry() }.apply { isEnabled = source.ready })
-        actions.addView(button("Import timetable", importTimetable).apply { isEnabled = source.ready })
-        actions.addView(button("Receive from phone/computer", receiveTimetable).apply { isEnabled = source.ready })
+        actions.addView(button("+ Add class") { editors.entry() }.apply { isEnabled = source.editable })
+        actions.addView(button("Import timetable", importTimetable).apply { isEnabled = source.editable })
+        actions.addView(button("Receive from phone/computer", receiveTimetable).apply { isEnabled = source.editable })
         actions.addView(button("Sources", manageTimetables).apply { isEnabled = source.ready })
         actions.addView(button("‹") { session.weekStart = session.weekStart.minusWeeks(1); render() }.apply { contentDescription = "Previous week" })
         actions.addView(context.scheduleLabel("${session.weekStart} – ${session.weekStart.plusDays(6)}", 18f), LayoutParams(0, context.dp(52), 1f))

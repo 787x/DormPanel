@@ -17,6 +17,13 @@ class V3UiFixture(private val context: Context) : AutoCloseable {
     val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val databases = mutableListOf<ScheduleDatabase>()
     fun checkpoints() = databases.last().dao().syncRecords().associate { it.id to digest(it.payload) }
+    fun entries() = databases.last().dao().entries()
+    /** Only a synthetic checkpoint is damaged; restoring it never deletes course rows. */
+    fun injectReadFailure(): () -> Unit {
+        val dao = databases.last().dao(); val previous = dao.syncRecord(1)
+        dao.checkpoint(ScheduleSyncCheckpoint(1, byteArrayOf(1)))
+        return { if (previous == null) dao.deleteSyncRecord(1) else dao.checkpoint(previous) }
+    }
     private val directories = linkedSetOf("/")
     private val executors = mutableListOf<ExecutorService>()
     val account get() = WebDavAccount(server.url("/").toString(), "test", "test")

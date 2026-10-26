@@ -77,6 +77,10 @@ internal class ScheduleEditors(private val context: Context, private val source:
         inputType = android.text.InputType.TYPE_CLASS_TEXT or if (multiline) android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE else android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         maxLines = if (multiline) 3 else 1
     }
+    private fun blocked(): Boolean {
+        val reason = source.editBlockReason ?: return false
+        Toast.makeText(context, reason, Toast.LENGTH_LONG).show(); return true
+    }
     private fun editor(title: String, fields: LinearLayout, delete: (() -> Unit)?,
         deleteLabel: String = "Delete", save: () -> String?) {
         val error = context.scheduleLabel("", 16f)
@@ -104,7 +108,7 @@ internal class ScheduleEditors(private val context: Context, private val source:
         }
     }
     fun event(date: LocalDate, existing: CalendarEvent? = null) {
-        if (!enabled() || !source.ready) return
+        if (!enabled() || !source.ready || blocked() || source.applyingSnapshot) return
         val editingZone = source.clock.zone()
         var start = existing?.let { Instant.ofEpochMilli(it.start).atZone(editingZone).toLocalDateTime() } ?: date.atTime(9, 0)
         var end = existing?.let { Instant.ofEpochMilli(it.end).atZone(editingZone).toLocalDateTime() } ?: start.plusHours(1)
@@ -143,7 +147,7 @@ internal class ScheduleEditors(private val context: Context, private val source:
         }
     }
     fun dayAdjustment(date: LocalDate) {
-        if (!enabled() || !source.ready) return
+        if (!enabled() || !source.ready || blocked() || source.applyingSnapshot) return
         val current = source.state.daysByDate[date.toString()]
         val choices = listOf("Normal", "No classes", "Use another weekday")
         val fields = context.scheduleColumn()
@@ -199,17 +203,22 @@ internal class ScheduleEditors(private val context: Context, private val source:
         val dialog = AlertDialog.Builder(context).setTitle(item.entry.title)
             .setView(ScrollView(context).apply { addView(content) })
             .setNegativeButton("Close", null).setPositiveButton("Edit", null).create()
-        if (weekly) content.addView(context.scheduleButton("Reset this week") {
+        if (weekly && !source.readOnly) content.addView(context.scheduleButton("Reset this week") {
+            if (blocked()) return@scheduleButton
             source.saveClassOverride(item.sourceId, item.seriesId, item.anchorDate, null); dialog.dismiss()
         })
-        if (series) content.addView(context.scheduleButton("Reset all-weeks edit") {
+        if (series && !source.readOnly) content.addView(context.scheduleButton("Reset all-weeks edit") {
+            if (blocked()) return@scheduleButton
             source.saveClassOverride(item.sourceId, item.seriesId, null, null); dialog.dismiss()
         })
-        if (item.imported == null) content.addView(context.scheduleButton("Delete recurring class") {
+        if (item.imported == null && !source.readOnly) content.addView(context.scheduleButton("Delete recurring class") {
+            if (blocked()) return@scheduleButton
             source.deleteEntry(item.seriesId); dialog.dismiss()
         })
+        source.editBlockReason?.let { content.addView(context.scheduleLabel(it, 16f)) }
         track(dialog)
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { dialog.dismiss(); editClass(item) }
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = source.editable
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { if (!blocked()) { dialog.dismiss(); editClass(item) } }
     }
 
     private fun editClass(item: ClassOccurrence) {
@@ -220,7 +229,7 @@ internal class ScheduleEditors(private val context: Context, private val source:
     }
 
     private fun classEditor(item: ClassOccurrence, allWeeks: Boolean) {
-        if (!enabled() || !source.ready) return
+        if (!enabled() || !source.ready || blocked() || source.applyingSnapshot) return
         val session = ClassEditSession(source.state, item, allWeeks, source.clock.zone())
         val date = session.date
         val draft = session.draft
@@ -333,7 +342,7 @@ internal class ScheduleEditors(private val context: Context, private val source:
         }
     }
     fun entry(existing: TimetableEntry? = null) {
-        if (!enabled() || !source.ready) return
+        if (!enabled() || !source.ready || blocked() || source.applyingSnapshot) return
         val title = input("Class title", existing?.title.orEmpty())
         val location = input("Location (optional)", existing?.location.orEmpty())
         val days = ScheduleProjection.weekDays(source.clock.locale())

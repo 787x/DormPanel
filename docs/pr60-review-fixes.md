@@ -1,5 +1,7 @@
 # PR60 合并前审查修复
 
+第二轮收尾见 [pr60-review-round2.md](pr60-review-round2.md)：本机读取错误的实际写保护、成功重载与过期确认安全拒绝。本页保留前轮记录。
+
 修复基线为 PR60 的 `c8705508c42d21900afc005d4d47a1c46b55cb15`，继续更新原 PR60。此前完整 UX 验证见 [pr60-shared-schedule-ux.md](pr60-shared-schedule-ux.md)，本次只运行受影响的定向检查。
 
 ## 修复内容

@@ -163,6 +163,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     private var presentationGeneration = 0
     private var operationScope: String? = null
     private var inspectingJoin = false
+    private var confirmationRejected = false
     private fun checkScope(): String? {
         val store = source.syncStore
         val a = if (store?.isV3() == true) store.v3Account(accounts) else accounts.account() ?: return null
@@ -181,12 +182,13 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     }
     private fun requireAction(action: SharedAction, confirmed: SharedConfirmation? = null) {
         val facts = actionState()
-        check(source.ready && !source.error && !source.applyingSnapshot && action in facts.actions) { "共享课表状态已变化，未执行原操作；请重新检查" }
-        if (confirmed != null) { check(confirmed.action == action); confirmed.requireMatches(facts, checkScope()) }
+        if (!source.ready || source.error || source.applyingSnapshot || action !in facts.actions) throw SharedConfirmationRejected()
+        if (confirmed != null) { if (confirmed.action != action) throw SharedConfirmationRejected(); confirmed.requireMatches(facts, checkScope()) }
     }
     fun connectionSaved() {
+        confirmationRejected = false
         settings.invalidateCheck()
-        presentation = presentation.copy(result = "UNCHECKED", lastSuccess = 0)
+        presentation = presentation.copy(result = "UNCHECKED", lastSuccess = 0, confirmationRejected = false)
         changed?.invoke(); refreshPresentation()
     }
     fun refreshPresentation() {
@@ -204,7 +206,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
                 val checked = settings.checkFor(runCatching { checkScope() }.getOrNull())
                 val next = facts.copy(mode = if (facts.mode in setOf(SharedMode.UNBOUND, SharedMode.UNCONFIGURED) && (settings.publishedRevision != null || settings.pendingRevision != null)) SharedMode.V1 else facts.mode,
                     confirming = facts.confirming || settings.pendingRevision != null, pending = facts.pending || pending, busy = busy,
-                    localRead = source.loadState,
+                    localRead = source.loadState, confirmationRejected = confirmationRejected,
                     result = if (facts.result == "PARTIAL" && checked.first !in setOf("NETWORK", "ERROR")) facts.result else checked.first, lastSuccess = checked.second)
                 if (next != presentation) { presentation = next; changed?.invoke() }
             } }
@@ -230,12 +232,17 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         main.post { readyListener() }
     }
     private fun notifyChanged() { if (!closed) {
-        val next = presentation.copy(busy = busy, localRead = source.loadState)
+        val next = presentation.copy(busy = busy, localRead = source.loadState, confirmationRejected = confirmationRejected)
         if (next != presentation) { presentation = next; changed?.invoke() }
         refreshPresentation()
     } }
     private fun account() = accounts.account() ?: throw WebDavException("WebDAV credentials unavailable; configure account")
     private fun failure(error: Throwable) {
+        if (error is SharedConfirmationRejected) {
+            // Admission refusal is not a server check or a damaged local transaction.
+            confirmationRejected = true; status = error.message.orEmpty(); busy = false
+            notifyChanged(); return
+        }
         settings.recordCheck(operationScope, when (error) {
             is ScheduleHistoryPending -> "DISCOVERING"
             is java.net.UnknownHostException, is java.net.SocketTimeoutException -> "NETWORK"
@@ -265,6 +272,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     }
     private fun <T> run(task: () -> T, joinInspection: Boolean = false, done: (T) -> Unit) {
         if (busy || closed) return
+        confirmationRejected = false
         inspectingJoin = joinInspection
         busy = true; status = "正在检查远端版本"; notifyChanged()
         worker.execute {
@@ -298,7 +306,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     }
     fun bind(remote: SharedScheduleRemote, confirmed: SharedConfirmation? = null) = run({
         synchronized(SharedScheduleRunLock) {
-            check(confirmed == null || confirmed.action in setOf(SharedAction.JOIN, SharedAction.JOIN_V2)) { "此确认不允许加入课表" }
+            if (confirmed != null && confirmed.action !in setOf(SharedAction.JOIN, SharedAction.JOIN_V2)) throw SharedConfirmationRejected()
             requireAction(confirmed?.action ?: SharedAction.JOIN_V2, confirmed)
             check(settings.publishedRevision == null && settings.pendingRevision == null) { "旧 v1 发布或待确认回执尚未恢复；请使用迁移入口" }
             val verified = ScheduleV2Binding.inspect(v2Remote(), remote)

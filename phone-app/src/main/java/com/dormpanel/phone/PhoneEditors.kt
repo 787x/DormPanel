@@ -125,17 +125,21 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             .setView(ScrollView(context).apply { addView(content) })
             .setNegativeButton("Close", null).setPositiveButton("Edit", null).create()
         if (weekly && !source.readOnly) content.addView(context.scheduleButton("Reset this week") {
+            if (blocked()) return@scheduleButton
             source.saveClassOverride(item.sourceId, item.seriesId, item.anchorDate, null); dialog.dismiss()
         })
         if (series && !source.readOnly) content.addView(context.scheduleButton("Reset all-weeks edit") {
+            if (blocked()) return@scheduleButton
             source.saveClassOverride(item.sourceId, item.seriesId, null, null); dialog.dismiss()
         })
         if (item.imported == null && !source.readOnly) content.addView(context.scheduleButton("Delete recurring class") {
+            if (blocked()) return@scheduleButton
             source.deleteEntry(item.seriesId); dialog.dismiss()
         })
+        source.editBlockReason?.let { content.addView(context.scheduleLabel(it, 16f)) }
         track(dialog)
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = !source.readOnly
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { dialog.dismiss(); editClass(item) }
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = source.editable
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { if (!blocked()) { dialog.dismiss(); editClass(item) } }
     }
 
     private fun editClass(item: ClassOccurrence) {

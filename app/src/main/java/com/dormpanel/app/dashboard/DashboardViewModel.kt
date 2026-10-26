@@ -51,7 +51,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     init {
-        termProfiles.editable = { schedule.ready && !schedule.applyingSnapshot }
+        termProfiles.editable = { schedule.editable }
         // Reconcile any PackageInstaller session interrupted by process death
         // before the live HA relay callback was registered. Recovered terminal
         // outcomes are queued on the single HA relay state machine so they are

@@ -4,6 +4,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.*
 import androidx.test.espresso.matcher.ViewMatchers.*
+import androidx.test.espresso.assertion.ViewAssertions.*
 import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.schedule.*
 import com.dormpanel.app.schedule.testing.FolderUiChecks
@@ -11,6 +12,7 @@ import com.dormpanel.app.schedule.testing.V3UiFixture
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.UUID
+import org.hamcrest.Matchers.containsString
 
 class PhoneSharedScheduleReviewUiTest {
     private fun waitFor(s: ActivityScenario<TimetableActivity>, condition: (TimetableActivity) -> Boolean) {
@@ -42,10 +44,40 @@ class PhoneSharedScheduleReviewUiTest {
                     val before = f.checkpoints(); val requestCount = f.requests.size
                     onView(withText(if (legacy) "创建旧版课表" else "创建")).perform(click())
                     waitFor(s) { !it.sharedSync.busy && it.sharedSync.status.contains("状态已变化") }
+                    s.onActivity { assertTrue(it.sharedSync.presentation.confirmationRejected) }
+                    onView(withText(containsString("原操作未执行"))).check(matches(isDisplayed()))
                     assertEquals(before, f.checkpoints()); assertEquals(requestCount, f.requests.size)
                     assertTrue(f.files.isEmpty())
                     onView(withText("关闭")).perform(click())
                 }
+            }
+        }
+    }
+    @Test fun localReadFailureHidesWriteEntrancesAndRecoveryRestoresEditing() {
+        V3UiFixture(InstrumentationRegistry.getInstrumentation().targetContext).use { f ->
+            launchPhoneTestActivity().use { s ->
+                waitFor(s) { it.source.editable && !it.sharedSync.busy }
+                s.onActivity { assertTrue(it.source.saveEntry("原课程", 1, 480, 530)) }
+                val end = System.currentTimeMillis() + 10000
+                while (f.entries().isEmpty()) { check(System.currentTimeMillis() < end); Thread.sleep(40) }
+                val original = f.entries(); val restore = f.injectReadFailure()
+                s.onActivity { it.source.reload() }
+                waitFor(s) { it.source.error && !it.source.applyingSnapshot }
+                onView(withText(containsString("暂不可编辑"))).check(matches(isDisplayed()))
+                onView(withText("＋ 课程")).check(doesNotExist())
+                onView(withText("日期调整")).check(doesNotExist())
+                s.onActivity {
+                    assertFalse(it.source.saveEntry("不应新增", 1, 480, 530))
+                    it.source.deleteEntry(original.single().id)
+                }
+                assertEquals(original, f.entries())
+                restore(); s.onActivity { it.source.reload() }
+                waitFor(s) { it.source.editable && !it.sharedSync.busy }
+                onView(withText("＋ 课程")).check(matches(isDisplayed()))
+                s.onActivity { assertTrue(it.source.saveEntry("恢复后课程", 1, 480, 530)) }
+                val savedEnd = System.currentTimeMillis() + 10000
+                while (f.entries().size != 2) { check(System.currentTimeMillis() < savedEnd); Thread.sleep(40) }
+                assertTrue(f.entries().any { it.title == "原课程" })
             }
         }
     }

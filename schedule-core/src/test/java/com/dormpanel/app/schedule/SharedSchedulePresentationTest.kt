@@ -80,6 +80,13 @@ class SharedSchedulePresentationTest {
         val v1 = SharedConfirmation(SharedAction.MIGRATE_V1, SharedMode.V1, "old", "A")
         assertThrows(IllegalStateException::class.java) { v1.requireMatches(v2, "A") }
     }
+    @Test fun staleConfirmationHasAnAdmissionRefusalTypeAndDoesNotImplyServerFailure() {
+        val token = SharedConfirmation(SharedAction.CREATE_V2, SharedMode.UNBOUND, null, "A")
+        assertThrows(SharedConfirmationRejected::class.java) { token.requireMatches(state(SharedMode.V3), "A") }
+        val summary = state(SharedMode.UNBOUND).copy(result = "VERIFIED", confirmationRejected = true).summary()
+        assertTrue(summary.contains("原操作未执行")); assertTrue(summary.contains("重新打开"))
+        assertTrue(summary.contains("检查成功")); assertFalse(summary.contains("检查未成功")); assertFalse(summary.contains("操作完成"))
+    }
     @Test fun joinFeedbackSeparatesDiscoveryFromValidationAndNetwork() {
         val unbound = state(SharedMode.UNBOUND)
         for ((code, expected) in mapOf("NO_CANDIDATE" to "尚未发现可加入", "NO_V3" to "尚未证明", "CANDIDATE_V2" to "已验证此位置的旧版", "CANDIDATE_V3" to "新版候选", "VALIDATION_FAILED" to "验证未通过", "NETWORK" to "无法连接服务器")) {

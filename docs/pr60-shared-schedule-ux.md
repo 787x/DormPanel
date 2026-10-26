@@ -4,6 +4,8 @@
 
 合并前审查修复与最新定向验证见 [pr60-review-fixes.md](pr60-review-fixes.md)：本地读取错误、检查位置证据、过期确认与加入反馈。下方保留初始 UX 验证记录，不代表本轮重复全部矩阵。
 
+第二轮写保护与安全拒绝收尾见 [pr60-review-round2.md](pr60-review-round2.md)。
+
 ## 状态—界面—动作
 
 X08E 与 Phone 共用 `SharedSchedulePresentation` 和对话框。控制器在工作线程读取持久状态；页面按枚举模式、冲突、待发布阶段、保护状态及机器结果码决定操作，不解析中文日志来决定按钮。

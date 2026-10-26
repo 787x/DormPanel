@@ -73,6 +73,18 @@ class SharedScheduleReviewAndroidTest {
             until { main { !source.applyingSnapshot } }
         }
         fun checkpoints() = db.dao().syncRecords().associate { it.id to digest(it.payload) }
+        fun verifiedEvidence(): () -> Unit {
+            val scope = sharedCheckScope(account, settings.folder)
+            settings.recordCheck(scope, "VERIFIED", true); settings.result("服务器先前检查成功", true)
+            main { sync.refreshPresentation() }
+            val check = settings.checkFor(scope); val diagnostic = settings.lastResult to settings.lastSuccess
+            return {
+                assertEquals(check, settings.checkFor(scope)); assertEquals(diagnostic, settings.lastResult to settings.lastSuccess)
+                assertTrue(main { sync.presentation.confirmationRejected })
+                assertTrue(main { sync.presentation.summary().contains("原操作未执行") })
+                assertFalse(main { sync.presentation.summary().contains("上次检查未成功") })
+            }
+        }
         override fun close() {
             main { sync.close(); source.close() }
             check(executor.awaitTermination(10, TimeUnit.SECONDS))
@@ -82,25 +94,35 @@ class SharedScheduleReviewAndroidTest {
     }
     @Test fun reloadFailureCannotReuseOldHealthyBindingAndSuccess() {
         Harness().use { h ->
-            val snapshot = ScheduleSnapshot(id(), id(), null, 1, ScheduleState(), 1)
+            val entry = TimetableEntry("stable", "原课程", 1, 480, 530, "")
+            h.db.dao().put(TimetableRow(entry.id, entry.title, entry.day, entry.startMinute, entry.endMinute, entry.location))
+            val snapshot = ScheduleSnapshot(id(), id(), null, 1, ScheduleState(entries = listOf(entry)), 1)
             h.db.dao().checkpoint(ScheduleSyncCheckpoint(1, ScheduleSnapshotCodec.encode(snapshot)))
             h.reload()
             h.settings.recordCheck(sharedCheckScope(h.account, h.settings.folder), "VERIFIED", true)
             main { h.sync.refreshPresentation() }; h.result("VERIFIED")
             assertTrue(main { h.sync.presentation.summary().contains("检查成功") })
             h.db.dao().checkpoint(ScheduleSyncCheckpoint(1, byteArrayOf(1)))
+            val original = main { h.source.state }; val rows = h.db.dao().entries()
             h.reload()
             until { main { h.sync.presentation.localRead == SharedLocalRead.FAILED } }
             main {
                 assertTrue(h.source.ready); assertTrue(h.source.error)
                 val text = h.sync.presentation.summary()
                 assertTrue(text.contains("读取失败")); assertFalse(text.contains("课表已保存")); assertFalse(text.contains("检查成功"))
+                assertTrue(h.source.readOnly); assertFalse(h.source.editable)
+                assertFalse(h.source.saveEntry("幽灵新增", 1, 480, 530))
+                assertFalse(h.source.saveEntry("幽灵编辑", 1, 480, 530, id = entry.id))
+                h.source.deleteEntry(entry.id); assertEquals(original, h.source.state)
             }
+            assertEquals(rows, h.db.dao().entries())
             h.db.dao().checkpoint(ScheduleSyncCheckpoint(1, ScheduleSnapshotCodec.encode(snapshot)))
             h.reload()
-            until { main { h.sync.presentation.localRead == SharedLocalRead.LOADED } }
+            until { main { h.sync.presentation.localRead == SharedLocalRead.LOADED && h.sync.presentation.mode == SharedMode.V1 && h.sync.presentation.result == "VERIFIED" } }
             assertTrue(main { h.sync.presentation.summary().contains("检查成功") })
             assertEquals(snapshot.datasetId, main { h.source.state.sync!!.datasetId })
+            assertTrue(main { h.source.editable && h.source.saveEntry("恢复后编辑", 1, 480, 530, id = entry.id) })
+            until { h.db.dao().entries().single().title == "恢复后编辑" }
         }
     }
     @Test fun connectionBRequiresItsOwnCheckAndPreservesDiagnosticA() {
@@ -130,19 +152,23 @@ class SharedScheduleReviewAndroidTest {
         Harness().use { h ->
             val confirmation = main { h.sync.confirmation(SharedAction.CREATE_V2) }
             h.store.prepareV3(h.settings.folder); h.reload()
+            val assertEvidence = h.verifiedEvidence()
             val before = h.checkpoints(); val count = h.requests.size
             main { h.sync.publish(confirmation) }
             until { main { !h.sync.busy && h.sync.status.contains("状态已变化") } }
             assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size); assertTrue(h.store.isV3())
+            assertEvidence()
         }
         Harness().use { h ->
             val confirmation = main { h.sync.confirmation(SharedAction.CREATE) }
             val root = ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState())
             h.store.v2Start(root, true); h.reload()
+            val assertEvidence = h.verifiedEvidence()
             val before = h.checkpoints(); val count = h.requests.size
             main { h.sync.createV3(confirmation) }
             until { main { !h.sync.busy && h.sync.status.contains("状态已变化") } }
             assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size); assertFalse(h.store.isV3())
+            assertEvidence()
         }
     }
     @Test fun joinFindsV3OrVerifiedV2AndSeparatesEmptyInvalidAndNetworkWithoutWrites() {
@@ -183,10 +209,12 @@ class SharedScheduleReviewAndroidTest {
             val confirmation = main { h.sync.confirmation(SharedAction.JOIN_V2) }
             main { h.sync.inspect { verified.set(it) } }; h.result("VERIFIED")
             h.store.prepareV3(h.settings.folder); h.reload()
+            val assertEvidence = h.verifiedEvidence()
             val before = h.checkpoints(); val count = h.requests.size
             main { h.sync.bind(verified.get()!!, confirmation) }
             until { main { !h.sync.busy && h.sync.status.contains("状态已变化") } }
             assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size)
+            assertEvidence()
         }
         Harness().use { h ->
             val d = V3Object(1, id(), id(), id())
@@ -203,10 +231,12 @@ class SharedScheduleReviewAndroidTest {
             }
             assertNotNull(preview.get())
             h.store.v2Start(ScheduleCommit(id(), id(), id(), emptyList(), ScheduleState()), true); h.reload()
+            val assertEvidence = h.verifiedEvidence()
             val before = h.checkpoints(); val count = h.requests.size
             main { h.sync.joinV3(preview.get()!!, confirmation) }
             until { main { !h.sync.busy && h.sync.status.contains("状态已变化") } }
             assertEquals(before, h.checkpoints()); assertEquals(count, h.requests.size)
+            assertEvidence()
         }
     }
     @Test fun migrationConfirmationDoesNotResumeAnAlreadyPreparedV3Task() {

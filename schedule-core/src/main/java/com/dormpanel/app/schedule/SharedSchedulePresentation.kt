@@ -19,7 +19,7 @@ data class SharedSchedulePresentation(
     val result: String = "UNCHECKED", val lastSuccess: Long = 0,
     val busy: Boolean = false, val ready: Boolean = false,
     val localRead: SharedLocalRead = if (ready) SharedLocalRead.LOADED else SharedLocalRead.LOADING,
-    val bindingId: String? = null
+    val bindingId: String? = null, val confirmationRejected: Boolean = false
 ) {
     val bound get() = mode in setOf(SharedMode.V1, SharedMode.V2, SharedMode.V3)
     val actions: Set<SharedAction> get() = buildSet {
@@ -56,6 +56,7 @@ data class SharedSchedulePresentation(
             mode == SharedMode.V1 -> "已开启旧版共享；请在管理中查看兼容升级步骤"
             else -> "已开启共享"
         })
+        if (confirmationRejected) append("\n原操作未执行，状态已变化，请重新打开操作")
         if (localRead != SharedLocalRead.LOADED || !ready) return@buildString
         if (recovery) append("\n本机数据与待确认记录保留")
         else if (ready && mode != SharedMode.UNKNOWN) append("\n本机课表已保存" + when { receipting -> " · 服务器已回读，待确认本机回执"; confirming -> " · 有操作待服务器回读确认"; pending -> " · 有修改待发布"; else -> "" })
@@ -80,12 +81,11 @@ internal fun v3AwaitingReadback(phase: String?) = phase != null && phase !in set
 
 data class SharedConfirmation(val action: SharedAction, val mode: SharedMode, val bindingId: String?, val scope: String?) {
     fun requireMatches(actual: SharedSchedulePresentation, actualScope: String?) {
-        check(actual.localRead == SharedLocalRead.LOADED && action in actual.actions &&
-            mode == actual.mode && bindingId == actual.bindingId && scope == actualScope) {
-            "共享课表状态或访问位置已变化；未执行已过期的确认，请重新打开操作"
-        }
+        if (actual.localRead != SharedLocalRead.LOADED || action !in actual.actions ||
+            mode != actual.mode || bindingId != actual.bindingId || scope != actualScope) throw SharedConfirmationRejected()
     }
 }
+class SharedConfirmationRejected : IllegalStateException("共享课表状态已变化或确认已失效；原操作未执行，请重新打开操作")
 
 /** No password or credential-derived value is persisted in this display identity. */
 internal fun sharedCheckScope(account: WebDavAccount, folder: String): String {
