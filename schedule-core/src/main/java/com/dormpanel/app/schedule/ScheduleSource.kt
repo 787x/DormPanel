@@ -94,6 +94,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     var state = ScheduleState(); private set
     var ready = false; private set
     var error = false; private set
+    val loadState get() = when { error -> SharedLocalRead.FAILED; !ready -> SharedLocalRead.LOADING; else -> SharedLocalRead.LOADED }
     private var closed = false
     private val listeners = linkedSetOf<() -> Unit>()
     init {

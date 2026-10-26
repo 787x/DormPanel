@@ -100,7 +100,7 @@ object SharedScheduleDialog {
                 setOnClickListener {
                     if (!active || sync.busy || (id !in setOf(SharedAction.DETAILS, SharedAction.RECOVER) && (!source.ready || source.error || source.applyingSnapshot))) return@setOnClickListener
                     if (id !in sync.presentation.actions) { status.text = "当前状态不支持此操作，请重新检查共享状态"; return@setOnClickListener }
-                    if (!connectionRequired || connectionSaved()) action()
+                    if (!connectionRequired || connectionSaved()) runCatching(action).onFailure { status.text = it.message ?: "操作未执行，请重新检查" }
                 }
                 registered[id] = this
                 fields.addView(this)
@@ -209,18 +209,20 @@ object SharedScheduleDialog {
             }
         }
         button(SharedAction.CREATE, "创建新的共享课表") {
+            val confirmed = sync.confirmation(SharedAction.CREATE)
             if (bound()) status.text = "已有活动绑定；请使用同步或显式迁移入口"
             else AlertDialog.Builder(context).setTitle("创建新的共享课表")
                 .setMessage("共享父目录：${locationText(sync.settings.folder)}\n\n将使用本机课程创建独立共享课表。若想接收其他设备的课程，请取消并选择加入已有共享课表。创建后会回读服务器确认；这不代表其他设备已接收。失败后会继续恢复同一候选。")
-                .setNegativeButton("取消", null).setPositiveButton("创建") { _, _ -> if (active && !bound() && connectionSaved()) sync.createV3() }.show()
+                .setNegativeButton("取消", null).setPositiveButton("创建") { _, _ -> if (active && connectionSaved()) sync.createV3(confirmed) }.show()
         }
         button(SharedAction.MIGRATE_V3, "升级旧版共享课表（v2 → v3）") {
+            val confirmed = sync.confirmation(SharedAction.MIGRATE_V3)
             if (source.syncStore?.isV3() != true) sync.previewV3Migration { preview ->
                 if (active) {
                     val v = preview.merged
                     AlertDialog.Builder(context).setTitle("v2→v3 迁移预览")
                         .setMessage("源 ${preview.frame.baseline?.datasetId}\n已验证 ${preview.hashes.size} 个提交，${preview.tips.size} 个前沿。\n课程 ${v.entries.size} · 事件 ${v.events.size} · 来源 ${v.sources.size} · 导入实例 ${v.imported.size} · 覆盖 ${v.classOverrides.size} · 日期调整 ${v.dayAdjustments.size} · 学期 ${v.profiles.size} · 自定义身份 ${v.customProfileKeys.size}\n业务 SHA-256: ${SyncV3Codec.businessHash(v)}\n\n保留未发布本地修改和原 v2 基线，不新增 v2 提交。确认后本机源 Writer 持久暂停，重新验证源，精确回读 v3 Genesis 并核验等价后才激活。\n\n原 v2 历史仍保留在远端；这不是独立回读验证的备份。请先停止其他已知旧客户端。普通 WebDAV 无法发现未知设备或禁止它们写入，旧目录未被服务端禁止写入。后续设备应加入此目标，不要再次迁移创建另一个目标。")
-                        .setNegativeButton("取消", null).setPositiveButton("已停止已知旧客户端，迁移") { _, _ -> if (active) sync.migrateV3(preview) }.show()
+                        .setNegativeButton("取消", null).setPositiveButton("已停止已知旧客户端，迁移") { _, _ -> if (active) sync.migrateV3(preview, confirmed) }.show()
                 }
             }
         }
@@ -231,6 +233,7 @@ object SharedScheduleDialog {
                 .setNegativeButton("取消", null).setPositiveButton("开始恢复") { _, _ -> if (active) sync.reopenV3Store() }.show()
         }
         button(SharedAction.JOIN_MIGRATED, "加入其他设备已升级的课表") {
+            val confirmed = sync.confirmation(SharedAction.JOIN_MIGRATED)
             if(source.syncStore?.isV3()==true) status.text="本机已有活动 v3 绑定，禁止隐式换库"
             else sync.discoverV3 { candidates ->
                 if(active) AlertDialog.Builder(context).setTitle("选择首台设备迁移出的目标")
@@ -238,7 +241,7 @@ object SharedScheduleDialog {
                         sync.previewExistingV3(candidates[index].bytes) { preview ->
                             if(active) AlertDialog.Builder(context).setTitle("加入已迁移目标")
                                 .setMessage("目标 ${preview.target.identity.datasetId}\n源与目标八类 RAW 已逐字段核验等价。确认时重新检查源及目标，再原子暂停本机 v2 Writer 并加入，不创建新的 Descriptor 或 Genesis。保留原 v2 基线、本地快照和历史证据。\n\n请停止其他已知旧客户端。未知设备无法自动发现；旧目录未由服务端禁止写入，远端保留历史不是独立备份。")
-                                .setNegativeButton("取消",null).setPositiveButton("已停止旧客户端，加入") { _,_ -> sync.joinMigratedV3(preview) }.show()
+                                .setNegativeButton("取消",null).setPositiveButton("已停止旧客户端，加入") { _,_ -> sync.joinMigratedV3(preview, confirmed) }.show()
                         }
                     }.setNegativeButton("关闭",null).show()
             }
@@ -248,62 +251,67 @@ object SharedScheduleDialog {
                 .setMessage("仅在尚未产生 v3 Descriptor/Genesis 候选时允许恢复原 v2 修改与基线。目标已有候选、已发布或已接受 v3 编辑时会拒绝；不会删除两端历史。")
                 .setNegativeButton("保留", null).setPositiveButton("检查并取消") { _, _ -> sync.cancelUnpublishedV3Migration() }.show()
         }
-        fun verifyJoin(selected:SharedScheduleController.V3Candidate) {
+        fun verifyJoin(selected:SharedScheduleController.V3Candidate, confirmed: SharedConfirmation) {
             sync.previewJoinV3(selected.bytes) { preview ->
                 if(active) {
                     if(preview==null) AlertDialog.Builder(context).setTitle("只读预检尚未完成")
                         .setMessage("进度已持久保存，当前业务库尚未切换。可继续同一目标的有界预检；不会创建新数据集。")
-                        .setNegativeButton("稍后",null).setPositiveButton("继续预检") { _,_->verifyJoin(selected) }.show()
+                        .setNegativeButton("稍后",null).setPositiveButton("继续预检") { _,_->verifyJoin(selected, confirmed) }.show()
                     else {
                         val v=preview.target.value.state!!
                         AlertDialog.Builder(context).setTitle("确认加入此共享课表")
                             .setMessage("已核验课表身份和本轮观察到的历史。\n课程 ${v.entries.size} · 事件 ${v.events.size} · 来源 ${v.sources.size} · 实例 ${v.imported.size} · 覆盖 ${v.classOverrides.size} · 日期调整 ${v.dayAdjustments.size} · 学期 ${v.profiles.size} · 自定义 ${v.customProfileKeys.size}\n课表识别码：${selected.descriptor.datasetId}\n\n确认时将再次验证服务器，再下载并加入。仅允许本机没有课程且尚未绑定时加入；不会创建第二份共享课表。本机存在数据或需要恢复时会阻止覆盖。")
-                            .setNegativeButton("取消",null).setPositiveButton("加入并继续验证") { _,_->if(active && !bound())sync.joinV3(preview) }.show()
+                            .setNegativeButton("取消",null).setPositiveButton("加入并继续验证") { _,_->if(active)sync.joinV3(preview, confirmed) }.show()
                     }
                 }
             }
         }
-        fun inspectAndConfirm() {
-            sync.inspect { remote ->
-                if (!active) return@inspect
-                val canBind = !bound()
-                val v = remote.snapshot.state
-                val details = buildString {
-                    if (canBind) append("已核验此位置已有的课表\n课表识别码：${remote.head.datasetId}")
-                    else append("Dataset: ${remote.head.datasetId}\nCommit: ${remote.head.revision}\n协议：Append-only v2")
-                    append("\n本地课程 ${v.entries.size} · 日历事件 ${v.events.size}\n来源 ${v.sources.size} · 导入实例 ${v.imported.size}")
-                    append("\n日期调整 ${v.dayAdjustments.size} · 课程编辑 ${v.classOverrides.size}")
-                    if (!canBind) append("\n远端历史：${remote.witness.size} 个已验证提交 · 单一分支 · 祖先闭包完整")
-                    if (!canBind || remote.unverifiable.isNotEmpty()) append("\n暂不可验证文件 ${remote.unverifiable.size}（不计为完成同步）")
-                    append("\n\n导入来源：")
-                    v.sources.forEach { append("\n${it.displayName.take(160)} · ${it.filename.take(160)} · ${it.kind.take(80)} · ${it.occurrenceCount} 项") }
-                    append("\n\n学期配置 ${v.profiles.size}（自定义 ${v.customProfileKeys.size}）：")
-                    v.profiles.toSortedMap().forEach { (key, profile) ->
-                        append("\n${key.take(160)} · ${profile.timezone} · 首周 ${profile.week1Monday} · ${profile.phases.size} 个时段阶段")
-                    }
-                    append(if (canBind) "\n\n确认前将重新检查完整版本图。绑定仅接收已有课程，不创建远端根提交。首次绑定要求空课表；已有本地数据请先保留，已有 v1 绑定请使用迁移入口。"
-                        else "\n\n本机已绑定；本次仅检查远端，不下载覆盖本地课程、不重新绑定，也不发布远端提交。")
+        fun showV2Preview(remote: SharedScheduleRemote, confirmed: SharedConfirmation?) {
+            if (!active) return
+            val canBind = !bound()
+            val v = remote.snapshot.state
+            val details = buildString {
+                if (canBind) append("已验证此位置的旧版共享课表\n课表识别码：${remote.head.datasetId}")
+                else append("Dataset: ${remote.head.datasetId}\nCommit: ${remote.head.revision}\n协议：Append-only v2")
+                append("\n本地课程 ${v.entries.size} · 日历事件 ${v.events.size}\n来源 ${v.sources.size} · 导入实例 ${v.imported.size}")
+                append("\n日期调整 ${v.dayAdjustments.size} · 课程编辑 ${v.classOverrides.size}")
+                if (!canBind) append("\n远端历史：${remote.witness.size} 个已验证提交 · 单一分支 · 祖先闭包完整")
+                if (!canBind || remote.unverifiable.isNotEmpty()) append("\n暂不可验证文件 ${remote.unverifiable.size}（不计为完成同步）")
+                append("\n\n导入来源：")
+                v.sources.forEach { append("\n${it.displayName.take(160)} · ${it.filename.take(160)} · ${it.kind.take(80)} · ${it.occurrenceCount} 项") }
+                append("\n\n学期配置 ${v.profiles.size}（自定义 ${v.customProfileKeys.size}）：")
+                v.profiles.toSortedMap().forEach { (key, profile) ->
+                    append("\n${key.take(160)} · ${profile.timezone} · 首周 ${profile.week1Monday} · ${profile.phases.size} 个时段阶段")
                 }
-                val content = TextView(context).apply { text = details; textSize = 16f; setPadding(24, 12, 24, 12); setTextIsSelectable(true) }
-                val preview = AlertDialog.Builder(context).setTitle("已验证的远端课表")
-                    .setView(ScrollView(context).apply { addView(content) })
-                    .setNegativeButton(if (canBind) "取消" else "关闭预览", null)
-                if (canBind) preview.setPositiveButton("确认下载并绑定") { _, _ ->
-                    if (active && !bound()) sync.bind(remote)
-                }
-                previewDialog = preview.show()
+                append(if (canBind) "\n\n确认前将重新检查完整版本图。绑定仅接收已有课程，不创建远端根提交。首次绑定要求空课表；已有本地数据请先保留，已有 v1 绑定请使用迁移入口。"
+                    else "\n\n本机已绑定；本次仅检查远端，不下载覆盖本地课程、不重新绑定，也不发布远端提交。")
             }
+            val content = TextView(context).apply { text = details; textSize = 16f; setPadding(24, 12, 24, 12); setTextIsSelectable(true) }
+            val preview = AlertDialog.Builder(context).setTitle(if (canBind) "已识别旧版共享课表" else "已验证的远端课表")
+                .setView(ScrollView(context).apply { addView(content) })
+                .setNegativeButton(if (canBind) "取消" else "关闭预览", null)
+            if (canBind) preview.setPositiveButton("确认下载并绑定") { _, _ ->
+                if (active && !bound()) sync.bind(remote, confirmed)
+            }
+            previewDialog = preview.show()
+        }
+        fun inspectAndConfirm() {
+            val confirmed = if (bound()) null else sync.confirmation(SharedAction.JOIN_V2)
+            sync.inspect { remote -> showV2Preview(remote, confirmed) }
         }
         button(SharedAction.JOIN, "加入已有共享课表") {
             if (bound()) status.text = "已有活动绑定，禁止隐式换库"
-            else sync.discoverV3 { candidates ->
-                if (active) {
-                    if (candidates.isEmpty()) inspectAndConfirm()
-                    else AlertDialog.Builder(context).setTitle("选择要加入的课表（身份已核验）")
-                        .setItems(candidates.mapIndexed { index, item -> "共享课表 ${index + 1}\n识别码：${item.descriptor.datasetId}" }.toTypedArray()) { _, index ->
-                            val selected = candidates[index]
-                            verifyJoin(selected)
-                        }.show()
+            else {
+                val confirmed = sync.confirmation(SharedAction.JOIN)
+                sync.discoverExisting { found ->
+                    val candidates = found.v3
+                    if (active) {
+                        if (found.v2 != null) showV2Preview(found.v2, confirmed)
+                        else if (candidates.isNotEmpty()) AlertDialog.Builder(context).setTitle("选择要加入的课表（身份已核验）")
+                            .setItems(candidates.mapIndexed { index, item -> "共享课表 ${index + 1}\n识别码：${item.descriptor.datasetId}" }.toTypedArray()) { _, index ->
+                                verifyJoin(candidates[index], confirmed)
+                            }.show()
+                    }
                 }
             }
         }
@@ -321,9 +329,10 @@ object SharedScheduleDialog {
         button(SharedAction.JOIN_V2, "预览并加入旧版课表（v2）") { inspectAndConfirm() }
         button(SharedAction.INSPECT_V2, "只读检查旧版远端课表（v2）", false) { inspectAndConfirm() }
         button(SharedAction.CREATE_V2, "兼容旧客户端：创建 v2 课表") {
+            val confirmed = sync.confirmation(SharedAction.CREATE_V2)
             AlertDialog.Builder(context).setTitle("创建旧版兼容课表")
                 .setMessage("仅用于仍需旧版客户端的情况。将使用本机课程创建 v2 共享；普通新建请使用首页的创建入口。")
-                .setNegativeButton("取消", null).setPositiveButton("创建旧版课表") { _, _ -> if (active) sync.publish() }.show()
+                .setNegativeButton("取消", null).setPositiveButton("创建旧版课表") { _, _ -> if (active) sync.publish(confirmed) }.show()
         }
         button(SharedAction.DIAGNOSE, "诊断 v2（独立随机目录写入测试数据）", false) {
             AlertDialog.Builder(context).setTitle("写入连接诊断数据")
@@ -331,9 +340,10 @@ object SharedScheduleDialog {
                 .setNegativeButton("取消", null).setPositiveButton("开始诊断") { _, _ -> if (active) sync.diagnose() }.show()
         }
         button(SharedAction.MIGRATE_V1, "升级旧版共享课表（v1 → v2）") {
+            val confirmed = sync.confirmation(SharedAction.MIGRATE_V1)
             AlertDialog.Builder(context).setTitle("切换同步协议")
                 .setMessage("必须先停止所有设备上的 v1 自动同步，之后所有编辑端均使用 v2。旧客户端无法看到 v2 修改，禁止继续写入旧目录。迁移仅读取旧远端文件，保留课程身份、账号及历史。不能证明共同基线或存在待确认上传时会停止。确认所有旧客户端已停止？")
-                .setNegativeButton("取消", null).setPositiveButton("旧客户端已停止，切换") { _, _ -> if (active) sync.migrate() }.show()
+                .setNegativeButton("取消", null).setPositiveButton("旧客户端已停止，切换") { _, _ -> if (active) sync.migrate(confirmed) }.show()
         }
         button(SharedAction.SWITCH, "更换课表 / 继续换库验收", false) {
             fun showJournal(j: ScheduleDatasetMigration) {
@@ -412,8 +422,9 @@ object SharedScheduleDialog {
         }
         button(SharedAction.DETAILS, "查看技术诊断", false) {
             val detail = TextView(context).apply {
-                text = sync.status + "\n\n" + runCatching { source.syncStore?.v3Control()?.toString(2) ?: "当前协议：${sync.presentation.mode}" }.getOrDefault("无法读取同步证据，请保留本机数据与恢复记录") +
-                    "\n最近成功检查：" + if (sync.settings.lastSuccess > 0) Instant.ofEpochMilli(sync.settings.lastSuccess).toString() else "尚无记录"
+                text = "历史诊断记录（不代表当前状态）：\n" + sync.status + "\n\n当前状态：\n" + sync.presentation.summary() + "\n\n" +
+                    runCatching { source.syncStore?.v3Control()?.toString(2) ?: "当前协议：${sync.presentation.mode}" }.getOrDefault("无法读取同步证据，请保留本机数据与恢复记录") +
+                    "\n历史最近成功检查（可能属于其他位置）：" + if (sync.settings.lastSuccess > 0) Instant.ofEpochMilli(sync.settings.lastSuccess).toString() else "尚无记录"
                 setTextIsSelectable(true); setPadding(24, 12, 24, 12)
             }
             AlertDialog.Builder(context).setTitle("共享课表诊断").setView(ScrollView(context).apply { addView(detail) }).setPositiveButton("关闭", null).show()
@@ -423,7 +434,7 @@ object SharedScheduleDialog {
             AlertDialog.Builder(context).setTitle("保存连接配置？")
                 .setMessage(if (publisher) "仅保存共享课表目录，不创建或加入课表。WebDAV 全局账号继续用于文件导入。" else "保存账号和共享课表目录，不创建或加入课表。")
                 .setNegativeButton("取消", null).setPositiveButton("确认保存连接") { _, _ ->
-                    if (active && save()) { password?.text?.clear(); connectionVisible = false; folder.visibility = android.view.View.GONE; confirmFolder.visibility = android.view.View.GONE; status.text = "连接配置已保存，可加入或创建共享课表"; sync.refreshPresentation() }
+                    if (active && save()) { password?.text?.clear(); connectionVisible = false; folder.visibility = android.view.View.GONE; confirmFolder.visibility = android.view.View.GONE; status.text = "连接配置已保存，可加入或创建共享课表"; sync.connectionSaved() }
                 }.show()
         } }
         fields.addView(saveConnection, fields.indexOfChild(status)); connectionViews += saveConnection; connectionViews += browseButton

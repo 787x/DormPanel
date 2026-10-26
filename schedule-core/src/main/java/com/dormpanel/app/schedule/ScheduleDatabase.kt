@@ -270,12 +270,13 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
                 pending = state?.sync?.pending == true, confirming = v3AwaitingReadback(c.optJSONObject("pending")?.optString("phase")),
                 receipting = c.optJSONObject("pending")?.optString("phase") == "READBACK_CONFIRMED", conflict = c.has("conflict"),
                 recovery = mode == "RECOVERY_REQUIRED", transition = mode in listOf("MIGRATING", "CREATING", "JOINING"),
-                migrated = runCatching { v3().binding().has("migrationId") }.getOrDefault(false))
+                migrated = runCatching { v3().binding().has("migrationId") }.getOrDefault(false), bindingId = c.optJSONObject("binding")?.optString("datasetId"))
         } else {
             val v2 = dao.hasSyncRecord(21) || dao.hasSyncRecord(23)
             val v1 = dao.hasSyncRecord(1) || dao.hasSyncRecord(4)
             SharedSchedulePresentation(mode = when { v2 -> SharedMode.V2; v1 -> SharedMode.V1; configured -> SharedMode.UNBOUND; else -> SharedMode.UNCONFIGURED },
-                ready = true, pending = readState().sync?.pending == true,
+                ready = true, bindingId = (v2Commit(21) ?: v2Commit(23))?.datasetId ?: decoded(1)?.datasetId ?: decoded(4)?.datasetId,
+                pending = readState().sync?.pending == true,
                 confirming = dao.hasSyncRecord(23) || dao.hasSyncRecord(4),
                 conflict = dao.hasSyncRecord(25) || dao.hasSyncRecord(3),
                 transition = dao.hasSyncRecord(200) || dao.hasSyncRecord(203), result = if (v2Problems().isNotEmpty()) "PARTIAL" else "UNCHECKED")

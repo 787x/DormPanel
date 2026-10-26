@@ -116,6 +116,16 @@ class SharedScheduleSettings(context: Context) {
     var presentationResult: String
         get() = prefs.getString("presentation_result", "UNCHECKED").orEmpty()
         set(value) { check(prefs.edit().putString("presentation_result", value).commit()) }
+    /** Old unscoped diagnostics remain intact, but cannot prove a new location was checked. */
+    fun recordCheck(scope: String?, code: String, verified: Boolean = false) {
+        val edit = prefs.edit().putString("presentation_result", code).putString("presentation_scope", scope)
+        if (verified && scope != null) edit.putString("check_success_scope", scope).putLong("check_success_at", System.currentTimeMillis())
+        check(edit.commit())
+    }
+    fun checkFor(scope: String?): Pair<String, Long> =
+        (if (scope != null && prefs.getString("presentation_scope", null) == scope) presentationResult else "UNCHECKED") to
+            (if (scope != null && prefs.getString("check_success_scope", null) == scope) prefs.getLong("check_success_at", 0) else 0)
+    fun invalidateCheck() { check(prefs.edit().remove("presentation_scope").remove("check_success_scope").commit()) }
     fun retryAllowed(): Boolean {
         val attempts = prefs.getInt("retry_attempts", 0) + 1
         check(prefs.edit().putInt("retry_attempts", attempts).commit())
@@ -151,8 +161,38 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     var changed: (() -> Unit)? = null
     var presentation = SharedSchedulePresentation(); private set
     private var presentationGeneration = 0
+    private var operationScope: String? = null
+    private var inspectingJoin = false
+    private fun checkScope(): String? {
+        val store = source.syncStore
+        val a = if (store?.isV3() == true) store.v3Account(accounts) else accounts.account() ?: return null
+        val folder = if (store?.isV3() == true) store.v3EndpointFolder() else settings.folder
+        return sharedCheckScope(a, folder)
+    }
+    private fun actionState(): SharedSchedulePresentation {
+        val facts = requireNotNull(source.syncStore).sharedPresentation(settings.folder.isNotBlank() && accounts.account() != null)
+        return facts.copy(localRead = source.loadState, mode = if (facts.mode in setOf(SharedMode.UNBOUND, SharedMode.UNCONFIGURED) &&
+            (settings.publishedRevision != null || settings.pendingRevision != null)) SharedMode.V1 else facts.mode)
+    }
+    fun confirmation(action: SharedAction): SharedConfirmation {
+        val facts = actionState()
+        check(action in facts.actions && source.ready && !source.error && !source.applyingSnapshot) { "当前状态不能执行此操作，请重新检查" }
+        return SharedConfirmation(action, facts.mode, facts.bindingId, checkScope())
+    }
+    private fun requireAction(action: SharedAction, confirmed: SharedConfirmation? = null) {
+        val facts = actionState()
+        check(source.ready && !source.error && !source.applyingSnapshot && action in facts.actions) { "共享课表状态已变化，未执行原操作；请重新检查" }
+        if (confirmed != null) { check(confirmed.action == action); confirmed.requireMatches(facts, checkScope()) }
+    }
+    fun connectionSaved() {
+        settings.invalidateCheck()
+        presentation = presentation.copy(result = "UNCHECKED", lastSuccess = 0)
+        changed?.invoke(); refreshPresentation()
+    }
     fun refreshPresentation() {
         if (closed) return
+        val read = source.loadState
+        if (presentation.localRead != read) { presentation = presentation.copy(localRead = read); changed?.invoke() }
         val generation = ++presentationGeneration
         val pending = source.state.sync?.pending == true
         worker.execute {
@@ -161,9 +201,11 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
                     ?: SharedSchedulePresentation(mode = SharedMode.UNKNOWN, ready = true)
             }.getOrElse { SharedSchedulePresentation(mode = SharedMode.UNKNOWN, ready = source.ready || source.error) }
             main.post { if (!closed && generation == presentationGeneration) {
+                val checked = settings.checkFor(runCatching { checkScope() }.getOrNull())
                 val next = facts.copy(mode = if (facts.mode in setOf(SharedMode.UNBOUND, SharedMode.UNCONFIGURED) && (settings.publishedRevision != null || settings.pendingRevision != null)) SharedMode.V1 else facts.mode,
                     confirming = facts.confirming || settings.pendingRevision != null, pending = facts.pending || pending, busy = busy,
-                    result = if (facts.result == "PARTIAL" && settings.presentationResult !in setOf("NETWORK", "ERROR")) facts.result else settings.presentationResult, lastSuccess = settings.lastSuccess)
+                    localRead = source.loadState,
+                    result = if (facts.result == "PARTIAL" && checked.first !in setOf("NETWORK", "ERROR")) facts.result else checked.first, lastSuccess = checked.second)
                 if (next != presentation) { presentation = next; changed?.invoke() }
             } }
         }
@@ -180,26 +222,29 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     private val automatic = Runnable { if (source.state.sync != null) synchronize(false) }
     private var initialChecked = false
     private val readyListener: () -> Unit = {
-        if (!closed && source.ready && !initialChecked) { initialChecked = true; refreshPresentation(); sync() }
-        else if (!closed && !busy) { status = settings.lastResult; notifyChanged() }
+        if (!closed && source.ready && !source.error && !initialChecked) { initialChecked = true; refreshPresentation(); sync() }
+        else if (!closed) { if (!busy) status = settings.lastResult; notifyChanged() }
     }
     init {
         source.localCommitted = localListener; source.subscribe(readyListener); SharedScheduleViews.add(source)
         main.post { readyListener() }
     }
     private fun notifyChanged() { if (!closed) {
-        val next = presentation.copy(busy = busy)
+        val next = presentation.copy(busy = busy, localRead = source.loadState)
         if (next != presentation) { presentation = next; changed?.invoke() }
         refreshPresentation()
     } }
     private fun account() = accounts.account() ?: throw WebDavException("WebDAV credentials unavailable; configure account")
     private fun failure(error: Throwable) {
-        settings.presentationResult = when (error) {
+        settings.recordCheck(operationScope, when (error) {
             is ScheduleHistoryPending -> "DISCOVERING"
             is java.net.UnknownHostException, is java.net.SocketTimeoutException -> "NETWORK"
             is WebDavException -> if (error.reason.startsWith("Network")) "NETWORK" else "ERROR"
+            is javax.net.ssl.SSLException -> "ERROR"
+            is java.io.IOException -> "NETWORK"
+            is IllegalArgumentException, is IllegalStateException -> if (inspectingJoin) "VALIDATION_FAILED" else "ERROR"
             else -> "ERROR"
-        }
+        })
         status = when (error) {
             is ScheduleHistoryPending -> error.message!!
             is WebDavException -> if (error.reason.startsWith("Network")) "离线 / 等待重试；本地修改已保留" else error.reason
@@ -218,18 +263,24 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         notifyChanged()
         if (presentation.bound && settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
     }
-    private fun <T> run(task: () -> T, done: (T) -> Unit) {
+    private fun <T> run(task: () -> T, joinInspection: Boolean = false, done: (T) -> Unit) {
         if (busy || closed) return
+        inspectingJoin = joinInspection
         busy = true; status = "正在检查远端版本"; notifyChanged()
-        worker.execute { val result = runCatching(task); main.post { if (!closed) result.onSuccess(done).onFailure(::failure) } }
+        worker.execute {
+            operationScope = runCatching { checkScope() }.getOrNull()
+            val result = runCatching(task); main.post { if (!closed) result.onSuccess(done).onFailure(::failure) }
+        }
     }
     private fun complete(message: String, verified: Boolean = true) {
         settings.result(message, verified); status = message; busy = false; notifyChanged()
     }
     private fun v2Local(): ScheduleV2Store = requireNotNull(source.syncStore) as ScheduleV2Store
-    private fun v2Remote(): WebDavCommitStore {
-        val account = account()
-        return WebDavCommitStore(account, v2Folder(account))
+    private fun v2Remote(account: WebDavAccount = account(), folder: String = settings.folder): WebDavCommitStore {
+        val target = transport.folder(account, folder)
+        operationScope = sharedCheckScope(account, target)
+        return WebDavCommitStore(account, WebDavClient().url(target).newBuilder()
+            .addPathSegment("dormpanel-sync-v2").addPathSegment("").build().toString())
     }
     private fun v2Folder(account: WebDavAccount = account()) = WebDavClient().url(transport.folder(account, settings.folder)).newBuilder()
         .addPathSegment("dormpanel-sync-v2").addPathSegment("").build().toString()
@@ -242,11 +293,13 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         ScheduleV2Binding.inspect(v2Remote())
     }) {
         busy = false; status = "v2 提交已验证，等待确认" + if (it.unverifiable.isNotEmpty()) " · 另有暂不可验证文件" else ""
-        settings.presentationResult = if (it.unverifiable.isEmpty()) "VERIFIED" else "PARTIAL"
+        settings.recordCheck(operationScope, if (it.unverifiable.isEmpty()) "VERIFIED" else "PARTIAL", it.unverifiable.isEmpty())
         settings.result(status, it.unverifiable.isEmpty()); notifyChanged(); done(it)
     }
-    fun bind(remote: SharedScheduleRemote) = run({
+    fun bind(remote: SharedScheduleRemote, confirmed: SharedConfirmation? = null) = run({
         synchronized(SharedScheduleRunLock) {
+            check(confirmed == null || confirmed.action in setOf(SharedAction.JOIN, SharedAction.JOIN_V2)) { "此确认不允许加入课表" }
+            requireAction(confirmed?.action ?: SharedAction.JOIN_V2, confirmed)
             check(settings.publishedRevision == null && settings.pendingRevision == null) { "旧 v1 发布或待确认回执尚未恢复；请使用迁移入口" }
             val verified = ScheduleV2Binding.inspect(v2Remote(), remote)
             SharedScheduleViews.changing { v2Local().v2Bind(verified) }
@@ -309,8 +362,8 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         }
     }) { source.reload { complete(if (cancel) "已取消准备；原数据与证据保留" else "Android 本机换库验收完成；恢复新库正常同步，其他设备由管理员验收", false); sync() } }
     fun sync() { settings.resetRetries(); synchronize(false) }
-    fun publish() { settings.resetRetries(); synchronize(true) }
-    fun createV3() = activateV3(null)
+    fun publish(confirmed: SharedConfirmation? = null) { settings.resetRetries(); synchronize(true, confirmed) }
+    fun createV3(confirmed: SharedConfirmation? = null) = activateV3(null, confirmed)
     fun reopenV3Store() = run({ synchronized(SharedScheduleRunLock) { SharedScheduleViews.changing { source.syncStore!!.reopenV3Store() } } }) {
         source.reload { complete("活动 v3 Store 已从同一数据库恢复；课程、候选与绑定保留",false) }
     }
@@ -321,8 +374,8 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     fun previewV3Migration(done: (ScheduleV3MigrationPreview) -> Unit) = run({
         synchronized(SharedScheduleRunLock) { requireNotNull(source.syncStore).previewV3Migration(v2Remote(), v2Folder()) }
     }) { busy = false; status = "v2 源历史及完整本地快照已验证；尚未切换"; notifyChanged(); done(it) }
-    fun migrateV3(preview: ScheduleV3MigrationPreview) = run({
-        synchronized(SharedScheduleRunLock) { requireNotNull(source.syncStore).prepareV3Migration(preview, v2Remote(), transport.folder(account(), settings.folder)) }
+    fun migrateV3(preview: ScheduleV3MigrationPreview, confirmed: SharedConfirmation? = null) = run({
+        synchronized(SharedScheduleRunLock) { requireAction(SharedAction.MIGRATE_V3, confirmed); requireNotNull(source.syncStore).prepareV3Migration(preview, v2Remote(), transport.folder(account(), settings.folder)) }
     }) { source.reload { complete("源 Writer 已持久暂停；v3 迁移等待精确回读及源重检", false); sync() } }
     fun previewExistingV3(descriptor:ByteArray,done:(ExistingV3MigrationPreview)->Unit) = run({
         synchronized(SharedScheduleRunLock) { source.syncStore!!.previewExistingV3Migration(v2Remote(),v2Folder(),account(),transport.folder(account(),settings.folder),descriptor) }
@@ -331,37 +384,75 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         status=if(preview==null) "目标只读预检进度已保存；请再次选择同一目标继续" else "源与既有 v3 目标完整 RAW 等价；尚未切换"
         settings.result(status,false); notifyChanged(); if(preview!=null) done(preview)
     }
-    fun joinMigratedV3(preview:ExistingV3MigrationPreview) = run({
-        synchronized(SharedScheduleRunLock) { source.syncStore!!.prepareExistingV3Migration(preview,v2Remote(),account()) }
+    fun joinMigratedV3(preview:ExistingV3MigrationPreview, confirmed: SharedConfirmation? = null) = run({
+        synchronized(SharedScheduleRunLock) { requireAction(SharedAction.JOIN_MIGRATED, confirmed); source.syncStore!!.prepareExistingV3Migration(preview,v2Remote(),account()) }
     }) { source.reload { complete("本机 v2 Writer 已暂停；已加入经验证的同一 v3 目标，未创建新 Genesis",false); sync() } }
     fun previewJoinV3(descriptor:ByteArray,done:(UnboundV3JoinPreview?)->Unit) = run({
         synchronized(SharedScheduleRunLock) { source.syncStore!!.previewUnboundV3Join(account(),transport.folder(account(),settings.folder),descriptor) }
-    }) { preview ->
+    }, true) { preview ->
         busy=false;status=if(preview==null) "只读预检进度已保存，尚未绑定；请选择同一目标继续" else "目标身份、前沿及完整业务快照已验证，尚未绑定"
         settings.result(status,false);notifyChanged();done(preview)
     }
-    fun joinV3(preview:UnboundV3JoinPreview) = run({
-        synchronized(SharedScheduleRunLock) { source.syncStore!!.joinVerifiedV3(preview,account()) }
-    }) { source.reload { complete("已加入指定 v3 身份；目标快照经精确回读，本地已保存",true);sync() } }
-    private fun activateV3(descriptor: ByteArray?) = run({
+    fun joinV3(preview:UnboundV3JoinPreview, confirmed: SharedConfirmation? = null) = run({
+        synchronized(SharedScheduleRunLock) { requireAction(SharedAction.JOIN, confirmed); source.syncStore!!.joinVerifiedV3(preview,account()) }
+    }) { source.reload { settings.recordCheck(operationScope, "VERIFIED", true); complete("已加入指定 v3 身份；目标快照经精确回读，本地已保存",true);sync() } }
+    private fun activateV3(descriptor: ByteArray?, confirmed: SharedConfirmation?) = run({
         synchronized(SharedScheduleRunLock) {
+            requireAction(SharedAction.CREATE, confirmed)
             check(settings.publishedRevision == null && settings.pendingRevision == null) { "已有 v1 绑定，禁止隐式切换" }
             requireNotNull(source.syncStore).prepareV3(transport.folder(account(), settings.folder), descriptor)
         }
     }) { source.reload { complete("v3 本地绑定意图已保存；等待远端验证", false); sync() } }
     data class V3Candidate(val descriptor: V3Object, val bytes: ByteArray, val hash: String)
-    fun discoverV3(done: (List<V3Candidate>) -> Unit) = run({
-        val remote = V3WebDavStore(account(), transport.folder(account(), settings.folder), V3Budget())
-        remote.list("").flatMap { scope ->
+    data class ExistingCandidates(val v3: List<V3Candidate>, val v2: SharedScheduleRemote? = null)
+    private fun sharedDirectories(account: WebDavAccount, folder: String): Set<String> {
+        val client = WebDavClient()
+        return client.list(account, folder, strict = true).filter { it.folder }.map { client.url(it.url).toString() }.toSet()
+    }
+    private fun protocolFolder(folder: String, protocol: String) = WebDavClient().url(folder).newBuilder()
+        .addPathSegment("dormpanel-sync-$protocol").addPathSegment("").build().toString()
+    private fun readV3Candidates(account: WebDavAccount = account(), folder: String = settings.folder, directories: Set<String>? = null): List<V3Candidate> {
+        val target = transport.folder(account, folder)
+        operationScope = sharedCheckScope(account, target)
+        if (protocolFolder(target, "v3") !in (directories ?: sharedDirectories(account, target))) return emptyList()
+        val remote = V3WebDavStore(account, target, V3Budget())
+        return remote.list("").flatMap { scope ->
             if (!scope.matches(Regex("dataset-[0-9a-f-]{36}/"))) emptyList() else remote.list(scope).filter { it.substringAfterLast('/').startsWith("descriptor-") }.map { path ->
                 val raw = requireNotNull(remote.read(path)); val d = V3Paths.match(path, raw); require(d.type == 1)
                 V3Candidate(d, raw, SyncV3Codec.hash(raw))
             }
         }
-    }) { busy = false; status = "v3 Descriptor 已验证；完整历史仍需验证，尚未绑定"; notifyChanged(); done(it) }
+    }
+    fun discoverV3(done: (List<V3Candidate>) -> Unit) = run({ readV3Candidates() }, true) {
+        busy = false
+        status = if (it.isEmpty()) "尚未发现可验证的新版候选；尚未证明有旧版课表，未创建新课表" else "已识别新版候选；完整历史仍需验证，尚未绑定"
+        settings.recordCheck(operationScope, if (it.isEmpty()) "NO_V3" else "CANDIDATE_V3")
+        settings.result(status); notifyChanged(); done(it)
+    }
+    fun discoverExisting(done: (ExistingCandidates) -> Unit) = run({
+        val account = account(); val folder = transport.folder(account, settings.folder)
+        operationScope = sharedCheckScope(account, folder)
+        val directories = sharedDirectories(account, folder)
+        val candidates = readV3Candidates(account, folder, directories)
+        if (candidates.isNotEmpty()) ExistingCandidates(candidates) else {
+            val remote = if (protocolFolder(folder, "v2") in directories) v2Remote(account, folder) else null
+            ExistingCandidates(emptyList(), if (remote == null || remote.list().isEmpty()) null else ScheduleV2Binding.inspect(remote))
+        }
+    }, true) { found ->
+        busy = false
+        val code = when { found.v3.isNotEmpty() -> "CANDIDATE_V3"; found.v2 != null -> "CANDIDATE_V2"; else -> "NO_CANDIDATE" }
+        status = when (code) {
+            "CANDIDATE_V3" -> "已识别新版候选，选择后继续只读验证"
+            "CANDIDATE_V2" -> "已验证此位置的旧版课表，等待确认加入"
+            else -> "此位置尚未发现可加入的共享课表；没有创建新课表"
+        }
+        settings.recordCheck(operationScope, code, found.v2 != null); settings.result(status, found.v2 != null)
+        notifyChanged(); done(found)
+    }
     /** Explicit UI switch, after all old clients have been stopped. Read v1 only. */
-    fun migrate() = run({
+    fun migrate(confirmed: SharedConfirmation? = null) = run({
         synchronized(SharedScheduleRunLock) {
+            requireAction(SharedAction.MIGRATE_V1, confirmed)
             val state = v2Local().v2Frame()
             check(state.baseline == null && state.pending == null) { "v2 已启用；禁止重复迁移旧协议" }
             val store = requireNotNull(source.syncStore)
@@ -378,14 +469,18 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
             outcome to v2Local().v2Frame().baseline?.state
         }
     }) { (outcome, baseline) -> finishV2(outcome, baseline) }
-    private fun synchronize(create: Boolean) {
-        if (!source.ready || settings.folder.isBlank() || source.syncStore == null) return
-        if (source.syncStore!!.isV3()) {
-            run({ synchronized(SharedScheduleRunLock) { source.syncStore!!.synchronizeV3(source.syncStore!!.v3Account(accounts)) } }) { result ->
+    private fun synchronize(create: Boolean, confirmed: SharedConfirmation? = null) {
+        if (!create && (!source.ready || source.error || settings.folder.isBlank() || source.syncStore == null)) return
+        if (!create && source.syncStore!!.isV3()) {
+            run({ synchronized(SharedScheduleRunLock) {
+                val account = source.syncStore!!.v3Account(accounts)
+                operationScope = sharedCheckScope(account, source.syncStore!!.v3EndpointFolder())
+                source.syncStore!!.synchronizeV3(account)
+            } }) { result ->
                 SharedScheduleViews.reloaded()
                 savedConflict = result == "CONFLICT"
                 source.reload { loaded -> loaded.onSuccess {
-                    settings.presentationResult = result
+                    settings.recordCheck(operationScope, result, result in listOf("OBSERVED", "PUBLISHED"))
                     complete(v3StatusMessage(result), result in listOf("OBSERVED","PUBLISHED"))
                     if (result in listOf("BUDGET", "DISCOVERING", "ROTATED") && settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
                 }.onFailure(::failure) }
@@ -396,6 +491,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
             notifyChanged(); return // Opening settings must not allocate a v2 Writer for an unbound local timetable.
         }
         run({ synchronized(SharedScheduleRunLock) {
+            if (create) requireAction(SharedAction.CREATE_V2, confirmed)
             v2Local().v2RequireSyncAllowed()
             val frame = v2Local().v2Frame()
             savedConflict = frame.conflict != null
@@ -428,7 +524,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         else->"端点只读预检进度已保存，可继续"
     };settings.result(status,false);notifyChanged();done(result) }
     private fun finishV2(outcome: ScheduleSyncEngine.Outcome, baseline: ScheduleState?) {
-        settings.presentationResult = if (outcome.conflicts.isNotEmpty()) "CONFLICT" else outcome.checkState
+        settings.recordCheck(operationScope, if (outcome.conflicts.isNotEmpty()) "CONFLICT" else outcome.checkState, outcome.checkState == "VERIFIED")
         conflicts = outcome.conflicts; savedConflict = conflicts.isNotEmpty()
         source.reload { result -> result.onSuccess {
             val dirty = baseline != null && !ScheduleMerge.same(baseline, source.state)

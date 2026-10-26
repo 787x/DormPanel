@@ -29,10 +29,13 @@ class ScheduleTest {
         val store = Store(); val source = ScheduleSource(store)
         assertTrue(source.saveEntry("Saved before failure", 1, 540, 585))
         val before = source.state
+        assertEquals(SharedLocalRead.LOADED, source.loadState)
         store.loadFailure = IllegalStateException("unconfirmed local transaction")
         source.reload(); assertTrue(source.error)
+        assertTrue(source.ready); assertEquals(SharedLocalRead.FAILED, source.loadState)
         store.loadFailure = null
         source.reload(); assertFalse(source.error); assertTrue(source.ready)
+        assertEquals(SharedLocalRead.LOADED, source.loadState)
         assertEquals(before, source.state); assertEquals(1, store.writes)
         source.close()
     }

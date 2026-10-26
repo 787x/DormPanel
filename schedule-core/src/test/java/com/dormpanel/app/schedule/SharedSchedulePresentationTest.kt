@@ -50,4 +50,50 @@ class SharedSchedulePresentationTest {
         for (phase in listOf("STAGED", "ATTEMPTED", "UNCERTAIN")) assertTrue(v3AwaitingReadback(phase))
         assertTrue(state(SharedMode.V3).copy(receipting = true).summary().contains("服务器已回读，待确认本机回执"))
     }
+    @Test fun failedLocalReadSuppressesOldHealthyFactsAndBusinessActions() {
+        val old = state(SharedMode.V3).copy(result = "PUBLISHED", lastSuccess = 1)
+        val failed = old.copy(localRead = SharedLocalRead.FAILED)
+        assertTrue(failed.summary().contains("读取失败"))
+        for (health in listOf("课表已保存", "检查成功", "仍可使用")) assertFalse(failed.summary().contains(health))
+        assertEquals(setOf(SharedAction.DETAILS), failed.actions)
+        assertTrue(failed.copy(recovery = true).actions.contains(SharedAction.RECOVER))
+        assertTrue(old.summary().contains("检查成功"))
+        assertTrue(SharedSchedulePresentation().summary().contains("正在读取"))
+        assertFalse(old.copy(ready = false).summary().contains("检查成功"))
+        assertFalse(old.copy(localRead = SharedLocalRead.LOADING).summary().contains("课表已保存"))
+    }
+    @Test fun confirmationPinsOperationModeBindingAndAccessScope() {
+        val unbound = state(SharedMode.UNBOUND)
+        for (action in listOf(SharedAction.CREATE, SharedAction.CREATE_V2, SharedAction.JOIN, SharedAction.JOIN_V2)) {
+            val token = SharedConfirmation(action, SharedMode.UNBOUND, null, "A")
+            token.requireMatches(unbound, "A")
+            assertThrows(IllegalStateException::class.java) { token.requireMatches(unbound, "B") }
+            for (mode in listOf(SharedMode.V2, SharedMode.V3)) assertThrows(IllegalStateException::class.java) { token.requireMatches(state(mode), "A") }
+        }
+        val v2 = state(SharedMode.V2).copy(bindingId = "dataset-A")
+        for (action in listOf(SharedAction.MIGRATE_V3, SharedAction.JOIN_MIGRATED)) {
+            val token = SharedConfirmation(action, v2.mode, v2.bindingId, "A")
+            token.requireMatches(v2, "A")
+            assertThrows(IllegalStateException::class.java) { token.requireMatches(v2.copy(bindingId = "dataset-B"), "A") }
+            assertThrows(IllegalStateException::class.java) { token.requireMatches(state(SharedMode.V3), "A") }
+        }
+        val v1 = SharedConfirmation(SharedAction.MIGRATE_V1, SharedMode.V1, "old", "A")
+        assertThrows(IllegalStateException::class.java) { v1.requireMatches(v2, "A") }
+    }
+    @Test fun joinFeedbackSeparatesDiscoveryFromValidationAndNetwork() {
+        val unbound = state(SharedMode.UNBOUND)
+        for ((code, expected) in mapOf("NO_CANDIDATE" to "尚未发现可加入", "NO_V3" to "尚未证明", "CANDIDATE_V2" to "已验证此位置的旧版", "CANDIDATE_V3" to "新版候选", "VALIDATION_FAILED" to "验证未通过", "NETWORK" to "无法连接服务器")) {
+            val text = unbound.copy(result = code).summary()
+            assertTrue(text, text.contains(expected)); assertFalse(text.contains("检查成功"))
+        }
+    }
+    @Test fun checkScopeIncludesLocationUserAndTrustWithoutPassword() {
+        val a = WebDavAccount("https://example.org/", "u", "secret")
+        assertEquals(sharedCheckScope(a, "https://example.org/A"), sharedCheckScope(a, "https://example.org:443/A/"))
+        assertNotEquals(sharedCheckScope(a, "https://example.org/A/"), sharedCheckScope(a, "https://example.org/B/"))
+        assertNotEquals(sharedCheckScope(a, "https://example.org/A/"), sharedCheckScope(WebDavAccount(a.baseUrl, "other", "secret"), "https://example.org/A/"))
+        assertEquals(64, sharedCheckScope(a, "https://example.org/A/").length)
+        val certificate = okhttp3.tls.HeldCertificate.Builder().build().certificatePem()
+        assertNotEquals(sharedCheckScope(a, "https://example.org/A/"), sharedCheckScope(WebDavAccount(a.baseUrl, a.username, a.password, certificate), "https://example.org/A/"))
+    }
 }
