@@ -1,14 +1,14 @@
 {
-  "verdict": "RC BLOCKED",
+  "verdict": "RC ACCEPTED",
   "date": "2026-10-26",
   "timezone": "Asia/Shanghai",
   "base": "54ab0a52fc6966af8b7a431ac756cc6a5563bc69",
   "runtimeSourceCommits": {
     "android": "0bd001bd8148b3e722c0ba297f5d6383dce80d60",
-    "fpk": "455e5598ac3d0845ba90edae33dd2585427155a2",
+    "fpk": "777ffdd2f01ae9a8723b69add91192233ba27a17",
     "ha": "unchanged from base; 0.1.2"
   },
-  "candidate": "artifacts/pr58/candidate-2",
+  "candidate": "artifacts/pr58/candidate-3",
   "artifacts": [
     {
       "file": "DormPanel-HA-0.1.2.zip",
@@ -21,9 +21,9 @@
       "sha256": "f424afa2108bd4e9a0574083d8d05dc79a35def7c117ec80ed6dbc4bc45a1320"
     },
     {
-      "file": "dormpanel-schedule-manager-0.8.0.fpk",
-      "bytes": 4599954,
-      "sha256": "cd5c1dd77c7e511032f400344cb093c0b7b8d697c5276af0ef92c7e5607ff39e"
+      "file": "dormpanel-schedule-manager-0.8.1.fpk",
+      "bytes": 4603184,
+      "sha256": "f9c2eb58a78c54850335de2d3191ad4bd3810ae37dba74bfabb7504008dc02b4"
     },
     {
       "file": "DormPanel-X08E-0.1.9.apk",
@@ -53,11 +53,14 @@
     },
     "fpk": {
       "package": "dormpanel-schedule-manager",
-      "name": "0.8.0",
+      "name": "0.8.1",
       "installedSourceFilesVerified": 44,
       "sourceMismatches": [],
-      "officialInPlaceUpgradeOfFinalBytes": "BLOCKED",
-      "initialSupersededCandidateUpgradeFrom": "0.7.6"
+      "officialInPlaceUpgradeOfFinalBytes": "PASS",
+      "initialSupersededCandidateUpgradeFrom": "0.7.6",
+      "upgradeFrom": "0.8.0",
+      "oldStateFilesUnchanged": 91,
+      "oldWorkspacesPreserved": 15
     },
     "ha": {
       "name": "0.1.2",
@@ -112,87 +115,176 @@
       "sourceCommit": "455e5598ac3d0845ba90edae33dd2585427155a2"
     },
     {
-      "name": "final installed CLI/MCP read equality",
+      "name": "final Android installed byte equality, daily business tables and v2 identities restored",
+      "result": "PASS"
+    },
+    {
+      "name": "official fnOS 0.8.0 to final 0.8.1 in-place upgrade",
       "result": "PASS",
+      "installedFilesMatched": 44,
+      "stateFilesUnchanged": 91
+    },
+    {
+      "name": "0.8.1 backup-version targeted roundtrip",
+      "result": "PASS",
+      "count": 1
+    },
+    {
+      "name": "final installed CLI/MCP reading equality",
+      "result": "PASS",
+      "version": "0.8.1",
       "tools": 86,
-      "protocol": "2026-07-28",
-      "permissions": [
+      "permissionsAtEnd": [
         "read"
       ]
     },
     {
-      "name": "final installed remote GC eligibility",
-      "result": "PASS",
-      "status": "NOT_ELIGIBLE",
-      "automaticDelete": false
-    },
-    {
-      "name": "final installed DPBK0002 create and authenticated readback",
-      "result": "PASS",
-      "appVersion": "0.8.0",
-      "workspaces": 15,
-      "files": 73,
-      "archiveBytes": 2640798,
-      "archiveSha256": "1100a307d6adf69159cb708c0c92c3d4a84a1f166612dc3bdf668d430b768b48"
-    },
-    {
-      "name": "Android in-place upgrades, final installed byte hashes and original-store restoration",
+      "name": "same verified descriptor, three distinct stable installation writers",
       "result": "PASS"
     },
     {
-      "name": "Phone signed product UI v3 join, local edit and exact remote receipt",
+      "name": "three actual writers publish and read each others business changes",
+      "result": "PASS"
+    },
+    {
+      "name": "Phone offline override persists through reopen; fnOS concurrent override; explicit real conflict decision",
       "result": "PASS",
-      "writerId": "feaef44a-03af-440e-a614-86ebd96ae020"
+      "staleDecisionRevalidated": true
     },
     {
-      "name": "Phone Wi-Fi-off save and process reopen",
+      "name": "default Epoch rollover by ordinary installed entry.upsert and sync.run",
       "result": "PASS",
-      "localCourseRetainedInArchivedStore": true
+      "additionalEdits": 153,
+      "changedProtocolBudget": false,
+      "testRotationPrimitive": false,
+      "temporaryEditPermissionRevoked": true
     },
     {
-      "name": "final three-client bidirectional/concurrent/Epoch matrix",
-      "result": "BLOCKED"
-    },
-    {
-      "name": "final installed rollback, multi-page diff, archive, private cleanup and DPBK protected restore",
-      "result": "SKIP"
-    },
-    {
-      "name": "X08E native Home and return to DormPanel",
+      "name": "Phone JobService background publication on final sealed endpoint",
       "result": "PASS",
-      "nativeActivity": "com.xiaomi.micolauncher/.Launcher"
+      "jobId": 3201,
+      "systemJobForcedForScheduling": true,
+      "activityForeground": false
     },
     {
-      "name": "X08E HA live control / XiaoAI and Mesh behavior / actual boot recovery",
-      "result": "SKIP"
+      "name": "three-client canonical RAW byte equality after Epoch and rollback restoration",
+      "result": "PASS",
+      "rawSha256": "9bb214876e45ce8ea86bacad8285fbfad147b6208bb466ffa4d571cd1c1d85f4",
+      "entries": 6
+    },
+    {
+      "name": "staged explicit nonempty isolated v2 migration, other final APK joins existing target",
+      "result": "PASS",
+      "creationFpkVersion": "0.8.0 initial candidate",
+      "recoveryEntryFpkVersion": "0.8.1 final",
+      "migrationPhase": "ACTIVE",
+      "rawEquivalent": true,
+      "sourceHistoryRetained": true,
+      "secondGenesisObserved": false,
+      "freshFinalFpkGenesisCreationRetested": false
+    },
+    {
+      "name": "final installed history pagination and RAW diff",
+      "result": "PASS",
+      "webPages": 5,
+      "cliPageLimit": 100,
+      "knownHistoryNodesAtInitialRead": 165,
+      "rawDiffAdded": 1,
+      "rawDiffModified": 1
+    },
+    {
+      "name": "two formal rollback publications; old objects immutable",
+      "result": "PASS",
+      "previousPublicObjectsUnchangedAtFinalRead": 167
+    },
+    {
+      "name": "final installed archive",
+      "result": "PASS",
+      "status": "VERIFIED",
+      "pages": 84,
+      "manifestHash": "260f697d92fdbee644067d224d56c76bc971e97ac4a72d85ac1376f9a35e582e",
+      "completeRemoteHistory": false
+    },
+    {
+      "name": "private unreferenced snapshot cleanup",
+      "result": "PASS",
+      "rowsRemoved": 160,
+      "reclaimedFileBytes": 1656576,
+      "remoteGC": "NOT_ELIGIBLE",
+      "automaticDelete": false
+    },
+    {
+      "name": "DPBK0002 production archives protected isolated restore via installed 0.8.1 backend",
+      "result": "PASS",
+      "archiveVersions": [
+        "0.8.0",
+        "0.8.1"
+      ],
+      "workspaces": 15,
+      "v3WorkspacesVerified": 4,
+      "completeRecordAndFrameHashesPreserved": true,
+      "remotePuts": 0,
+      "restoreGuardsRetained": true,
+      "archiveDirty": false
+    },
+    {
+      "name": "final product endpoint preview, continue, cancel, confirm; stable writer and other-client observation",
+      "result": "PASS",
+      "android": "public HTTPS-A, system CA",
+      "fnos": "LAN HTTPS, exact independently checked NAS certificate"
+    },
+    {
+      "name": "X08E landscape offline clock, cached classes and running/paused timer",
+      "result": "PASS"
+    },
+    {
+      "name": "X08E HA live state, physical light ON then restore OFF",
+      "result": "PASS"
+    },
+    {
+      "name": "X08E native MIUI Home, reopen and configured own BootReceiver startup",
+      "result": "PASS",
+      "wholeDeviceReboot": false
+    },
+    {
+      "name": "spoken XiaoAI, physical Bluetooth Mesh and native alarm operation",
+      "result": "SKIP",
+      "observed": "native Home and resident services only; no system change or daily alarm interference"
     }
   ],
   "network": {
-    "setup": "3 synthetic immutable objects copied to a second random directory; every object GET verified after PUT",
     "paths": [
       {
         "alias": "HTTPS-A",
+        "actual": "public NAS HTTPS through configured WebDAV hostname",
         "tls": "system CA",
-        "computer": "PROPFIND 207",
-        "nasInitialCandidate": "v2 create, v3 migration, endpoint preview/confirm observed",
-        "android": "TCP timeout observed"
+        "android": "final APKs actual read/publication",
+        "computer": "final recursive PROPFIND + exact GET"
       },
       {
         "alias": "HTTPS-B",
+        "actual": "second NAS public HTTPS isolated fixture",
         "tls": "system CA",
-        "computer": "PROPFIND 207",
-        "phone": "actual v2 bind, existing v3 target join, publication receipt",
-        "nasLater": "package-user DNS resolution failed; Web UI network failure"
+        "role": "initial accessible path; later Node DNS failure; never equated with LAN"
+      },
+      {
+        "alias": "LAN-HTTPS",
+        "actual": "fnOS package process -> test NAS 192.168.3.153:5006",
+        "tls": "exact certificate SHA256 1adbc220f108c0942c436e2522d1b3ed6a682b2b6d6d4ee8f561bbf90941257e",
+        "fnos": "final endpoint move, normal publications, Epoch, history/rollback"
       }
     ],
     "adbUsedForDataTransportToWebDav": false,
-    "globalDnsOrTlsChanged": false
+    "temporaryTestNasHostsEntry": "independently CA/hostname/Descriptor verified; used to heal old source endpoint; original /etc/hosts restored byte-for-byte",
+    "tlsValidationWeakened": false
   },
   "syntheticDataset": {
     "v2": "138ab693-fe57-47f6-b4da-83d0ab4d6241",
     "v3": "7d3d4110-56ed-48ce-baf8-1ab7cb29dab0",
     "descriptorSha256": "a8e90bd9d5893e8cbb214b8257ea0e4d66c2fd8b003a2098af9bdcea314fbcaa",
-    "threeClientAcceptance": false
+    "threeClientAcceptance": true,
+    "finalRawSha256": "9bb214876e45ce8ea86bacad8285fbfad147b6208bb466ffa4d571cd1c1d85f4",
+    "epoch2": "26742e1f-66d1-47e1-8b5e-6fa8abd2efbc"
   },
   "recovery": {
     "incident": "official install-local unexpectedly uninstalled the existing package before install failed with 10237; not counted as an in-place upgrade",
@@ -205,30 +297,120 @@
     "androidOriginalBusinessTablesUnchangedAfterRestoration": true,
     "androidOriginalV2WritersAndSelectedEncryptedPreferencesPreserved": true,
     "testStoresRetained": true,
-    "dpbkRestoreTested": false
+    "dpbkRestoreTested": true,
+    "originalOtherWorkspaceFilesUnchangedAtFinalVerification": 64,
+    "finalOriginalWorkspaceSelected": true,
+    "originalDailyAndroidRestoredAgain": true
   },
-  "invalidated": {
-    "candidate": "candidate-1",
-    "fpkSha256": "3584fb8476b5d98d139db85dd76e8a36a63e2dea1f6aa9aa45a1230c7ff137f1",
-    "reason": "endpoint UI stale Catalog revision; final FPK rebuilt, APK/HA bytes reused by exact hash"
-  },
+  "invalidated": [
+    {
+      "candidate": "candidate-1",
+      "fpkSha256": "3584fb8476b5d98d139db85dd76e8a36a63e2dea1f6aa9aa45a1230c7ff137f1",
+      "reason": "endpoint UI stale Catalog revision; final FPK rebuilt, APK/HA bytes reused by exact hash"
+    },
+    {
+      "candidate": "candidate-2",
+      "fpkSha256": "cd5c1dd77c7e511032f400344cb093c0b7b8d697c5276af0ef92c7e5607ff39e",
+      "reason": "superseded by user-requested monotonic 0.8.1; same-version official upgrade cannot validate final bytes; APK/HA reused unchanged"
+    }
+  ],
   "notPerformed": [
     "merge",
     "tag",
     "GitHub Release",
     "daily v2 to v3 migration",
     "remote GC",
-    "full growth/70-cycle/long soak rerun"
+    "full growth/70-cycle/long soak rerun",
+    "whole-device reboot",
+    "spoken XiaoAI and physical Mesh exercise",
+    "fresh Genesis creation on final 0.8.1 (existing migration resumed and verified instead)"
   ],
   "remoteObservation": {
-    "scope": "one observed recursive listing of the owned random HTTPS-B fixture; no global consistency claim",
-    "directories": 21,
+    "scope": "one observed recursive listing of the owned random HTTPS-A fixture; no global consistency claim",
+    "directories": 37,
     "initialObjectsUnchanged": true,
     "dpvTypeCounts": {
       "1": 1,
-      "2": 1,
-      "3": 2,
-      "4": 0
+      "2": 2,
+      "3": 163,
+      "4": 1
+    },
+    "files": 168,
+    "v2RawSha256": "8f285ef2133840d7dfc395eec71ec2f4be1c88be02743c9784f6018117d14444"
+  },
+  "writers": {
+    "fnos": "815bc368-1ba9-4848-91ff-db4f02953e2a",
+    "phone": "feaef44a-03af-440e-a614-86ebd96ae020",
+    "x08e": "f057f4c6-a3e6-4652-ba17-b6ebfca85a4d"
+  },
+  "privateEvidenceHashes": [
+    {
+      "path": "artifacts/pr58/rc081/fnos-installed-verification.private.json",
+      "sha256": "63c9f8ca2df1add4ea55d41e8647b8391206202dd986dd1e847d8ca462b44dd8"
+    },
+    {
+      "path": "artifacts/pr58/rc081/three-way-raw.private.log",
+      "sha256": "652b8f7fc05cbaa4f5114416d5ecccc2684f9db40427fb4bb6a31646013cbdde"
+    },
+    {
+      "path": "artifacts/pr58/rc081/archive-verified.private.json",
+      "sha256": "ca060963422c4eb96f00e885ddca12a8ebbd197ebf12f3c584e5321571ac472b"
+    },
+    {
+      "path": "artifacts/pr58/rc081/cleanup-result.private.json",
+      "sha256": "7ac178c16e7427e6b1ad196f4ae427e0431fa9c92862f4175dc86cea11c1a25c"
+    },
+    {
+      "path": "artifacts/pr58/rc081/final-gc-eligibility.private.json",
+      "sha256": "388829369c230d180f7070790a66a66e05fc48ee05a4ebeeb0c3bfdcc1eda549"
+    },
+    {
+      "path": "artifacts/pr58/rc081/isolated-restore-archive-oracle.private.log",
+      "sha256": "c69c6ac7b57fd3eb7dfd8668793dfe94b747a90409a43be0c8ea1964a5af4e76"
+    },
+    {
+      "path": "artifacts/pr58/rc081/daily-restoration-safe.json",
+      "sha256": "62090f949a976bbb8bcd3da2f54837c893626daf49fcb421927151fa77954315"
+    },
+    {
+      "path": "artifacts/pr58/rc081/other-workspaces-preserved.json",
+      "sha256": "1c7f1f697648ef6fae7c37f7fa823baa7396d6668ab8b349d22c274b4c30c238"
+    },
+    {
+      "path": "artifacts/pr58/rc081/final-after-maintenance-audit.json",
+      "sha256": "e3283d845198e25e35d12670ac9901bffce173d325964aedbf364631bfe0f761"
+    },
+    {
+      "path": "artifacts/pr58/rc081/installed-cli-mcp.private.log",
+      "sha256": "a8e051613b426abf37f2c71bfba64131cc8e1f4aa2c0cbe4a2ca807a5ef432a8"
+    },
+    {
+      "path": "artifacts/pr58/rc081/migration-resumed-final.txt",
+      "sha256": "5c0b36b8eabacea27e1fa9600cf3c956dfb3d192671b4a7b4b3bab23308743b7"
+    },
+    {
+      "path": "artifacts/pr58/rc081/startup-smoke.json",
+      "sha256": "61bd573ec80500906b5d55dc9fb8c8cd3b60af71dd9d8f8736d8f6049d2b4ac9"
+    },
+    {
+      "path": "artifacts/pr58/rc081/phone-background-job.json",
+      "sha256": "4577d291fdc9f4d88a5284369c42ad72241d2119db577410ee5d69327dd958d0"
+    },
+    {
+      "path": "artifacts/pr58/rc081/ha-control-summary.json",
+      "sha256": "549a579bf4e5879bf12b0ce644f6f78d76cbe1615b33300cf7ba4c2271bebd49"
+    },
+    {
+      "path": "artifacts/pr58/rc081/x08e-offline-smoke.json",
+      "sha256": "e569c62cf36b7f810881757aae77cc03edd4dbf01781b3a67c50ec0d8daaa7f3"
+    },
+    {
+      "path": "artifacts/pr58/rc081/temporary-resolution.private.json",
+      "sha256": "968e4a78cb1d2be463f0f5deb0f49fbe8b497336df1e8e877bafb5a6a245aefe"
+    },
+    {
+      "path": "artifacts/pr58/rc081/revoked-capabilities.private.json",
+      "sha256": "e99f99a368b972ed05d36b0dff87065cb02ed435e376592dc3543fe2ef74d74f"
     }
-  }
+  ]
 }
