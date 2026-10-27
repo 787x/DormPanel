@@ -49,3 +49,9 @@
 - 尚未量化长期 CPU、峰值内存或做人工 TalkBack 流程验收。未更动日用客户端、Launcher、原厂服务或同步数据，也未据此声称原厂功能全量通过。
 
 测试入口：`TimetableSwipeTest` 的 `realAdjacentPagesFollowAtQuarterHalfAndEightyAndPromoteWithoutRebuild`、`todayBackgroundIsBelowOpaqueCardsAndRedLineInBothThemes`、`nativeDistinctDatePreviewRecording`；`X08eScheduleDisplayTest` 的 `pr64RealAdjacentPreviewGeometryPromotionAndCleanupAcrossLayouts`、`pr64HomeBoundsChineseEnglishAndEdgeTouches`、`pr64NativeDistinctWeeksPreviewRecording`。其余入口名称在对应日志中。使用 testbed APK；Home 实机页面内分发验证传 `-e homeDirect true`，模拟器原生点击不传此参数。
+
+## 追加：Apps 页返回首页按钮
+
+按用户追加要求，Apps 页按钮文字由 Home 改为「返回首页」，宽度从 144dp 增至 176dp，高度保持 56dp，原 `onReturnHome` 行为不变。只修改 Apps 专用文字资源与此按钮宽度。
+
+[构建通过](apps-home-build.txt)；X08E 实机复用 `AppsAndroidTest.gridOwnsScrollHomeButtonReturnsAndFavoritesSurviveNewViewModel`，[1/1 PASS](apps-home-ui.txt)，覆盖应用列表滚动、深浅色、重建、按钮回首页及收藏保持。使用隔离 testbed 与合成应用列表。[实际截图](screenshots/apps-home.png)。
