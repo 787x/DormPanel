@@ -58,7 +58,7 @@ internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, priv
                 X08eWeekGeometry.lanes(group).forEach { lane ->
                     val laneView = FrameLayout(context)
                     lane.forEach { segment ->
-                        val card = context.courseView(listOf(segment.item), source.state, style, source.clock.zone()) { open(group.map { it.item }, true) }
+                        val card = context.courseView(listOf(segment.item), source.state, style, source.clock.zone()) { detail(segment.item) }
                         cards += card
                         laneView.addView(card, FrameLayout.LayoutParams(-1, maxOf(1, offset(segment.end) - offset(segment.start))).apply {
                             topMargin = offset(segment.start) - top; marginStart = context.dp(2); marginEnd = context.dp(2)
@@ -74,13 +74,13 @@ internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, priv
         applyAppearance(appearance.state)
     }
     /** Always available from the fixed day footer, even for one-minute or heavily overlapping courses. */
-    fun openDay(day: Int) = open(segments.filter { it.day == day }.map { it.item }, false)
+    fun openDay(day: Int) = open(segments.filter { it.day == day }.map { it.item })
     fun dayCount(day: Int) = segments.count { it.day == day }
-    private fun open(items: List<ClassOccurrence>, overlap: Boolean) {
+    private fun open(items: List<ClassOccurrence>) {
         if (items.isEmpty()) return
         if (items.size == 1) { detail(items.single()); return }
         chooser?.dismiss()
-        chooser = AlertDialog.Builder(context).setTitle(context.scheduleText(if (overlap) "重叠课程" else "当天课程", if (overlap) "Overlapping courses" else "Day courses"))
+        chooser = AlertDialog.Builder(context).setTitle(context.scheduleText("当天课程", "Day courses"))
             .setItems(items.map { "${it.entry.title}\n${context.occurrenceTime(it, source.clock.zone())} · ${it.entry.location}" }.toTypedArray()) { _, i -> detail(items[i]) }
             .setNegativeButton(context.scheduleText("关闭", "Close"), null).create().also {
                 it.show(); it.matchActivityBrightness(); applyAppearanceTree(it.window!!.decorView, appearance.state)

@@ -15,7 +15,7 @@
 - 实际时间采用最终 `ClassOccurrence.start/end`。跨午夜切片到实际日期，点击仍引用原始 occurrence；不以原始导入时间重新定位课程。
 - 节次模式校验本周涉及来源的配置、时区、七天生效阶段及节次先后关系；只有能构造一致的节次表时才压缩课间。自定义时间及节次外课程继续按同一可逆时间映射显示。缺失/混合作息明确提示并回退到实际时间，不隐藏课程。纯本地课程没有可靠的学期关联时同样回退，不猜测配置。
 - 当前节次必须与有效关联作息及 occurrence 的实际起止时刻一致。详情中会区分当前节次与原始导入节次。
-- 重叠按精确 Instant 判断，课程各自保持真实起止坐标并分配可复用的并排位置。点击重叠组内卡片可选择完整课程；日期下方的固定列表也可访问短课程、午夜课程及拥挤课程。空白位置没有扩大后的课程点击区域。
+- 重叠按精确 Instant 判断，课程各自保持真实起止坐标并分配可复用的并排位置。点击独立卡片直接进入该卡片对应的原始 occurrence 详情；日期下方的固定列表可选择短课程、午夜课程及拥挤课程。只有当天列表确有多门课程时才弹出选择框，单门直接进入详情。空白位置没有扩大后的课程点击区域。
 - 配色使用 `sourceId + seriesId` 的稳定散列，与日期、课程名称和排序无关；六种低饱和色允许不同课程同色。卡片仍保留文字身份，并通过 `AppearanceAware` 自行响应主题，避免全局 Button tint 覆盖。
 - 优化排版按空间展示名称、原始地点、有效时间/节次及必要的已修改/补课标记。正常课程不重复标记 Imported。空间不足时明确省略次要文字，完整信息可在详情查看；不拆分学校地点命名。
 - 今天列和标题高亮；当前时间线仅在真实今天显示。可见且位于当前周时每分钟只更新覆盖层；隐藏/脱离窗口时停止回调。主题切换更新现有卡片，时钟更新不重建课程视图。
@@ -70,14 +70,50 @@ adb -s emulator-5580 shell am instrument -w -r -e class com.dormpanel.app.schedu
 | --- | --- |
 | ![节次深色](screenshots/pr63-periods-hierarchy.png) | ![节次浅色](screenshots/pr63-periods-light.png) |
 
-| 显示设置 | 重叠选择与作息回退 |
+| 显示设置 | 首轮审查证据与作息回退 |
 | --- | --- |
-| ![显示设置](screenshots/pr63-settings.png) | ![重叠选择](screenshots/pr63-overlap-chooser.png) |
+| ![显示设置](screenshots/pr63-settings.png) | ![首轮审查时的重叠选择（已由下文修复替代）](screenshots/pr63-overlap-chooser.png) |
 | ![作息回退](screenshots/pr63-periods-fallback.png) | 回退仍展示课程，并保持视口对应的实际时间。 |
 
 ## 剩余限制
 
 - 未在真实 X08E 验收触摸、亮度及长时间运行，未声称实机 PASS。未运行 Phone、fnOS 或 Sync v3 完整专项，也未进行四小时 soak。
 - 非标准短课和密集重叠卡片可能只容纳简略文字；固定的当天课程入口及详情保留完整访问。不同有效作息不能共用一套诚实的节次刻度时，采用明确的实际时间回退。
-- App 全量 JVM 的既有 WebDAV 文案断言仍失败，因此 PR 保持 Draft，未声称所有检查通过。
+- App 全量 JVM 的既有 WebDAV 文案断言仍失败，保留上方原始失败记录。本次未改相关代码、不重跑全量，也不把该既有失败归因于此次 UI 修复；未声称全量通过。按本次交付要求，该项与实机未验证项不自动阻塞转为 Ready for Review。
 - 未修改课程模型、数据库表、导入原文、作息定义、编辑/合并/同步语义、Phone 代码或正式版本号；未合并、发布 Release 或升级日用设备。
+
+## 合并前收尾：独立卡片点击与经典兼容
+
+针对审查 HEAD `61c3e396031acbf0cb0de330b2c2221b3abb671b` 的局部修复：原先虽已绘制独立重叠卡片，点击仍把整个 group 交给选择框；现在每张卡片直接调用 `detail(segment.item)`。当天列表继续持有完整原始 occurrence，只有多候选列表才要求选择。精确 Instant 分组、并排位置、时间轴、显示偏好及业务写入路径均未修改。经典 Button 的无障碍文本、分层卡片的无障碍描述与实际点击目标都指向各自课程。
+
+### 经典兼容契约与 PR62 对照
+
+兼容配置固定为 `CLASSIC + colors=false + hierarchy=false`，兼容指布局和操作保持熟悉，并非逐字复刻旧标签。对照 `8e550696664358f1dcb47c387a7f7120a28eba4b` 的 `SchedulePageView.timetable()`：
+
+| 必须保留的行为 | 对照与验证 |
+| --- | --- |
+| 七天并列、等权列与七列独立纵向滚动 | 继续使用七个竖向 LinearLayout、每列自己的 ScrollView、相同 3dp 列内边距；滑动第一列不改变其他六列。整数布局可有 1px 取整差。 |
+| 日期及时间顺序、课程不遗漏 | 沿用同一 `ScheduleProjection.week` 结果和日期过滤；用乱序输入的 24 门追加本地课与原有导入课核对实际卡片顺序和数量。 |
+| 单色、经典文字结构与深浅色 | 继续用 Button、16sp、最多七行、名称/起止时间/地点/节次纵向文本与同一 PanelPalette.surface；两个主题均检查单色 tint。4dp 卡片间距只是可读性微调，不改变触控入口。 |
+| 详情、编辑、日期调整和周次导航 | 继续传递原始 occurrence 给既有 ScheduleEditors；实际打开本周编辑并核对名称；点击日期调整、下一周和本周；既有 scoped-edit 保存/恢复回归通过。 |
+| 无偏好默认与随时切回 | 清空 testbed 的显示偏好后直接创建页面，得到经典单色/经典排版及七列；通过设置切到彩色分层时间模式，再切回三个经典值并核对保存结果。 |
+| 原有管理操作 | 添加、导入、接收、来源/同步入口及权限判断沿用 PR62；只新增集中显示设置入口和设备语言文案。 |
+
+允许的文字改善：显示最终生效起止时间（跨日注明日期）、仅展示经验证的当前节次、取消正常课程重复的 Imported、采用中文设备文案。地点不拆分；教师、备注、来源及原始说明保留在完整详情中。上述对照没有发现需要再改产品布局或业务入口的操作退化，因此此次生产代码只修复网格点击。
+
+### 本次定向验证
+
+仍使用 API 28、1280×800、160dpi 的 `emulator-5580` 与 testbed/隔离数据；未安装到物理 X08E。
+
+- X08E App/AndroidTest 构建通过：[构建与 JVM](premerge-build.txt)、[补充 UI 测试构建](premerge-ui-build.txt)。几何 JVM 6/6 PASS：[JUnit XML](results/premerge-X08eWeekGeometryTest.xml)。
+- `individualCardsOpenTheirOwnDetailsForTwoThreeAndAdjacentCourses`：在实际时间和节次两种网格，覆盖双课重叠、三课重叠及端点相接的非重叠课程。通过 Espresso 真实点击，核对目标名称、起止时间、地点、教师、备注、来源及原始说明，并进入所选 B 的本周编辑核对字段。经典单色与彩色分层均覆盖所有目标，另两种配色/排版组合覆盖 A/B；还点击真实时间及压缩节次中的课间空白，确认不打开详情或选择框。
+- `fixedDayListsRetainShortSubminuteAndBothMidnightSlices`：一分钟、十秒课程及跨午夜课程在前后两天的固定列表均能进入对应详情，未改原始导入记录。
+- `classicCompatibilityDefaultsIndependentScrollingAndOperations`：验证上方经典兼容契约的默认值、顺序、独立滚动、两主题单色、详情与编辑、日期调整、周次导航以及设置往返。
+- 复用 `shortOverlapFallbackAndDateAdjustmentRemainAccessible` 与偏好默认/损坏值回退测试；已有 `localClassDetailDayAdjustmentAndScopedEdit` 再次完成实际保存、覆盖与恢复验证。
+- [首轮记录](premerge-ui-initial.txt)：6 项中的 5 项通过；经典测试起初错误要求所有等权列的整数宽度完全相等，遇到正常的 1px 取整差后失败。已将该断言修正为至多 1px，并保留列数、横向排列、独立父容器和实际滚动断言。[修正后的经典及卡片定向记录](premerge-ui.txt)：最终 2/2 PASS，包含新增的实际/压缩课间空白点击断言；本轮覆盖的 6 项测试均已有通过记录。
+
+此前 12 种组合的完整视觉、跨进程偏好、深浅色和核心课表 34 项验收继续复用，没有机械重复全套测试。未修改 WebDAV，保留前述 205/206 与超时文案断言失败；未验证的真实设备触摸、亮度与长期运行继续列为限制。
+
+| 审查时点击独立卡片仍弹选择框（历史） | 修复后点击 B 直接显示 B 的完整详情 |
+| --- | --- |
+| ![历史重叠选择](screenshots/pr63-overlap-chooser.png) | ![独立卡片直接进入 B 详情](screenshots/pr63-overlap-exact-target.png) |

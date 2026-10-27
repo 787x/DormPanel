@@ -62,8 +62,8 @@ class X08eScheduleDisplayTest {
     @Before fun setup() { saved = X08eSchedulePreferences(context).read() }
     @After fun restore() { X08eSchedulePreferences(context).write(saved); if (::source.isInitialized) instrumentation.runOnMainSync { source.close() } }
     private fun views(root: View): List<View> = listOf(root) + if (root is ViewGroup) (0 until root.childCount).flatMap { views(root.getChildAt(it)) } else emptyList()
-    private fun install(activity: MainActivity, style: X08eScheduleStyle, theme: ThemeMode = ThemeMode.DARK, session: ScheduleSession? = null) {
-        X08eSchedulePreferences(context).write(style)
+    private fun install(activity: MainActivity, style: X08eScheduleStyle, theme: ThemeMode = ThemeMode.DARK, session: ScheduleSession? = null, persistStyle: Boolean = true) {
+        if (persistStyle) X08eSchedulePreferences(context).write(style)
         val config = Configuration(activity.resources.configuration).apply { setLocale(Locale.SIMPLIFIED_CHINESE) }
         val localized = android.view.ContextThemeWrapper(activity, com.dormpanel.app.R.style.Theme_DormPanel).apply { applyOverrideConfiguration(config) }
         if (!::source.isInitialized) {
@@ -183,7 +183,8 @@ class X08eScheduleDisplayTest {
             onView(withText("关闭")).perform(click())
             scenario.onActivity { views(page).filterIsInstance<X08eCourseCard>().single { v -> v.contentDescription.startsWith("重叠课程，") }.performClick() }
             onView(withText("重叠课程")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
-            screenshot("overlap-chooser")
+            onView(withText(org.hamcrest.Matchers.containsString("地点：实验楼"))).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
+            screenshot("overlap-direct-detail")
             onView(withText("关闭")).perform(click())
             onView(withContentDescription("日期调整 ${week.plusDays(1)}")).perform(click())
             onView(withContentDescription("日期调整方式")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
@@ -210,4 +211,148 @@ class X08eScheduleDisplayTest {
             scenario.onActivity { assertEquals(0, views(page).filterIsInstance<X08eWeekGrid>().single().dayCount(0)) }
         }
     }
+
+    private fun clickCourse(title: String) {
+        onView(org.hamcrest.Matchers.allOf(isClickable(), org.hamcrest.Matchers.anyOf(
+            withText(org.hamcrest.Matchers.startsWith("$title\n")),
+            withContentDescription(org.hamcrest.Matchers.startsWith("$title，")))))
+            .perform(click())
+    }
+    private fun detailContains(vararg values: String) {
+        onView(withText(org.hamcrest.Matchers.allOf(values.map { org.hamcrest.Matchers.containsString(it) })))
+            .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+            .check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
+    }
+    private fun closeDetail() = onView(withText("关闭"))
+        .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
+    private fun selectLayout(index: Int) = object : androidx.test.espresso.ViewAction {
+        override fun getConstraints() = isAssignableFrom(Spinner::class.java)
+        override fun getDescription() = "Select layout $index"
+        override fun perform(controller: androidx.test.espresso.UiController, view: View) {
+            (view as Spinner).setSelection(index); controller.loopMainThreadUntilIdle()
+        }
+    }
+    @Test fun individualCardsOpenTheirOwnDetailsForTwoThreeAndAdjacentCourses() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val targets = listOf(
+                Triple("点击A", 0, 480 to 580), Triple("点击B", 0, 500 to 560),
+                Triple("点击C", 1, 480 to 580), Triple("点击D", 1, 500 to 570), Triple("点击E", 1, 520 to 580),
+                Triple("相邻F", 2, 600 to 645), Triple("相邻G", 2, 645 to 690))
+            scenario.onActivity {
+                install(it, X08eScheduleStyle(X08eScheduleLayout.TIME))
+                fixtureData = fixtureData.copy(imported = targets.map { (id,day,bounds) ->
+                    val start = instant(day,bounds.first/60,bounds.first%60)
+                    ImportedClassOccurrence(id,"source",id,null,start,id,start,instant(day,bounds.second/60,bounds.second%60),
+                        zone.id,"地点-$id","来源原文-$id",null)
+                }, classOverrides=targets.map { (id,_,_) -> ClassOverride.of("source",id,null,
+                    ClassPatch(teacher="教师-$id",note="备注-$id")) })
+                source.reload()
+            }
+            for (layout in listOf(X08eScheduleLayout.TIME,X08eScheduleLayout.PERIODS))
+                for (colors in listOf(false,true)) for (hierarchy in listOf(false,true)) {
+                    scenario.onActivity { install(it,X08eScheduleStyle(layout,colors,hierarchy)) }
+                    instrumentation.waitForIdleSync()
+                    val clickTargets = if (colors == hierarchy) targets else targets.take(2)
+                    for ((id,_,bounds) in clickTargets) {
+                        // Espresso sends a real tap at the visible card; no performClick shortcut.
+                        clickCourse(id)
+                        val time = "${X08eWeekGeometry.timeLabel(bounds.first)}–${X08eWeekGeometry.timeLabel(bounds.second)}"
+                        detailContains(id,time,"地点-$id","教师-$id","备注-$id","来源原文-$id","隔离演示课表")
+                        if (layout == X08eScheduleLayout.PERIODS && colors && hierarchy && id == "点击B") screenshot("overlap-exact-target")
+                        closeDetail()
+                    }
+                    val gap = FloatArray(2)
+                    scenario.onActivity {
+                        val grid = views(page).filterIsInstance<X08eWeekGrid>().single()
+                        val column = grid.getChildAt(1)
+                        val xy = IntArray(2); column.getLocationOnScreen(xy)
+                        gap[0] = xy[0] + column.width / 2f; gap[1] = xy[1] + grid.offset(590f).toFloat()
+                    }
+                    onView(org.hamcrest.Matchers.sameInstance(page)).perform(androidx.test.espresso.action.GeneralClickAction(
+                        androidx.test.espresso.action.Tap.SINGLE, { gap }, androidx.test.espresso.action.Press.FINGER))
+                    onView(withText("编辑")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                    onView(withText("当天课程")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                }
+            clickCourse("点击B")
+            onView(withText("编辑")).perform(click()); onView(withText("仅本周")).perform(click())
+            onView(withHint("课程名称")).check(androidx.test.espresso.assertion.ViewAssertions.matches(withText("点击B")))
+            onView(withHint("教师")).check(androidx.test.espresso.assertion.ViewAssertions.matches(withText("教师-点击B")))
+            onView(withText("取消")).perform(click())
+            scenario.onActivity { assertEquals(fixtureData.imported, source.state.imported); assertEquals(fixtureData.classOverrides,source.state.classOverrides) }
+        }
+    }
+    @Test fun fixedDayListsRetainShortSubminuteAndBothMidnightSlices() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity {
+                install(it,X08eScheduleStyle(X08eScheduleLayout.PERIODS,true,true))
+                val start = instant(2,12,10)+1000
+                fixtureData = fixtureData.copy(imported=fixtureData.imported + ImportedClassOccurrence("seconds","source","seconds",null,
+                    start,"十秒课程",start,start+10000,zone.id,"短课地点","十秒来源",null))
+                source.reload()
+                assertEquals(5,views(page).filterIsInstance<X08eWeekGrid>().single().dayCount(2))
+            }
+            for ((day,title,room) in listOf(Triple(2,"短课程（1分钟）","会议室"),Triple(2,"十秒课程","短课地点"),
+                Triple(4,"跨午夜研讨","线上"),Triple(5,"跨午夜研讨","线上"))) {
+                scenario.onActivity { views(page).filterIsInstance<X08eWeekGrid>().single().openDay(day) }
+                onView(withText(org.hamcrest.Matchers.startsWith("$title\n"))).perform(click())
+                detailContains(title,room)
+                if (title=="跨午夜研讨") detailContains("23:30–10/31 00:30","2026")
+                closeDetail()
+            }
+            scenario.onActivity { assertEquals(fixtureData.imported,source.state.imported) }
+        }
+    }
+    @Test fun classicCompatibilityDefaultsIndependentScrollingAndOperations() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+            lateinit var firstScroll: ScrollView
+            scenario.onActivity {
+                context.getSharedPreferences("x08e_schedule_display",Context.MODE_PRIVATE).edit().clear().commit()
+                install(it,X08eScheduleStyle(),session=session,persistStyle=false)
+                assertEquals(X08eScheduleStyle(),X08eSchedulePreferences(context).read())
+                fixtureData=fixtureData.copy(entries=(0..23).map { i -> TimetableEntry("classic-$i","经典追加$i",1,360+i*25,380+i*25,"教室$i") }.reversed())
+                source.reload()
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity {
+                val scrolls=views(page).filterIsInstance<ScrollView>(); assertEquals(7,scrolls.size)
+                assertTrue(scrolls.zipWithNext().all { (a,b) -> a.left==b.left && kotlin.math.abs(a.width-b.width)<=1 && a.parent!==b.parent })
+                val xs=scrolls.map { v -> IntArray(2).also { v.getLocationOnScreen(it) }[0] }
+                assertTrue(xs.zipWithNext().all { (a,b) -> b>a })
+                val expected=ScheduleProjection.week(source.state,week,zone).filter { it.date==week }.map { it.entry.title }
+                val actual=views(scrolls[0]).filterIsInstance<X08eClassicCourseButton>().map { it.text.toString().substringBefore('\n') }
+                assertEquals(expected,actual); assertTrue(views(page).filterIsInstance<X08eCourseCard>().isEmpty())
+                firstScroll=scrolls.first()
+            }
+            onView(org.hamcrest.Matchers.sameInstance(firstScroll)).perform(androidx.test.espresso.action.ViewActions.swipeUp())
+            scenario.onActivity {
+                val scrolls=views(page).filterIsInstance<ScrollView>(); assertTrue(scrolls[0].scrollY>0)
+                assertTrue(scrolls.drop(1).all { it.scrollY==0 })
+                appearance.setTheme(ThemeMode.LIGHT); page.applyAppearance(appearance.state)
+                assertTrue(views(page).filterIsInstance<X08eClassicCourseButton>().all { v -> v.backgroundTintList!!.defaultColor==PanelPalette.forMode(ThemeMode.LIGHT).surface })
+                appearance.setTheme(ThemeMode.DARK); page.applyAppearance(appearance.state)
+            }
+            onView(withText(org.hamcrest.Matchers.startsWith("经典追加0\n"))).perform(androidx.test.espresso.action.ViewActions.scrollTo(),click())
+            detailContains("经典追加0","06:00–06:20","教室0")
+            onView(withText("编辑")).perform(click()); onView(withText("仅本周")).perform(click())
+            onView(withHint("课程名称")).check(androidx.test.espresso.assertion.ViewAssertions.matches(withText("经典追加0")))
+            onView(withText("取消")).perform(click())
+            onView(withContentDescription("日期调整 $week")).perform(click())
+            onView(withContentDescription("日期调整方式")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
+            onView(withText("取消")).perform(click())
+            onView(withContentDescription("下一周")).perform(click())
+            scenario.onActivity { assertEquals(week.plusWeeks(1),session.weekStart) }
+            onView(withText("本周")).perform(click())
+            for ((index,expected) in listOf(1 to X08eScheduleStyle(X08eScheduleLayout.TIME,true,true),0 to X08eScheduleStyle())) {
+                onView(withText("显示设置")).perform(click())
+                onView(withContentDescription("课表布局")).perform(selectLayout(index))
+                onView(withText("按课程配色")).perform(click()); onView(withText("优化信息排版")).perform(click())
+                onView(withText("保存")).perform(click())
+                scenario.onActivity { assertEquals(expected,X08eSchedulePreferences(context).read()); assertEquals(week,session.weekStart) }
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals(7,views(page).filterIsInstance<ScrollView>().size); assertEquals(fixtureData.entries.toSet(),source.state.entries.toSet()) }
+        }
+    }
+
 }
