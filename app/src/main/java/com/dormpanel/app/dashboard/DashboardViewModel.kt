@@ -41,6 +41,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val webDav = WebDavSyncController(application, schedule, profiles = termProfiles)
     val sharedSchedule = SharedScheduleController(application, schedule, accounts = webDav.settings)
     val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
+    val scheduleViewport = com.dormpanel.app.schedule.ScheduleViewport()
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) } +
         listOf("calendar", "timetable").map { ScheduleCardProvider(it, schedule, appearance) })

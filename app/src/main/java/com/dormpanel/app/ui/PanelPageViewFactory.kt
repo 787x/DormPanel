@@ -32,9 +32,10 @@ class PanelPageViewFactory(
     private val installApk: () -> Unit = {},
     private val webDavSettings: com.dormpanel.app.schedule.WebDavSettings? = null,
     private val webDavSync: com.dormpanel.app.schedule.WebDavSyncController? = null,
+    private val scheduleViewport: com.dormpanel.app.schedule.ScheduleViewport = com.dormpanel.app.schedule.ScheduleViewport(),
 ) {
     fun create(page: PanelPage, parent: ViewGroup): View {
-        if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, receiveTimetable, manageTimetables)
+        if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, receiveTimetable, manageTimetables, scheduleViewport)
         if (page == PanelPage.APPS) return com.dormpanel.app.apps.AppsPageView(inflater.context, apps, apps.icons, appearance, onReturnHome, installApk)
         if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed)
         if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, deviceControls, onPageGestureClaimed, backend, startupPolicy, webDavSettings, webDavSync)

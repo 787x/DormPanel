@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.schedule.ClassEditSessionTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-27T10:16:10.620Z" hostname="LAPTOP-6ORBUU2C" time="0.12">
+  <properties/>
+  <testcase name="weeklyBaselineIncludesSeriesEditWhileAllWeeksIgnoresWeeklyEdits" classname="com.dormpanel.app.schedule.ClassEditSessionTest" time="0.087"/>
+  <testcase name="untouchedFieldsInheritAndExplicitEmptyClearsOnlyChangedField" classname="com.dormpanel.app.schedule.ClassEditSessionTest" time="0.003"/>
+  <testcase name="profileFormRoundTripsAllPhasesAndRejectsInvalidInput" classname="com.dormpanel.app.schedule.ClassEditSessionTest" time="0.02"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
