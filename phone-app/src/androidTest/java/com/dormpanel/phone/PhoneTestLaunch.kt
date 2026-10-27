@@ -12,7 +12,10 @@ internal fun launchPhoneTestActivity(): ActivityScenario<TimetableActivity> {
         // Instrumentation-only watcher: MIUI can open its prompt after any dialog transition.
         repeat(6000) { runCatching { dismissTestPasswordPrompt() }; Thread.sleep(100) }
     }.apply { isDaemon = true; name = "test-password-prompt"; start() }
-    if (InstrumentationRegistry.getArguments().getString("pr35RootUi") != "true") {
+    if (InstrumentationRegistry.getArguments().getString("directUi") == "true") {
+        return ActivityScenario.launch(TimetableActivity::class.java)
+    }
+    if (InstrumentationRegistry.getArguments().getString("pr35RootUi") != "true" && InstrumentationRegistry.getArguments().getString("shellUi") != "true") {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val pkg = instrumentation.targetContext.packageName
         require(pkg.endsWith(".testbed"))
@@ -43,7 +46,9 @@ internal fun launchPhoneTestActivity(): ActivityScenario<TimetableActivity> {
             // executeShellCommand uses argv splitting; keep su's -c argument free of spaces.
             val script = java.io.File(instrumentation.targetContext.filesDir, "pr35-isolated-ui-launch.sh")
             script.writeText("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $pkg/com.dormpanel.phone.TimetableActivity\n")
-            val command = "su -c /system/bin/sh<${script.absolutePath}"
+            val command = if (InstrumentationRegistry.getArguments().getString("shellUi") == "true")
+                "am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $pkg/com.dormpanel.phone.TimetableActivity"
+                else "su -c /system/bin/sh<${script.absolutePath}"
             val fd = instrumentation.uiAutomation.executeShellCommand(command)
             val output = ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader().use { it.readText() }
             check(output.contains("Status: ok")) { "Root-assisted isolated Activity launch failed: ${output.take(160)}" }

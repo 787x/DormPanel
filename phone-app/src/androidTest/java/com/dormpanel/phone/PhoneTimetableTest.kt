@@ -86,6 +86,186 @@ class PhoneTimetableTest {
             }, androidx.test.espresso.action.Press.FINGER).perform(controller, view)
         }
     }
+    private fun grid(a: TimetableActivity): PhoneWeekView {
+        fun find(v: android.view.View): PhoneWeekView? {
+            if (v is PhoneWeekView) return v
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) find(v.getChildAt(i))?.let { return it }
+            return null
+        }
+        return find(a.window.decorView)!!
+    }
+    @Test fun pr62AxesRangesClockAndRecreationWithRealCsv() {
+        val ctx = instrumentation.targetContext
+        for (name in listOf("TimetableActivity","com.dormpanel.phone.TimetableActivity")) ctx.getSharedPreferences(name,0).edit()
+            .putString("date","2026-10-27").putString("term",BuiltInProfiles.TERM_2026_2027_1).commit()
+        try {
+            androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO)
+            open().use { s ->
+                if (InstrumentationRegistry.getArguments().getString("userCsv") == "true") {
+                    val file = java.io.File(ctx.getExternalFilesDir(null),"user-timetable.csv")
+                    val parsed = file.inputStream().use { TimetableImporter(profiles=TermScheduleProfileStore(ctx)).parse(ScheduleArtifact.read("user.csv",it)) }
+                    s.onActivity { a -> a.source.import(parsed,"实测 CSV",null) { assertTrue(it.isSuccess) } }
+                    waitFor(s) { it.source.state.imported.size == parsed.occurrences.size }
+                } else {
+                    pick("hubei_2026-2027-1.csv"); preview(s); onView(withText("确认导入")).perform(click())
+                    waitFor(s) { it.source.state.imported.size == 131 }
+                }
+                onView(withText("今天")).perform(click())
+                onView(withText("周视图")).perform(click())
+                screenshot("pr62-time-seven-light")
+                onView(withText("按时间 ▾")).perform(click())
+                onView(withText("按节次 · 压缩课间")).perform(click())
+                screenshot("pr62-period-seven-light")
+                var narrow = 0
+                var anchor = 480f
+                s.onActivity { a ->
+                    val g = grid(a); assertTrue(g.usesPeriods); narrow = g.getChildAt(1).width
+                    val cards = (1 until g.childCount).sumOf { (g.getChildAt(it) as android.view.ViewGroup).childCount }
+                    val today = a.source.clock.today()
+                    g.updateNow(today.atTime(10,0).atZone(a.source.clock.zone()))
+                    g.updateNow(today.atTime(10,1).atZone(a.source.clock.zone()))
+                    assertEquals(cards,(1 until g.childCount).sumOf { (g.getChildAt(it) as android.view.ViewGroup).childCount })
+                    val scroller = a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll")
+                    scroller.scrollTo(0,g.offsetAt(600f))
+                    anchor = g.minuteAt(scroller.scrollY)
+                }
+                onView(withText("七天 · 切换五天")).perform(click())
+                s.onActivity { a ->
+                    val g = grid(a); assertEquals(6,g.childCount); assertTrue(g.getChildAt(1).width > narrow)
+                    val y = a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll").scrollY
+                    assertEquals(anchor,g.minuteAt(y),3f)
+                }
+                s.onActivity { a -> a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll").scrollTo(0,0) }
+                screenshot("pr62-period-five-light")
+                s.recreate(); waitFor(s) { it.source.ready }
+                s.onActivity { assertEquals(5,grid(it).dayCount); assertTrue(grid(it).usesPeriods) }
+                instrumentation.runOnMainSync { androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES) }
+                Thread.sleep(1000); waitFor(s) { it.source.ready }
+                s.onActivity { a -> a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll").scrollTo(0,0) }
+                screenshot("pr62-period-five-dark")
+                onView(withText("五天 · 切换七天")).perform(click())
+                screenshot("pr62-period-seven-dark")
+                s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+                Thread.sleep(1000); waitFor(s) { it.source.ready }; screenshot("pr62-period-landscape-dark")
+                s.onActivity { a ->
+                    val scroller = a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll")
+                    val parent = scroller.parent as android.view.View
+                    assertTrue("Landscape content height ${scroller.height}",scroller.height > (parent.height-parent.paddingTop-parent.paddingBottom)*.60)
+                }
+            }
+        } finally { instrumentation.runOnMainSync { androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM) } }
+    }
+    @Test fun pr62SyntheticOriginalsPhasesShortCardsAndClock() {
+        open().use { scenario ->
+            var chosen: ClassOccurrence? = null
+            val monday = LocalDate.of(2026,10,5)
+            val zone = java.time.ZoneId.systemDefault()
+            fun item(id: String, day: Int, start: Int, end: Int) = ClassOccurrence(
+                TimetableEntry(id,id,day+1,start,end.coerceAtMost(1439),"长地点 B310 通识多媒体教室"),monday.plusDays(day.toLong()),
+                monday.plusDays(day.toLong()).atStartOfDay(zone).plusMinutes(start.toLong()).toInstant(),
+                monday.plusDays(day.toLong()).atStartOfDay(zone).plusMinutes(end.toLong()).toInstant())
+            val long = item("很长的课程名称需要显示三行以上",0,480,580)
+            val short = item("一分钟课程",0,780,781)
+            val night = item("跨午夜原始实例",2,1410,1470)
+            val overlapA = item("连续重叠 A",1,480,540)
+            val overlapB = item("连续重叠 B",1,510,570)
+            val overlapC = item("连续重叠 C",1,560,600)
+            val weekend = item("周末课程",6,600,660)
+            val items = listOf(long,short,night,overlapA,overlapB,overlapC,weekend)
+            scenario.onActivity { a ->
+                val profile = BuiltInProfiles.term2026.copy(timezone=zone.id)
+                val g = PhoneWeekView(a,items,monday,zone,{ chosen=it },7,true,profile)
+                a.setContentView(android.widget.ScrollView(a).apply { addView(g) })
+                assertTrue(g.usesPeriods)
+                assertEquals(g.offsetAt(870f,0),g.offsetAt(840f,3))
+                assertTrue(g.offsetAt(780f,0) < g.offsetAt(870f,0))
+                val mondayColumn = g.getChildAt(1) as android.widget.FrameLayout
+                val originals = (0 until mondayColumn.childCount).map { mondayColumn.getChildAt(it) }
+                g.updateNow(monday.atTime(8,10).atZone(zone))
+                val line = mondayColumn.getChildAt(mondayColumn.childCount-1)
+                assertEquals(android.view.View.VISIBLE,line.visibility)
+                assertEquals(g.offsetAt(490f,0),(line.layoutParams as android.widget.FrameLayout.LayoutParams).topMargin)
+                g.updateNow(monday.atTime(8,11).atZone(zone))
+                originals.forEachIndexed { i,v -> assertSame(v,mondayColumn.getChildAt(i)) }
+                g.updateNow(monday.plusDays(1).atTime(8,11).atZone(zone))
+                assertEquals(android.view.View.GONE,line.visibility)
+                assertEquals(android.view.View.VISIBLE,(g.getChildAt(2) as android.widget.FrameLayout).getChildAt((g.getChildAt(2) as android.widget.FrameLayout).childCount-1).visibility)
+                // Both clipped overnight pieces retain the exact same editor object.
+                for (day in listOf(2,3)) {
+                    val col = g.getChildAt(day+1) as android.view.ViewGroup
+                    (0 until col.childCount).map { col.getChildAt(it) }.filterIsInstance<CourseCard>().single().performClick()
+                    assertSame(night,chosen)
+                }
+                val small = (0 until mondayColumn.childCount).map { mondayColumn.getChildAt(it) }.filterIsInstance<CourseCard>().last()
+                small.performClick(); assertSame(short,chosen)
+            }
+            onView(withText("3 门重叠")).perform(timeBlockClick())
+            onView(withText(startsWith("连续重叠 C"))).perform(click())
+            assertSame(overlapC,chosen)
+            scenario.onActivity { a ->
+                val config = android.content.res.Configuration(a.resources.configuration).apply { fontScale=1.6f }
+                val large = a.createConfigurationContext(config)
+                val g = PhoneWeekView(large,items,monday,zone,{},5,true,BuiltInProfiles.term2026.copy(timezone=zone.id))
+                g.measure(android.view.View.MeasureSpec.makeMeasureSpec(a.dp(320),android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(0,android.view.View.MeasureSpec.UNSPECIFIED))
+                g.layout(0,0,g.measuredWidth,g.measuredHeight)
+                fun inspect(view: android.view.View) {
+                    if (view is CourseCard) for (i in 0 until view.childCount) {
+                        val child = view.getChildAt(i)
+                        if (child.visibility == android.view.View.VISIBLE) {
+                            assertTrue(child.bottom <= view.height-view.paddingBottom)
+                            assertTrue(child.right <= view.width-view.paddingRight)
+                        }
+                    }
+                    if (view is android.view.ViewGroup) for (i in 0 until view.childCount) inspect(view.getChildAt(i))
+                }
+                inspect(g); assertEquals(6,g.childCount)
+            }
+        }
+    }
+    @Test fun pr62VisibleMinuteTickPreservesCardsAndStopsOffscreen() {
+        open().use { scenario ->
+            scenario.onActivity { a -> a.source.saveEntry("实时时钟验证",a.source.clock.today().dayOfWeek.value,480,1080) }
+            waitFor(scenario) { it.source.state.entries.isNotEmpty() }
+            onView(withText("今天")).perform(click()); onView(withText("周视图")).perform(click())
+            var original: PhoneWeekView? = null
+            var line: android.view.View? = null
+            var card: CourseCard? = null
+            var handler: android.os.Handler? = null
+            var tick: Runnable? = null
+            var staleTop = 0
+            scenario.onActivity { a ->
+                val g = grid(a); original = g
+                val day = a.source.clock.today().dayOfWeek.value-1
+                val col = g.getChildAt(day+1) as android.view.ViewGroup
+                card = (0 until col.childCount).map { col.getChildAt(it) }.filterIsInstance<CourseCard>().single()
+                line = col.getChildAt(col.childCount-1)
+                g.updateNow(java.time.ZonedDateTime.now(a.source.clock.zone()).minusMinutes(2))
+                staleTop = (line!!.layoutParams as android.widget.FrameLayout.LayoutParams).topMargin
+                handler = g.handler
+                tick = PhoneWeekView::class.java.getDeclaredField("tick").apply { isAccessible=true }.get(g) as Runnable
+                if (android.os.Build.VERSION.SDK_INT >= 29) assertTrue(handler!!.hasCallbacks(tick!!))
+            }
+            var updated = false
+            val deadline = System.currentTimeMillis()+65_000
+            while (!updated && System.currentTimeMillis() < deadline) {
+                Thread.sleep(1000)
+                scenario.onActivity { a ->
+                    assertSame(original,grid(a))
+                    updated = (line!!.layoutParams as android.widget.FrameLayout.LayoutParams).topMargin != staleTop
+                    if (updated) {
+                        val now = java.time.ZonedDateTime.now(a.source.clock.zone())
+                        assertTrue(kotlin.math.abs(original!!.offsetAt(now.toLocalTime().toSecondOfDay()/60f,now.dayOfWeek.value-1)-
+                            (line!!.layoutParams as android.widget.FrameLayout.LayoutParams).topMargin) <= a.dp(2))
+                        val parent = card!!.parent as android.view.ViewGroup
+                        assertTrue((0 until parent.childCount).any { parent.getChildAt(it) === card })
+                    }
+                }
+            }
+            assertTrue("Visible clock must refresh at the next real minute",updated)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            instrumentation.runOnMainSync { if (android.os.Build.VERSION.SDK_INT >= 29) assertFalse(handler!!.hasCallbacks(tick!!)) }
+        }
+    }
     @Test fun sevenColumnsRotateRefreshAndOpenDetail() {
         open().use { s ->
             s.onActivity { it.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
@@ -395,6 +575,7 @@ class PhoneTimetableTest {
         open().use { s ->
             pick("wakeup.ics"); preview(s); onView(withText("确认导入")).perform(click())
             waitFor(s) { it.source.state.sources.size == 1 }
+            onView(withText("日视图")).perform(click())
             var title = ""
             var id = ""
             s.onActivity { a ->
