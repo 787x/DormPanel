@@ -34,6 +34,20 @@ class WeekAxisTest {
             PeriodTime(1,LocalTime.of(8,0),LocalTime.of(9,0)), PeriodTime(2,LocalTime.of(8,30),LocalTime.of(10,0))))))
         assertNull(WeekAxis.periods(bad,monday,zone,480,1080))
     }
+    @Test fun periodLabelsRetainActualPhaseNumbersAndClockBounds() {
+        val profile=BuiltInProfiles.term2026
+        for (date in listOf(monday,monday.plusDays(3))) {
+            val axis=WeekAxis.periods(profile,date,zone,0,1440)!!
+            assertEquals(profile.phaseOn(date)!!.periods.sortedBy { it.periodNumber }.map {
+                WeekAxis.PeriodLabel(it.start.toSecondOfDay()/60,it.periodNumber,it.start,it.end)
+            },axis.periodLabels)
+        }
+        assertNotEquals(WeekAxis.periods(profile,monday,zone,0,1440)!!.periodLabels,
+            WeekAxis.periods(profile,monday.plusDays(3),zone,0,1440)!!.periodLabels)
+        val seconds=profile.copy(phases=listOf(SchedulePhase(profile.week1Monday,listOf(
+            PeriodTime(1,LocalTime.of(8,0,30),LocalTime.of(8,45,30))))))
+        assertNull(WeekAxis.periods(seconds,monday,zone,480,1080))
+    }
     @Test fun visibleBoundsApplyToBothAxesAndStillIncludeConfiguredPeriods() {
         val weekday = com.dormpanel.app.schedule.ClassOccurrence(TimetableEntry("a","weekday",1,480,1020),monday,
             monday.atTime(8,0).atZone(zone).toInstant(),monday.atTime(17,0).atZone(zone).toInstant())

@@ -29,6 +29,12 @@ class TimetableActivity : AppCompatActivity() {
     private var scrollOffset = 0
     private var periodMode = false
     private var weekdaysOnly = false
+    private var swipeDates = false
+    private var swipeContent: TimetableSwipeLayout? = null
+    private fun moveDate(direction: Int) {
+        selected = if (weekView) selected.plusWeeks(direction.toLong()) else selected.plusDays(direction.toLong())
+        render()
+    }
     private var weekAnchor = 480f
     private var weekGrid: PhoneWeekView? = null
     private var renderedWeek = true
@@ -39,7 +45,8 @@ class TimetableActivity : AppCompatActivity() {
         else scrollOffset = scroll?.scrollY ?: scrollOffset
     }
     private fun saveDisplayPreferences() {
-        getPreferences(MODE_PRIVATE).edit().putBoolean("periodMode",periodMode).putBoolean("weekdaysOnly",weekdaysOnly).apply()
+        getPreferences(MODE_PRIVATE).edit().putBoolean("periodMode",periodMode).putBoolean("weekdaysOnly",weekdaysOnly)
+            .putBoolean("swipeDates",swipeDates).apply()
     }
     private var restoringScroll = true
     private fun restoreScroll() {
@@ -53,6 +60,7 @@ class TimetableActivity : AppCompatActivity() {
         }
     }
     override fun onPause() {
+        swipeContent?.cancelMotion()
         captureScroll()
         getPreferences(MODE_PRIVATE).edit().putString("date", selected.toString()).putBoolean("weekView", weekView)
             .putInt("scroll", scrollOffset).putFloat("weekAnchor",weekAnchor).apply()
@@ -90,6 +98,7 @@ class TimetableActivity : AppCompatActivity() {
         weekAnchor = savedInstanceState?.getFloat("weekAnchor") ?: getPreferences(MODE_PRIVATE).getFloat("weekAnchor",480f)
         periodMode = getPreferences(MODE_PRIVATE).getBoolean("periodMode",false)
         weekdaysOnly = getPreferences(MODE_PRIVATE).getBoolean("weekdaysOnly",false)
+        swipeDates = getPreferences(MODE_PRIVATE).getBoolean("swipeDates",false)
         replacement = savedInstanceState?.getString("replacement")
         activeTerm = savedInstanceState?.getString("term") ?: getPreferences(MODE_PRIVATE).getString("term", null)
         profiles = TermScheduleProfileStore(this)
@@ -151,6 +160,8 @@ class TimetableActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
     }
     private fun render() {
+        swipeContent?.cancelMotion()
+        swipeContent = null
         captureScroll()
         restoringScroll = true
         weekGrid = null
@@ -184,9 +195,9 @@ class TimetableActivity : AppCompatActivity() {
         heading.addView(scheduleButton("管理") { management() }.apply { minimumWidth = dp(48); minWidth = dp(48); textSize = 12f; minHeight = dp(48); minimumHeight = dp(48); setPadding(dp(4),0,dp(4),0) })
         (if (landscape) heading else row()).also { bar ->
             val modeStart = bar.childCount
-            action(bar,"‹ 上周") { selected = selected.minusWeeks(1); render() }
+            action(bar,if (weekView) "‹ 上周" else "‹ 前一天") { moveDate(-1) }
             action(bar,"今天") { selected = source.clock.today(); render() }
-            action(bar,"下周 ›") { selected = selected.plusWeeks(1); render() }
+            action(bar,if (weekView) "下周 ›" else "后一天 ›") { moveDate(1) }
             action(bar,"周视图") { weekView = true; render() }
             (bar.getChildAt(modeStart+3) as TextView).apply { isSelected = weekView; if (weekView) setTypeface(typeface,android.graphics.Typeface.BOLD); alpha = if (weekView) 1f else .6f }
             action(bar,"日视图") { weekView = false; render() }
@@ -204,7 +215,15 @@ class TimetableActivity : AppCompatActivity() {
             if (!source.readOnly) action(bar,"＋ 课程") { editors.entry() }
             if (!source.readOnly) action(bar,"日期调整") { editors.dayAdjustment(selected) }
         }
-        val days = row().apply { if (weekView) setPadding(dp(32), 0, 0, 0) }
+        val body = scheduleColumn()
+        val swipe = TimetableSwipeLayout(this) { direction ->
+            moveDate(direction)
+            swipeContent?.arrive(direction)
+        }.apply { tag = "timetable-swipe"; swipeEnabled = swipeDates }
+        swipeContent = swipe
+        swipe.addView(body, android.widget.FrameLayout.LayoutParams(-1,-1))
+        root.addView(swipe, LinearLayout.LayoutParams(-1,0,1f))
+        val days = row(body).apply { if (weekView) setPadding(dp(32), 0, 0, 0) }
         val labels = listOf("一", "二", "三", "四", "五", "六", "日")
         repeat(if (weekView && weekdaysOnly) 5 else 7) { i ->
             val date = monday().plusDays(i.toLong())
@@ -226,7 +245,7 @@ class TimetableActivity : AppCompatActivity() {
         }
         val list = scheduleColumn()
         scroll = ScrollView(this).apply { tag = "timetable-scroll"; addView(list); isFillViewport = true }
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        body.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         if (!source.ready) { if (!source.error) list.addView(scheduleLabel("正在读取课程…", 16f)); return }
         if (!source.error && source.state.invalidRecords > 0) list.addView(scheduleLabel("存在无效记录，请检查。", 16f))
         if (busy) list.addView(scheduleLabel("正在处理文件…", 16f))
@@ -238,8 +257,8 @@ class TimetableActivity : AppCompatActivity() {
             weekGrid = grid
             if (periodMode && !grid.usesPeriods) {
                 // Keep the grid origin aligned with scroll anchors: explanation lives above the scroller.
-                val note = scheduleLabel("当前按时间显示：节次模式需要本周各日有有效、无重叠的学期作息，且时区与设备一致。点管理选择学期。",12f)
-                root.addView(note,root.indexOfChild(scroll))
+                val note = scheduleLabel("当前按时间显示：节次模式需要本周各日作息一致、有效且无重叠，起止为整分钟，时区与设备一致。点管理选择学期。",12f)
+                body.addView(note,body.indexOfChild(scroll))
             }
             list.addView(grid)
             restoreScroll()
@@ -277,10 +296,21 @@ class TimetableActivity : AppCompatActivity() {
     }
     private fun management() {
         if (source.applyingSnapshot) return
-        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）")) { _, i ->
+        swipeContent?.cancelMotion()
+        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）", "课表显示设置")) { _, i ->
             if (i < 3 && source.error) { message(source.editBlockReason.orEmpty()); return@setItems }
-            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) } }
+            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) }; 4 -> displaySettings() }
         }.setNegativeButton("关闭", null).show()
+    }
+    private fun displaySettings() {
+        val toggle = CheckBox(this).apply {
+            text = "横划切换日期"; isChecked = swipeDates; minHeight = dp(48)
+            setPadding(dp(24),dp(12),dp(24),dp(12))
+        }
+        AlertDialog.Builder(this).setTitle("课表显示设置").setView(toggle)
+            .setMessage("日视图切换前后一天，周视图切换前后一周。仅保存在本机。")
+            .setPositiveButton("保存") { _,_ -> swipeDates = toggle.isChecked; saveDisplayPreferences(); render() }
+            .setNegativeButton("取消",null).show()
     }
     private fun chooseFile(target: String?) {
         source.editBlockReason?.let { message(it); return }

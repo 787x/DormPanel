@@ -14,6 +14,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.IsolatedDashboardRule
 import com.dormpanel.app.MainActivity
 import com.dormpanel.app.appearance.*
+import com.dormpanel.app.schedule.testing.SwipeEvents
 import org.junit.*
 import org.junit.Assert.*
 import java.time.*
@@ -84,6 +85,8 @@ class X08eScheduleDisplayTest {
         })
         val selected = session ?: ScheduleSession(clock).apply { mode = ScheduleMode.TIMETABLE }
         page = SchedulePageView(localized, source, selected, appearance, {}, viewport = viewport)
+        // Exercise the same MainActivity arbitration as a real displayed schedule page.
+        MainActivity::class.java.getDeclaredField("activePageInteraction").apply { isAccessible=true }.set(activity,page)
         activity.setContentView(page)
     }
     private fun screenshot(name: String) {
@@ -171,6 +174,116 @@ class X08eScheduleDisplayTest {
             assertTrue(store.write(X08eScheduleStyle(X08eScheduleLayout.TIME,false,true)))
             assertEquals(X08eScheduleStyle(X08eScheduleLayout.TIME,false,true),X08eSchedulePreferences(context,"pr63_preferences_test").read())
         } finally { prefs.edit().clear().commit() }
+    }
+    @Test fun pr64SwipeAllLayoutsDirectionCancelScrollAndRefresh() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for (layout in X08eScheduleLayout.entries) {
+                val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+                val enabled=X08eScheduleStyle(layout,true,true,true)
+                scenario.onActivity { install(it,enabled,session=session) }
+                fun idle() { instrumentation.waitForIdleSync(); Thread.sleep(500); instrumentation.waitForIdleSync() }
+                fun swipe() = views(page).filterIsInstance<TimetableSwipeLayout>().single()
+                idle()
+                var anchor=0f
+                scenario.onActivity {
+                    if (layout != X08eScheduleLayout.CLASSIC) {
+                        val grid=views(page).filterIsInstance<X08eWeekGrid>().single()
+                        val scroll=views(page).filterIsInstance<ScrollView>().single()
+                        scroll.scrollTo(0,grid.offset(600f)); anchor=grid.minuteAt(scroll.scrollY)
+                    }
+                    SwipeEvents.drag(swipe(),-swipe().width*.4f,during={ assertTrue(swipe().getChildAt(0).translationX<0) })
+                }; idle()
+                scenario.onActivity {
+                    assertEquals(week.plusWeeks(1),session.weekStart)
+                    assertEquals(0f,swipe().getChildAt(0).translationX,0f)
+                    assertEquals(enabled,X08eSchedulePreferences(context).read())
+                    if (layout != X08eScheduleLayout.CLASSIC) {
+                        val g=views(page).filterIsInstance<X08eWeekGrid>().single()
+                        assertEquals(anchor,g.minuteAt(views(page).filterIsInstance<ScrollView>().single().scrollY),2f)
+                    }
+                    SwipeEvents.drag(swipe(),swipe().width*.4f)
+                }; idle()
+                scenario.onActivity { assertEquals(week,session.weekStart) }
+                for (kind in 0..5) {
+                    scenario.onActivity { val v=swipe()
+                        when(kind) {
+                            0 -> SwipeEvents.drag(v,-v.width*.08f)
+                            1 -> SwipeEvents.drag(v,-v.width*.4f,cancel=true)
+                            2 -> SwipeEvents.drag(v,-v.width*.3f,-v.width*.3f)
+                            3 -> SwipeEvents.multiTouch(v)
+                            4 -> SwipeEvents.drag(v,-v.width*.4f,during={ source.refresh() })
+                            5 -> SwipeEvents.drag(v,-v.width*.4f,during={ v.onWindowFocusChanged(false) })
+                        }
+                    }; idle()
+                    scenario.onActivity { assertEquals("$layout kind=$kind",week,session.weekStart); assertEquals(0f,swipe().getChildAt(0).translationX,0f) }
+                }
+                if (layout == X08eScheduleLayout.CLASSIC) {
+                    scenario.onActivity {
+                        val columns=views(page).filterIsInstance<ScrollView>()
+                        assertEquals(7,columns.size)
+                        // Each classic column remains an independent vertical scroller.
+                        columns[0].getChildAt(0).minimumHeight=2000; columns[0].requestLayout()
+                    }; idle()
+                    scenario.onActivity {
+                        val col=views(page).filterIsInstance<ScrollView>()[0]
+                        val pos=IntArray(2); col.getLocationOnScreen(pos); val loc=IntArray(2); swipe().getLocationOnScreen(loc)
+                        SwipeEvents.drag(swipe(),0f,-100f,x=(pos[0]-loc[0]+col.width/2f),y=(pos[1]-loc[1]+col.height*.7f))
+                    }; idle()
+                    scenario.onActivity { val columns=views(page).filterIsInstance<ScrollView>(); assertTrue(columns[0].scrollY>0); assertEquals(0,columns[1].scrollY) }
+                } else {
+                    var old=0
+                    scenario.onActivity { val sc=views(page).filterIsInstance<ScrollView>().single(); sc.scrollTo(0,0); old=sc.scrollY; SwipeEvents.drag(swipe(),0f,-100f,y=swipe().height*.7f) }; idle()
+                    scenario.onActivity { assertTrue("$layout scroll ${views(page).filterIsInstance<ScrollView>().single().scrollY} old=$old",views(page).filterIsInstance<ScrollView>().single().scrollY>old) }
+                }
+                scenario.onActivity { SwipeEvents.drag(swipe(),-80f,duration=35) }; idle()
+                scenario.onActivity {
+                    assertEquals(week.plusWeeks(1),session.weekStart); assertEquals(fixtureData,source.state)
+                    install(it,enabled.copy(swipeWeeks=false),session=session)
+                }; idle()
+                scenario.onActivity { SwipeEvents.drag(swipe(),-swipe().width*.4f) }; idle()
+                scenario.onActivity { assertEquals(week.plusWeeks(1),session.weekStart); assertEquals(0f,swipe().getChildAt(0).translationX,0f) }
+            }
+        }
+    }
+    @Test fun pr64SettingsPersistAndDisableCancelsMotion() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+            scenario.onActivity { install(it,X08eScheduleStyle(),session=session) }
+            onView(withText("显示设置")).perform(click())
+            onView(withText("横划切换周次")).perform(click()); onView(withText("保存")).perform(click())
+            scenario.onActivity { a ->
+                assertTrue(X08eSchedulePreferences(context).read().swipeWeeks)
+                install(a,X08eSchedulePreferences(context).read(),session=session)
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity {
+                val swipe=views(page).filterIsInstance<TimetableSwipeLayout>().single()
+                SwipeEvents.drag(swipe,-swipe.width*.4f,during={ swipe.swipeEnabled=false })
+                assertEquals(0f,swipe.getChildAt(0).translationX,0f); assertEquals(week,session.weekStart)
+                assertFalse(page.shouldObservePageSwipe(android.view.MotionEvent.obtain(0,0,0,0f,0f,0)))
+            }
+            onView(withText("日历")).perform(click())
+            scenario.onActivity { assertTrue(views(page).none { it is TimetableSwipeLayout }) }
+            onView(withText("课表")).perform(click())
+            scenario.onActivity { assertTrue(views(page).filterIsInstance<TimetableSwipeLayout>().single().swipeEnabled) }
+        }
+    }
+    @Test fun pr64NativeTouchAnimationAcrossLayouts() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for (layout in X08eScheduleLayout.entries) {
+                val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+                scenario.onActivity { install(it,X08eScheduleStyle(layout,true,true,true),session=session) }
+                instrumentation.waitForIdleSync()
+                val target=withTagValue(org.hamcrest.Matchers.equalTo("timetable-swipe" as Any))
+                onView(target).perform(SwipeEvents.nativeDrag(.7f,.25f))
+                Thread.sleep(500); instrumentation.waitForIdleSync()
+                scenario.onActivity { assertEquals(week.plusWeeks(1),session.weekStart); assertSame(page,views(it.window.decorView).filterIsInstance<SchedulePageView>().single()) }
+                onView(target).perform(SwipeEvents.nativeDrag(.5f,.42f))
+                Thread.sleep(500); scenario.onActivity { assertEquals(week.plusWeeks(1),session.weekStart) }
+                onView(target).perform(SwipeEvents.nativeDrag(.3f,.75f))
+                Thread.sleep(500); scenario.onActivity { assertEquals(week,session.weekStart) }
+            }
+        }
     }
     @Test fun shortOverlapFallbackAndDateAdjustmentRemainAccessible() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->

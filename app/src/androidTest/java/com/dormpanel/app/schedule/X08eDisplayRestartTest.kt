@@ -15,7 +15,7 @@ class X08eDisplayRestartTest {
         require(UUID.fromString(token).toString() == token)
         val namespace = "test-x08e-display-$token"
         val store = X08eSchedulePreferences(context, namespace)
-        val expected = X08eScheduleStyle(X08eScheduleLayout.PERIODS, true, true)
+        val expected = X08eScheduleStyle(X08eScheduleLayout.PERIODS, true, true, true)
         val phase = args.getString("displayPhase")
         try {
             if (phase != "verify") assertTrue(store.write(expected))

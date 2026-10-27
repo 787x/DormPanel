@@ -25,6 +25,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     private var style = preferences.read()
     private val scrollOffsets get() = viewport.offsets
     private var grid: X08eWeekGrid? = null
+    private var swipeContent: TimetableSwipeLayout? = null
     private var settingsDialog: androidx.appcompat.app.AlertDialog? = null
     private fun tr(zh: String, en: String) = context.scheduleText(zh, en)
     private fun scroll(key: String, content: View, initial: Int = 0, minuteAt: ((Int) -> Float)? = null) = ScrollView(context).apply {
@@ -38,11 +39,12 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     init { orientation = VERTICAL; setPadding(context.dp(20), context.dp(10), context.dp(20), context.dp(10)); render() }
     override fun shouldObservePageSwipe(event: MotionEvent) = false
     override fun onAttachedToWindow() { super.onAttachedToWindow(); display.visibility(isShown) }
-    override fun onDetachedFromWindow() { display.visibility(false); settingsDialog?.dismiss(); editors.close(); super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { swipeContent?.cancelMotion(); display.visibility(false); settingsDialog?.dismiss(); editors.close(); super.onDetachedFromWindow() }
     override fun onVisibilityAggregated(isVisible: Boolean) { super.onVisibilityAggregated(isVisible); visible = isVisible; display.visibility(isVisible) }
     override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); display.visibility(visible && visibility == VISIBLE) }
     private fun button(text: String, action: () -> Unit) = context.scheduleButton(text, action)
     private fun render() {
+        swipeContent?.cancelMotion(); swipeContent = null
         grid?.setClockActive(false); grid = null
         removeAllViews(); accents.clear()
         val header = LinearLayout(context)
@@ -141,8 +143,17 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         actions.addView(button("›") { session.weekStart = session.weekStart.plusWeeks(1); render() }.apply { contentDescription = tr("下一周", "Next week") })
         actions.addView(button(tr("本周", "This week")) { session.today(source.clock); render() })
         addView(actions)
+        val body = context.scheduleColumn()
+        val swipe = TimetableSwipeLayout(context) { direction ->
+            session.weekStart = session.weekStart.plusWeeks(direction.toLong())
+            render()
+            swipeContent?.arrive(direction)
+        }.apply { tag = "timetable-swipe"; swipeEnabled = style.swipeWeeks }
+        swipeContent = swipe
+        swipe.addView(body, FrameLayout.LayoutParams(-1,-1))
+        addView(swipe, LayoutParams(-1,0,1f))
         val occurrences = ScheduleProjection.week(source.state, session.weekStart, source.clock.zone())
-        if (style.layout != X08eScheduleLayout.CLASSIC) { timeGrid(occurrences); return }
+        if (style.layout != X08eScheduleLayout.CLASSIC) { timeGrid(occurrences, body); return }
         val week = LinearLayout(context)
         (0L..6L).forEach { offset ->
             val date = session.weekStart.plusDays(offset)
@@ -171,12 +182,12 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
             column.addView(scroll("classic-$offset", classes), LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
             week.addView(column, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         }
-        addView(week, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        body.addView(week, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
     }
-    private fun timeGrid(items: List<ClassOccurrence>) {
+    private fun timeGrid(items: List<ClassOccurrence>, body: LinearLayout) {
         val content = X08eWeekGrid(context, items, session.weekStart, source, style, appearance, editors::classDetail)
         grid = content
-        if (style.layout == X08eScheduleLayout.PERIODS && !content.usesPeriods) addView(context.scheduleLabel(
+        if (style.layout == X08eScheduleLayout.PERIODS && !content.usesPeriods) body.addView(context.scheduleLabel(
             tr("本周作息缺失或不一致，暂按实际时间显示。", "Period schedules are missing or differ this week. Showing actual time."), 16f))
         val headings = LinearLayout(context)
         headings.addView(context.scheduleLabel(if (content.usesPeriods) tr("节次", "Period") else tr("时间", "Time"), 16f), LayoutParams(context.dp(76), context.dp(56)))
@@ -195,14 +206,14 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
             headings.addView(heading, LayoutParams(0, context.dp(56), 1f))
             accents += { if (date == source.clock.today()) heading.setTextColor(PanelPalette.forMode(appearance.state.themeMode).accent) }
         }
-        addView(headings)
-        addView(scroll("grid", content, content.offset(viewport.gridMinute ?: 480f).coerceAtLeast(0), content::minuteAt), LayoutParams(-1, 0, 1f))
+        body.addView(headings)
+        body.addView(scroll("grid", content, content.offset(viewport.gridMinute ?: 480f).coerceAtLeast(0), content::minuteAt), LayoutParams(-1, 0, 1f))
         val footer = LinearLayout(context)
         footer.addView(Space(context), LayoutParams(context.dp(76), context.dp(48)))
         repeat(7) { day -> footer.addView(button(tr("查看 ${content.dayCount(day)} 门", "View ${content.dayCount(day)}")) { content.openDay(day) }.apply {
             minWidth = 0; minimumWidth = 0; textSize = 14f; setPadding(0, 0, 0, 0); isEnabled = content.dayCount(day) > 0
         }, LayoutParams(0, context.dp(48), 1f)) }
-        addView(footer)
+        body.addView(footer)
     }
     override fun applyAppearance(state: AppearanceState) {
         setBackgroundColor(PanelPalette.forMode(state.themeMode).background)

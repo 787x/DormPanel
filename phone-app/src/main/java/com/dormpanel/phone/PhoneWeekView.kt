@@ -21,7 +21,9 @@ internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, pri
     private val first = range.first
     private val last = range.second
     private val periodAxes = (0 until dayCount).map { WeekAxis.periods(profile, monday.plusDays(it.toLong()), zone, first, last) }
-    val usesPeriods = periodMode && periodAxes.all { it != null }
+    // A single 32dp gutter cannot label multiple effective timetables accurately.
+    // Compare actual labels too: equal pixel geometry does not imply equal clock times.
+    val usesPeriods = periodMode && periodAxes.all { it != null && it.periodLabels == periodAxes.first()?.periodLabels }
     val axes = (0 until dayCount).map { if (usesPeriods) periodAxes[it]!! else WeekAxis.time(first,last) }
     private val columns = mutableListOf<FrameLayout>()
     private val lines = mutableListOf<View>()
@@ -38,8 +40,26 @@ internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, pri
         val height = (axes.maxOf { it.height }*density).toInt() + context.dp(24)
         val axis = FrameLayout(context)
         addView(axis, LayoutParams(context.dp(32),height))
-        axes.first().labels.forEach { (minute,label) ->
-            axis.addView(TextView(context).apply { text = label; textSize = if (usesPeriods) 12f else 9f; includeFontPadding = false },
+        if (usesPeriods) axes.first().periodLabels.forEach { p ->
+            val label = LinearLayout(context).apply {
+                orientation = VERTICAL; gravity = android.view.Gravity.CENTER_HORIZONTAL
+                contentDescription = "第${p.number}节 ${p.start}–${p.end}"
+            }
+            val scale = resources.configuration.fontScale
+            // Keep the fixed 32dp gutter and 56dp slot readable up to large accessibility fonts.
+            // Cap visual scaling here; the complete label remains available to TalkBack.
+            listOf("${p.number}" to 12f, p.start.toString() to 9f, p.end.toString() to 9f).forEachIndexed { i, (text,size) ->
+                label.addView(TextView(context).apply {
+                    this.text = text; textSize = size * minOf(scale,if (i == 0) 1.3f else 1.2f) / scale
+                    includeFontPadding = false; gravity = android.view.Gravity.CENTER
+                    maxLines = 1; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+                    if (i == 0) setTypeface(typeface,android.graphics.Typeface.BOLD) else alpha = .8f
+                }, LinearLayout.LayoutParams(-1,-2))
+            }
+            label.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+            axis.addView(label,FrameLayout.LayoutParams(-1,context.dp(56)).apply { topMargin = offsetAt(p.minute.toFloat()) })
+        } else axes.first().labels.forEach { (minute,label) ->
+            axis.addView(TextView(context).apply { text = label; textSize = 9f; includeFontPadding = false },
                 FrameLayout.LayoutParams(-1,context.dp(24)).apply { topMargin = offsetAt(minute.toFloat()) })
         }
         repeat(dayCount) { day ->
@@ -47,14 +67,6 @@ internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, pri
             addView(column, LayoutParams(0,height,1f))
             axes[day].labels.forEach { (minute,_) -> column.addView(View(context).apply { setBackgroundColor(Color.GRAY); alpha = .25f },
                 FrameLayout.LayoutParams(-1,1).apply { topMargin = offsetAt(minute.toFloat(),day) }) }
-            // A mid-week phase can have different gaps/numbers. Mark that day's own ticks;
-            // the shared left gutter must never imply that Monday's phase applies to every day.
-            if (usesPeriods && axes[day].labels.map { it.second to axes[day].y(it.first.toFloat()) } !=
-                axes.first().labels.map { it.second to axes.first().y(it.first.toFloat()) }) {
-                axes[day].labels.forEach { (minute,label) -> column.addView(TextView(context).apply {
-                    text = "${label}节"; textSize = 9f; alpha = .7f; includeFontPadding = false
-                },FrameLayout.LayoutParams(-2,context.dp(16)).apply { topMargin = offsetAt(minute.toFloat(),day) }) }
-            }
             val groups = WeekLayout.groups(segments.filter { it.day == day })
             val hitAreas = groups.map { WeekHitArea(it,offsetAt(it.minOf { s -> s.start }.toFloat(),day),
                 maxOf(offsetAt(it.minOf { s -> s.start }.toFloat(),day)+1,offsetAt(it.maxOf { s -> s.end }.toFloat(),day))) }

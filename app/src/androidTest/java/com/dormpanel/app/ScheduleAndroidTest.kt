@@ -69,6 +69,32 @@ class ScheduleAndroidTest {
             controller.loopMainThreadUntilIdle()
         }
     }
+    @Test fun pr64ActualPageSwipesNeverTriggerGlobalNavigationAndHomeStillWorks() {
+        val context=instrumentation.targetContext
+        val prefs=X08eSchedulePreferences(context)
+        val saved=prefs.read()
+        try {
+            prefs.write(X08eScheduleStyle(swipeWeeks=true))
+            PreferencesScheduleModeStore(context).write(ScheduleMode.TIMETABLE)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                ready(scenario)
+                onView(withId(R.id.page_container)).perform(swipeLeft())
+                onView(isAssignableFrom(SchedulePageView::class.java)).check(matches(isDisplayed()))
+                var week=LocalDate.now()
+                scenario.onActivity { week=model(it).scheduleSession.weekStart }
+                val target=withTagValue(equalTo("timetable-swipe" as Any))
+                onView(target).perform(com.dormpanel.app.schedule.testing.SwipeEvents.nativeDrag(.7f,.25f))
+                Thread.sleep(500)
+                scenario.onActivity { assertEquals(week.plusWeeks(1),model(it).scheduleSession.weekStart) }
+                onView(isAssignableFrom(SchedulePageView::class.java)).check(matches(isDisplayed()))
+                onView(withText(context.scheduleText("返回首页","Home"))).perform(click())
+                onView(isAssignableFrom(SchedulePageView::class.java)).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                onView(withId(R.id.page_container)).perform(swipeLeft())
+                onView(isAssignableFrom(SchedulePageView::class.java)).check(matches(isDisplayed()))
+                scenario.onActivity { assertEquals(week.plusWeeks(1),model(it).scheduleSession.weekStart) }
+            }
+        } finally { prefs.write(saved) }
+    }
     @Test fun localClassDetailDayAdjustmentAndScopedEdit() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             ready(scenario); open(); onView(withText("Timetable")).perform(click())

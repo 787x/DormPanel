@@ -1,0 +1,197 @@
+Reusing configuration cache.
+> Task :schedule-core:preBuild UP-TO-DATE
+> Task :schedule-core:generateDebugAssets UP-TO-DATE
+> Task :phone-app:preBuild UP-TO-DATE
+> Task :app:generateX08eTestAndroidTestAssets UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :phone-app:generateX08eTestAssets UP-TO-DATE
+> Task :app:generateX08eTestAssets UP-TO-DATE
+> Task :phone-app:generateX08eTestAndroidTestAssets UP-TO-DATE
+> Task :app:preX08eTestBuild UP-TO-DATE
+> Task :app:desugarX08eTestFileDependencies UP-TO-DATE
+> Task :phone-app:preX08eTestBuild UP-TO-DATE
+> Task :app:writeX08eTestSigningConfigVersions UP-TO-DATE
+> Task :app:writeX08eTestAppMetadata UP-TO-DATE
+> Task :schedule-core:preDebugBuild UP-TO-DATE
+> Task :phone-app:mergeX08eTestNativeDebugMetadata NO-SOURCE
+> Task :phone-app:javaPreCompileX08eTest UP-TO-DATE
+> Task :schedule-core:generateDebugResources UP-TO-DATE
+> Task :phone-app:mapX08eTestSourceSetPaths UP-TO-DATE
+> Task :phone-app:extractDeepLinksX08eTest UP-TO-DATE
+> Task :schedule-core:mapDebugSourceSetPaths UP-TO-DATE
+> Task :phone-app:mergeX08eTestJniLibFolders UP-TO-DATE
+> Task :phone-app:preX08eTestAndroidTestBuild SKIPPED
+> Task :phone-app:writeX08eTestAppMetadata UP-TO-DATE
+> Task :phone-app:validateSigningX08eTest UP-TO-DATE
+> Task :schedule-core:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:generateX08eTestResources UP-TO-DATE
+> Task :app:mergeX08eTestNativeDebugMetadata NO-SOURCE
+> Task :app:mapX08eTestSourceSetPaths UP-TO-DATE
+> Task :app:javaPreCompileX08eTest UP-TO-DATE
+> Task :phone-app:processX08eTestAndroidTestNavigationResources UP-TO-DATE
+> Task :phone-app:javaPreCompileX08eTestAndroidTest UP-TO-DATE
+> Task :app:generateX08eTestGlobalSynthetics UP-TO-DATE
+> Task :phone-app:generateX08eTestGlobalSynthetics UP-TO-DATE
+> Task :phone-app:generateX08eTestResources UP-TO-DATE
+> Task :phone-app:generateX08eTestAndroidTestGlobalSynthetics UP-TO-DATE
+> Task :phone-app:desugarX08eTestFileDependencies UP-TO-DATE
+> Task :schedule-core:processDebugNavigationResources UP-TO-DATE
+> Task :phone-app:desugarX08eTestAndroidTestFileDependencies UP-TO-DATE
+> Task :schedule-core:javaPreCompileDebug UP-TO-DATE
+> Task :schedule-core:writeDebugAarMetadata UP-TO-DATE
+> Task :schedule-core:mergeDebugAssets UP-TO-DATE
+> Task :phone-app:createX08eTestCompatibleScreenManifests UP-TO-DATE
+> Task :schedule-core:extractDeepLinksDebug UP-TO-DATE
+> Task :phone-app:mergeX08eTestAndroidTestJniLibFolders UP-TO-DATE
+> Task :phone-app:checkX08eTestDuplicateClasses UP-TO-DATE
+> Task :schedule-core:processDebugManifest UP-TO-DATE
+> Task :phone-app:writeX08eTestSigningConfigVersions UP-TO-DATE
+> Task :app:createX08eTestCompatibleScreenManifests UP-TO-DATE
+> Task :app:preX08eTestAndroidTestBuild SKIPPED
+> Task :phone-app:generateX08eTestAndroidTestResources UP-TO-DATE
+> Task :app:extractDeepLinksX08eTest UP-TO-DATE
+> Task :schedule-core:packageDebugResources UP-TO-DATE
+> Task :app:mergeX08eTestJniLibFolders UP-TO-DATE
+> Task :schedule-core:mergeDebugNativeLibs NO-SOURCE
+> Task :app:validateSigningX08eTest UP-TO-DATE
+> Task :app:generateX08eTestAndroidTestResources UP-TO-DATE
+> Task :phone-app:mapX08eTestAndroidTestSourceSetPaths UP-TO-DATE
+> Task :phone-app:writeX08eTestAndroidTestSigningConfigVersions UP-TO-DATE
+> Task :phone-app:packageX08eTestResources UP-TO-DATE
+> Task :phone-app:validateSigningX08eTestAndroidTest UP-TO-DATE
+> Task :phone-app:checkX08eTestAndroidTestDuplicateClasses UP-TO-DATE
+> Task :phone-app:mergeX08eTestAndroidTestAssets UP-TO-DATE
+> Task :app:generateX08eTestAndroidTestGlobalSynthetics UP-TO-DATE
+> Task :app:packageX08eTestResources UP-TO-DATE
+> Task :app:javaPreCompileX08eTestAndroidTest UP-TO-DATE
+> Task :app:processX08eTestAndroidTestNavigationResources UP-TO-DATE
+> Task :schedule-core:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :schedule-core:parseDebugLocalResources UP-TO-DATE
+> Task :schedule-core:compileDebugLibraryResources UP-TO-DATE
+> Task :phone-app:compileX08eTestAndroidTestNavigationResources UP-TO-DATE
+> Task :phone-app:compressX08eTestAndroidTestAssets UP-TO-DATE
+> Task :phone-app:packageX08eTestAndroidTestResources UP-TO-DATE
+> Task :app:desugarX08eTestAndroidTestFileDependencies UP-TO-DATE
+> Task :app:mapX08eTestAndroidTestSourceSetPaths UP-TO-DATE
+> Task :app:validateSigningX08eTestAndroidTest UP-TO-DATE
+> Task :app:packageX08eTestAndroidTestResources UP-TO-DATE
+> Task :phone-app:preX08eTestUnitTestBuild UP-TO-DATE
+> Task :app:mergeX08eTestAndroidTestJniLibFolders UP-TO-DATE
+> Task :phone-app:mergeX08eTestAndroidTestResources UP-TO-DATE
+> Task :app:writeX08eTestAndroidTestSigningConfigVersions UP-TO-DATE
+> Task :app:parseX08eTestAndroidTestLocalResources UP-TO-DATE
+> Task :phone-app:parseX08eTestAndroidTestLocalResources UP-TO-DATE
+> Task :schedule-core:generateDebugRFile UP-TO-DATE
+> Task :app:compileX08eTestAndroidTestNavigationResources UP-TO-DATE
+> Task :phone-app:javaPreCompileX08eTestUnitTest UP-TO-DATE
+> Task :phone-app:checkX08eTestAarMetadata UP-TO-DATE
+> Task :phone-app:checkX08eTestAndroidTestAarMetadata UP-TO-DATE
+> Task :phone-app:generateX08eTestAndroidTestRFile UP-TO-DATE
+> Task :phone-app:mergeX08eTestResources UP-TO-DATE
+> Task :app:generateX08eTestAndroidTestRFile UP-TO-DATE
+> Task :phone-app:processX08eTestNavigationResources UP-TO-DATE
+> Task :phone-app:mergeExtDexX08eTest UP-TO-DATE
+> Task :app:mergeX08eTestAndroidTestResources UP-TO-DATE
+> Task :phone-app:mergeExtDexX08eTestAndroidTest UP-TO-DATE
+> Task :phone-app:parseX08eTestLocalResources UP-TO-DATE
+> Task :phone-app:compileX08eTestNavigationResources UP-TO-DATE
+> Task :phone-app:mergeX08eTestNativeLibs NO-SOURCE
+> Task :phone-app:generateX08eTestRFile UP-TO-DATE
+> Task :phone-app:mergeX08eTestAndroidTestManifest UP-TO-DATE
+> Task :phone-app:stripX08eTestDebugSymbols NO-SOURCE
+> Task :phone-app:processX08eTestAndroidTestManifest UP-TO-DATE
+> Task :phone-app:mergeX08eTestAndroidTestNativeLibs NO-SOURCE
+> Task :phone-app:stripX08eTestAndroidTestDebugSymbols NO-SOURCE
+> Task :phone-app:processX08eTestMainManifest UP-TO-DATE
+> Task :phone-app:processX08eTestManifest UP-TO-DATE
+> Task :phone-app:processX08eTestManifestForPackage UP-TO-DATE
+> Task :app:mergeX08eTestAndroidTestAssets UP-TO-DATE
+> Task :app:compressX08eTestAndroidTestAssets UP-TO-DATE
+> Task :phone-app:processX08eTestResources UP-TO-DATE
+> Task :phone-app:processX08eTestAndroidTestResources UP-TO-DATE
+> Task :app:checkX08eTestDuplicateClasses UP-TO-DATE
+> Task :app:checkX08eTestAndroidTestDuplicateClasses UP-TO-DATE
+> Task :app:processX08eTestNavigationResources UP-TO-DATE
+> Task :app:compileX08eTestNavigationResources UP-TO-DATE
+> Task :app:parseX08eTestLocalResources UP-TO-DATE
+> Task :app:generateX08eTestRFile UP-TO-DATE
+> Task :app:checkX08eTestAndroidTestAarMetadata UP-TO-DATE
+> Task :app:checkX08eTestAarMetadata UP-TO-DATE
+> Task :app:mergeX08eTestAssets UP-TO-DATE
+> Task :phone-app:mergeX08eTestAssets UP-TO-DATE
+> Task :app:mergeX08eTestResources UP-TO-DATE
+> Task :app:compressX08eTestAssets UP-TO-DATE
+> Task :app:mergeX08eTestNativeLibs NO-SOURCE
+> Task :phone-app:compressX08eTestAssets UP-TO-DATE
+> Task :app:stripX08eTestDebugSymbols NO-SOURCE
+> Task :app:mergeX08eTestAndroidTestManifest UP-TO-DATE
+> Task :app:mergeX08eTestAndroidTestNativeLibs NO-SOURCE
+> Task :app:stripX08eTestAndroidTestDebugSymbols NO-SOURCE
+> Task :app:processX08eTestAndroidTestManifest UP-TO-DATE
+> Task :app:processX08eTestMainManifest UP-TO-DATE
+> Task :app:mergeExtDexX08eTest UP-TO-DATE
+> Task :app:mergeExtDexX08eTestAndroidTest UP-TO-DATE
+> Task :app:processX08eTestManifest UP-TO-DATE
+> Task :app:processX08eTestManifestForPackage UP-TO-DATE
+> Task :app:processX08eTestAndroidTestResources UP-TO-DATE
+> Task :app:processX08eTestResources UP-TO-DATE
+> Task :schedule-core:kspDebugKotlin
+> Task :schedule-core:compileDebugKotlin
+> Task :schedule-core:processDebugJavaRes UP-TO-DATE
+> Task :schedule-core:compileDebugJavaWithJavac NO-SOURCE
+> Task :schedule-core:bundleLibRuntimeToDirDebug
+> Task :phone-app:mergeLibDexX08eTestAndroidTest UP-TO-DATE
+> Task :app:mergeLibDexX08eTestAndroidTest UP-TO-DATE
+> Task :schedule-core:bundleLibRuntimeToJarDebug
+> Task :schedule-core:bundleLibCompileToJarDebug
+> Task :app:mergeLibDexX08eTest
+> Task :phone-app:mergeLibDexX08eTest
+> Task :phone-app:compileX08eTestKotlin
+> Task :phone-app:compileX08eTestJavaWithJavac NO-SOURCE
+> Task :phone-app:bundleX08eTestClassesToCompileJar UP-TO-DATE
+> Task :phone-app:processX08eTestJavaRes UP-TO-DATE
+> Task :phone-app:bundleX08eTestClassesToRuntimeJar UP-TO-DATE
+> Task :phone-app:dexBuilderX08eTest UP-TO-DATE
+> Task :phone-app:mergeProjectDexX08eTest UP-TO-DATE
+> Task :phone-app:mergeX08eTestJavaResource UP-TO-DATE
+> Task :phone-app:compileX08eTestUnitTestKotlin
+> Task :phone-app:compileX08eTestUnitTestJavaWithJavac NO-SOURCE
+> Task :phone-app:processX08eTestUnitTestJavaRes UP-TO-DATE
+> Task :phone-app:packageX08eTest
+> Task :phone-app:assembleX08eTest
+> Task :phone-app:createX08eTestApkListingFileRedirect UP-TO-DATE
+> Task :app:kspX08eTestKotlin
+> Task :phone-app:compileX08eTestAndroidTestKotlin
+> Task :phone-app:processX08eTestAndroidTestJavaRes UP-TO-DATE
+> Task :phone-app:mergeX08eTestAndroidTestJavaResource UP-TO-DATE
+> Task :phone-app:compileX08eTestAndroidTestJavaWithJavac UP-TO-DATE
+> Task :app:compileX08eTestKotlin
+> Task :phone-app:dexBuilderX08eTestAndroidTest
+> Task :app:compileX08eTestJavaWithJavac NO-SOURCE
+> Task :app:processX08eTestJavaRes UP-TO-DATE
+> Task :app:bundleX08eTestClassesToCompileJar UP-TO-DATE
+> Task :app:dexBuilderX08eTest UP-TO-DATE
+> Task :app:mergeProjectDexX08eTest UP-TO-DATE
+> Task :app:kspX08eTestAndroidTestKotlin SKIPPED
+> Task :app:mergeX08eTestJavaResource UP-TO-DATE
+> Task :phone-app:mergeProjectDexX08eTestAndroidTest
+> Task :phone-app:packageX08eTestAndroidTest
+> Task :phone-app:assembleX08eTestAndroidTest
+> Task :phone-app:createX08eTestAndroidTestApkListingFileRedirect UP-TO-DATE
+> Task :app:packageX08eTest
+> Task :app:assembleX08eTest
+> Task :app:createX08eTestApkListingFileRedirect UP-TO-DATE
+> Task :phone-app:testX08eTestUnitTest
+> Task :app:compileX08eTestAndroidTestKotlin
+> Task :app:compileX08eTestAndroidTestJavaWithJavac NO-SOURCE
+> Task :app:processX08eTestAndroidTestJavaRes UP-TO-DATE
+> Task :app:dexBuilderX08eTestAndroidTest UP-TO-DATE
+> Task :app:mergeProjectDexX08eTestAndroidTest UP-TO-DATE
+> Task :app:mergeX08eTestAndroidTestJavaResource UP-TO-DATE
+> Task :app:packageX08eTestAndroidTest UP-TO-DATE
+> Task :app:assembleX08eTestAndroidTest UP-TO-DATE
+> Task :app:createX08eTestAndroidTestApkListingFileRedirect UP-TO-DATE
+
+BUILD SUCCESSFUL in 5s
+157 actionable tasks: 19 executed, 138 up-to-date
+Configuration cache entry reused.
