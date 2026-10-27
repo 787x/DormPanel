@@ -37,14 +37,39 @@ let activeProtocol = 'v2', viewEpoch = 0, currentPage = 'dashboard';
 let historyPreview = null, historyScope = null, historyEligible = false, historyBusy = false, backupBusy = false;
 let historyReadEpoch = 0, historyOutputEpoch = 0;
 class StaleResponse extends Error {}
+// Stops the old view's continuation only after its write result has been retained and reconciled.
+class DetachedWriteResult extends Error {}
+const obsoleteView=error=>error instanceof StaleResponse || error instanceof DetachedWriteResult;
+let editingContext=null, localEditorContext=null;
+const localActions=['newCourse','newEvent','managerCourse','managerEvent','newProfile','adjustDate','importFile'];
+function isolateEditing() {
+  editingContext=null;local=null;
+  $('records').replaceChildren();$('records').inert=true;$('week').inert=true;
+  for(const id of localActions)$(id).disabled=true;
+  for(const c of $('week').querySelectorAll('[role=button]')){c.tabIndex=-1;c.setAttribute('aria-disabled','true');}
+  if(localEditorContext && $('editor').open)$('editor').close();
+}
+function requireEditing(context=editingContext) {
+  if(!context || context!==editingContext || context.workspaceId!==workspaceId || context.version!==version || context.epoch!==loadEpoch)
+    throw Error('编辑数据尚未就绪或已失效，请重新读取当前课程表');
+  return context;
+}
+function businessDialog(...args) {
+  let context;
+  try {context=requireEditing();}
+  catch(error){isolateEditing();$('editingState').hidden=false;$('editingStatus').textContent=error.message;return;}
+  dialog(...args);localEditorContext=context;
+}
+
 function invalidateHistory() {
   historyPreview = null; historyEligible = false; ++historyReadEpoch; ++historyOutputEpoch;
   $('historyConfirm').disabled = true; $('historyPreview').disabled = true;
   $('historyConfirm').parentElement.hidden=true;
 }
 function navigate(page) {
-  ++viewEpoch; ++historyJobId; ++backupJobId; historyBusy=false;backupBusy=false; invalidateHistory(); invalidateBackup();
+  ++viewEpoch; ++historyJobId; ++backupJobId; historyBusy=false;backupBusy=false;
   unlockControls([...$('history').querySelectorAll('button'),...$('backups').querySelectorAll('button')]);
+  invalidateHistory();invalidateBackup();
   currentPage = page;
   for (const id of ['dashboard','dataSources','history','backups']) $(id).hidden = id !== page;
   $('dashboardActions').hidden = page !== 'dashboard';
@@ -65,6 +90,7 @@ let token,
   profiles = [];
 async function load() {
   const epoch = ++loadEpoch;
+  isolateEditing(); $('editingStatus').textContent='正在读取当前课程表的编辑数据…';$('editingState').hidden=false;
   try {
     const r = await fetch(
       `${base}/api/schedule?${workspaceId ? "workspaceId=" + encodeURIComponent(workspaceId) + "&" : ""}date=${encodeURIComponent($("date").value)}&zone=${encodeURIComponent($("zone").value)}&origin=${encodeURIComponent(location.origin)}`,
@@ -135,9 +161,10 @@ async function load() {
           card.tabIndex = 0;
           card.setAttribute("role", "button");
           card.setAttribute("aria-label", "编辑 " + c.title);
-          card.onclick = () => editOccurrence(c);
+          const openCourse=()=>{if(editingContext?.epoch===epoch && editingContext.workspaceId===s.workspaceId && editingContext.version===s.version && editingContext.version===version)editOccurrence(c);};
+          card.onclick = openCourse;
           card.onkeydown = (e) => {
-            if (e.key === "Enter") editOccurrence(c);
+            if (e.key === "Enter") openCourse();
           };
           card.append(
             el("small", `${fmt(c.start)}–${fmt(c.end)}`),
@@ -206,12 +233,19 @@ async function load() {
     );
     try {
       const state = await get('/api/state',{pageSensitive:false});
-      if (epoch !== loadEpoch || state.workspaceId !== workspaceId) return;
-      if(state.version!==version){invalidateHistory();invalidateBackup();}
-      local = state.local; version = state.version; loadedVersion=state.version; renderRecords();
+      if(epoch!==loadEpoch) return;
+      if(state.workspaceId!==workspaceId || state.workspaceId!==s.workspaceId || !Number.isSafeInteger(state.version) || state.version!==s.version || state.version!==version)
+        throw Error('课程表身份或版本已变化，请重新读取');
+      local=state.local;loadedVersion=state.version;
+      editingContext=Object.freeze({workspaceId,version,epoch});
+      renderRecords();$('records').inert=false;$('week').inert=false;
+      for(const id of localActions)$(id).disabled=false;
+      for(const c of $('week').querySelectorAll('[role=button]')){c.tabIndex=0;c.setAttribute('aria-disabled','false');}
+      $('editingState').hidden=true;
     } catch (e) {
-      if (e instanceof StaleResponse) return;
-      $('managerStatus').textContent='周课表已读取；编辑数据暂不可用：'+e.message+'。可重新检查。';
+      if(epoch!==loadEpoch || e instanceof StaleResponse)return;
+      isolateEditing();$('editingStatus').textContent='周课表已读取；编辑数据暂不可用：'+e.message+'。可安全重试。';
+      $('managerStatus').textContent=$('editingStatus').textContent;
     }
     await loadManagement(epoch).catch(() => {});
   } catch (e) {
@@ -254,19 +288,85 @@ async function get(path,{pageSensitive=true}={}) {
   if (!r.ok) throw Error(v.error);
   return v;
 }
+let activeWrite=null, unresolvedWrite=null, lastWrite=null;
+function readOnlyPost(path,data) {
+  return ['/api/backups/list','/api/backups/verify','/api/backups/cancel','/api/history/preview','/api/history/cleanup-preview','/api/import/preview','/api/connections/test','/api/connections/browse'].includes(path)
+    || path==='/api/sync' && data.discover
+    || path==='/api/migration' && ['v3.preview','v3.discover'].includes(data.action)
+    || path==='/api/endpoint' && data.action==='status';
+}
+function writeLabel(path,data) {
+  return ({'/api/edit':'保存课程编辑','/api/sync':'检查并同步','/api/history/rollback':'历史回退','/api/backups/restore':'恢复应用备份','/api/backups/create':'创建应用备份','/api/migration':'迁移操作','/api/endpoint':'端点操作','/api/manage':'课程表与连接配置','/api/import/confirm':'导入课程','/api/resolve':'解决冲突'}[path]??'历史维护')+(data.action?' · '+data.action:'');
+}
+function renderWriteStatus() {
+  const op=activeWrite??unresolvedWrite??lastWrite,host=$('writeStatus');host.hidden=!op;if(!op)return;
+  host.replaceChildren(el('strong',op.label+' · '+op.workspaceName),el('p',op.message));
+  if(op.evidence)host.append(el('p',op.evidence));
+  if(op.phase!=='running')host.append(button('重新读取操作状态',async()=>{await reconcileWrite(op);renderWriteStatus();}));
+  if(op.phase==='uncertain' && op.evidenceReady && unresolvedWrite===op)host.append(button('已核对结果，解除操作保护（不重发）',async()=>{
+    if(unresolvedWrite!==op || activeWrite)return;
+    unresolvedWrite=null;invalidateHistory();invalidateBackup();
+    op.message='结果仍不确定；已由用户结束本次核对，没有重发原请求。请根据当前课程和恢复信息继续。';
+    await refreshAfterWrite(op);renderWriteStatus();
+  }));
+}
+async function authority(path) {
+  const response=await fetch(base+path),value=await response.json();if(!response.ok)throw Error(value.error??'状态读取失败');return value;
+}
+async function reconcileWrite(op) {
+  op.evidenceReady=false;
+  try {
+    // Restores and migrations may change the active catalog identity. Discover it read-only.
+    const globalChange=op.path==='/api/backups/restore' || op.path==='/api/migration';
+    const query=new URLSearchParams({date:$('date').value,zone:$('zone').value,origin:location.origin,...(!globalChange?{workspaceId:op.workspaceId}:{})});
+    const schedule=await authority('/api/schedule?'+query);
+    if(!globalChange && schedule.workspaceId!==op.workspaceId)throw Error('权威状态的课程表身份不匹配');
+    const maintenance=await authority('/api/maintenance?workspaceId='+encodeURIComponent(schedule.workspaceId));
+    if(maintenance.workspaceId!==schedule.workspaceId)throw Error('维护状态的课程表身份不匹配');
+    op.observedWorkspaceId=schedule.workspaceId;
+    op.evidence=`已重新读取服务器状态：版本 ${schedule.version} · ${scheduleStatus(schedule)}`;
+    if(maintenance.protection)op.evidence+='；迁移保护阶段：'+maintenance.protection.phase;
+    if(maintenance.restoreGuard || maintenance.restorePoisoned)op.evidence+='；恢复保护尚未解除，请继续恢复检查';
+    if(maintenance.lastRestore)op.evidence+='；最近一条恢复记录：'+(maintenance.lastRestore.ok?'完成':'未完成')+'（'+new Date(maintenance.lastRestore.restoredAt).toLocaleString()+'，此记录不单独证明本请求结果）';
+    op.evidenceReady=true;
+  } catch(error) {op.evidence='权威状态暂不可读：'+error.message+'。保留请求结果，使用“重新读取操作状态”重试，不自动重发写请求。';}
+}
+async function refreshAfterWrite(op) {
+  // Refresh only the still-selected scope, using authoritative identity for catalog replacement.
+  if(workspaceId!==op.workspaceId)return;
+  if(op.observedWorkspaceId && (op.path==='/api/backups/restore' || op.path==='/api/migration'))workspaceId=op.observedWorkspaceId;
+  await load();
+}
 async function post(path, data = {}) {
-  const scope = data.workspaceId ?? workspaceId, pageTicket=viewEpoch;
-  const r = await fetch(base + path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-DormPanel-CSRF": token },
-    body: JSON.stringify({ workspaceId: scope, version, catalogVersion, ...data }),
-  });
-  const v = await r.json();
-  if (path !== '/api/backups/cancel' && (scope !== workspaceId || pageTicket !== viewEpoch)) throw new StaleResponse('页面或课程表已切换，请重新读取状态');
-  if (!r.ok) throw Error(v.error);
-  if (scope === workspaceId && v.version !== undefined) version = v.version;
-  if (scope === workspaceId && v.catalogVersion !== undefined) catalogVersion = v.catalogVersion;
-  return v;
+  const scope=data.workspaceId??workspaceId,pageTicket=viewEpoch,modelTicket=loadEpoch,formTicket=$('editor').open?editorEpoch:null,readOnly=readOnlyPost(path,data);
+  if(!readOnly && (activeWrite || unresolvedWrite))throw Error('已有写操作正在执行或等待结果核对，请查看页面上方操作状态，不能重复提交');
+  // Revoking a view's restore capability must not cancel an already dispatched restore.
+  if(path==='/api/backups/cancel' && [activeWrite,unresolvedWrite,lastWrite].some(op=>op?.path==='/api/backups/restore' && op.restoreToken===data.token))return {};
+  const op=readOnly?null:{path,workspaceId:scope,workspaceName:management?.workspaces.find(w=>w.id===scope)?.name??scope,label:writeLabel(path,data),restoreToken:path==='/api/backups/restore'?data.token:null,phase:'running',message:'请求已发出，正在执行；切换页面不会取消。请等待结果，期间不提交其他写操作。'};
+  if(op){activeWrite=op;lastWrite=op;renderWriteStatus();}
+  let response,value,failure;
+  try {
+    response=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json','X-DormPanel-CSRF':token},body:JSON.stringify({workspaceId:scope,version,catalogVersion,...data})});
+    value=await response.json();
+    if(!response.ok)failure=Error(value.error??'服务器返回失败');
+  } catch(error) {failure=error;}
+  const detached=scope!==workspaceId || pageTicket!==viewEpoch || modelTicket!==loadEpoch || formTicket!==null && formTicket!==editorEpoch;
+  if(op) {
+    op.phase=!response || !value?'uncertain':failure?'failed':'completed';
+    op.message=op.phase==='uncertain'?'没有取得完整回执，结果不确定；这不表示操作取消或未写入。原请求不会自动重发。':failure?'服务器返回失败：'+failure.message+'。可能已有部分进度，请核对权威状态。':'服务器已返回成功响应；请求处理完成，具体保存、发布和恢复状态以核对结果为准。';
+    renderWriteStatus();
+    // Keep the global write fence until reconciliation and the current model refresh finish.
+    if(detached || failure || ['/api/history/rollback','/api/backups/restore','/api/migration'].includes(path))await reconcileWrite(op);
+    if(op.phase==='uncertain')unresolvedWrite=op;
+    if(failure || detached){invalidateHistory();invalidateBackup();await refreshAfterWrite(op);}
+    activeWrite=null;renderWriteStatus();
+    if(detached)throw new DetachedWriteResult(op.message);
+  }
+  if(failure)throw failure;
+  if(readOnly && path!=='/api/backups/cancel' && detached)throw new StaleResponse('页面或课程表已切换');
+  if(scope===workspaceId && value.version!==undefined)version=value.version;
+  if(scope===workspaceId && value.catalogVersion!==undefined)catalogVersion=value.catalogVersion;
+  return value;
 }
 async function runSync(options) {
   const scope=workspaceId;
@@ -275,7 +375,7 @@ async function runSync(options) {
   try {
     await post("/api/sync", options);
   } catch (e) {
-    if (!(e instanceof StaleResponse)) await notifyUser(e.message);
+    if (!obsoleteView(e)) await notifyUser(e.message);
   } finally {
     if(scope===workspaceId)await load();
     $("refresh").disabled = false;
@@ -289,7 +389,7 @@ function button(label, action) {
     const managed=!!b.closest('#history,#backups');
     if(!managed)b.disabled = true;
     try { await action(event); }
-    catch (e) { if (!(e instanceof StaleResponse)) await notifyUser(e.message); }
+    catch (e) { if (!obsoleteView(e)) await notifyUser(e.message); }
     finally { if (b.isConnected && !b.closest('#history') && !b.closest('#backups')) b.disabled = false; }
   };
   if (/删除|移除/.test(label)) b.className = "danger";
@@ -306,6 +406,7 @@ function field(name, value = "", type = "text") {
 }
 let editorEpoch = 0;
 function dialog(title, build, save, saveLabel = '保存本地') {
+  localEditorContext=null;
   const opener = document.activeElement;
   const epoch = ++editorEpoch, submit = $("editorForm").querySelector("[type=submit]");
   let scope = workspaceId, formVersion = version, formCatalogVersion = catalogVersion;
@@ -348,6 +449,7 @@ function dialog(title, build, save, saveLabel = '保存本地') {
       $("editor").close();
       await load();
     } catch (error) {
+      if(error instanceof DetachedWriteResult){if(current())$('editor').close();return;}
       if (current()) $("formError").textContent = error.message;
     } finally {
       saving = false; update();
@@ -362,11 +464,11 @@ function dialog(title, build, save, saveLabel = '保存本地') {
 }
 $("cancel").onclick = () => $("editor").close();
 $("editor").addEventListener('close', () => {
-  ++editorEpoch;
+  ++editorEpoch;localEditorContext=null;
   $("fields").replaceChildren();
   $("editorForm").onsubmit = null;
 });
-const edit = (operation, context = { workspaceId, version }) => post("/api/edit", { ...context, operation });
+const edit = (operation, context = editingContext) => {requireEditing(context);return post("/api/edit", { workspaceId:context.workspaceId, version:context.version, operation });};
 const time = (minute) =>
   `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 const minute = (text) => {
@@ -376,7 +478,7 @@ const minute = (text) => {
   return h * 60 + m;
 };
 function editEntry(row = {}) {
-  dialog(
+  businessDialog(
     row.id ? "编辑本地课程" : "新增本地课程",
     () => {
       const title = field("课程名", row.title),
@@ -397,7 +499,7 @@ function editEntry(row = {}) {
   );
 }
 function editEvent(row = {}) {
-  dialog(
+  businessDialog(
     row.id ? "编辑事件" : "新增事件",
     () => {
       const title = field("标题", row.title),
@@ -433,10 +535,10 @@ function editEvent(row = {}) {
   );
 }
 function editOccurrence(c) {
-  const context = { workspaceId, version };
-  dialog(
+  const context = requireEditing();
+  businessDialog(
     "课程详情：" + c.title,
-    () => {
+    form => {
       const label = el("label", "编辑范围"),
         select = el("select");
       for (const [value, text] of [
@@ -499,8 +601,10 @@ function editOccurrence(c) {
       );
       $("fields").append(
         button("重置所选范围", async () => {
+          if(!form.current())return;
           if (await confirmAction("确认重置所选范围？"))
             try {
+              if(!form.current())return;
               await edit({
                 kind: "override",
                 action: "reset",
@@ -508,10 +612,11 @@ function editOccurrence(c) {
                 seriesId: c.seriesId,
                 anchorDate: select.value === "all" ? null : c.anchorDate,
               }, context);
+              if(!form.current())return;
               $("editor").close();
               await load();
             } catch (e) {
-              $("formError").textContent = e.message;
+              if(form.current() && !obsoleteView(e))$("formError").textContent = e.message;
             }
         }),
       );
@@ -537,7 +642,7 @@ function editOccurrence(c) {
   );
 }
 function editProfile(p = {}) {
-  dialog(
+  businessDialog(
     "学期、阶段作息与节次",
     () => {
       const key = field("学期标识", p.termKey),
@@ -580,7 +685,7 @@ function editProfile(p = {}) {
   );
 }
 function adjustDate(row = {}) {
-  dialog(
+  businessDialog(
     "日期调整 / 停课与补课",
     () => {
       const d = field("目标日期", row.date ?? $("date").value, "date"),
@@ -604,17 +709,18 @@ function adjustDate(row = {}) {
     (value) => edit({ kind: "date", action: "upsert", value }),
   );
 }
-async function remove(kind, id, label) {
-  const context = { workspaceId, version };
+async function remove(kind, id, label, context=editingContext) {
+  requireEditing(context);
   if (await confirmAction("确认删除 / 重置 " + label + "？相关覆盖会随课程或来源删除。"))
     try {
       await edit({ kind, id, action: "delete" }, context);
       await load();
     } catch (e) {
-      await notifyUser(e.message);
+      if(!(e instanceof DetachedWriteResult))await notifyUser(e.message);
     }
 }
 function renderRecords() {
+  const context=requireEditing();
   const root = $("records");
   root.replaceChildren();
   for (const [kind, rows, label, key, editor] of [
@@ -627,7 +733,7 @@ function renderRecords() {
       "来源",
       "id",
       (row) =>
-        dialog(
+        businessDialog(
           "来源管理",
           () => {
             const name = field("显示名", row.displayName),
@@ -658,9 +764,9 @@ function renderRecords() {
           `${row.date} ${row.mode === "none" ? "停课" : "补课"} ${row.label}`,
       );
       p.append(
-        button("编辑", () => editor(row)),
+        button("编辑", () => {requireEditing(context);return editor(row);}),
         button("删除 / 重置", () =>
-          remove(kind, row[key], row.title ?? row.displayName ?? row[key]),
+          remove(kind, row[key], row.title ?? row.displayName ?? row[key],context),
         ),
       );
       group.append(p);
@@ -669,7 +775,7 @@ function renderRecords() {
 }
 async function importFile() {
   const scope = workspaceId, importVersion = version;
-  dialog(
+  businessDialog(
     "导入预览",
     (form) => {
       const file = field("选择 ICS、CSV 或 XLS", "", "file");
@@ -752,7 +858,7 @@ async function showConflicts() {
     version = c.version;
     dialog(
       "同步冲突",
-      () => {
+      form => {
         $("fields").append(
           el(
             "p",
@@ -814,13 +920,16 @@ async function showConflicts() {
         ])
           $("fields").append(
             button(label, async () => {
+              if(!form.current())return;
               if (!(await confirmAction(label + "？将保存待发布提交。"))) return;
               try {
+                if(!form.current())return;
                 await post("/api/resolve", { choice, token: c.token, workspaceId: c.workspaceId, version: c.version });
+                if(!form.current())return;
                 $("editor").close();
                 await load();
               } catch (e) {
-                $("formError").textContent = e.message;
+                if(form.current() && !obsoleteView(e))$("formError").textContent = e.message;
               }
             }),
           );
@@ -866,7 +975,7 @@ $("bind").onclick = () => sharingAction(async () => {
       if(!candidate)return;
       if (await confirmAction(`确认加入 ${candidate.datasetId}？本地必须为空；已有课程不会自动清空。`, '加入此共享课表'))
         await runSync({ workspaceId, version, bind:true, descriptorPath:candidate.descriptorPath, descriptorHash:candidate.descriptorHash });
-    } catch (e) { if (!(e instanceof StaleResponse)) await notifyUser(e.message); }
+    } catch (e) { if (!obsoleteView(e)) await notifyUser(e.message); }
     return;
   }
   const context = { workspaceId, version };
@@ -884,7 +993,7 @@ async function loadManagement(epoch = loadEpoch) {
   let m;
   try { m = await get('/api/manage',{pageSensitive:false}); }
   catch (error) {
-    if (!(error instanceof StaleResponse) && epoch === loadEpoch && scope === workspaceId && ticket===managementEpoch) $('managementStatus').textContent = '管理数据加载失败：' + error.message + '。可点击“刷新状态”或重新打开连接弹窗重试。';
+    if (!obsoleteView(error) && epoch === loadEpoch && scope === workspaceId && ticket===managementEpoch) $('managementStatus').textContent = '管理数据加载失败：' + error.message + '。可点击“刷新状态”或重新打开连接弹窗重试。';
     throw error;
   }
   if (epoch !== loadEpoch || scope !== workspaceId || ticket!==managementEpoch) return;
@@ -970,7 +1079,7 @@ async function migrateToV3() {
       ...(selected ? {descriptorPath:selected.descriptorPath,descriptorHash:selected.descriptorHash} : {}) });
     await load();
     await resumeV3Migration(m.id);
-  } catch (e) { await notifyUser(e.message + '。本地、源历史与目标候选已保留，请从恢复入口继续。'); await load(); }
+  } catch (e) { if(e instanceof DetachedWriteResult)return;await notifyUser(e.message + '。本地、源历史与目标候选已保留，请从恢复入口继续。'); await load(); }
 }
 async function resumeV3Migration(id) {
   const m = await post('/api/migration', { action:'v3.resume', migrationId:id });
@@ -985,22 +1094,23 @@ async function recoverV3Migration() {
     if (m.phase === 'ACTIVE' || m.phase === 'CANCELLED') return notifyUser(JSON.stringify(m,null,2));
     if (await confirmAction(JSON.stringify(m,null,2) + '\n继续恢复同一事务和目标？')) await resumeV3Migration(m.id);
     else if (await confirmAction('仅在尚未发布本机候选、尚未激活目标时可取消准备并恢复源 Writer。加入既有目标的只读预检可以取消；不删除两端文件。检查并取消？')) { await post('/api/migration', { action:'v3.cancel', migrationId:m.id }); await load(); }
-  } catch (e) { await notifyUser(e.message + '。保留两端数据，禁止清库或简单切回旧协议。'); }
+  } catch (e) { if(e instanceof DetachedWriteResult)return;await notifyUser(e.message + '。保留两端数据，禁止清库或简单切回旧协议。'); }
 }
 async function manageAction(input) {
   try { const result = await post('/api/manage', input); await load(); return result; }
-  catch (e) { await notifyUser(e.message); await load(); }
+  catch (e) { if(e instanceof DetachedWriteResult)return;await notifyUser(e.message); await load(); }
 }
 async function switchWorkspace(id) {
   if (!id || id === workspaceId || switching) return;
-  switching = true; invalidateHistory(); invalidateBackup(); ++viewEpoch; $('workspaceSelect').disabled = true;
+  if(activeWrite || unresolvedWrite){$('workspaceSelect').value=workspaceId;renderWriteStatus();return;}
+  switching = true; isolateEditing();invalidateHistory(); invalidateBackup(); ++viewEpoch; $('workspaceSelect').disabled = true;
   for (const id of ['dashboard', 'dashboardActions', 'dataSources','history','backups']) $(id).inert = true;
   $('editor').close();
   try {
     await post('/api/manage', { action: 'workspace.switch', targetId: id });
     ++loadEpoch; workspaceId = id; local = null;
     $('editor').close(); navigate('dashboard'); await load();
-  } catch (e) { await notifyUser(e.message); await load(); }
+  } catch (e) { if(e instanceof DetachedWriteResult)return;await notifyUser(e.message); await load(); }
   finally {
     switching = false; $('workspaceSelect').disabled = false;
     for (const id of ['dashboard', 'dashboardActions', 'dataSources','history','backups']) $(id).inert = false;
@@ -1209,7 +1319,7 @@ let backupToken = null, backupDirectoryIdentity = null, backupEpoch = 0;
 function invalidateBackup() {
   ++backupEpoch; const old=backupToken; backupToken=null;backupDirectoryIdentity=null;
   $('backupPreview').replaceChildren();$('backupRows').replaceChildren();$('backupRestore').disabled=true;
-  if(old)void post('/api/backups/cancel',{token:old}).catch(()=>{});
+  if(old && ![activeWrite,unresolvedWrite,lastWrite].some(op=>op?.path==='/api/backups/restore' && op.restoreToken===old))void post('/api/backups/cancel',{token:old}).catch(()=>{});
 }
 $('workspaceSelect').addEventListener('change',invalidateBackup);
 const backupLocation = () => ({ rootId: $('backupRoot').value, relative: $('backupRelative').value, directoryIdentity: backupDirectoryIdentity });
@@ -1218,7 +1328,7 @@ async function backupJob(action) {
   backupBusy=true; const job=++backupJobId, scope=workspaceId;
   const buttons=lockControls('backups'); $('backupStatus').textContent='正在处理…';
   try { await action(); }
-  catch(e) { if (!(e instanceof StaleResponse) && scope===workspaceId && job===backupJobId) $('backupStatus').textContent=e.message; }
+  catch(e) { if (!obsoleteView(e) && scope===workspaceId && job===backupJobId) $('backupStatus').textContent=e.message; }
   finally {
     if(job!==backupJobId)return;
     backupBusy=false; $('backupPassword').value='';
@@ -1305,8 +1415,8 @@ async function historyJob(action) {
   const buttons=lockControls('history');
   try { await action(); }
   catch(e) {
-    if (!(e instanceof StaleResponse) && scope===workspaceId && job===historyJobId && page===viewEpoch) {
-      $('historyStatus').textContent=e.message+'。可重试；已有本地课程保持不变。'; historyPreview=null;
+    if (!obsoleteView(e) && scope===workspaceId && job===historyJobId && page===viewEpoch) {
+      $('historyStatus').textContent=e.message+'。请查看操作状态与当前课程；不自动重发写操作。'; historyPreview=null;
       $('historyRows').append(button('刷新当前课表与历史',()=>historyJob(async()=>{await load();await historyRead();})));
     }
   } finally {
@@ -1475,7 +1585,7 @@ async function historyRead() {
   $('historyExportTitle').textContent='完整已知 v2 历史归档与精简候选';
   $('historyExportHint').textContent='复制本轮已验证的 DPC2 原始字节；不包含应用私有课程和凭据。不会删除、移动或改写旧库。';
   $('historyCompactHint').hidden=false;
-  await migrationRead();
+  void loadMigrationTools();
   historyPreview = null; historyEligible = false; historyScope = workspaceId; $('historyOutput').replaceChildren();
   const h = await get('/api/history'); if (historyScope !== workspaceId || ticket!==historyReadEpoch) throw new StaleResponse();
   version = h.version;
@@ -1545,10 +1655,21 @@ for (const [id, action] of [['historyArchive','archive'],['historyCompact','comp
   showMaintenance(result); $('historyStatus').textContent = result.message;
 });
 
-async function migrationRead() {
+let migrationReadEpoch=0;
+async function loadMigrationTools() {
+  const ticket=++migrationReadEpoch,scope=workspaceId,page=viewEpoch;
+  try {await migrationRead(()=>ticket===migrationReadEpoch && scope===workspaceId && page===viewEpoch);}
+  catch(e) {
+    if(e instanceof StaleResponse || ticket!==migrationReadEpoch || scope!==workspaceId || page!==viewEpoch)return;
+    let panel=$('datasetMigration');if(!panel){panel=el('section');panel.id='datasetMigration';$('advancedHistory').append(panel);}
+    panel.replaceChildren(el('h3','高级精简换库工具'),el('p','迁移信息暂不可用：'+e.message+'。普通历史仍可浏览；现有迁移保护保持不变。','warning'),button('重试读取迁移工具',loadMigrationTools));
+  }
+}
+async function migrationRead(current=()=>true) {
   let panel = $('datasetMigration');
   if (!panel) { panel = el('section'); panel.id = 'datasetMigration'; $('advancedHistory').append(panel); }
   const result = await get('/api/migration');
+  if(!current())throw new StaleResponse();
   panel.replaceChildren(el('h3', '迁移到精简数据集'), el('p', result.warning));
   const form = el('div');
   const candidate = el('input'); candidate.readOnly=true; candidate.placeholder = '选择已生成的精简候选目录'; candidate.id = 'migrationCandidate'; candidate.setAttribute('aria-label', '精简候选相对目录');
@@ -1574,6 +1695,7 @@ async function migrationRead() {
   });
   const connection = el('select'); connection.id = 'migrationConnection'; connection.setAttribute('aria-label', 'Android 实际使用的目标 WebDAV 连接');
   const management = await get('/api/manage');
+  if(!current())throw new StaleResponse();
   connection.append(...management.connections.filter(c => c.type === 'webdav').map(c => { const o = el('option', `${c.name} · ${c.url}`); o.value = c.id; return o; }));
   const job = async data => {
     await post('/api/migration', data);
@@ -1649,6 +1771,7 @@ async function loadAgentAccess() {
   }
   panel.append(el('pre', JSON.stringify(state.audit.slice(-20), null, 2)));
 }
+$('editingRetry').onclick=()=>load();
 $('agentReload').onclick = () => loadAgentAccess().catch(e => notifyUser(e.message));
 
 $('historyCancel').onclick=()=>{historyPreview=null;++historyOutputEpoch;$('historyOutput').replaceChildren();$('historyConfirm').disabled=true;$('historyConfirm').parentElement.hidden=true;$('historyStatus').textContent='已取消预览，没有执行回退。';};

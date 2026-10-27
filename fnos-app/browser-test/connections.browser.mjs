@@ -15,12 +15,14 @@ import { expect } from 'playwright/test';
 import { createApp, PREFIX } from '../src/server.mjs';
 import { encode, decode } from '../src/protocol.mjs';
 import { loadGraph } from '../src/graph.mjs';
-import { emptyState } from '../src/merge.mjs';
+import { emptyState, same } from '../src/merge.mjs';
 import { Workspace } from '../src/workspace.mjs';
 
 let browser;
 before(async () => { browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chromium') }); });
 after(async () => { await browser?.close(); });
+
+// PR61 review fixes use only the same isolated server and synthetic remote fixtures below.
 
 // 只在独立临时实例中注入网关身份；生产服务仍拒绝 TCP 和伪造的客户端身份。
 async function fixture(t, { authorized = false, proxyHost = null, remoteFactory, v3RemoteFactory } = {}) {
@@ -891,4 +893,144 @@ test('PR61 离开正在读取的备份页再返回，旧请求不锁死新页面
   const f=await fixture(t,{authorized:true});let release,started,first=true;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
   await f.page.route('**/api/backups/list',async route=>{if(first){first=false;started();await gate;}return route.fulfill({json:{directoryIdentity:'isolated',backups:[]}}).catch(()=>{});});
   try{await f.open();await f.page.locator('#backupsPage').click();await pending;await f.page.locator('#schedulePage').click();await f.page.locator('#backupsPage').click();await expect(f.page.locator('#backupStatus')).toContainText('0 个加密备份');release();await expect(f.page.locator('#backupBrowse')).toBeEnabled();await expect(f.page.locator('#backupCreate')).toBeEnabled();await expect(f.page.locator('#backupRestore')).toBeDisabled();}finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+
+const reviewEntry=(id,title)=>({id,title,day:1,startMinute:480,endMinute:540,location:''});
+async function addUnboundWorkspace(f,name,entry) {
+  const id=randomUUID(),db=await Workspace.open(f.app.catalog.workspaceStore(id));
+  await db.edit({kind:'entry',action:'upsert',value:entry});
+  const manifest=structuredClone(f.app.catalog.manifest);manifest.workspaces.push({id,name});manifest.revision++;
+  await f.app.catalog.commit(manifest);f.app.catalog.attach(id,db);return {id,db};
+}
+
+test('审查修复61 A/B 切换后 state 失败隔离旧记录、来源和学期闭包，重试只恢复 B',async t=>{
+  const f=await fixture(t),a=f.app.catalog.manifest.activeId;
+  await f.app.db.edit({kind:'entry',action:'upsert',value:reviewEntry('a-entry','A独有课程')});await configureTerm(f);
+  await f.app.db.tx(frame=>{
+    frame.local.sources=[{id:'a-source',displayName:'A来源',filename:'a.ics',kind:'ics',locator:null,calendarName:null,sha256:'0'.repeat(64),importedAt:0,timezones:'UTC',occurrenceCount:1,firstStart:1,lastEnd:2,termKey:null}];
+    frame.local.imported=[{id:'a-instance',sourceId:'a-source',seriesId:'a-series',uid:null,originalStart:1,title:'A原始课程',start:1,end:2,timezone:'UTC',location:'',description:'',periodLabel:null}];
+  });
+  const aBefore=structuredClone(f.app.db.frame.local),b=await addUnboundWorkspace(f,'B课程表',reviewEntry('b-entry','B独有课程')),before=structuredClone(b.db.frame.local);
+  let fail=true,edits=0;f.page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/edit'))edits++;});
+  await f.page.route('**/api/state?*',route=>new URL(route.request().url()).searchParams.get('workspaceId')===b.id&&fail?route.fulfill({status:503,json:{error:'B编辑数据暂不可读'}}):route.continue());
+  await f.open();await expect(f.page.locator('#records')).toContainText('A来源');await f.page.locator('#schedulePage').click();await f.page.locator('#manage').click();
+  // Keep references to detached nodes to exercise the closures themselves, beyond DOM removal.
+  await f.page.evaluate(()=>{window.reviewOld=[...document.querySelectorAll('#records button')];window.reviewCourse=document.querySelector('#week [role=button]');});
+  await f.page.locator('#workspaceSelect').selectOption(b.id);await expect(f.page.locator('#editingStatus')).toContainText('B编辑数据暂不可读');
+  await expect(f.page.locator('#records button')).toHaveCount(0);await expect(f.page.locator('#week')).toContainText('B独有课程');await expect(f.page.locator('#status')).not.toContainText('初始化失败');
+  for(const id of ['newCourse','newEvent','newProfile','importFile','adjustDate'])await expect(f.page.locator('#'+id)).toBeDisabled();
+  await f.page.evaluate(()=>window.reviewCourse?.click());await expect(f.page.locator('#editor')).not.toBeVisible();
+  for(const i of [0,1,2,4]){
+    await f.page.evaluate(i=>window.reviewOld[i]?.click(),i);await expect(f.page.locator('#feedback[open]')).toBeVisible();await f.page.locator('#feedbackAccept').click();
+  }
+  assert.equal(edits,0);assert.deepEqual((await f.app.catalog.load(b.id)).frame.local,before);assert(same((await f.app.catalog.load(a)).frame.local,aBefore));await f.app.catalog.load(b.id);
+  fail=false;await f.page.locator('#editingRetry').click();await expect(f.page.locator('#newCourse')).toBeEnabled();await expect(f.page.locator('#records')).toContainText('B独有课程');await expect(f.page.locator('#records')).not.toContainText('A独有课程');assert.deepEqual(f.errors,[]);
+});
+
+test('审查修复61 同工作区 state 失败和迟到响应保持只读，版本不匹配不能恢复编辑',async t=>{
+  const f=await fixture(t);await f.app.db.edit({kind:'entry',action:'upsert',value:reviewEntry('stable','当前课程')});await f.open();await expect(f.page.locator('#newCourse')).toBeEnabled();
+  let mode='fail',release,started;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  await f.page.route('**/api/state?*',async route=>{
+    if(mode==='fail')return route.fulfill({status:503,json:{error:'本地读取故障'}});
+    const response=await route.fetch(),value=await response.json();
+    if(mode==='late'){mode='valid';started();await gate;}
+    else if(mode==='wrong')value.version++;
+    else if(mode==='wrongScope')value.workspaceId=randomUUID();
+    return route.fulfill({response,json:value}).catch(()=>{});
+  });
+  await f.page.locator('#schedulePage').click();await f.page.locator('#today').click();await expect(f.page.locator('#editingStatus')).toContainText('本地读取故障');await expect(f.page.locator('#records button')).toHaveCount(0);await expect(f.page.locator('#week')).toContainText('当前课程');
+  await f.page.locator('#week [role=button]').first().evaluate(e=>e.click());await expect(f.page.locator('#editor')).not.toBeVisible();
+  for(const invalid of ['wrong','wrongScope']){mode=invalid;await f.page.locator('#editingRetry').click();await expect(f.page.locator('#editingStatus')).toContainText('身份或版本');await expect(f.page.locator('#newCourse')).toBeDisabled();}
+  try{
+    mode='late';await f.page.locator('#editingRetry').click();await pending;
+    await f.app.db.edit({kind:'entry',action:'upsert',value:reviewEntry('stable','新版本课程')});
+    await f.page.locator('#editingRetry').click();await expect(f.page.locator('#records')).toContainText('新版本课程');release();
+    await expect(f.page.locator('#records')).not.toContainText('当前课程');await expect(f.page.locator('#newCourse')).toBeEnabled();
+  }finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+for(const kind of ['rollback','restore'])for(const outcome of ['success','failure','uncertain'])test(`审查修复61 ${kind} POST 切页后保留 ${outcome} 结果并读取权威状态`,async t=>{
+  const remote=memoryV3(),f=await fixture(t,{authorized:true,v3RemoteFactory:()=>remote}),v=await seedV3(f,remote);
+  let release,started,requests=0,cancellations=0,authorityFail=outcome==='uncertain';const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  const path=kind==='rollback'?'/api/history/rollback':'/api/backups/restore';
+  await f.page.route('**/api/maintenance?*',route=>authorityFail?route.fulfill({status:503,json:{error:'结果核对暂不可读'}}):route.continue());
+  await f.page.route('**'+path,async route=>{
+    requests++;let response;
+    if(kind==='rollback'&&outcome!=='failure')response=await route.fetch();
+    if(kind==='restore'&&outcome!=='failure')await v.db.edit({kind:'entry',action:'upsert',value:reviewEntry('restored','恢复后的权威内容')});
+    started();await gate;
+    if(outcome==='uncertain')return route.abort('failed').catch(()=>{});
+    if(outcome==='failure')return route.fulfill({status:500,json:{error:'服务端执行失败，进度已保留'}}).catch(()=>{});
+    return route.fulfill(response?{response}:{json:{result:'隔离夹具模拟恢复成功'}}).catch(()=>{});
+  });
+  await f.page.route('**/api/backups/cancel',route=>{cancellations++;return route.fulfill({json:{ok:true}});});
+  if(kind==='restore'){
+    await f.page.route('**/api/backups/list',route=>route.fulfill({json:{directoryIdentity:'review-isolated',backups:[{name:'isolated.dpbk',size:4,modifiedAt:0,status:'未验证'}]}}));
+    await f.page.route('**/api/backups/verify',route=>route.fulfill({json:{token:'review-restore',createdAt:0,appVersion:'test',formatVersion:'DPBK0002',workspaceCount:1,fileCount:1,bytes:4,coverage:'仅用于在途响应交互验证',dependencies:[]}}));
+  }
+  try {
+    await f.open();
+    if(kind==='rollback'){
+      await f.page.locator('#historyPage').click();await f.page.locator('#historyTo').selectOption(v.root.id);await f.page.locator('#historyPreview').click();await f.page.locator('#historyConfirm').click();await f.page.locator('#feedbackAccept').click();
+    }else{
+      await f.page.locator('#backupsPage').click();await f.page.getByRole('button',{name:'验证并预览恢复',exact:true}).click();await f.page.locator('#backupRestore').click();await f.page.locator('#feedbackInput').fill('恢复应用数据');await f.page.locator('#feedbackAccept').click();
+    }
+    await pending;await expect(f.page.locator('#writeStatus')).toContainText('请求已发出');
+    if(kind==='rollback')await f.page.evaluate(()=>document.querySelector('#historyConfirm').onclick());
+    await f.page.locator('#schedulePage').click();await expect(f.page.locator('#writeStatus')).toContainText('切换页面不会取消');
+    await expect(f.page.locator('#historyConfirm')).toBeDisabled();await expect(f.page.locator('#backupRestore')).toBeDisabled();
+    release();
+    await expect(f.page.locator('#writeStatus')).toContainText(outcome==='success'?'服务器已返回成功响应':outcome==='failure'?'服务器返回失败':'结果不确定');
+    await expect(f.page.locator('#writeStatus')).toContainText(outcome==='uncertain'?'结果核对暂不可读':'已重新读取服务器状态');await expect(f.page.locator('#pageTitle')).toHaveText('课程表');
+    assert.equal(requests,1);assert.equal(cancellations,0);assert.doesNotMatch(await f.page.locator('#writeStatus').textContent(),/已取消恢复|已取消预览/);
+    if(kind==='rollback')assert.equal(v.db.frame.local.entries.length,outcome==='failure'?1:0);
+    else if(outcome!=='failure')await expect(f.page.locator('#week')).toContainText('恢复后的权威内容');
+    if(outcome==='uncertain'){
+      await expect(f.page.getByRole('button',{name:'已核对结果，解除操作保护（不重发）',exact:true})).toHaveCount(0);authorityFail=false;
+      await f.page.getByRole('button',{name:'重新读取操作状态',exact:true}).click();await expect(f.page.locator('#writeStatus')).toContainText('结果不确定');
+      await f.page.getByRole('button',{name:'已核对结果，解除操作保护（不重发）',exact:true}).click();await expect(f.page.locator('#writeStatus')).toContainText('没有重发原请求');await expect(f.page.getByRole('button',{name:'已核对结果，解除操作保护（不重发）',exact:true})).toHaveCount(0);assert.equal(requests,1);
+    }
+  } finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+test('审查修复61 v2 迁移接口失败或延迟不阻止历史、比较和回退资格',async t=>{
+  const root={datasetId:randomUUID(),writerId:randomUUID(),commitId:randomUUID(),parents:[],state:{...emptyState(),entries:[reviewEntry('stable','v2历史课程')]}};
+  const rows=new Map([[root.commitId,encode(root)]]),remote={key:'review-v2',list:async()=>[...rows.keys()],read:async id=>rows.get(id)??null,put:async(id,b)=>rows.set(id,b)};
+  const f=await fixture(t,{remoteFactory:()=>remote}),graph=await loadGraph(remote),manifest=structuredClone(f.app.catalog.manifest),connectionId=randomUUID();
+  manifest.connections.push({id:connectionId,name:'隔离连接',type:'webdav',config:{url:'https://review.test/',username:'synthetic',password:'synthetic'}});manifest.workspaces[0].connectionId=connectionId;await f.app.catalog.commit(manifest);
+  await f.app.db.tx(frame=>{frame.graph=graph;frame.local=graph.state;frame.baseline=graph.state;frame.frontier=graph.tips;frame.datasetId=root.datasetId;frame.bindingKey=remote.key;frame.checkpoint={hashes:graph.hashes,datasetId:root.datasetId};});
+  let release,started;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  await f.page.route('**/api/migration?*',async route=>{started();await gate;return route.fulfill({status:503,json:{error:'高级迁移接口不可用'}}).catch(()=>{});});
+  try{
+    await f.open();await f.page.locator('#historyPage').click();await pending;await expect(f.page.locator('#historyRows')).toContainText(root.commitId.slice(0,8));
+    await f.page.locator('#historyTo').selectOption(root.commitId);await expect(f.page.locator('#historyPreview')).toBeEnabled();
+    await f.page.locator('#historyRows').getByRole('button',{name:'查看版本内容',exact:true}).click();await f.page.getByRole('button',{name:'展开此集合',exact:true}).first().click();await expect(f.page.locator('#historyOutput')).toContainText('v2历史课程');
+    release();await expect(f.page.locator('#datasetMigration')).toContainText('高级迁移接口不可用');await expect(f.page.locator('#historyStatus')).not.toContainText('高级迁移接口不可用');
+    await f.page.locator('#historyFrom').selectOption('current');await f.page.locator('#historyDiff').click();await expect(f.page.locator('#historyOutput')).toContainText('共 0 条记录变化');
+  }finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+
+test('审查修复61 编辑 POST 发出后关闭表单切页保留结果，并阻止竞争写入和工作区切换',async t=>{
+  const f=await fixture(t),a=f.app.catalog.manifest.activeId;await f.app.db.edit({kind:'entry',action:'upsert',value:reviewEntry('a-entry','待编辑课程')});
+  const b=await addUnboundWorkspace(f,'另一课程表',reviewEntry('b-entry','B课程'));
+  let release,started,edits=0,syncs=0,switches=0;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  await f.page.route('**/api/edit',async route=>{edits++;const response=await route.fetch();started();await gate;return route.fulfill({response}).catch(()=>{});});
+  f.page.on('request',r=>{if(r.url().endsWith('/api/sync'))syncs++;if(r.url().endsWith('/api/manage')&&r.method()==='POST'&&r.postDataJSON().action==='workspace.switch')switches++;});
+  try{
+    await f.open();await f.page.locator('#schedulePage').click();await f.page.locator('#manage').click();await f.page.locator('#records button').first().click();await f.page.getByLabel('课程名',{exact:true}).fill('已保存的编辑');await f.save.click();await pending;
+    await f.page.locator('#cancel').click();await f.page.locator('#sourcesPage').click();await f.page.locator('#workspaceSelect').selectOption(b.id);await expect(f.page.locator('#workspaceSelect')).toHaveValue(a);assert.equal(switches,0);
+    await f.page.locator('#schedulePage').click();await f.page.locator('#refresh').click();await expect(f.page.locator('#feedbackMessage')).toContainText('已有写操作');await f.page.locator('#feedbackAccept').click();assert.equal(syncs,0);
+    await f.page.locator('#sourcesPage').click();release();await expect(f.page.locator('#writeStatus')).toContainText('服务器已返回成功响应');await expect(f.page.locator('#writeStatus')).toContainText('已重新读取服务器状态');await expect(f.page.locator('#pageTitle')).toHaveText('课程表与共享');
+    await expect(f.page.locator('#week')).toContainText('已保存的编辑');assert.equal(edits,1);assert.deepEqual((await f.app.catalog.load(b.id)).frame.local.entries,[reviewEntry('b-entry','B课程')]);
+  }finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+
+test('审查修复61 关闭的课程详情重置闭包不能向后来打开的编辑表单提交或写入提示',async t=>{
+  const f=await fixture(t);await f.app.db.edit({kind:'entry',action:'upsert',value:reviewEntry('stable','原课程')});let edits=0;f.page.on('request',r=>{if(r.url().endsWith('/api/edit'))edits++;});
+  await f.open();await f.page.locator('#schedulePage').click();await f.page.locator('#week [role=button]').first().click();await expect(f.page.locator('#editorTitle')).toContainText('课程详情');
+  await f.page.getByRole('button',{name:'重置所选范围',exact:true}).evaluate(e=>window.oldReset=e);await f.page.locator('#cancel').click();await f.page.locator('#newCourse').click();
+  await f.page.evaluate(()=>window.oldReset.click());await expect(f.page.locator('#feedback')).not.toBeVisible();await expect(f.page.locator('#editorTitle')).toHaveText('新增本地课程');await expect(f.page.locator('#formError')).toBeEmpty();assert.equal(edits,0);assert.deepEqual(f.errors,[]);
 });
