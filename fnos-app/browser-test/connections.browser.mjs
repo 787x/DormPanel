@@ -1034,3 +1034,91 @@ test('审查修复61 关闭的课程详情重置闭包不能向后来打开的�
   await f.page.getByRole('button',{name:'重置所选范围',exact:true}).evaluate(e=>window.oldReset=e);await f.page.locator('#cancel').click();await f.page.locator('#newCourse').click();
   await f.page.evaluate(()=>window.oldReset.click());await expect(f.page.locator('#feedback')).not.toBeVisible();await expect(f.page.locator('#editorTitle')).toHaveText('新增本地课程');await expect(f.page.locator('#formError')).toBeEmpty();assert.equal(edits,0);assert.deepEqual(f.errors,[]);
 });
+
+
+for(const kind of ['edit','import'])test(`二轮61 ${kind} 明确验证拒绝保留草稿并可纠正重试`,async t=>{
+  const f=await fixture(t);let response;
+  f.page.on('response',async r=>{if(r.url().endsWith(kind==='edit'?'/api/edit':'/api/import/confirm')&&r.status()===400)response=await r.json();});
+  if(kind==='edit'){
+    await f.open();await f.page.locator('#schedulePage').click();await f.page.locator('#newCourse').click();
+    await f.page.getByLabel('课程名',{exact:true}).fill('保留课程草稿');await f.page.getByLabel('开始',{exact:true}).fill('10:00');await f.page.getByLabel('结束',{exact:true}).fill('09:00');
+  }else{
+    await configureTerm(f);await openImport(f);await f.page.locator('#fields input[type=file]').setInputFiles(csvPath);await expect(f.save).toBeEnabled();await f.page.getByLabel('来源显示名',{exact:true}).fill('   ');
+  }
+  const before=f.app.db.snapshot();await f.save.click();if(kind==='import')await f.page.locator('#feedbackAccept').click();
+  await expect(f.page.locator('#formError')).not.toBeEmpty();await expect(f.page.locator('#editor')).toBeVisible();await expect(f.save).toBeEnabled();assert.equal(response.writeApplied,false);assert.deepEqual(f.app.db.frame,before);
+  if(kind==='edit'){
+    await expect(f.page.getByLabel('课程名',{exact:true})).toHaveValue('保留课程草稿');await expect(f.page.getByLabel('开始',{exact:true})).toHaveValue('10:00');await f.page.getByLabel('结束',{exact:true}).fill('11:00');
+  }else{
+    await expect(f.page.getByLabel('来源显示名',{exact:true})).toHaveValue('   ');assert.equal(await f.page.locator('#fields input[type=file]').evaluate(e=>e.files.length),1);await expect(f.page.locator('#fields pre')).toContainText('hubei_2026-2027-1.csv');await f.page.getByLabel('来源显示名',{exact:true}).fill('纠正后的来源');
+  }
+  await f.save.click();if(kind==='import')await f.page.locator('#feedbackAccept').click();await expect(f.page.locator('#editor')).not.toBeVisible();
+  if(kind==='edit')assert.equal(f.app.db.frame.local.entries[0].title,'保留课程草稿');else assert.equal(f.app.db.frame.local.sources[0].displayName,'纠正后的来源');assert.deepEqual(f.errors,[]);
+});
+
+for(const kind of ['edit','import'])test(`二轮61 ${kind} 版本失效保留草稿但撤销旧提交资格`,async t=>{
+  const f=await fixture(t);
+  if(kind==='edit'){await f.open();await f.page.locator('#schedulePage').click();await f.page.locator('#newCourse').click();await f.page.getByLabel('课程名',{exact:true}).fill('过期但保留的草稿');}
+  else{await configureTerm(f);await openImport(f);await f.page.locator('#fields input[type=file]').setInputFiles(csvPath);await expect(f.save).toBeEnabled();await f.page.getByLabel('来源显示名',{exact:true}).fill('过期但保留的来源草稿');}
+  await f.app.db.edit({kind:'entry',action:'upsert',value:reviewEntry('external','外部已保存课程')});const before=f.app.db.snapshot();
+  await f.save.click();if(kind==='import')await f.page.locator('#feedbackAccept').click();await expect(f.page.locator('#editor')).toBeVisible();await expect(f.page.locator('#formError')).toContainText('原提交资格已失效');await expect(f.save).toBeDisabled();
+  if(kind==='edit')await expect(f.page.getByLabel('课程名',{exact:true})).toHaveValue('过期但保留的草稿');
+  else{await expect(f.page.getByLabel('来源显示名',{exact:true})).toHaveValue('过期但保留的来源草稿');assert.equal(await f.page.locator('#fields input[type=file]').evaluate(e=>e.files.length),1);}
+  assert.deepEqual(f.app.db.frame,before);await f.page.locator('#cancel').click();await f.page.locator('#editingRetry').click();await expect(f.page.locator('#newCourse')).toBeEnabled();await expect(f.page.locator('#records')).toContainText('外部已保存课程');assert.deepEqual(f.errors,[]);
+});
+
+test('二轮61 临时导入预览在途不占正式编辑写锁，迟到响应不能复活旧表单',async t=>{
+  const f=await fixture(t);await configureTerm(f);let release,started;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  await f.page.route('**/api/import/preview',async route=>{const response=await route.fetch();started();await gate;return route.fulfill({response}).catch(()=>{});});
+  try{
+    await openImport(f);await f.page.locator('#fields input[type=file]').setInputFiles(csvPath);await pending;await f.page.locator('#cancel').click();await f.page.locator('#newCourse').click();await f.page.getByLabel('课程名',{exact:true}).fill('预览在途时保存的课程');await f.save.click();await expect(f.page.locator('#editor')).not.toBeVisible();await expect(f.page.locator('#week')).toContainText('预览在途时保存的课程');release();await expect(f.page.locator('#editor')).not.toBeVisible();assert.equal(f.app.db.frame.local.sources.length,0);
+  }finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+for(const outcome of ['success','uncertain','confirmation-retry'])test(`二轮61 工作区切换 ${outcome} 切页后按权威 activeId 更新，不重发`,async t=>{
+  const f=await fixture(t),a=f.app.catalog.manifest.activeId;await f.app.db.edit({kind:'entry',action:'upsert',value:reviewEntry('a','A课程')});const b=await addUnboundWorkspace(f,'B权威活动课表',reviewEntry('b','B课程'));
+  let release,started,posts=0,block=outcome==='confirmation-retry';const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r),historyScopes=[];
+  await f.page.route('**/api/manage*',async route=>{
+    if(route.request().method()==='GET')return block&&!new URL(route.request().url()).searchParams.has('workspaceId')?route.fulfill({status:503,json:{error:'活动身份暂不可读'}}):route.continue();
+    const input=route.request().postDataJSON();if(input.action!=='workspace.switch')return route.continue();posts++;const response=await route.fetch();started();await gate;
+    return outcome==='uncertain'?route.abort('failed').catch(()=>{}):route.fulfill({response}).catch(()=>{});
+  });
+  f.page.on('request',r=>{if(new URL(r.url()).pathname.endsWith('/api/history'))historyScopes.push(new URL(r.url()).searchParams.get('workspaceId'));});
+  try{
+    await f.open();await f.page.locator('#workspaceSelect').selectOption(b.id);await pending;assert.equal(f.app.catalog.manifest.activeId,b.id);await f.page.locator('#historyPage').click();release();
+    if(block){await expect(f.page.locator('#writeStatus')).toContainText('活动课程表尚未确认');await expect(f.page.locator('#workspaceSelect')).toHaveValue(a);block=false;await f.page.getByRole('button',{name:'重新读取操作状态',exact:true}).click();}
+    await expect(f.page.locator('#workspaceSelect')).toHaveValue(b.id);await expect(f.page.locator('#week')).toContainText('B课程');await expect(f.page.locator('#currentContext')).toContainText('B权威活动课表');await expect(f.page.locator('#pageTitle')).toHaveText('历史版本');
+    await f.page.locator('#historyPage').click();await expect(f.page.locator('#historyStatus')).not.toHaveText('');assert.equal(historyScopes.at(-1),b.id);assert.equal(posts,1);assert.equal(f.app.catalog.manifest.activeId,b.id);
+    if(outcome==='uncertain')await expect(f.page.locator('#writeStatus')).toContainText('结果不确定');
+  }finally{release();}assert.deepEqual(f.errors,[]);
+});
+
+test('二轮61 已创建但自动切换失败保留独立成功状态，可切换恢复而不重复创建',async t=>{
+  const f=await fixture(t,{v3RemoteFactory:()=>memoryV3()}),catalog=f.app.catalog,a=catalog.manifest.activeId;
+  const {connectionId}=await catalog.manage({catalogVersion:catalog.manifest.revision,action:'connection.save',name:'待创建连接',type:'webdav',url:'https://review.test/',username:'synthetic',password:'synthetic'});
+  let creates=0,switches=0,fail=true;
+  await f.page.route('**/api/manage',route=>{if(route.request().method()!=='POST')return route.continue();const data=route.request().postDataJSON();if(data.action==='workspace.add')creates++;if(data.action==='workspace.switch'){switches++;if(fail)return route.fulfill({status:500,json:{error:'自动切换失败'}});}return route.continue();});
+  await f.open();await f.page.getByRole('button',{name:'新建课程表',exact:true}).click();await f.page.getByLabel('课程表名称',{exact:true}).fill('已经建立的新课表');await f.save.click();
+  await expect(f.page.locator('#editor')).not.toBeVisible();await expect(f.page.locator('#creationStatus')).toContainText('课程表已建立：已经建立的新课表');await expect(f.page.locator('#creationStatus')).toContainText('自动切换尚未完成');
+  const created=catalog.manifest.workspaces.find(w=>w.connectionId===connectionId);assert(created);assert.equal(catalog.manifest.workspaces.length,2);assert.equal(catalog.manifest.activeId,a);assert.equal(creates,1);
+  fail=false;await f.page.getByRole('button',{name:'切换到已建立的课程表',exact:true}).click();await expect(f.page.locator('#workspaceSelect')).toHaveValue(created.id);await expect(f.page.locator('#creationStatus')).toContainText('已核对为当前活动课程表');assert.equal(creates,1);assert.equal(switches,2);assert.equal(catalog.manifest.workspaces.length,2);assert.deepEqual(f.errors,[]);
+});
+
+
+test('二轮61 正式编辑回执丢失保留草稿并冻结资格，不重复写入',async t=>{
+  const f=await fixture(t);let writes=0;await f.page.route('**/api/edit',async route=>{writes++;await route.fetch();return route.abort('failed');});
+  await f.open();await f.page.locator('#schedulePage').click();await f.page.locator('#newCourse').click();await f.page.getByLabel('课程名',{exact:true}).fill('回执未知的草稿');await f.save.click();
+  await expect(f.page.locator('#formError')).toContainText('草稿已保留');await expect(f.page.locator('#editor')).toBeVisible();await expect(f.save).toBeDisabled();await expect(f.page.getByLabel('课程名',{exact:true})).toHaveValue('回执未知的草稿');await expect(f.page.locator('#writeStatus')).toContainText('结果不确定');assert.equal(writes,1);assert.equal(f.app.db.frame.local.entries.length,1);
+  await f.page.locator('#cancel').click();await f.page.locator('#editingRetry').click();await expect(f.page.locator('#week')).toContainText('回执未知的草稿');assert.equal(writes,1);assert.deepEqual(f.errors,[]);
+});
+
+
+test('二轮61 原位只读刷新废止导入资格，迟到预览不能复活资格或丢弃草稿',async t=>{
+  const f=await fixture(t);await configureTerm(f);let release,started;const gate=new Promise(r=>release=r),pending=new Promise(r=>started=r);
+  await f.page.route('**/api/import/preview',async route=>{const response=await route.fetch();started();await gate;return route.fulfill({response}).catch(()=>{});});
+  try{
+    await openImport(f);await f.page.getByLabel('来源显示名',{exact:true}).fill('应保留的来源草稿');await f.page.locator('#fields input[type=file]').setInputFiles(csvPath);await pending;
+    await f.page.evaluate(()=>document.querySelector('#today').onclick());await expect(f.page.locator('#newCourse')).toBeEnabled();release();
+    await expect(f.page.locator('#editor')).toBeVisible();await expect(f.save).toBeDisabled();await expect(f.page.getByLabel('来源显示名',{exact:true})).toHaveValue('应保留的来源草稿');await expect(f.page.locator('#formError')).toContainText('草稿已保留');assert.equal(await f.page.locator('#fields input[type=file]').evaluate(e=>e.files.length),1);
+  }finally{release();}assert.deepEqual(f.errors,[]);
+});

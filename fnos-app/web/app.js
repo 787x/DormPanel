@@ -40,14 +40,17 @@ class StaleResponse extends Error {}
 // Stops the old view's continuation only after its write result has been retained and reconciled.
 class DetachedWriteResult extends Error {}
 const obsoleteView=error=>error instanceof StaleResponse || error instanceof DetachedWriteResult;
-let editingContext=null, localEditorContext=null;
+let editingContext=null, localEditorContext=null, currentEditorForm=null;
 const localActions=['newCourse','newEvent','managerCourse','managerEvent','newProfile','adjustDate','importFile'];
 function isolateEditing() {
   editingContext=null;local=null;
   $('records').replaceChildren();$('records').inert=true;$('week').inert=true;
   for(const id of localActions)$(id).disabled=true;
   for(const c of $('week').querySelectorAll('[role=button]')){c.tabIndex=-1;c.setAttribute('aria-disabled','true');}
-  if(localEditorContext && $('editor').open)$('editor').close();
+  if(localEditorContext && $('editor').open){
+    currentEditorForm?.invalidate('草稿已保留，但原提交资格已失效。请先复制需要的内容，关闭窗口后重新读取当前课程表并核对。');
+    $('editingState').hidden=false;$('editingStatus').textContent='编辑资格已失效，草稿保留在原表单。关闭后可重新读取并核对。';
+  }
 }
 function requireEditing(context=editingContext) {
   if(!context || context!==editingContext || context.workspaceId!==workspaceId || context.version!==version || context.epoch!==loadEpoch)
@@ -288,21 +291,33 @@ async function get(path,{pageSensitive=true}={}) {
   if (!r.ok) throw Error(v.error);
   return v;
 }
-let activeWrite=null, unresolvedWrite=null, lastWrite=null;
-function readOnlyPost(path,data) {
-  return ['/api/backups/list','/api/backups/verify','/api/backups/cancel','/api/history/preview','/api/history/cleanup-preview','/api/import/preview','/api/connections/test','/api/connections/browse'].includes(path)
+let activeWrite=null, unresolvedWrite=null, lastWrite=null, pendingCreatedWorkspace=null;
+function renderCreationStatus() {
+  const host=$('creationStatus'),created=pendingCreatedWorkspace;host.hidden=!created;if(!created)return;
+  host.replaceChildren(el('strong','课程表已建立：'+created.name),el('p',created.active?'已核对为当前活动课程表。共享数据的创建或加入仍需单独确认。':created.message??'已保留课程表及连接，尚未确认已切换。可使用下方入口切换，不会再次创建。'));
+  if(!created.active){const b=button('切换到已建立的课程表',()=>switchWorkspace(created.id));b.disabled=!!(activeWrite||unresolvedWrite);host.append(b);}
+}
+
+function postSemantics(path,data) {
+  // Temporary import tokens never acquire the page-wide business-write fence.
+  if(path==='/api/import/preview')return 'temporary-preview';
+  return ['/api/backups/list','/api/backups/verify','/api/backups/cancel','/api/history/preview','/api/history/cleanup-preview','/api/connections/test','/api/connections/browse'].includes(path)
     || path==='/api/sync' && data.discover
     || path==='/api/migration' && ['v3.preview','v3.discover'].includes(data.action)
-    || path==='/api/endpoint' && data.action==='status';
+    || path==='/api/endpoint' && data.action==='status' ? 'read' : 'write';
 }
 function writeLabel(path,data) {
   return ({'/api/edit':'保存课程编辑','/api/sync':'检查并同步','/api/history/rollback':'历史回退','/api/backups/restore':'恢复应用备份','/api/backups/create':'创建应用备份','/api/migration':'迁移操作','/api/endpoint':'端点操作','/api/manage':'课程表与连接配置','/api/import/confirm':'导入课程','/api/resolve':'解决冲突'}[path]??'历史维护')+(data.action?' · '+data.action:'');
 }
 function renderWriteStatus() {
-  const op=activeWrite??unresolvedWrite??lastWrite,host=$('writeStatus');host.hidden=!op;if(!op)return;
+  const op=activeWrite??unresolvedWrite??lastWrite,host=$('writeStatus');host.hidden=!op;renderCreationStatus();if(!op)return;
   host.replaceChildren(el('strong',op.label+' · '+op.workspaceName),el('p',op.message));
   if(op.evidence)host.append(el('p',op.evidence));
-  if(op.phase!=='running')host.append(button('重新读取操作状态',async()=>{await reconcileWrite(op);renderWriteStatus();}));
+  if(op.phase!=='running')host.append(button('重新读取操作状态',async()=>{
+    await reconcileWrite(op);
+    if(op.action==='workspace.switch' && op.evidenceReady){await refreshAfterWrite(op);if(op.confirmationPending){op.confirmationPending=false;if(unresolvedWrite===op && op.phase!=='uncertain')unresolvedWrite=null;}}
+    renderWriteStatus();
+  }));
   if(op.phase==='uncertain' && op.evidenceReady && unresolvedWrite===op)host.append(button('已核对结果，解除操作保护（不重发）',async()=>{
     if(unresolvedWrite!==op || activeWrite)return;
     unresolvedWrite=null;invalidateHistory();invalidateBackup();
@@ -316,6 +331,11 @@ async function authority(path) {
 async function reconcileWrite(op) {
   op.evidenceReady=false;
   try {
+    if(op.path==='/api/manage' && op.action==='workspace.switch'){
+      const m=await authority('/api/manage');
+      if(!m.workspaces.some(w=>w.id===m.activeId))throw Error('活动课程表身份未获验证');
+      op.observedWorkspaceId=m.activeId;op.evidence='已读取服务端活动课程表：'+m.workspaces.find(w=>w.id===m.activeId).name;op.evidenceReady=true;return;
+    }
     // Restores and migrations may change the active catalog identity. Discover it read-only.
     const globalChange=op.path==='/api/backups/restore' || op.path==='/api/migration';
     const query=new URLSearchParams({date:$('date').value,zone:$('zone').value,origin:location.origin,...(!globalChange?{workspaceId:op.workspaceId}:{})});
@@ -334,15 +354,20 @@ async function reconcileWrite(op) {
 async function refreshAfterWrite(op) {
   // Refresh only the still-selected scope, using authoritative identity for catalog replacement.
   if(workspaceId!==op.workspaceId)return;
-  if(op.observedWorkspaceId && (op.path==='/api/backups/restore' || op.path==='/api/migration'))workspaceId=op.observedWorkspaceId;
+  if(op.observedWorkspaceId && (op.path==='/api/backups/restore' || op.path==='/api/migration' || op.action==='workspace.switch'))workspaceId=op.observedWorkspaceId;
   await load();
+  if(op.action==='workspace.switch' && currentPage==='history'){
+    ++historyJobId;historyBusy=false;unlockControls([...$('history').querySelectorAll('button')]);
+    await historyJob(historyRead);
+  }
+  if(pendingCreatedWorkspace){pendingCreatedWorkspace.active=workspaceId===pendingCreatedWorkspace.id;renderCreationStatus();}
 }
 async function post(path, data = {}) {
-  const scope=data.workspaceId??workspaceId,pageTicket=viewEpoch,modelTicket=loadEpoch,formTicket=$('editor').open?editorEpoch:null,readOnly=readOnlyPost(path,data);
+  const scope=data.workspaceId??workspaceId,pageTicket=viewEpoch,modelTicket=loadEpoch,formTicket=$('editor').open?editorEpoch:null,readOnly=postSemantics(path,data)!=='write';
   if(!readOnly && (activeWrite || unresolvedWrite))throw Error('已有写操作正在执行或等待结果核对，请查看页面上方操作状态，不能重复提交');
   // Revoking a view's restore capability must not cancel an already dispatched restore.
   if(path==='/api/backups/cancel' && [activeWrite,unresolvedWrite,lastWrite].some(op=>op?.path==='/api/backups/restore' && op.restoreToken===data.token))return {};
-  const op=readOnly?null:{path,workspaceId:scope,workspaceName:management?.workspaces.find(w=>w.id===scope)?.name??scope,label:writeLabel(path,data),restoreToken:path==='/api/backups/restore'?data.token:null,phase:'running',message:'请求已发出，正在执行；切换页面不会取消。请等待结果，期间不提交其他写操作。'};
+  const op=readOnly?null:{path,workspaceId:scope,workspaceName:management?.workspaces.find(w=>w.id===scope)?.name??scope,label:writeLabel(path,data),action:data.action,targetId:data.targetId,restoreToken:path==='/api/backups/restore'?data.token:null,phase:'running',message:'请求已发出，正在执行；切换页面不会取消。请等待结果，期间不提交其他写操作。'};
   if(op){activeWrite=op;lastWrite=op;renderWriteStatus();}
   let response,value,failure;
   try {
@@ -350,17 +375,33 @@ async function post(path, data = {}) {
     value=await response.json();
     if(!response.ok)failure=Error(value.error??'服务器返回失败');
   } catch(error) {failure=error;}
+  const draftWrite=!!op && ['/api/edit','/api/import/confirm'].includes(path) && formTicket!==null && localEditorContext;
   const detached=scope!==workspaceId || pageTicket!==viewEpoch || modelTicket!==loadEpoch || formTicket!==null && formTicket!==editorEpoch;
   if(op) {
-    op.phase=!response || !value?'uncertain':failure?'failed':'completed';
+    const rejected=failure && value?.writeApplied===false;
+    const correctable=rejected && response.status===400;
+    if(draftWrite && failure)failure.draftInvalid=!correctable;
+    op.phase=!response || !value?'uncertain':rejected?'rejected':failure?'failed':'completed';
     op.message=op.phase==='uncertain'?'没有取得完整回执，结果不确定；这不表示操作取消或未写入。原请求不会自动重发。':failure?'服务器返回失败：'+failure.message+'。可能已有部分进度，请核对权威状态。':'服务器已返回成功响应；请求处理完成，具体保存、发布和恢复状态以核对结果为准。';
+    if(rejected)op.message=draftWrite?(correctable?'服务器已拒绝，本次未提交修改。草稿已保留，可纠正输入后重试。':'服务器已拒绝，本次未提交修改；原提交资格已失效，草稿保留供核对。'):'服务器已拒绝，本次未执行请求：'+failure.message;
+    if(!failure && path==='/api/manage' && data.action==='workspace.add' && value.workspaceId){
+      pendingCreatedWorkspace={id:value.workspaceId,name:data.name,active:false};renderCreationStatus();
+    }
     renderWriteStatus();
     // Keep the global write fence until reconciliation and the current model refresh finish.
-    if(detached || failure || ['/api/history/rollback','/api/backups/restore','/api/migration'].includes(path))await reconcileWrite(op);
+    const switching=path==='/api/manage' && data.action==='workspace.switch';
+    if(detached || failure && !correctable || switching || ['/api/history/rollback','/api/backups/restore','/api/migration'].includes(path))await reconcileWrite(op);
+    if(switching && !op.evidenceReady){op.confirmationPending=true;unresolvedWrite=op;op.message+=' 活动课程表尚未确认，请只读核对，不能重发切换。';}
     if(op.phase==='uncertain')unresolvedWrite=op;
-    if(failure || detached){invalidateHistory();invalidateBackup();await refreshAfterWrite(op);}
+    if(failure || detached || switching){
+      invalidateHistory();invalidateBackup();
+      if(draftWrite && failure && !detached){
+        if(!correctable)isolateEditing();
+      }else if(!switching || op.evidenceReady)await refreshAfterWrite(op);
+    }
     activeWrite=null;renderWriteStatus();
     if(detached)throw new DetachedWriteResult(op.message);
+    if(switching && op.confirmationPending)throw Error(op.message);
   }
   if(failure)throw failure;
   if(readOnly && path!=='/api/backups/cancel' && detached)throw new StaleResponse('页面或课程表已切换');
@@ -410,14 +451,17 @@ function dialog(title, build, save, saveLabel = '保存本地') {
   const opener = document.activeElement;
   const epoch = ++editorEpoch, submit = $("editorForm").querySelector("[type=submit]");
   let scope = workspaceId, formVersion = version, formCatalogVersion = catalogVersion;
-  let read, ready = true, saving = false;
+  let read, ready = true, saving = false, stale = false;
   const current = () => epoch === editorEpoch && $("editor").open;
-  const update = () => { if (current()) submit.disabled = !read || !ready || saving; };
+  const update = () => { if (current()) submit.disabled = !read || !ready || saving || stale; };
   const form = {
     current,
-    setReady(value) { ready = value; update(); },
+    valid:()=>current() && !stale,
+    setReady(value) { ready = value && !stale; update(); },
     captureVersion() { scope = workspaceId; formVersion = version; formCatalogVersion = catalogVersion; },
+    invalidate(message) {stale=true;ready=false;update();if(current())$('formError').textContent=message;},
   };
+  currentEditorForm=form;
   $("editorTitle").textContent = title;
   $("cancel").textContent = save ? "关闭" : "暂不处理";
   submit.hidden = !save; submit.textContent=saveLabel;
@@ -437,20 +481,23 @@ function dialog(title, build, save, saveLabel = '保存本地') {
   };
   $("editorForm").onsubmit = async (e) => {
     e.preventDefault();
-    if (!save || !read || !ready || saving) return;
+    if (!save || !read || !ready || saving || stale) return;
     saving = true; update();
     try {
-      if (scope !== workspaceId || formVersion !== version || formCatalogVersion !== catalogVersion) throw Error("表单版本或工作区已变化，请关闭后重新打开");
+      if (scope !== workspaceId || formVersion !== version || formCatalogVersion !== catalogVersion) throw Object.assign(Error("表单版本或工作区已变化，请关闭后重新打开"),{draftInvalid:true});
       const input = await read();
       if (!current()) return;
-      if (scope !== workspaceId || formVersion !== version || formCatalogVersion !== catalogVersion) throw Error("表单版本或工作区已变化，请关闭后重新打开");
+      if (scope !== workspaceId || formVersion !== version || formCatalogVersion !== catalogVersion) throw Object.assign(Error("表单版本或工作区已变化，请关闭后重新打开"),{draftInvalid:true});
       await save(input);
       if (!current()) return;
       $("editor").close();
       await load();
     } catch (error) {
       if(error instanceof DetachedWriteResult){if(current())$('editor').close();return;}
-      if (current()) $("formError").textContent = error.message;
+      if(current()){
+        if(error.draftInvalid)form.invalidate(error.message+'。草稿已保留；原提交资格已失效，请复制草稿后关闭窗口并重新读取、核对。');
+        else $('formError').textContent=error.message;
+      }
     } finally {
       saving = false; update();
     }
@@ -464,7 +511,7 @@ function dialog(title, build, save, saveLabel = '保存本地') {
 }
 $("cancel").onclick = () => $("editor").close();
 $("editor").addEventListener('close', () => {
-  ++editorEpoch;localEditorContext=null;
+  ++editorEpoch;localEditorContext=null;currentEditorForm=null;
   $("fields").replaceChildren();
   $("editorForm").onsubmit = null;
 });
@@ -535,7 +582,7 @@ function editEvent(row = {}) {
   );
 }
 function editOccurrence(c) {
-  const context = requireEditing();
+  const context = requireEditing(), overrides=local.classOverrides;
   businessDialog(
     "课程详情：" + c.title,
     form => {
@@ -556,7 +603,7 @@ function editOccurrence(c) {
         Object.values(values).forEach((x) => x.label.remove());
         const anchor = select.value === "all" ? null : c.anchorDate,
           row =
-            local.classOverrides.find(
+            overrides.find(
               (e) =>
                 e.sourceId === c.sourceId &&
                 e.seriesId === c.seriesId &&
@@ -796,7 +843,7 @@ async function importFile() {
       let preview = null, selectedFile = null, previewError = '请先选择文件', previewEpoch = 0;
       form.setReady(false);
       const previewFile = async (f) => {
-        const epoch = ++previewEpoch, current = () => form.current() && epoch === previewEpoch;
+        const epoch = ++previewEpoch, current = () => form.valid() && epoch === previewEpoch;
         preview = null; previewError = '正在检查文件预览，请稍候'; form.setReady(false);
         retry.hidden = true; $('formError').textContent = '';
         if (!f) { info.textContent = previewError = '未选择文件，请选择 ICS、CSV 或 XLS。'; return; }
@@ -1108,8 +1155,7 @@ async function switchWorkspace(id) {
   $('editor').close();
   try {
     await post('/api/manage', { action: 'workspace.switch', targetId: id });
-    ++loadEpoch; workspaceId = id; local = null;
-    $('editor').close(); navigate('dashboard'); await load();
+    $('editor').close();navigate('dashboard');
   } catch (e) { if(e instanceof DetachedWriteResult)return;await notifyUser(e.message); await load(); }
   finally {
     switching = false; $('workspaceSelect').disabled = false;
@@ -1286,18 +1332,22 @@ function showSources(open) { navigate(open ? 'dataSources' : 'dashboard'); }
 $('sourcesPage').onclick = () => showSources(true);
 $('schedulePage').onclick = () => navigate('dashboard');
 async function createWorkspace(c) {
-  const scope=workspaceId;
-  dialog('新建独立课程表', () => {
+  let creationForm;
+  dialog('新建独立课程表', form => {
+    creationForm=form;
     const name=field('课程表名称',c.name), protocol=el('select'); protocol.setAttribute('aria-label','共享协议');
     for (const [value,label] of [['v3','Sync v3（推荐）'],['v2','Sync v2（旧版设备兼容）']]) {const o=el('option',label);o.value=value;protocol.append(o);}
     $('fields').append(el('p',`使用连接：${c.name}。新课程表为空，不包含当前本地课程。保存仅建立本机配置；远端创建或加入须另行确认。`),protocol);
     return ()=>({action:'workspace.add',connectionId:c.id,name:name.value,protocol:protocol.value});
   }, async input=>{
     const r=await post('/api/manage',input);
-    if(scope!==workspaceId)throw Error('课程表已切换，请重新选择');
-    // Avoid closing/reopening this editor while its submit handler is still active.
-    await post('/api/manage',{action:'workspace.switch',targetId:r.workspaceId});
-    workspaceId=r.workspaceId;local=null;invalidateHistory();invalidateBackup();
+    if(!creationForm.current())return;
+    creationForm.setReady(false);
+    try{await post('/api/manage',{action:'workspace.switch',targetId:r.workspaceId});}
+    catch(error){
+      if(pendingCreatedWorkspace?.id===r.workspaceId){pendingCreatedWorkspace.message='课程表已经建立；自动切换尚未完成。'+error.message;renderCreationStatus();}
+      return;
+    }
     $('connectionNext').replaceChildren(el('p','独立空白课程表已建立。请在当前课程表卡片选择“加入已有共享课表”或“创建新的共享课表”；尚未写入远端。'));
   },'建立空白课程表');
 }

@@ -13,6 +13,10 @@ import {
 import { emptyState, same } from "./merge.mjs";
 import { json } from "./store.mjs";
 
+// Request-local evidence only; never persisted or used to bypass a transaction.
+const preparationRejections = new WeakSet();
+export const rejectedBeforePersistence = error => error instanceof Error && preparationRejections.has(error);
+
 // 单一原子文档 = 本地课程、基线、精确 capture、候选、attempt、冲突与观察日志。
 // 网络永不处于事务内。队列内无外部异步回调，编辑可在上传期间提交。
 export class Workspace {
@@ -85,29 +89,41 @@ export class Workspace {
     try { this.guard?.(); } catch (e) { return Promise.reject(e); }
     this.writing++;
     const task = this.queue.then(async () => {
+      let preparationError;
       const prepare = () => {
-        this.guard?.();
-        const next = structuredClone(this.frame);
-        ensure(
-          expected === undefined || expected === next.revision,
-          "请求版本过期，请重新读取",
-        );
-        const value = change(next);
-        ensure(!(value instanceof Promise), "本地事务不得执行异步操作");
-        this.mutationGuard?.(this.frame, next);
-        next.local = canonical(next.local);
-        next.revision++;
-        return { next, value };
+        try {
+          this.guard?.();
+          const next = structuredClone(this.frame);
+          ensure(
+            expected === undefined || expected === next.revision,
+            "请求版本过期，请重新读取",
+          );
+          const value = change(next);
+          ensure(!(value instanceof Promise), "本地事务不得执行异步操作");
+          this.mutationGuard?.(this.frame, next);
+          next.local = canonical(next.local);
+          next.revision++;
+          return { next, value };
+        } catch (error) {
+          preparationError=error;
+          if (error instanceof Error) preparationRejections.add(error);
+          throw error;
+        }
       };
       let committed;
-      if (this.store.commitWorkspace) {
-        // SQLite adapters execute preparation and persistence in ONE synchronous
-        // transaction. Publish the in-memory frame only after COMMIT succeeds.
-        committed = this.store.commitWorkspace(prepare, transactionContext);
-        ensure(!(committed instanceof Promise), "Workspace 提交钩子不得执行异步操作");
-      } else {
-        committed = prepare();
-        await this.store.save("workspace.json", committed.next);
+      try {
+        if (this.store.commitWorkspace) {
+          // SQLite adapters execute preparation and persistence in ONE synchronous
+          // transaction. Publish the in-memory frame only after COMMIT succeeds.
+          committed = this.store.commitWorkspace(prepare, transactionContext);
+          ensure(!(committed instanceof Promise), "Workspace 提交钩子不得执行异步操作");
+        } else {
+          committed = prepare();
+          await this.store.save("workspace.json", committed.next);
+        }
+      } catch (error) {
+        if(error!==preparationError && error instanceof Error)preparationRejections.delete(error);
+        throw error;
       }
       this.frame = committed.next;
       await this.saveSummary();

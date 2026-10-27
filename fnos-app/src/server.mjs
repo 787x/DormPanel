@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { randomBytes, timingSafeEqual, randomUUID, createHash } from "node:crypto";
 import { Store, json } from "./store.mjs";
 import { Catalog } from "./catalog.mjs";
+import { rejectedBeforePersistence } from './workspace.mjs';
 import { browseFolders } from './folder-browser.mjs';
 import { date, ensure, zone } from "./protocol.mjs";
 import { projectWeek, monday, addDays } from "./projection.mjs";
@@ -133,7 +134,7 @@ export async function createApp({
   const refresh = options => catalog.network(catalog.manifest.activeId, engine => engine.synchronize(options));
   let agents;
   const handle = async (req, res, internal = false) => {
-    requests++; let writing = false;
+    requests++; let writing = false, requestPath;
     const send = (status, value, type = "application/json; charset=utf-8") => {
       res.writeHead(status, {
         "Content-Type": type,
@@ -159,6 +160,7 @@ export async function createApp({
       );
       const u = new URL(req.url, "http://unix"),
         path = u.pathname.slice(PREFIX.length);
+      requestPath=path;
       if (req.method === "POST") {
         const routes = [
           '/api/endpoint',
@@ -242,7 +244,7 @@ export async function createApp({
           !Number.isSafeInteger(input.version) ||
           input.version !== db.frame.revision
         ) {
-          send(409, { error: "请求版本过期，请重新读取" });
+          send(409, { error: "请求版本过期，请重新读取", writeApplied:false });
           return;
         }
         ensure(!catalog.configuring && !catalog.manifest.transition, "正在保存配置或等待恢复");
@@ -377,14 +379,13 @@ export async function createApp({
           previews.delete(input.id);
         } else if (path === "/api/import/confirm") {
           const p = previews.get(input.id);
-          ensure(
+          if (!(
             p &&
               p.user === user &&
               p.workspaceId === workspaceId &&
               p.version === input.version &&
-              p.expires > Date.now(),
-            "导入预览已失效",
-          );
+              p.expires > Date.now()
+          )) { send(409,{error:'导入预览已失效',writeApplied:false});return; }
           await db.tx(
             (f) =>
               commitImport(
@@ -590,7 +591,8 @@ export async function createApp({
     } catch (e) {
       const message=String(e.message ?? '操作失败');
       const sensitive=/\b(?:ENOENT|EACCES|EPERM|EIO|ERR_SQLITE|SQLITE_[A-Z_]+)\b|\/(?:data|var|vol\d+|home|proc|tmp)\/|[A-Za-z]:\\|password=|token=/i.test(message+' '+(e.code ?? ''));
-      send(/过期|变化|失效/.test(message) ? 409 : 400, { error:sensitive ? '存储或访问验证失败；数据与恢复证据已保留，敏感位置已隐藏' : message.slice(0,500) });
+      send(/过期|变化|失效/.test(message) ? 409 : 400, { error:sensitive ? '存储或访问验证失败；数据与恢复证据已保留，敏感位置已隐藏' : message.slice(0,500),
+        ...(['/api/edit','/api/import/confirm'].includes(requestPath) && rejectedBeforePersistence(e) ? {writeApplied:false} : {}) });
     } finally {
       if (writing) writes--; requests--;
       if (requests === 0) catalog.prune();
