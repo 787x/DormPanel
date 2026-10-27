@@ -186,7 +186,7 @@ export class Catalog {
       roots: this.grants.roots.map(({ id, name }) => ({ id, name })),
       connections: this.manifest.connections.map(c => ({ id: c.id, name: c.name, type: c.type,
         ...(c.type === 'webdav' ? { url: c.config.url, username: c.config.username, hasCredentials: !!c.config.password, hasTrustedCertificate: !!c.config.certificatePem, allowInsecureHttp: c.config.allowInsecureHttp === true } : { rootId: c.config.rootId, relative: c.config.relative }) })),
-      workspaces: this.manifest.workspaces.map(row => ({ ...row, ...summaries.get(row.id), restoredPendingValidation: !!this.restoreGuards[row.id], recovery: this.restoreGuards[row.id] ? true : summaries.get(row.id).recovery, busy: this.busy.has(row.id) })) };
+      workspaces: this.manifest.workspaces.map(row => ({ ...row, ...summaries.get(row.id), protection: this.protection(row.id) ? { phase:this.protection(row.id).phase } : null, restoredPendingValidation: !!this.restoreGuards[row.id], recovery: this.restoreGuards[row.id] ? true : summaries.get(row.id).recovery, busy: this.busy.has(row.id) })) };
   }
 
   async exclusive(version, action) {

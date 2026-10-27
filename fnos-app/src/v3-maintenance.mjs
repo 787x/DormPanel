@@ -27,9 +27,12 @@ export class V3Maintenance {
     for(const field of ['since','until'])if(input[field]!=null)ensure(Number.isSafeInteger(Number(input[field])) && Number(input[field])>=0,'验证时间筛选无效');
     ensure(!input.since || !input.until || Number(input.since)<=Number(input.until),'验证时间范围无效');
     const ns=namespaces[status], scanned=this.meta.page(ns,after,limit), rows=[];
+    ensure(!input.view || ['business','evidence'].includes(input.view),'历史视图无效');
     for(const row of scanned) {
       const node=ns==='node'?row.value:this.meta.get('node',row.key);
       const anomaly=ns==='error'?row.value:this.meta.get('error',row.key), indexVerified=!!node && this.meta.get('identity',node.objectId)?.path===row.key;
+      // Bounded metadata projection: no remote requests or full snapshot decoding for a list.
+      if(input.view==='business' && (ns!=='node' || !indexVerified || ![2,3].includes(node.type)))continue;
       if(input.epoch && node?.epochId!==input.epoch || input.writer && node?.writerId!==input.writer || input.type && node?.type!==Number(input.type))continue;
       if(input.since && (!node?.verifiedAt || node.verifiedAt<Number(input.since)) || input.until && (!node?.verifiedAt || node.verifiedAt>Number(input.until)))continue;
       // DPV3 does not encode a wall-clock creation timestamp. Never substitute file mtime.

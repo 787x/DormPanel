@@ -38,7 +38,7 @@ for (const hook of ['install_init', 'install_callback', 'upgrade_init', 'upgrade
 }
 // 增量构建也必须移除旧安装表单，保留官方配置/目录授权入口。
 await rm(new URL('wizard/install', build), { force: true });
-await writeFile(new URL('wizard/config', build), JSON.stringify([{ stepTitle: '数据源管理', items: [{ type: 'tips', helpText: '请打开 DormPanel 页面中的数据源管理添加或修改连接；NAS 本地文件夹授权请使用应用设置的访问权限。系统配置回调不会覆盖已保存的工作区或凭据。' }] }]));
+await writeFile(new URL('wizard/config', build), JSON.stringify([{ stepTitle: '课程表与共享', items: [{ type: 'tips', helpText: '请打开 DormPanel 页面的“课程表与共享”添加或修改连接；NAS 本地文件夹授权请使用应用设置的访问权限。系统配置回调不会覆盖已保存的工作区或凭据。' }] }]));
 // 仓库内自绘 PNG 图标，无外部图片、字体或构建时下载。
 for (const [source, targets] of [['icon64.png', ['ICON.PNG', 'app/ui/images/icon_64.png']], ['icon256.png', ['ICON_256.PNG', 'app/ui/images/icon_256.png']]]) for (const target of targets) await cp(new URL(source, import.meta.url), new URL(target, build));
 console.log('FPK 工程已生成：' + build.pathname);

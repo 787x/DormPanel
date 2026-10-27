@@ -1,6 +1,6 @@
 // 页面内对话框；消息逐个展示，不使用浏览器 alert/confirm/prompt。
 let queue = Promise.resolve();
-function showFeedback(kind, message, initialValue = '') {
+function showFeedback(kind, message, initialValue = '', acceptLabel = '') {
   const task = queue.then(() => new Promise(resolve => {
     const dialog = document.getElementById('feedback'),
       title = document.getElementById('feedbackTitle'),
@@ -15,7 +15,7 @@ function showFeedback(kind, message, initialValue = '') {
     label.hidden = kind !== 'text';
     input.value = initialValue;
     cancel.hidden = kind === 'notice';
-    accept.textContent = kind === 'notice' ? '知道了' : '确定';
+    accept.textContent = acceptLabel || (kind === 'notice' ? '知道了' : '确定');
     dialog.returnValue = 'cancel';
     cancel.onclick = () => dialog.close('cancel');
     form.onsubmit = event => { event.preventDefault(); dialog.close('accept'); };
@@ -33,5 +33,5 @@ function showFeedback(kind, message, initialValue = '') {
   return task;
 }
 export const notifyUser = message => showFeedback('notice', message);
-export const confirmAction = message => showFeedback('confirm', message);
-export const requestText = (message, value = '') => showFeedback('text', message, value);
+export const confirmAction = (message, label = '确认操作') => showFeedback('confirm', message, '', label);
+export const requestText = (message, value = '', label = '确定') => showFeedback('text', message, value, label);

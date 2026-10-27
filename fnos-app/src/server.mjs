@@ -3,7 +3,7 @@ import { V3EndpointMove } from './v3-endpoint.mjs';
 import http from "node:http";
 import { Readable } from "node:stream";
 import { AgentService } from "./agent-service.mjs";
-import { HistoryManager, cachedGraph, historySummary, commitAt, versionDifferences } from './history.mjs';
+import { HistoryManager, cachedGraph, historySummary, commitAt, versionDifferences, differences } from './history.mjs';
 import { DatasetMigration } from './migration.mjs';
 import { V3DatasetMigration } from './v3-migration.mjs';
 import { BackupManager, recoverRestore } from "./backup.mjs";
@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { randomBytes, timingSafeEqual, randomUUID, createHash } from "node:crypto";
 import { Store, json } from "./store.mjs";
 import { Catalog } from "./catalog.mjs";
+import { rejectedBeforePersistence } from './workspace.mjs';
 import { browseFolders } from './folder-browser.mjs';
 import { date, ensure, zone } from "./protocol.mjs";
 import { projectWeek, monday, addDays } from "./projection.mjs";
@@ -133,7 +134,7 @@ export async function createApp({
   const refresh = options => catalog.network(catalog.manifest.activeId, engine => engine.synchronize(options));
   let agents;
   const handle = async (req, res, internal = false) => {
-    requests++; let writing = false;
+    requests++; let writing = false, requestPath;
     const send = (status, value, type = "application/json; charset=utf-8") => {
       res.writeHead(status, {
         "Content-Type": type,
@@ -159,6 +160,7 @@ export async function createApp({
       );
       const u = new URL(req.url, "http://unix"),
         path = u.pathname.slice(PREFIX.length);
+      requestPath=path;
       if (req.method === "POST") {
         const routes = [
           '/api/endpoint',
@@ -242,7 +244,7 @@ export async function createApp({
           !Number.isSafeInteger(input.version) ||
           input.version !== db.frame.revision
         ) {
-          send(409, { error: "请求版本过期，请重新读取" });
+          send(409, { error: "请求版本过期，请重新读取", writeApplied:false });
           return;
         }
         ensure(!catalog.configuring && !catalog.manifest.transition, "正在保存配置或等待恢复");
@@ -377,14 +379,13 @@ export async function createApp({
           previews.delete(input.id);
         } else if (path === "/api/import/confirm") {
           const p = previews.get(input.id);
-          ensure(
+          if (!(
             p &&
               p.user === user &&
               p.workspaceId === workspaceId &&
               p.version === input.version &&
-              p.expires > Date.now(),
-            "导入预览已失效",
-          );
+              p.expires > Date.now()
+          )) { send(409,{error:'导入预览已失效',writeApplied:false});return; }
           await db.tx(
             (f) =>
               commitImport(
@@ -457,7 +458,12 @@ export async function createApp({
           if (catalog.restoreGuards[workspaceId]) { result.blockers.push('恢复后尚未验证远端历史，请先检查并同步'); result.rollbackEnabled = false; }
         }
         else if (path.endsWith('/preview-diff')) result = history.previewDiff(db, { workspaceId, token:u.searchParams.get('token'), offset:Number(u.searchParams.get('offset') ?? 0) }, user);
-        else if (path.endsWith('/diff')) result = versionDifferences(g, u.searchParams.get('from'), u.searchParams.get('to'), Number(u.searchParams.get('offset') ?? 0));
+        else if (path.endsWith('/diff')) {
+          const from=u.searchParams.get('from'), to=u.searchParams.get('to'), offset=Number(u.searchParams.get('offset') ?? 0);
+          result = from==='current' || to==='current'
+            ? differences(from==='current' ? db.frame.local : commitAt(g,from).state,to==='current' ? db.frame.local : commitAt(g,to).state,offset)
+            : versionDifferences(g,from,to,offset);
+        }
         else {
           const state = commitAt(g, u.searchParams.get('id')).state, table = u.searchParams.get('table') ?? 'entries', offset = Number(u.searchParams.get('offset') ?? 0);
           ensure(Object.hasOwn(state, table) && Number.isSafeInteger(offset) && offset >= 0, '快照分页无效');
@@ -585,7 +591,8 @@ export async function createApp({
     } catch (e) {
       const message=String(e.message ?? '操作失败');
       const sensitive=/\b(?:ENOENT|EACCES|EPERM|EIO|ERR_SQLITE|SQLITE_[A-Z_]+)\b|\/(?:data|var|vol\d+|home|proc|tmp)\/|[A-Za-z]:\\|password=|token=/i.test(message+' '+(e.code ?? ''));
-      send(/过期|变化|失效/.test(message) ? 409 : 400, { error:sensitive ? '存储或访问验证失败；数据与恢复证据已保留，敏感位置已隐藏' : message.slice(0,500) });
+      send(/过期|变化|失效/.test(message) ? 409 : 400, { error:sensitive ? '存储或访问验证失败；数据与恢复证据已保留，敏感位置已隐藏' : message.slice(0,500),
+        ...(['/api/edit','/api/import/confirm'].includes(requestPath) && rejectedBeforePersistence(e) ? {writeApplied:false} : {}) });
     } finally {
       if (writing) writes--; requests--;
       if (requests === 0) catalog.prune();
