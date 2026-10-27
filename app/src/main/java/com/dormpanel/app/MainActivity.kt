@@ -112,6 +112,7 @@ class MainActivity : AppCompatActivity() {
             installApk = apkImports::open,
             webDavSettings = dashboardViewModel.webDav.settings,
             webDavSync = dashboardViewModel.webDav,
+            scheduleViewport = dashboardViewModel.scheduleViewport,
             onReturnHome = ::returnHome,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()
