@@ -6,6 +6,7 @@ import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.doOnLayout
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.dormpanel.app.schedule.*
@@ -26,16 +27,35 @@ class TimetableActivity : AppCompatActivity() {
     private var weekView = true
     private var scroll: ScrollView? = null
     private var scrollOffset = 0
-    private var renderedKey = ""
+    private var periodMode = false
+    private var weekdaysOnly = false
+    private var weekAnchor = 480f
+    private var weekGrid: PhoneWeekView? = null
+    private var renderedWeek = true
+    private var renderedDay = 0
+    private fun captureScroll() {
+        if (restoringScroll) return
+        if (renderedWeek) weekGrid?.let { weekAnchor = it.minuteAt((scroll?.scrollY ?: 0)-it.top, renderedDay) }
+        else scrollOffset = scroll?.scrollY ?: scrollOffset
+    }
+    private fun saveDisplayPreferences() {
+        getPreferences(MODE_PRIVATE).edit().putBoolean("periodMode",periodMode).putBoolean("weekdaysOnly",weekdaysOnly).apply()
+    }
     private var restoringScroll = true
     private fun restoreScroll() {
         val view = scroll ?: return
-        val offset = scrollOffset
-        view.post { if (scroll === view) { view.scrollTo(0, offset); restoringScroll = false } }
+        view.doOnLayout {
+            if (scroll === view) {
+                val offset = if (weekView) weekGrid?.let { it.top+it.offsetAt(weekAnchor,selected.dayOfWeek.value-1) } ?: 0 else scrollOffset
+                view.scrollTo(0,offset)
+                restoringScroll = false
+            }
+        }
     }
     override fun onPause() {
+        captureScroll()
         getPreferences(MODE_PRIVATE).edit().putString("date", selected.toString()).putBoolean("weekView", weekView)
-            .putInt("scroll", if (restoringScroll) scrollOffset else scroll?.scrollY ?: scrollOffset).apply()
+            .putInt("scroll", scrollOffset).putFloat("weekAnchor",weekAnchor).apply()
         super.onPause()
     }
     private var activeTerm: String? = null
@@ -67,12 +87,15 @@ class TimetableActivity : AppCompatActivity() {
         selected = savedInstanceState?.getString("date")?.let(LocalDate::parse) ?: getPreferences(MODE_PRIVATE).getString("date", null)?.let(LocalDate::parse) ?: LocalDate.now()
         weekView = savedInstanceState?.getBoolean("weekView") ?: getPreferences(MODE_PRIVATE).getBoolean("weekView", true)
         scrollOffset = savedInstanceState?.getInt("scroll") ?: getPreferences(MODE_PRIVATE).getInt("scroll", 0)
+        weekAnchor = savedInstanceState?.getFloat("weekAnchor") ?: getPreferences(MODE_PRIVATE).getFloat("weekAnchor",480f)
+        periodMode = getPreferences(MODE_PRIVATE).getBoolean("periodMode",false)
+        weekdaysOnly = getPreferences(MODE_PRIVATE).getBoolean("weekdaysOnly",false)
         replacement = savedInstanceState?.getString("replacement")
         activeTerm = savedInstanceState?.getString("term") ?: getPreferences(MODE_PRIVATE).getString("term", null)
         profiles = TermScheduleProfileStore(this)
         source = ScheduleSource(ScheduleStores.create(this, profiles), profileResolver = profiles::get)
         profiles.editable = { source.editable && !isDestroyed }
-        sharedSync = SharedScheduleController(this, source).also { it.changed = { sharedStatusView?.text = it.presentation.summary() } }
+        sharedSync = SharedScheduleController(this, source).also { it.changed = { updateSharedStatus() } }
         editors = PhoneEditors(this, source) { !busy }
         root = scheduleColumn().apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
         setContentView(root)
@@ -86,6 +109,23 @@ class TimetableActivity : AppCompatActivity() {
         source.subscribe(listener)
         render()
     }
+    private val clockChanges = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: android.content.Intent) { render() }
+    }
+    override fun onStart() {
+        super.onStart()
+        androidx.core.content.ContextCompat.registerReceiver(this,clockChanges,android.content.IntentFilter().apply {
+            addAction(android.content.Intent.ACTION_DATE_CHANGED)
+            addAction(android.content.Intent.ACTION_TIME_CHANGED)
+            addAction(android.content.Intent.ACTION_TIMEZONE_CHANGED)
+        },androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+        weekGrid?.setClockActive(true)
+    }
+    override fun onStop() {
+        weekGrid?.setClockActive(false)
+        unregisterReceiver(clockChanges)
+        super.onStop()
+    }
     override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
     private fun checkOnResume() {
         if (resumeCheckPending && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
@@ -93,8 +133,10 @@ class TimetableActivity : AppCompatActivity() {
         }
     }
     override fun onSaveInstanceState(outState: Bundle) {
+        captureScroll()
+        outState.putFloat("weekAnchor",weekAnchor)
         outState.putString("date", selected.toString()); outState.putString("replacement", replacement)
-        outState.putBoolean("weekView", weekView); outState.putInt("scroll", if (restoringScroll) scrollOffset else scroll?.scrollY ?: scrollOffset)
+        outState.putBoolean("weekView", weekView); outState.putInt("scroll", scrollOffset)
         outState.putString("term", activeTerm); super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
@@ -109,24 +151,22 @@ class TimetableActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
     }
     private fun render() {
-        val key = "${monday()}:$weekView:${if (weekView) "" else selected}"
-        if (renderedKey == key && !restoringScroll) scrollOffset = scroll?.scrollY ?: scrollOffset
-        else if (renderedKey != key && renderedKey.isNotEmpty()) scrollOffset = 0
-        renderedKey = key
+        captureScroll()
         restoringScroll = true
+        weekGrid = null
+        renderedWeek = weekView; renderedDay = selected.dayOfWeek.value-1
         root.removeAllViews()
         sharedStatusView = null
         if (source.state.sync != null && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
         // A failed load must render cached data without querying the unreadable catalog again.
         val profile = if (source.error) activeTerm?.let(source.state.profiles::get) else activeTerm?.let(profiles::get)
+        val dark = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
         val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        if (::sharedSync.isInitialized && (!landscape || source.state.sync != null)) {
-            root.addView(scheduleLabel(sharedSync.presentation.summary(), 12f).apply {
-                sharedStatusView = this
-                setPadding(dp(4), 0, dp(4), 0)
-                setOnClickListener { AlertDialog.Builder(this@TimetableActivity).setMessage(sharedSync.presentation.summary()).setPositiveButton("关闭", null).show() }
-            })
-        }
+        root.addView(scheduleLabel("",12f).apply {
+            sharedStatusView = this
+            setOnClickListener { sharedDialog = SharedScheduleDialog.show(this@TimetableActivity,source,sharedSync,false) }
+        })
+        updateSharedStatus()
         // Above either view and the first-load early return, so failure never hides retry.
         if (source.error) {
             root.addView(scheduleLabel(if (source.retryingLocalRead && source.applyingSnapshot) "正在重新读取…已有数据保留。" else source.editBlockReason.orEmpty(), 16f))
@@ -135,44 +175,54 @@ class TimetableActivity : AppCompatActivity() {
             })
         }
         val week = profile?.let { ChronoUnit.WEEKS.between(it.week1Monday, monday()) + 1 }
-        root.addView(scheduleLabel("${if (source.state.sync == null) "本机课表 · " else ""}${monday()} — ${monday().plusDays(6)} · " + if (week == null) "未选择学期" else "${profile.termKey} · 第 $week 教学周", 16f).apply { tag = "week-range"
-            if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
-                textSize = 12f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(dp(8), 0, dp(8), 0)
-            } })
-        row().also { bar ->
-            action(bar, "‹ 上周") { selected = selected.minusWeeks(1); render() }
-            action(bar, "今天") { selected = source.clock.today(); render() }
-            action(bar, "下周 ›") { selected = selected.plusWeeks(1); render() }
-            action(bar, "周视图") { weekView = true; render() }
-            action(bar, "日视图") { weekView = false; render() }
-            if (landscape) {
-                if (!source.readOnly) action(bar, "＋ 课程") { editors.entry() }
-                if (!source.readOnly) action(bar, "日期调整") { editors.dayAdjustment(selected) }
-                action(bar, "管理") { management() }
+        val heading = row()
+        heading.addView(scheduleLabel("${if (week == null) "课程表" else "第 $week 教学周"} · ${monday().monthValue}/${monday().dayOfMonth}–${monday().plusDays(6).monthValue}/${monday().plusDays(6).dayOfMonth}",16f).apply {
+            tag = "week-range"; maxLines = if (landscape && resources.configuration.fontScale <= 1.3f) 1 else 2
+            if (landscape) { textSize = 12f; ellipsize = android.text.TextUtils.TruncateAt.END }
+            contentDescription = "${profile?.termKey.orEmpty()} · ${monday()} — ${monday().plusDays(6)}"
+        }, if (landscape) LinearLayout.LayoutParams(dp(180),-2) else LinearLayout.LayoutParams(0,-2,1f))
+        heading.addView(scheduleButton("管理") { management() }.apply { minimumWidth = dp(48); minWidth = dp(48); textSize = 12f; minHeight = dp(48); minimumHeight = dp(48); setPadding(dp(4),0,dp(4),0) })
+        (if (landscape) heading else row()).also { bar ->
+            val modeStart = bar.childCount
+            action(bar,"‹ 上周") { selected = selected.minusWeeks(1); render() }
+            action(bar,"今天") { selected = source.clock.today(); render() }
+            action(bar,"下周 ›") { selected = selected.plusWeeks(1); render() }
+            action(bar,"周视图") { weekView = true; render() }
+            (bar.getChildAt(modeStart+3) as TextView).apply { isSelected = weekView; if (weekView) setTypeface(typeface,android.graphics.Typeface.BOLD); alpha = if (weekView) 1f else .6f }
+            action(bar,"日视图") { weekView = false; render() }
+            (bar.getChildAt(modeStart+4) as TextView).apply { isSelected = !weekView; if (!weekView) setTypeface(typeface,android.graphics.Typeface.BOLD); alpha = if (!weekView) 1f else .6f }
+        }
+        if (weekView) (if (landscape) heading else row()).also { bar ->
+            action(bar,if (periodMode) "按节次 ▾" else "按时间 ▾") {
+                AlertDialog.Builder(this).setTitle("周视图时间轴").setSingleChoiceItems(arrayOf("按实际时间","按节次 · 压缩课间"),if (periodMode) 1 else 0) { dialog,i ->
+                    periodMode = i == 1; saveDisplayPreferences(); dialog.dismiss(); render()
+                }.setNegativeButton("关闭",null).show()
             }
+            action(bar,if (landscape) { if (weekdaysOnly) "五天 ↔" else "七天 ↔" } else if (weekdaysOnly) "五天 · 切换七天" else "七天 · 切换五天") { weekdaysOnly = !weekdaysOnly; saveDisplayPreferences(); render() }
+            action(bar,if (landscape || source.readOnly) "更多" else "＋ / 更多") { courseActions() }
+        } else (if (landscape) heading else row()).also { bar ->
+            if (!source.readOnly) action(bar,"＋ 课程") { editors.entry() }
+            if (!source.readOnly) action(bar,"日期调整") { editors.dayAdjustment(selected) }
         }
         val days = row().apply { if (weekView) setPadding(dp(32), 0, 0, 0) }
         val labels = listOf("一", "二", "三", "四", "五", "六", "日")
-        repeat(7) { i ->
+        repeat(if (weekView && weekdaysOnly) 5 else 7) { i ->
             val date = monday().plusDays(i.toLong())
             days.addView(scheduleButton("${labels[i]}\n${date.dayOfMonth}") { selected = date; weekView = false; render() }.apply {
-                setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 12f * resources.displayMetrics.density * minOf(resources.configuration.fontScale, 1.2f)); minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0; includeFontPadding = false; setPadding(0, 0, 0, 0)
+                textSize = 12f; minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0; includeFontPadding = false; setPadding(0, 0, 0, 0)
                 isSelected = date == selected
-                if (date == selected) {
-                    setTypeface(typeface, android.graphics.Typeface.BOLD)
-                    backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(55, 85, 155))
-                    setTextColor(android.graphics.Color.WHITE)
+                if (date == source.clock.today()) {
+                    backgroundTintList = android.content.res.ColorStateList.valueOf(if (dark) 0xff263e53.toInt() else 0xffdceafa.toInt())
+                    setTextColor(if (dark) android.graphics.Color.WHITE else android.graphics.Color.rgb(30,55,80))
+                    setTypeface(typeface,android.graphics.Typeface.BOLD)
+                } else if (date == selected) {
+                    setTypeface(typeface,android.graphics.Typeface.BOLD)
+                    text = "${labels[i]} ·\n${date.dayOfMonth}"
                 }
                 if (date == source.clock.today()) text = "●${labels[i]}\n${date.dayOfMonth}"
                 if (source.state.daysByDate.containsKey(date.toString())) text = "$text *"
                 contentDescription = "$date${if (date == source.clock.today()) " 今天" else ""}${if (date == selected) " 已选择" else ""}"
-            }, LinearLayout.LayoutParams(0, dp(if (landscape) 40 else 48), 1f))
-        }
-        if (!landscape) row().also { bar ->
-            if (!source.readOnly) action(bar, "＋ 课程") { editors.entry() }
-            if (!source.readOnly) action(bar, "日期调整") { editors.dayAdjustment(selected) }
-            action(bar, "管理") { management() }
+            }, LinearLayout.LayoutParams(0, dp(maxOf(if (landscape) 40 else 48,(resources.configuration.fontScale*30).toInt()+8)), 1f))
         }
         val list = scheduleColumn()
         scroll = ScrollView(this).apply { tag = "timetable-scroll"; addView(list); isFillViewport = true }
@@ -182,7 +232,16 @@ class TimetableActivity : AppCompatActivity() {
         if (busy) list.addView(scheduleLabel("正在处理文件…", 16f))
         val projected = ScheduleProjection.week(source.state, monday(), source.clock.zone())
         if (weekView) {
-            list.addView(PhoneWeekView(this, projected, monday(), source.clock.zone(), editors::classDetail))
+            val effectiveProfile = profile ?: projected.mapNotNull { ScheduleProjection.profile(source.state,it) }.distinct().singleOrNull()
+            val grid = PhoneWeekView(this,projected,monday(),source.clock.zone(),editors::classDetail,
+                if (weekdaysOnly) 5 else 7,periodMode,effectiveProfile) { ScheduleProjection.profile(source.state,it) }
+            weekGrid = grid
+            if (periodMode && !grid.usesPeriods) {
+                // Keep the grid origin aligned with scroll anchors: explanation lives above the scroller.
+                val note = scheduleLabel("当前按时间显示：节次模式需要本周各日有有效、无重叠的学期作息，且时区与设备一致。点管理选择学期。",12f)
+                root.addView(note,root.indexOfChild(scroll))
+            }
+            list.addView(grid)
             restoreScroll()
             return
         }
@@ -195,12 +254,26 @@ class TimetableActivity : AppCompatActivity() {
             list.addView(scheduleButton(buildString {
                 append(item.entry.title).append("\n")
                 append(scheduleTime(item.start)).append(" – ").append(scheduleTime(item.end))
-                item.periodLabel?.let { append(" · ").append(it) }
+                CoursePresentation.currentPeriods(item,ScheduleProjection.profile(source.state,item))?.let { append(" · ").append(it) }
                 if (item.entry.location.isNotBlank()) append("\n").append(item.entry.location)
                 if (item.teacher.isNotBlank()) append(" · ").append(item.teacher)
                 if (item.allWeeksEdited || item.thisWeekEdited) append("\n已应用本地修改")
             }) { editors.classDetail(item) }.apply { gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14)) })
         }
+    }
+    private fun updateSharedStatus() {
+        val p = sharedSync.presentation
+        sharedStatusView?.apply {
+            text = p.summary()
+            visibility = if (p.conflict || p.recovery || p.transition || p.confirmationRejected ||
+                (p.ready && p.mode == SharedMode.UNKNOWN) || (p.bound && (p.result !in setOf("UNCHECKED","OBSERVED","PUBLISHED","VERIFIED") && !p.busy || p.confirming || p.receipting))) android.view.View.VISIBLE else android.view.View.GONE
+        }
+    }
+    private fun courseActions() {
+        val labels = if (source.readOnly) arrayOf("管理") else arrayOf("＋ 课程","日期调整","管理")
+        AlertDialog.Builder(this).setItems(labels) { _,i -> when(labels[i]) {
+            "＋ 课程" -> editors.entry(); "日期调整" -> editors.dayAdjustment(selected); else -> management()
+        } }.setNegativeButton("关闭",null).show()
     }
     private fun management() {
         if (source.applyingSnapshot) return

@@ -107,7 +107,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         val info = buildString {
             append(scheduleDate(item.date)).append(" · ").append(item.date.dayOfWeek)
             append("\n").append(context.scheduleTime(item.start)).append(" – ").append(context.scheduleTime(item.end))
-            item.periodLabel?.let { append("\n").append(it) }
+            CoursePresentation.detailPeriods(item,ScheduleProjection.profile(source.state,item))?.let { append("\n").append(it) }
             if (item.entry.location.isNotBlank()) append("\nLocation: ").append(item.entry.location)
             if (item.teacher.isNotBlank()) append("\nTeacher: ").append(item.teacher)
             if (item.note.isNotBlank()) append("\nNote: ").append(item.note)

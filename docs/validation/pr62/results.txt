@@ -1,0 +1,39 @@
+PR62 本地验证摘录（2026-10-27；所有 Android 测试均在 testbed 隔离包）
+基线 4667cd4；最终生产修改只位于 phone-app。
+
+pr62-final-build-unit.log
+BUILD SUCCESSFUL in 4s
+
+pr62-build.log
+BUILD SUCCESSFUL in 3s
+
+pr62-pixel-complete.log
+Time: 190.637
+OK (12 tests)
+
+pr62-pixel-final-anchor.log
+Time: 132.726
+OK (11 tests)
+
+pr62-xiaomi14-complete.log
+Time: 83.158
+OK (5 tests)
+
+pr62-final-focused-210b601e.log
+Time: 43.667
+OK (4 tests)
+
+pr62-ui-final-emulator-5554.log
+Time: 19.932
+OK (2 tests)
+
+pr62-ui-final-5ea4783a.log
+Time: 13.489
+OK (2 tests)
+
+pr62-baseline-emulator-5554.log
+Error in browseFolderSelectAndCancelAreDraftOnly(com.dormpanel.phone.PhoneTimetableTest):
+Error in folderErrorsCancellationAndLateResponses(com.dormpanel.phone.PhoneTimetableTest):
+Error in missingCsvProfileCanBeConfiguredBeforeConfirmation(com.dormpanel.phone.PhoneTimetableTest):
+Time: 46.146
+Tests run: 4,  Failures: 3

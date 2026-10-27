@@ -1,0 +1,21 @@
+PR62 审查修复本地验证摘录（2026-10-27）
+基于 78572537782ac7ba388f58994f20a680ed98aa60；Phone testbed / Pixel 10 Pro API 37.2。
+
+review-unit-final.log
+BUILD SUCCESSFUL in 4s
+
+review-build.log
+BUILD SUCCESSFUL in 3s
+
+review-ui-final.log
+Time: 162.995
+OK (7 tests)
+
+review-touch-scroll.log
+Time: 20.259
+OK (2 tests)
+
+JVM JUnit XML 摘录：
+com.dormpanel.phone.CoursePresentationTest: tests=2, failures=0, errors=0
+com.dormpanel.phone.WeekAxisTest: tests=4, failures=0, errors=0
+com.dormpanel.phone.WeekLayoutTest: tests=6, failures=0, errors=0
