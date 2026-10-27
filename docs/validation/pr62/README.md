@@ -14,6 +14,9 @@
 
 ## 数据与截图
 
+> **截图版本说明：PR61 = 重构前旧版，仅供对照；PR62 = 本次重构后的界面。**
+> 文件名以 `baseline-` 开头的截图都是 PR61 旧版，不属于 PR62 的实现效果。下方对比表的第一列为旧版，其余列为新版。
+
 全部安装到 `com.dormpanel.timetable.testbed`，使用 UUID 命名的隔离 Room 数据库和学期配置命名空间。日用包、日用数据库、迁移、共享目录和凭据未作为测试输入。
 
 使用仓库湖北大学 CSV / XLS、ICS 夹具，以及用户提供的 `课表打印 (3).csv`。原始用户 CSV 只在本机和隔离测试包中使用，不提交其个人信息头部。用户文件 SHA-256：`70c679a6305769600cd20544469e338211e538a6b455a70386e6710f2d832e29`。
@@ -22,23 +25,27 @@
 
 ### 小米 14：1200×2670，Android 16，系统字号 1.1
 
-| PR61 时间 / 七天 | PR62 时间 / 七天 | PR62 节次 / 七天 | PR62 节次 / 五天 |
+| **重构前 · PR61 旧版（仅供对照）**<br>时间 / 七天 | **重构后 · PR62 新版**<br>时间 / 七天 | **重构后 · PR62 新版**<br>节次 / 七天 | **重构后 · PR62 新版**<br>节次 / 五天 |
 | --- | --- | --- | --- |
-| ![PR61](xiaomi14/baseline-time-seven-light.png) | ![PR62 时间](xiaomi14/time-seven-light.png) | ![PR62 节次七天](xiaomi14/period-seven-light.png) | ![PR62 节次五天](xiaomi14/period-five-light.png) |
+| ![重构前 PR61 旧版，仅供对照](xiaomi14/baseline-time-seven-light.png) | ![PR62 时间](xiaomi14/time-seven-light.png) | ![PR62 节次七天](xiaomi14/period-seven-light.png) | ![PR62 节次五天](xiaomi14/period-five-light.png) |
 
-| PR61 深色 | PR62 深色七天 | PR62 深色五天 |
+| **重构前 · PR61 旧版（仅供对照）**<br>深色 / 七天 | **重构后 · PR62 新版**<br>深色 / 七天 | **重构后 · PR62 新版**<br>深色 / 五天 |
 | --- | --- | --- |
-| ![PR61 深色](xiaomi14/baseline-time-seven-dark.png) | ![PR62 七天深色](xiaomi14/period-seven-dark.png) | ![PR62 五天深色](xiaomi14/period-five-dark.png) |
+| ![重构前 PR61 旧版深色，仅供对照](xiaomi14/baseline-time-seven-dark.png) | ![PR62 七天深色](xiaomi14/period-seven-dark.png) | ![PR62 五天深色](xiaomi14/period-five-dark.png) |
 
-![小米 14 横屏](xiaomi14/period-landscape-dark.png)
+**重构后 · PR62 新版：小米 14 横屏 / 深色 / 节次七天。**
+
+![重构后 PR62 新版，小米 14 横屏](xiaomi14/period-landscape-dark.png)
 
 ### Pixel 10 Pro 模拟器：1280×2856，API 37.2
 
-| PR61 | PR62 时间 / 七天 | PR62 节次 / 七天 | PR62 节次 / 五天 |
+| **重构前 · PR61 旧版（仅供对照）**<br>时间 / 七天 | **重构后 · PR62 新版**<br>时间 / 七天 | **重构后 · PR62 新版**<br>节次 / 七天 | **重构后 · PR62 新版**<br>节次 / 五天 |
 | --- | --- | --- | --- |
-| ![Pixel PR61](pixel/baseline-time-seven-light.png) | ![Pixel 时间](pixel/time-seven-light.png) | ![Pixel 七天](pixel/period-seven-light.png) | ![Pixel 五天](pixel/period-five-light.png) |
+| ![重构前 Pixel PR61 旧版，仅供对照](pixel/baseline-time-seven-light.png) | ![Pixel 时间](pixel/time-seven-light.png) | ![Pixel 七天](pixel/period-seven-light.png) | ![Pixel 五天](pixel/period-five-light.png) |
 
-[Pixel 深色七天](pixel/period-seven-dark.png) · [深色五天](pixel/period-five-dark.png) · [横屏](pixel/period-landscape-dark.png) · [基线深色](pixel/baseline-time-seven-dark.png)
+**重构后 · PR62 新版补充截图：** [Pixel 深色七天](pixel/period-seven-dark.png) · [深色五天](pixel/period-five-dark.png) · [横屏](pixel/period-landscape-dark.png)
+
+**重构前 · PR61 旧版（仅供对照）：** [Pixel 旧版深色七天](pixel/baseline-time-seven-dark.png)
 
 参考 WakeUp 截图的课程名称/地点信息密度与节次轴，不复制其作息时间、装饰或非本周课程。当前课程时间仍完全来自有效配置和现有投影。
 
