@@ -94,6 +94,179 @@ class PhoneTimetableTest {
         }
         return find(a.window.decorView)!!
     }
+    @Test fun pr62ReviewCustomTimingKeepsSourceLabelButNeverShowsItAsCurrent() {
+        val ctx = instrumentation.targetContext
+        for (name in listOf("TimetableActivity","com.dormpanel.phone.TimetableActivity")) ctx.getSharedPreferences(name,0).edit()
+            .putString("date","2026-10-27").putString("term",BuiltInProfiles.TERM_2026_2027_1)
+            .putBoolean("periodMode",true).putBoolean("weekdaysOnly",true).commit()
+        open().use { scenario ->
+            val parsed = instrumentation.context.assets.open("hubei_2026-2027-1.csv").use {
+                TimetableImporter(profiles=TermScheduleProfileStore(ctx)).parse(ScheduleArtifact.read("review.csv",it))
+            }
+            scenario.onActivity { a -> a.source.import(parsed,"边界验收 CSV",null) { assertTrue(it.isSuccess) } }
+            waitFor(scenario) { it.source.state.imported.size==131 }
+            lateinit var original: ClassOccurrence
+            fun projected(a: TimetableActivity) = ScheduleProjection.week(a.source.state,LocalDate.of(2026,10,26),a.source.clock.zone())
+            scenario.onActivity { a -> original=projected(a).single { it.date==LocalDate.of(2026,10,27) && ScheduleProjection.periods(it.periodLabel)==(3 to 4) } }
+            fun currentCard() = withContentDescription(startsWith("${original.entry.title}，2026-10-27"))
+            fun inspect(custom: Boolean) {
+                scenario.onActivity { a ->
+                    val current = projected(a).single { it.seriesId==original.seriesId && it.anchorDate==original.anchorDate }
+                    assertEquals(original.periodLabel,current.periodLabel)
+                    assertEquals(original.imported,a.source.state.imported.single { it.id==original.imported!!.id })
+                    assertEquals(!custom,current.linked)
+                    assertEquals(if (custom) null else "3–4节",CoursePresentation.currentPeriods(current,ScheduleProjection.profile(a.source.state,current)))
+                    val col = grid(a).getChildAt(2) as android.view.ViewGroup
+                    val card = (0 until col.childCount).map { col.getChildAt(it) }.filterIsInstance<CourseCard>().single { it.contentDescription.startsWith("${original.entry.title}，2026-10-27") }
+                    assertEquals(if (custom) "" else "3–4节",(card.getChildAt(3) as android.widget.TextView).text.toString())
+                    if (custom) {
+                        assertFalse(card.contentDescription.contains("3–4节"))
+                        assertEquals(android.view.View.VISIBLE,card.getChildAt(2).visibility)
+                        assertTrue((card.getChildAt(2) as android.widget.TextView).text.contains("13:15"))
+                        assertTrue((card.getChildAt(2) as android.widget.TextView).text.contains("14:45"))
+                    }
+                }
+            }
+            onView(withText("周视图")).perform(click()); inspect(false); screenshot("review-linked-before")
+            onView(currentCard()).perform(timeBlockClick())
+            onView(withText(containsString("当前节次：3–4节"))).check(matches(isDisplayed()))
+            onView(withText("Edit")).perform(click()); onView(withText("This week")).perform(click())
+            onView(isAssignableFrom(android.widget.Spinner::class.java)).perform(spinner(1))
+            fun pickTime(prefix: String, hour: Int, minute: Int) {
+                onView(withText(startsWith(prefix))).perform(scrollTo(),click())
+                onView(isAssignableFrom(android.widget.TimePicker::class.java)).perform(object : androidx.test.espresso.ViewAction {
+                    override fun getConstraints()=isAssignableFrom(android.widget.TimePicker::class.java)
+                    override fun getDescription()="Set custom time"
+                    override fun perform(controller: androidx.test.espresso.UiController,view: android.view.View) {
+                        (view as android.widget.TimePicker).apply { this.hour=hour; this.minute=minute }; controller.loopMainThreadUntilIdle()
+                    }
+                })
+                onView(withId(android.R.id.button1)).perform(click())
+            }
+            pickTime("Start ·",13,15); pickTime("End ·",14,45)
+            onView(withText("Save")).perform(click())
+            waitFor(scenario) { a -> projected(a).any { it.seriesId==original.seriesId && it.anchorDate==original.anchorDate && !it.linked && it.entry.startMinute==795 } }
+            inspect(true); screenshot("review-custom-after")
+            onView(currentCard()).perform(timeBlockClick())
+            onView(withText(containsString("原始导入节次（非当前节次）"))).check(matches(isDisplayed()))
+            androidx.test.espresso.Espresso.pressBack()
+            scenario.recreate(); waitFor(scenario) { it.source.ready }; inspect(true)
+            onView(currentCard()).perform(timeBlockClick()); onView(withText("Edit")).perform(scrollTo(),click())
+            onView(withText("This week")).perform(click())
+            onView(isAssignableFrom(android.widget.Spinner::class.java)).check { view,error -> if(error!=null) throw error; assertEquals(1,(view as android.widget.Spinner).selectedItemPosition) }
+            onView(withText("Cancel")).perform(click())
+            onView(currentCard()).perform(timeBlockClick()); onView(withText("Reset this week")).perform(scrollTo(),click())
+            waitFor(scenario) { it.source.state.classOverrides.isEmpty() }; inspect(false)
+            scenario.onActivity { a -> assertTrue(a.source.saveDayAdjustment(LocalDate.of(2026,10,27),"weekday",1)) }
+            waitFor(scenario) { it.source.state.dayAdjustments.isNotEmpty() }
+            scenario.onActivity { a -> projected(a).filter { it.date==LocalDate.of(2026,10,27) && it.linked }.forEach {
+                assertNotNull(CoursePresentation.currentPeriods(it,ScheduleProjection.profile(a.source.state,it)))
+            }; assertTrue(a.source.saveDayAdjustment(LocalDate.of(2026,10,27),"normal")) }
+            waitFor(scenario) { it.source.state.dayAdjustments.isEmpty() }; inspect(false)
+        }
+    }
+    @Test fun pr62ReviewCompressedGapUsesNearbyAndKeepsBodyAndCancelSemantics() {
+        open().use { scenario ->
+            val monday = LocalDate.of(2026,10,26); val zone=java.time.ZoneId.systemDefault()
+            fun item(id: String,day: Int,start: Int,end: Int)=ClassOccurrence(TimetableEntry(id,id,day+1,start,end.coerceAtMost(1439)),monday.plusDays(day.toLong()),
+                monday.plusDays(day.toLong()).atStartOfDay(zone).plusMinutes(start.toLong()).toInstant(),monday.plusDays(day.toLong()).atStartOfDay(zone).plusMinutes(end.toLong()).toInstant())
+            val a=item("相邻课程 A",0,480,525); val b=item("相邻课程 B",0,535,580)
+            val tiny=item("一分钟课程命中",1,480,481)
+            val overlap=listOf(item("连叠 A",2,480,540),item("连叠 B",2,510,570),item("连叠 C",2,560,600))
+            val night=item("跨日原始命中",3,1410,1470)
+            var chosen: ClassOccurrence?=null
+            lateinit var g: PhoneWeekView
+            scenario.onActivity { activity ->
+                g=PhoneWeekView(activity,listOf(a,b,tiny,night)+overlap,monday,zone,{chosen=it},7,true,BuiltInProfiles.term2026.copy(timezone=zone.id))
+                activity.setContentView(android.widget.ScrollView(activity).apply { addView(g) })
+            }
+            onView(withContentDescription(startsWith("相邻课程 A，"))).perform(timeBlockClick()); assertSame(a,chosen)
+            onView(withContentDescription(startsWith("相邻课程 B，"))).perform(timeBlockClick()); assertSame(b,chosen)
+            fun touch(day: Int,y: Float,cancel: Boolean=false,drag: Boolean=false) {
+                scenario.onActivity { activity ->
+                    val column=g.getChildAt(day+1)
+                    val density=activity.resources.displayMetrics.density
+                    val now=android.os.SystemClock.uptimeMillis()
+                    fun send(action:Int,at:Float) { android.view.MotionEvent.obtain(now,now,action,column.width/2f,at*density,0).also { column.dispatchTouchEvent(it); it.recycle() } }
+                    send(android.view.MotionEvent.ACTION_DOWN,y)
+                    if(drag) send(android.view.MotionEvent.ACTION_MOVE,y+30)
+                    send(if(cancel) android.view.MotionEvent.ACTION_CANCEL else android.view.MotionEvent.ACTION_UP,if(drag) y+30 else y)
+                }
+            }
+            val gap=(g.axes[0].y(525f)+g.axes[0].y(535f))/2
+            chosen=null; touch(0,gap,true); assertNull(chosen)
+            touch(0,gap,drag=true); assertNull(chosen)
+            fun awaitDialog(title: String) {
+                val deadline=System.currentTimeMillis()+3000
+                while(true) {
+                    try { onView(withText(title)).check(matches(isDisplayed())); return }
+                    catch(error: androidx.test.espresso.NoMatchingViewException) { if(System.currentTimeMillis()>deadline) throw error; Thread.sleep(40) }
+                }
+            }
+            touch(0,gap)
+            awaitDialog("附近课程"); screenshot("review-nearby-gap")
+            onView(withText(startsWith("相邻课程 B\n"))).perform(click()); assertSame(b,chosen)
+            chosen=null; touch(1,g.axes[1].y(481f)+4); assertSame(tiny,chosen)
+            chosen=null
+            var scrollBefore=0
+            scenario.onActivity { scrollBefore=(g.parent as android.widget.ScrollView).scrollY }
+            onView(isAssignableFrom(android.widget.ScrollView::class.java)).perform(swipeUp())
+            scenario.onActivity { assertTrue((g.parent as android.widget.ScrollView).scrollY>scrollBefore); assertNull(chosen) }
+            screenshot("review-overlap-before-click")
+            for (item in overlap) {
+                onView(withText("3 门重叠")).perform(timeBlockClick())
+                awaitDialog("重叠课程")
+                onView(withText(startsWith(item.entry.title+"\n"))).perform(click()); assertSame(item,chosen)
+            }
+            for (day in listOf(3,4)) scenario.onActivity {
+                val column=g.getChildAt(day+1) as android.view.ViewGroup
+                (0 until column.childCount).map { column.getChildAt(it) }.filterIsInstance<CourseCard>().single().performClick(); assertSame(night,chosen)
+            }
+        }
+    }
+    @Test fun pr62ReviewFiveDayRangeKeepsWeekdayFragmentsAndRestoresAnchor() {
+        val ctx=instrumentation.targetContext
+        for(name in listOf("TimetableActivity","com.dormpanel.phone.TimetableActivity")) ctx.getSharedPreferences(name,0).edit()
+            .putString("date","2026-10-27").putString("term",BuiltInProfiles.TERM_2026_2027_1).commit()
+        open().use { scenario ->
+            scenario.onActivity { a ->
+                a.source.saveEntry("工作日正常",1,480,1020)
+                a.source.saveEntry("周六深夜",6,1320,1430)
+            }
+            waitFor(scenario) { it.source.state.entries.size==2 }; onView(withText("周视图")).perform(click())
+            fun checkRange(count: Int,periods: Boolean) {
+                scenario.onActivity { a ->
+                    val g=grid(a); assertEquals(count,g.dayCount); assertEquals(periods,g.usesPeriods)
+                    assertEquals(if(count==5) { if(periods) 1295f else 1080f } else 1430f,g.axes.first().points.last().first,.01f)
+                    assertEquals(2,a.source.state.entries.size)
+                    if(count==7) assertTrue((g.getChildAt(6) as android.view.ViewGroup).let { col -> (0 until col.childCount).any { col.getChildAt(it) is CourseCard } })
+                    val scroller=a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll")
+                    scroller.scrollTo(0,0)
+                }
+            }
+            checkRange(7,false)
+            scenario.onActivity { a -> a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll").let { it.scrollTo(0,(it.getChildAt(0).height-it.height).coerceAtLeast(0)) } }
+            screenshot("review-range-seven-time")
+            onView(withText("七天 · 切换五天")).perform(click()); checkRange(5,false)
+            scenario.onActivity { a -> a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll").let { it.scrollTo(0,(it.getChildAt(0).height-it.height).coerceAtLeast(0)) } }
+            screenshot("review-range-five-time")
+            onView(withText("按时间 ▾")).perform(click()); onView(withText("按节次 · 压缩课间")).perform(click()); checkRange(5,true)
+            onView(withText("五天 · 切换七天")).perform(click()); checkRange(7,true)
+            var anchor=480f
+            scenario.onActivity { a -> val g=grid(a); val scroller=a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll"); scroller.scrollTo(0,g.offsetAt(600f)); anchor=g.minuteAt(scroller.scrollY) }
+            onView(withText("七天 · 切换五天")).perform(click())
+            scenario.onActivity { a ->
+                val g=grid(a); val scroller=a.window.decorView.findViewWithTag<android.widget.ScrollView>("timetable-scroll")
+                val expected=g.offsetAt(anchor).coerceAtMost((g.height-scroller.height).coerceAtLeast(0))
+                assertTrue(kotlin.math.abs(expected-scroller.scrollY)<=2)
+                assertEquals(5,g.dayCount); assertTrue(g.usesPeriods)
+            }
+            scenario.recreate(); waitFor(scenario) { it.source.ready }; checkRange(5,true)
+            scenario.onActivity { a -> a.source.saveEntry("工作日晚间",5,1380,1439) }
+            waitFor(scenario) { it.source.state.entries.size==3 }
+            scenario.onActivity { a -> assertEquals(1439f,grid(a).axes.first().points.last().first,.01f) }
+        }
+    }
     @Test fun pr62AxesRangesClockAndRecreationWithRealCsv() {
         val ctx = instrumentation.targetContext
         for (name in listOf("TimetableActivity","com.dormpanel.phone.TimetableActivity")) ctx.getSharedPreferences(name,0).edit()

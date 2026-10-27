@@ -234,7 +234,7 @@ class TimetableActivity : AppCompatActivity() {
         if (weekView) {
             val effectiveProfile = profile ?: projected.mapNotNull { ScheduleProjection.profile(source.state,it) }.distinct().singleOrNull()
             val grid = PhoneWeekView(this,projected,monday(),source.clock.zone(),editors::classDetail,
-                if (weekdaysOnly) 5 else 7,periodMode,effectiveProfile)
+                if (weekdaysOnly) 5 else 7,periodMode,effectiveProfile) { ScheduleProjection.profile(source.state,it) }
             weekGrid = grid
             if (periodMode && !grid.usesPeriods) {
                 // Keep the grid origin aligned with scroll anchors: explanation lives above the scroller.
@@ -254,7 +254,7 @@ class TimetableActivity : AppCompatActivity() {
             list.addView(scheduleButton(buildString {
                 append(item.entry.title).append("\n")
                 append(scheduleTime(item.start)).append(" – ").append(scheduleTime(item.end))
-                item.periodLabel?.let { append(" · ").append(it) }
+                CoursePresentation.currentPeriods(item,ScheduleProjection.profile(source.state,item))?.let { append(" · ").append(it) }
                 if (item.entry.location.isNotBlank()) append("\n").append(item.entry.location)
                 if (item.teacher.isNotBlank()) append(" · ").append(item.teacher)
                 if (item.allWeeksEdited || item.thisWeekEdited) append("\n已应用本地修改")

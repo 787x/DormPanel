@@ -13,11 +13,13 @@ import java.time.*
 /** Bounded native columns. Only the clock overlay changes on each minute tick. */
 internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, private val monday: LocalDate,
     private val zone: ZoneId, detail: (ClassOccurrence) -> Unit, val dayCount: Int = 7,
-    periodMode: Boolean = false, profile: TermScheduleProfile? = null) : LinearLayout(context) {
+    periodMode: Boolean = false, profile: TermScheduleProfile? = null,
+    profileFor: (ClassOccurrence) -> TermScheduleProfile? = { profile }) : LinearLayout(context) {
     private val density = resources.displayMetrics.density
     private val segments = WeekLayout.segments(items, monday, zone)
-    private val first = minOf(480, segments.minOfOrNull { it.start } ?: 480) / 60 * 60
-    private val last = maxOf(1080, segments.maxOfOrNull { it.end } ?: 1080)
+    private val range = WeekLayout.visibleRange(segments,dayCount)
+    private val first = range.first
+    private val last = range.second
     private val periodAxes = (0 until dayCount).map { WeekAxis.periods(profile, monday.plusDays(it.toLong()), zone, first, last) }
     val usesPeriods = periodMode && periodAxes.all { it != null }
     val axes = (0 until dayCount).map { if (usesPeriods) periodAxes[it]!! else WeekAxis.time(first,last) }
@@ -54,28 +56,31 @@ internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, pri
                 },FrameLayout.LayoutParams(-2,context.dp(16)).apply { topMargin = offsetAt(minute.toFloat(),day) }) }
             }
             val groups = WeekLayout.groups(segments.filter { it.day == day })
-            fun open(group: List<ClassOccurrence>) {
-                if (group.size == 1) detail(group.single()) else AlertDialog.Builder(context).setTitle("重叠课程")
+            val hitAreas = groups.map { WeekHitArea(it,offsetAt(it.minOf { s -> s.start }.toFloat(),day),
+                maxOf(offsetAt(it.minOf { s -> s.start }.toFloat(),day)+1,offsetAt(it.maxOf { s -> s.end }.toFloat(),day))) }
+            fun open(group: List<ClassOccurrence>, nearby: Boolean = false) {
+                if (group.size == 1) detail(group.single()) else AlertDialog.Builder(context).setTitle(if (nearby) "附近课程" else "重叠课程")
                     .setItems(group.map { "${it.entry.title}\n${context.scheduleTime(it.start)}–${context.scheduleTime(it.end)} · ${it.entry.location}" }.toTypedArray()) { _,i -> detail(group[i]) }
                     .setNegativeButton("关闭",null).show()
             }
             // Short blocks keep exact geometry; an enlarged empty-space hit area offers ALL nearby originals.
-            var downY = 0f; var moved = false
+            var downY = 0f; var downX = 0f; var moved = false
             column.setOnTouchListener { _,event ->
                 when (event.actionMasked) {
-                    android.view.MotionEvent.ACTION_DOWN -> { downY = event.y; moved = false }
-                    android.view.MotionEvent.ACTION_MOVE -> if (kotlin.math.abs(event.y-downY) > android.view.ViewConfiguration.get(context).scaledTouchSlop) moved = true
+                    android.view.MotionEvent.ACTION_DOWN -> { downY = event.y; downX = event.x; moved = false }
+                    android.view.MotionEvent.ACTION_MOVE -> if (maxOf(kotlin.math.abs(event.y-downY),kotlin.math.abs(event.x-downX)) > android.view.ViewConfiguration.get(context).scaledTouchSlop) moved = true
                     android.view.MotionEvent.ACTION_CANCEL -> moved = true
                     android.view.MotionEvent.ACTION_UP -> if (!moved) {
-                        val nearby = groups.filter { event.y >= offsetAt(it.first().start.toFloat(),day)-context.dp(24) && event.y <= offsetAt(it.maxOf { s -> s.end }.toFloat(),day)+context.dp(24) }
-                        if (nearby.isNotEmpty()) open(nearby.flatten().map { it.item })
+                        val nearby = WeekTouch.hit(hitAreas,event.y,context.dp(24))
+                        if (nearby.isNotEmpty()) open(nearby.flatMap { it.group }.map { it.item },nearby.size > 1)
                     }
                 }; true
             }
-            groups.forEach { group ->
-                val top = offsetAt(group.first().start.toFloat(),day)
-                val bottom = offsetAt(group.maxOf { it.end }.toFloat(),day)
-                column.addView(CourseCard(context,group.map { it.item },zone) { open(group.map { it.item }) },
+            hitAreas.forEach { area ->
+                val group = area.group
+                val top = area.top
+                val bottom = area.bottom
+                column.addView(CourseCard(context,group.map { it.item },zone,profileFor) { open(group.map { it.item }) },
                     FrameLayout.LayoutParams(-1,maxOf(1,bottom-top)).apply { topMargin = top; marginStart = context.dp(1); marginEnd = context.dp(1) })
             }
             val line = View(context).apply { setBackgroundColor(Color.rgb(224,88,76)); contentDescription = "当前时间"; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }

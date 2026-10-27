@@ -18,15 +18,29 @@ internal object WeekLayout {
             }.sortedWith(compareBy<WeekSegment> { it.start }.thenBy { it.end }.thenBy { it.item.sourceId.orEmpty() }
                 .thenBy { it.item.seriesId }.thenBy { it.item.anchorDate }.thenBy { it.item.entry.id })
         }
-    // Minimum touch height participates in collision grouping so short classes remain reachable.
+    // Group only genuine instant overlap, independently of minute/pixel rounding and touch padding.
     fun groups(segments: List<WeekSegment>): List<List<WeekSegment>> {
         val groups = mutableListOf<MutableList<WeekSegment>>()
-        var bottom = -1
-        segments.forEach { segment ->
-            if (groups.isEmpty() || segment.start >= bottom) { groups.add(mutableListOf()); bottom = -1 }
+        var bottom: Instant? = null
+        segments.sortedBy { it.item.start }.forEach { segment ->
+            if (bottom == null || segment.item.start >= bottom) { groups.add(mutableListOf()); bottom = segment.item.end }
             groups.last().add(segment)
-            bottom = maxOf(bottom, segment.end, segment.end)
+            bottom = maxOf(bottom!!,segment.item.end)
         }
         return groups
+    }
+    fun visibleRange(segments: List<WeekSegment>, dayCount: Int): Pair<Int,Int> {
+        val visible = segments.filter { it.day in 0 until dayCount }
+        return minOf(480,visible.minOfOrNull { it.start } ?: 480)/60*60 to
+            maxOf(1080,visible.maxOfOrNull { it.end } ?: 1080)
+    }
+}
+
+internal data class WeekHitArea(val group: List<WeekSegment>, val top: Int, val bottom: Int)
+internal object WeekTouch {
+    /** Body wins; blank-space candidates stay in stable time order and retain their overlap groups. */
+    fun hit(areas: List<WeekHitArea>, y: Float, padding: Int): List<WeekHitArea> {
+        areas.firstOrNull { y >= it.top && y < it.bottom }?.let { return listOf(it) }
+        return areas.filter { y >= it.top-padding && y <= it.bottom+padding }
     }
 }

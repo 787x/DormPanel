@@ -34,4 +34,21 @@ class WeekAxisTest {
             PeriodTime(1,LocalTime.of(8,0),LocalTime.of(9,0)), PeriodTime(2,LocalTime.of(8,30),LocalTime.of(10,0))))))
         assertNull(WeekAxis.periods(bad,monday,zone,480,1080))
     }
+    @Test fun visibleBoundsApplyToBothAxesAndStillIncludeConfiguredPeriods() {
+        val weekday = com.dormpanel.app.schedule.ClassOccurrence(TimetableEntry("a","weekday",1,480,1020),monday,
+            monday.atTime(8,0).atZone(zone).toInstant(),monday.atTime(17,0).atZone(zone).toInstant())
+        val weekend = weekday.copy(date=monday.plusDays(5),start=monday.plusDays(5).atTime(22,0).atZone(zone).toInstant(),
+            end=monday.plusDays(6).atTime(0,30).atZone(zone).toInstant())
+        val segments = WeekLayout.segments(listOf(weekday,weekend),monday,zone)
+        val five = WeekLayout.visibleRange(segments,5); val seven = WeekLayout.visibleRange(segments,7)
+        for (period in listOf(false,true)) {
+            fun axis(bounds: Pair<Int,Int>) = if (period) WeekAxis.periods(BuiltInProfiles.term2026,monday,zone,bounds.first,bounds.second)!! else WeekAxis.time(bounds.first,bounds.second)
+            val a = axis(five); val b = axis(seven)
+            assertTrue(a.height < b.height)
+            assertEquals(480f,a.points.first().first,.01f)
+            assertEquals(if (period) 1295f else 1080f,a.points.last().first,.01f)
+            assertEquals(600f,a.minute(a.y(600f)),.01f)
+            assertEquals(600f,b.minute(b.y(600f)),.01f)
+        }
+    }
 }
