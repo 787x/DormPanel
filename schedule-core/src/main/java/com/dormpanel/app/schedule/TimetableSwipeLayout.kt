@@ -4,16 +4,19 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.view.MotionEvent
 import android.view.VelocityTracker
+import android.view.View
+import android.view.ViewGroup
 import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import kotlin.math.abs
 
-/** Local event arbitration, independent of dates, stores and either app's page navigation.
- * Observe before ScrollView can disallow interception; cancel its target exactly once on lock.
- * The single child contains the date headings and courses, never the fixed toolbar.
+/** Local arbitration and a two-page clipped viewport. Owners supply read-only date projections.
+ * No preview is built for DOWN, taps or vertical scrolling. The owner can promote the exact
+ * preview tree with takePreview() during navigate; otherwise it is released after navigation.
  */
 class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit) : FrameLayout(context) {
+    var preparePreview: ((Int) -> View)? = null
     var swipeEnabled = false
         set(value) { if (field != value) cancelMotion(); field = value }
     private val config = ViewConfiguration.get(context)
@@ -27,12 +30,18 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
     private var committing = false
     private var generation = 0
     private var velocity: VelocityTracker? = null
+    private var animator: ValueAnimator? = null
+    private var preview: View? = null
+    private var previewDirection = 0
+    private var previewFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
+    private var offset = 0f
     private val content get() = getChildAt(0)
+
+    init { clipChildren = true; clipToPadding = true }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (!swipeEnabled) return super.dispatchTouchEvent(event)
         if (settling && (committing || event.actionMasked != MotionEvent.ACTION_DOWN)) return true
-        // An incoming page or rebound can be grabbed immediately by a fresh finger.
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             cancelMotion()
             tracking = true; downX = event.x; downY = event.y
@@ -44,8 +53,7 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
         val dy = event.y - downY
         if (event.pointerCount > 1 || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
             cancelChild(event); rejected = true; horizontal = false
-            content?.translationX = 0f
-            // Suppress the entire multi-touch stream, including a remaining finger's UP.
+            releasePreview(); position(0f)
             velocity?.recycle(); velocity = null
             return true
         }
@@ -58,12 +66,13 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
                 horizontal = true
                 cancelChild(event)
                 parent?.requestDisallowInterceptTouchEvent(true)
-            } else rejected = true // Direction lock: a vertical/diagonal scroll cannot become a page turn.
+            } else rejected = true
         }
         if (horizontal) {
             when (event.actionMasked) {
-                MotionEvent.ACTION_MOVE -> content?.translationX = dragOffset(dx)
+                MotionEvent.ACTION_MOVE -> drag(dx)
                 MotionEvent.ACTION_UP -> {
+                    drag(dx) // UP may contain a final reversal not delivered in a MOVE.
                     velocity?.computeCurrentVelocity(1000, config.scaledMaximumFlingVelocity.toFloat())
                     val vx = velocity?.xVelocity ?: 0f
                     val vy = velocity?.yVelocity ?: 0f
@@ -78,8 +87,7 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
         }
         val handled = super.dispatchTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-            tracking = false
-            cancelMotion()
+            tracking = false; cancelMotion()
         }
         return handled || tracking
     }
@@ -87,64 +95,93 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
     private fun cancelChild(event: MotionEvent) {
         val cancel = MotionEvent.obtain(event)
         cancel.action = MotionEvent.ACTION_CANCEL
-        super.dispatchTouchEvent(cancel)
-        cancel.recycle()
+        super.dispatchTouchEvent(cancel); cancel.recycle()
     }
 
-    private fun dragOffset(dx: Float): Float {
-        // Bounded live translation; no screenshots, duplicate course views or offscreen bitmaps.
-        val limit = width * .24f
-        return dx.coerceIn(-limit, limit)
+    private fun drag(dx: Float) {
+        val direction = when { dx < 0 -> 1; dx > 0 -> -1; else -> previewDirection }
+        if (direction != 0 && direction != previewDirection) {
+            releasePreview()
+            previewDirection = direction
+            preparePreview?.invoke(direction)?.let { page ->
+                preview = page
+                page.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                if (page is ViewGroup) {
+                    previewFocusability = page.descendantFocusability
+                    page.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                }
+                addView(page, LayoutParams(-1,-1))
+                // Restore its scroll anchor before exposing the first strip.
+                page.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(height,MeasureSpec.EXACTLY))
+                page.layout(0,0,width,height)
+            }
+        }
+        position(dx.coerceIn(-width.toFloat(),width.toFloat()))
+    }
+
+    private fun position(x: Float) {
+        offset = x
+        content?.translationX = x
+        preview?.translationX = previewDirection * width + x
     }
 
     private fun finish(direction: Int) {
         tracking = false; horizontal = false
         velocity?.recycle(); velocity = null
         parent?.requestDisallowInterceptTouchEvent(false)
-        val view = content ?: return
-        settling = true
-        committing = direction != 0
+        settling = true; committing = direction != 0
+        val target = if (direction == 0) 0f else -direction * width.toFloat()
+        val expectedGeneration = generation
         val complete = {
-            settling = false; committing = false; view.translationX = 0f; view.alpha = 1f
-            if (direction != 0) navigate(direction)
+            if (expectedGeneration == generation) {
+                settling = false; committing = false; animator = null
+                if (direction != 0) navigate(direction)
+                if (expectedGeneration == generation) { releasePreview(); position(0f) }
+            }
         }
-        if (!ValueAnimator.areAnimatorsEnabled()) { complete(); return }
-        view.animate().translationX(if (direction == 0) 0f else -direction * width * .24f)
-            .alpha(if (direction == 0) 1f else .85f).setDuration(if (direction == 0) 180 else 120)
-            .setInterpolator(DecelerateInterpolator()).withEndAction { complete() }.start()
+        if (!ValueAnimator.areAnimatorsEnabled()) { position(target); complete(); return }
+        animator = ValueAnimator.ofFloat(offset,target).apply {
+            duration = 200
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { position(it.animatedValue as Float) }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) { complete() }
+            })
+            start()
+        }
     }
 
-    /** Called on the newly rendered content, after the owner has atomically changed its date. */
-    fun arrive(direction: Int) {
-        if (!ValueAnimator.areAnimatorsEnabled()) return
-        val view = content ?: return
-        view.translationX = direction * width * .08f
-        // Width is not known until layout when the owner rebuilds the hierarchy.
-        view.alpha = .85f
-        settling = true
-        val expectedGeneration = generation
-        view.post {
-            if (generation != expectedGeneration || !settling || !isAttachedToWindow) return@post
-            view.translationX = direction * width * .08f
-            view.animate().translationX(0f).alpha(1f).setDuration(80)
-                .setInterpolator(DecelerateInterpolator()).withEndAction { settling = false }.start()
-        }
+    /** Transfer ownership on successful navigation; reuse the preview's measured tree. */
+    fun takePreview(): View? = preview?.also { page ->
+        preview = null; previewDirection = 0
+        removeView(page); page.translationX = 0f
+        if (page is ViewGroup) page.descendantFocusability = previewFocusability
+        page.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_AUTO
+    }
+
+    private fun releasePreview() {
+        preview?.let { removeView(it) }
+        preview = null; previewDirection = 0
     }
 
     fun cancelMotion() {
-        generation++ // Invalidate even an arrival runnable that has not started its animator yet.
+        generation++
+        animator?.cancel(); animator = null
         if (tracking) {
             val time = android.os.SystemClock.uptimeMillis()
             val cancel = MotionEvent.obtain(time,time,MotionEvent.ACTION_CANCEL,downX,downY,0)
             super.dispatchTouchEvent(cancel); cancel.recycle()
         }
-        content?.animate()?.withEndAction(null)?.cancel()
-        content?.let { it.translationX = 0f; it.alpha = 1f }
+        releasePreview(); position(0f)
         velocity?.recycle(); velocity = null
         tracking = false; horizontal = false; rejected = false; settling = false; committing = false
         parent?.requestDisallowInterceptTouchEvent(false)
     }
     override fun onDetachedFromWindow() { cancelMotion(); super.onDetachedFromWindow() }
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w,h,oldw,oldh)
+        if (oldw > 0 && (w != oldw || h != oldh)) cancelMotion()
+    }
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) { super.onWindowFocusChanged(hasWindowFocus); if (!hasWindowFocus) cancelMotion() }
     override fun onVisibilityAggregated(isVisible: Boolean) { super.onVisibilityAggregated(isVisible); if (!isVisible) cancelMotion() }
 }

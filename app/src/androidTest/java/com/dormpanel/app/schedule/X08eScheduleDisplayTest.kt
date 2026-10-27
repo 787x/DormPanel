@@ -63,9 +63,10 @@ class X08eScheduleDisplayTest {
     @Before fun setup() { saved = X08eSchedulePreferences(context).read() }
     @After fun restore() { X08eSchedulePreferences(context).write(saved); if (::source.isInitialized) instrumentation.runOnMainSync { source.close() } }
     private fun views(root: View): List<View> = listOf(root) + if (root is ViewGroup) (0 until root.childCount).flatMap { views(root.getChildAt(it)) } else emptyList()
-    private fun install(activity: MainActivity, style: X08eScheduleStyle, theme: ThemeMode = ThemeMode.DARK, session: ScheduleSession? = null, persistStyle: Boolean = true) {
+    private fun install(activity: MainActivity, style: X08eScheduleStyle, theme: ThemeMode = ThemeMode.DARK, session: ScheduleSession? = null, persistStyle: Boolean = true,
+        locale: Locale = Locale.SIMPLIFIED_CHINESE, homeAction: () -> Unit = {}) {
         if (persistStyle) X08eSchedulePreferences(context).write(style)
-        val config = Configuration(activity.resources.configuration).apply { setLocale(Locale.SIMPLIFIED_CHINESE) }
+        val config = Configuration(activity.resources.configuration).apply { setLocale(locale) }
         val localized = android.view.ContextThemeWrapper(activity, com.dormpanel.app.R.style.Theme_DormPanel).apply { applyOverrideConfiguration(config) }
         if (!::source.isInitialized) {
             fixtureData = fixture()
@@ -84,7 +85,7 @@ class X08eScheduleDisplayTest {
             override fun write(state: AppearanceState) = Unit
         })
         val selected = session ?: ScheduleSession(clock).apply { mode = ScheduleMode.TIMETABLE }
-        page = SchedulePageView(localized, source, selected, appearance, {}, viewport = viewport)
+        page = SchedulePageView(localized, source, selected, appearance, homeAction, viewport = viewport)
         // Exercise the same MainActivity arbitration as a real displayed schedule page.
         MainActivity::class.java.getDeclaredField("activePageInteraction").apply { isAccessible=true }.set(activity,page)
         activity.setContentView(page)
@@ -282,6 +283,147 @@ class X08eScheduleDisplayTest {
                 Thread.sleep(500); scenario.onActivity { assertEquals(week.plusWeeks(1),session.weekStart) }
                 onView(target).perform(SwipeEvents.nativeDrag(.3f,.75f))
                 Thread.sleep(500); scenario.onActivity { assertEquals(week,session.weekStart) }
+            }
+        }
+    }
+    private fun followScreenshot(name: String) {
+        instrumentation.waitForIdleSync(); Thread.sleep(150)
+        val b=instrumentation.uiAutomation.takeScreenshot()
+        assertEquals(1280,b.width); assertEquals(800,b.height)
+        java.io.File(context.getExternalFilesDir(null),"pr64-follow-$name.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) }; b.recycle()
+    }
+    private fun datedPreviewFixture() {
+        val imported=(-7..20).flatMap { day -> listOf(8,10,14).map { hour ->
+            val start=instant(day,hour,0)
+            ImportedClassOccurrence("preview-$day-$hour","source","preview-$day-$hour",null,start,"真实 ${week.plusDays(day.toLong())}",
+                start,start+45*60_000,zone.id,"预览教室","",null)
+        } }
+        val p=profile.copy(phases=profile.phases.map { it.copy(effectiveFrom=week.minusWeeks(2)) })
+        fixtureData=fixtureData.copy(entries=emptyList(),imported=imported,profiles=mapOf(p.termKey to p),
+            sources=fixtureData.sources.map { it.copy(occurrenceCount=imported.size,firstStart=imported.minOf { c -> c.start },lastEnd=imported.maxOf { c -> c.end }) })
+        source.reload()
+    }
+    @Test fun pr64NativeDistinctWeeksPreviewRecording() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+            scenario.onActivity { install(it,X08eScheduleStyle(X08eScheduleLayout.TIME,true,true,true),session=session); datedPreviewFixture() }
+            instrumentation.waitForIdleSync()
+            val target=withTagValue(org.hamcrest.Matchers.equalTo("timetable-swipe" as Any))
+            onView(target).perform(SwipeEvents.nativeDrag(.9f,.1f)); Thread.sleep(450)
+            scenario.onActivity { assertEquals(week.plusWeeks(1),session.weekStart) }
+            onView(target).perform(SwipeEvents.nativeDrag(.5f,.42f)); Thread.sleep(450)
+            scenario.onActivity { assertEquals(week.plusWeeks(1),session.weekStart) }
+            onView(target).perform(SwipeEvents.nativeDrag(.1f,.9f)); Thread.sleep(450)
+            scenario.onActivity { assertEquals(week,session.weekStart); assertEquals(1,views(page).filterIsInstance<TimetableSwipeLayout>().single().childCount) }
+        }
+    }
+    @Test fun pr64RealAdjacentPreviewGeometryPromotionAndCleanupAcrossLayouts() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            fun idle() { instrumentation.waitForIdleSync(); Thread.sleep(450); instrumentation.waitForIdleSync() }
+            fun swipe()=views(page).filterIsInstance<TimetableSwipeLayout>().single()
+            for (layout in X08eScheduleLayout.entries) {
+                val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+                scenario.onActivity { a ->
+                    install(a,X08eScheduleStyle(layout,true,true,true),session=session)
+                    datedPreviewFixture()
+                }; idle()
+                for (direction in listOf(1,-1)) {
+                    val target=week.plusWeeks(direction.toLong())
+                    lateinit var stroke: SwipeEvents.Stroke
+                    lateinit var current: View
+                    lateinit var preview: View
+                    var offsets=emptyList<Int>()
+                    scenario.onActivity {
+                        val v=swipe(); current=v.getChildAt(0)
+                        stroke=SwipeEvents.Stroke(v,if(direction==1) v.width*.9f else v.width*.1f)
+                        assertEquals(1,v.childCount)
+                    }
+                    for (fraction in listOf(.25f,.5f,.8f)) {
+                        scenario.onActivity {
+                            val v=swipe(); val start=android.os.SystemClock.elapsedRealtimeNanos()
+                            stroke.move(-direction*v.width*fraction)
+                            if(fraction==.25f) println("PR64 preview x08e $layout build-layout-ms=${(android.os.SystemClock.elapsedRealtimeNanos()-start)/1_000_000f}")
+                            assertEquals(2,v.childCount); preview=v.getChildAt(1)
+                            assertEquals("x08e-page-$target",preview.tag)
+                            assertEquals(-direction*v.width*fraction,current.translationX,1f)
+                            assertEquals(direction*v.width*(1-fraction),preview.translationX,1f)
+                            assertEquals(v.width,preview.width); assertEquals(v.height,preview.height)
+                            assertEquals(week,session.weekStart)
+                            assertTrue(views(preview).filterIsInstance<TextView>().any { it.text.contains("真实 $target") })
+                            views(preview).filterIsInstance<Button>().forEach { it.performClick() }
+                            views(preview).filterIsInstance<X08eCourseCard>().firstOrNull()?.performClick()
+                            assertTrue(page.hasWindowFocus())
+                            views(preview).filterIsInstance<X08eWeekGrid>().forEach { g ->
+                                assertFalse(g.clockAllowed)
+                                assertEquals(false,X08eWeekGrid::class.java.getDeclaredField("active").let { it.isAccessible=true; it.get(g) })
+                            }
+                        }
+                        if(fraction==.5f && direction==1) followScreenshot("${layout.name.lowercase()}-half")
+                    }
+                    scenario.onActivity { offsets=views(preview).filterIsInstance<ScrollView>().map { it.scrollY }; stroke.end() }; idle()
+                    scenario.onActivity {
+                        assertEquals(target,session.weekStart); assertSame(preview,swipe().getChildAt(0)); assertEquals(1,swipe().childCount)
+                        assertFalse(current.isAttachedToWindow); assertEquals(0f,preview.translationX,0f)
+                        assertEquals(offsets,views(preview).filterIsInstance<ScrollView>().map { it.scrollY })
+                        assertEquals(fixtureData,source.state)
+                    }
+                    if(direction==1) {
+                        scenario.onActivity {
+                            views(preview).first { it is X08eCourseCard || it is X08eClassicCourseButton }.performClick()
+                        }
+                        onView(withText("真实 $target")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+                            .check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
+                        androidx.test.espresso.Espresso.pressBack()
+                    }
+                    scenario.onActivity { SwipeEvents.drag(swipe(),direction*swipe().width*.6f) }; idle()
+                    scenario.onActivity {
+                        assertEquals(week,session.weekStart)
+                        val v=swipe(); val reversal=SwipeEvents.Stroke(v)
+                        reversal.move(-v.width*.5f); val next=v.getChildAt(1)
+                        reversal.move(v.width*.5f)
+                        assertFalse(next.isAttachedToWindow); assertEquals(2,v.childCount)
+                        assertEquals("x08e-page-${week.minusWeeks(1)}",v.getChildAt(1).tag)
+                        reversal.end(cancel=true)
+                    }; idle()
+                    scenario.onActivity { assertEquals(week,session.weekStart); assertEquals(1,swipe().childCount); assertEquals(0f,swipe().getChildAt(0).translationX,0f) }
+                }
+                scenario.onActivity {
+                    val v=swipe(); val drag=SwipeEvents.Stroke(v); drag.move(-v.width*.5f); val preview=v.getChildAt(1)
+                    source.refresh(); assertFalse(preview.isAttachedToWindow); drag.end()
+                }; idle()
+                scenario.onActivity {
+                    assertEquals(1,swipe().childCount); assertEquals(week,session.weekStart)
+                    val v=swipe(); val drag=SwipeEvents.Stroke(v); drag.move(-v.width*.5f); val preview=v.getChildAt(1)
+                    v.swipeEnabled=false; assertFalse(preview.isAttachedToWindow); assertEquals(1,v.childCount); drag.end()
+                }
+            }
+        }
+    }
+    @Test fun pr64HomeBoundsChineseEnglishAndEdgeTouches() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for (locale in listOf(Locale.SIMPLIFIED_CHINESE,Locale.US)) {
+                var clicks=0
+                scenario.onActivity { install(it,X08eScheduleStyle(),locale=locale,homeAction={clicks++}) }
+                instrumentation.waitForIdleSync()
+                val name=if(locale.language=="zh") "返回首页" else "Home"
+                scenario.onActivity {
+                    val home=views(page).filterIsInstance<Button>().single { it.text==name }
+                    assertTrue(home.width>=context.dp(112)); assertEquals(context.dp(56),home.height)
+                    val header=page.getChildAt(0) as ViewGroup
+                    assertTrue((0 until header.childCount-1).all { i -> header.getChildAt(i).right<=header.getChildAt(i+1).left })
+                    assertTrue(home.right<=header.width); assertTrue(header.getChildAt(0).width>0)
+                }
+                followScreenshot("home-${locale.language}")
+                for ((x,y) in listOf(.03f to .5f,.97f to .5f,.5f to .03f,.5f to .97f)) {
+                    if (InstrumentationRegistry.getArguments().getString("homeDirect")=="true") scenario.onActivity {
+                        val home=views(page).filterIsInstance<Button>().single { it.text==name }
+                        val r=android.graphics.Rect(0,0,home.width,home.height); page.offsetDescendantRectToMyCoords(home,r)
+                        SwipeEvents.Stroke(page,r.left+r.width()*x,r.top+r.height()*y).end()
+                    } else onView(withText(name)).perform(androidx.test.espresso.action.GeneralClickAction(androidx.test.espresso.action.Tap.SINGLE,
+                        { v -> val p=IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0]+v.width*x,p[1]+v.height*y) },androidx.test.espresso.action.Press.FINGER))
+                    instrumentation.waitForIdleSync()
+                }
+                assertEquals(4,clicks)
             }
         }
     }

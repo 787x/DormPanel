@@ -11,7 +11,8 @@ import kotlin.math.roundToInt
 /** One scroll surface for all seven days; the parent keeps date headers outside it. */
 internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, private val week: LocalDate,
     private val source: ScheduleSource, private val style: X08eScheduleStyle,
-    private val appearance: AppearanceController, private val detail: (ClassOccurrence) -> Unit) : LinearLayout(context), AppearanceAware {
+    private val appearance: AppearanceController, private val detail: (ClassOccurrence) -> Unit,
+    private val interactive: () -> Boolean = { true }) : LinearLayout(context), AppearanceAware {
     private val segments = X08eWeekGeometry.segments(items, week, source.clock.zone())
     private val range = X08eWeekGeometry.range(segments)
     private val periodAxis = if (style.layout == X08eScheduleLayout.PERIODS)
@@ -25,6 +26,8 @@ internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, priv
     private val rules = mutableListOf<View>()
     private var chooser: AlertDialog? = null
     private var active = false
+    var clockAllowed = true
+        set(value) { field = value; setClockActive(value && isShown && isAttachedToWindow) }
     private val tick = object : Runnable {
         override fun run() {
             updateNow()
@@ -32,7 +35,7 @@ internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, priv
                 postDelayed(this, 60_000L - Math.floorMod(source.clock.instant().toEpochMilli(), 60_000L))
         }
     }
-    fun setClockActive(value: Boolean) { active = value; removeCallbacks(tick); if (value) tick.run() }
+    fun setClockActive(value: Boolean) { active = value && clockAllowed; removeCallbacks(tick); if (active) tick.run() }
     fun offset(minute: Float) = (axis.y(minute) * resources.displayMetrics.density).roundToInt()
     fun minuteAt(offset: Int) = axis.minute(offset / resources.displayMetrics.density)
     init {
@@ -77,6 +80,7 @@ internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, priv
     fun openDay(day: Int) = open(segments.filter { it.day == day }.map { it.item })
     fun dayCount(day: Int) = segments.count { it.day == day }
     private fun open(items: List<ClassOccurrence>) {
+        if (!interactive()) return
         if (items.isEmpty()) return
         if (items.size == 1) { detail(items.single()); return }
         chooser?.dismiss()

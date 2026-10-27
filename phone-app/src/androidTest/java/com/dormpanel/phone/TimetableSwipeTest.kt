@@ -106,6 +106,149 @@ class TimetableSwipeTest {
             s.onActivity { assertEquals(LocalDate.of(2026,10,28),selected(it)); assertTrue(SwipeEvents.views(it.window.decorView).filterIsInstance<TextView>().any { v -> v.text.startsWith("2026-10-28") }) }
         }
     }
+    private fun datedFixture() {
+        val zone=ZoneId.systemDefault()
+        val dated=(-7..20).flatMap { d -> listOf(480,600,840).map { minute ->
+            val date=week.plusDays(d.toLong()); val start=date.atStartOfDay(zone).plusMinutes(minute.toLong()).toInstant().toEpochMilli()
+            ImportedClassOccurrence("preview-$d-$minute","preview-source","preview-$d-$minute",null,start,
+                "真实 $date",start,start+45*60_000,zone.id,"预览教室","",null)
+        } }
+        fixture=fixture.copy(entries=emptyList(),imported=dated,sources=listOf(ImportSource("preview-source","预览夹具","preview.csv","csv",null,null,"preview",0,
+            zone.id,dated.size,dated.minOf { it.start },dated.maxOf { it.end },profile.termKey)))
+    }
+    @Test fun nativeDistinctDatePreviewRecording() {
+        datedFixture(); seed("2026-10-27",true)
+        open().use { s ->
+            val target=androidx.test.espresso.matcher.ViewMatchers.withTagValue(org.hamcrest.Matchers.equalTo("timetable-swipe" as Any))
+            onView(target).perform(SwipeEvents.nativeDrag(.9f,.1f)); idle()
+            s.onActivity { assertEquals(LocalDate.of(2026,11,3),selected(it)); assertEquals(1,swipe(it).childCount) }
+            onView(target).perform(SwipeEvents.nativeDrag(.5f,.42f)); idle()
+            s.onActivity { assertEquals(LocalDate.of(2026,11,3),selected(it)) }
+            onView(target).perform(SwipeEvents.nativeDrag(.1f,.9f)); idle()
+            s.onActivity { assertEquals(LocalDate.of(2026,10,27),selected(it)) }
+            onView(withText("日视图")).perform(click())
+            onView(target).perform(SwipeEvents.nativeDrag(.9f,.1f)); idle()
+            s.onActivity { assertEquals(LocalDate.of(2026,10,28),selected(it)); assertEquals(1,swipe(it).childCount) }
+            onView(target).perform(SwipeEvents.nativeDrag(.1f,.9f)); idle()
+            s.onActivity { assertEquals(LocalDate.of(2026,10,27),selected(it)) }
+        }
+    }
+    @Test fun realAdjacentPagesFollowAtQuarterHalfAndEightyAndPromoteWithoutRebuild() {
+        datedFixture()
+        for ((weekly,periods,five) in listOf(Triple(false,false,false),Triple(true,false,false),Triple(true,false,true),Triple(true,true,false),Triple(true,true,true))) {
+            seed("2026-10-27",weekly)
+            prefs.edit().putBoolean("periodMode",periods).putBoolean("weekdaysOnly",five).commit()
+            open().use { s ->
+                for (direction in listOf(1,-1)) {
+                    val target=LocalDate.of(2026,10,27).let { if(weekly) it.plusWeeks(direction.toLong()) else it.plusDays(direction.toLong()) }
+                    lateinit var stroke: SwipeEvents.Stroke
+                    lateinit var old: View
+                    lateinit var preview: View
+                    var offsets=emptyList<Int>()
+                    s.onActivity { a ->
+                        val v=swipe(a); old=v.getChildAt(0)
+                        stroke=SwipeEvents.Stroke(v,if(direction==1) v.width*.9f else v.width*.1f)
+                        assertEquals(1,v.childCount) // DOWN does not allocate a page.
+                    }
+                    for (fraction in listOf(.25f,.5f,.8f)) {
+                        s.onActivity { a ->
+                            val v=swipe(a)
+                            val start=android.os.SystemClock.elapsedRealtimeNanos()
+                            stroke.move(-direction*v.width*fraction)
+                            if(fraction==.25f) println("PR64 preview phone weekly=$weekly periods=$periods five=$five build-layout-ms=${(android.os.SystemClock.elapsedRealtimeNanos()-start)/1_000_000f}")
+                            assertEquals(2,v.childCount); preview=v.getChildAt(1)
+                            assertEquals("phone-page-$target",preview.tag)
+                            assertEquals(-direction*v.width*fraction,old.translationX,1f)
+                            assertEquals(direction*v.width*(1-fraction),preview.translationX,1f)
+                            assertEquals(v.width,preview.width); assertEquals(v.height,preview.height)
+                            assertEquals(LocalDate.of(2026,10,27),selected(a))
+                            val targetCards=SwipeEvents.views(preview).filterIsInstance<CourseCard>()
+                            assertTrue(SwipeEvents.views(preview).filterIsInstance<TextView>().any { it.text.contains("真实 $target") } || targetCards.any { it.contentDescription.contains("真实 $target") })
+                            // Even programmatic clicks in a preview cannot open a detail or date editor.
+                            targetCards.firstOrNull()?.performClick()
+                            SwipeEvents.views(preview).filterIsInstance<Button>().forEach { it.performClick() }
+                            assertTrue(a.window.decorView.hasWindowFocus())
+                            SwipeEvents.views(preview).filterIsInstance<PhoneWeekView>().forEach { g ->
+                                assertEquals(false,PhoneWeekView::class.java.getDeclaredField("clockActive").let { it.isAccessible=true; it.get(g) })
+                            }
+                        }
+                        if (fraction==.5f && direction==1 && !five) screenshot("follow-${if(weekly) if(periods) "periods" else "week" else "day"}-half")
+                    }
+                    s.onActivity { offsets=SwipeEvents.views(preview).filterIsInstance<ScrollView>().map { it.scrollY }; stroke.end() }; idle()
+                    s.onActivity { a ->
+                        assertEquals(target,selected(a)); assertSame(preview,swipe(a).getChildAt(0))
+                        assertEquals(1,swipe(a).childCount); assertEquals(0f,preview.translationX,0f); assertFalse(old.isAttachedToWindow)
+                        assertEquals(offsets,SwipeEvents.views(preview).filterIsInstance<ScrollView>().map { it.scrollY })
+                        assertEquals(fixture,a.source.state)
+                    }
+                    if(direction==1 && !five && !periods) {
+                        val title="真实 ${if(weekly) target.minusDays((target.dayOfWeek.value-1).toLong()) else target}"
+                        s.onActivity {
+                            val cards=SwipeEvents.views(preview).filterIsInstance<CourseCard>()
+                            if(weekly) cards.first().performClick() else SwipeEvents.views(preview).filterIsInstance<Button>().first { b -> b.text.startsWith(title) }.performClick()
+                        }
+                        onView(withText(title)).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+                            .check(androidx.test.espresso.assertion.ViewAssertions.matches(androidx.test.espresso.matcher.ViewMatchers.isDisplayed()))
+                        androidx.test.espresso.Espresso.pressBack()
+                    }
+                    // Return to the original target, then reverse the preview within one drag.
+                    s.onActivity { a -> SwipeEvents.drag(swipe(a),direction*swipe(a).width*.6f) }; idle()
+                    s.onActivity { a ->
+                        val v=swipe(a); val reversal=SwipeEvents.Stroke(v)
+                        reversal.move(-v.width*.5f); val next=v.getChildAt(1)
+                        reversal.move(v.width*.5f)
+                        assertFalse(next.isAttachedToWindow); assertEquals(2,v.childCount)
+                        val previous=if(weekly) LocalDate.of(2026,10,20) else LocalDate.of(2026,10,26)
+                        assertEquals("phone-page-$previous",v.getChildAt(1).tag)
+                        reversal.end(cancel=true)
+                    }; idle()
+                    s.onActivity { a -> assertEquals(LocalDate.of(2026,10,27),selected(a)); assertEquals(1,swipe(a).childCount); assertEquals(0f,swipe(a).getChildAt(0).translationX,0f) }
+                }
+                s.onActivity { a -> val v=swipe(a); val drag=SwipeEvents.Stroke(v); drag.move(-v.width*.5f); val preview=v.getChildAt(1); a.source.refresh(); assertFalse(preview.isAttachedToWindow); drag.end() }; idle()
+                s.onActivity { a -> assertEquals(1,swipe(a).childCount); assertEquals(LocalDate.of(2026,10,27),selected(a)) }
+                s.recreate(); idle(); s.onActivity { assertEquals(1,swipe(it).childCount) }
+            }
+        }
+    }
+    @Test fun todayBackgroundIsBelowOpaqueCardsAndRedLineInBothThemes() {
+        open().use { s ->
+            for (dark in listOf(false,true)) {
+                lateinit var g: PhoneWeekView
+                s.onActivity { a ->
+                    val config=Configuration(a.resources.configuration).apply { uiMode=(uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or if(dark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO }
+                    val ctx=android.view.ContextThemeWrapper(a.createConfigurationContext(config),R.style.PhoneTheme)
+                    val zone=ZoneId.systemDefault()
+                    val items=(0..1).map { day -> val date=week.plusDays(day.toLong()); ClassOccurrence(TimetableEntry("same","同色层级核查",day+1,600,660,"教室 A201"),date,
+                        date.atTime(10,0).atZone(zone).toInstant(),date.atTime(11,0).atZone(zone).toInstant(),seriesId="same") }
+                    g=PhoneWeekView(ctx,items,week,zone,{})
+                    g.setClockActive(false)
+                    a.setContentView(ScrollView(a).apply { setBackgroundColor(if(dark) android.graphics.Color.BLACK else android.graphics.Color.WHITE); addView(g) })
+                }; idle()
+                s.onActivity { g.updateNow(week.atTime(10,20).atZone(ZoneId.systemDefault())) }
+                idle() // Let the requested line layout reach its real drawing position.
+                s.onActivity {
+                    val b=Bitmap.createBitmap(g.width,g.height,Bitmap.Config.ARGB_8888); g.draw(android.graphics.Canvas(b))
+                    fun rect(v: View) = android.graphics.Rect(0,0,v.width,v.height).also { g.offsetDescendantRectToMyCoords(v,it) }
+                    val cards=SwipeEvents.views(g).filterIsInstance<CourseCard>()
+                    val colors=cards.map { c ->
+                        assertEquals(1f,c.alpha,0f)
+                        val drawable=(c.background as android.graphics.drawable.RippleDrawable).getDrawable(0) as android.graphics.drawable.GradientDrawable
+                        val color=drawable.color!!.defaultColor; assertEquals(255,android.graphics.Color.alpha(color))
+                        val r=rect(c); assertEquals(color,b.getPixel(r.right-context.dp(2),r.centerY())); color
+                    }
+                    assertEquals(colors[0],colors[1])
+                    val today=g.getChildAt(1) as ViewGroup
+                    val line=today.getChildAt(today.childCount-1); val lr=rect(line)
+                    assertEquals(g.offsetAt(620f),(line.layoutParams as FrameLayout.LayoutParams).topMargin)
+                    assertEquals(android.graphics.Color.rgb(224,88,76),b.getPixel(lr.centerX(),lr.top))
+                    val cr=rect(today)
+                    assertEquals(if(dark) 0xff172735.toInt() else 0xffe8f1fa.toInt(),b.getPixel(cr.centerX(),g.offsetAt(710f)))
+                    b.recycle()
+                }
+                screenshot("today-layer-${if(dark) "dark" else "light"}")
+            }
+        }
+    }
     @Test fun weekModesAnchorsCancellationRefreshAndVerticalScroll() {
         for (five in listOf(false,true)) for (periods in listOf(false,true)) {
             seed("2026-10-27",true)
@@ -227,10 +370,9 @@ class TimetableSwipeTest {
             s.onActivity { val (x,y)=coords(500f); SwipeEvents.drag(host,-host.width*.08f,x=x,y=y) }; idle()
             assertNull(chosen); assertEquals(1,navigations)
             s.onActivity { assertEquals(0f,host.getChildAt(0).translationX,0f) }
-            // Grab an arrival before its posted animator runs, and commit in the same UI turn.
-            // A stale arrival runnable must not replace the new outgoing completion callback.
+            // A fresh stream after cancellation must still commit only once.
             s.onActivity {
-                host.arrive(1)
+                host.cancelMotion()
                 val (x,y)=coords(500f)
                 SwipeEvents.drag(host,-host.width*.35f,x=x,y=y)
             }; idle()

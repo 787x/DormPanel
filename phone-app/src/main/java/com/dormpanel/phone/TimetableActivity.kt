@@ -31,6 +31,7 @@ class TimetableActivity : AppCompatActivity() {
     private var weekdaysOnly = false
     private var swipeDates = false
     private var swipeContent: TimetableSwipeLayout? = null
+    private var currentPage: PhonePage? = null
     private fun moveDate(direction: Int) {
         selected = if (weekView) selected.plusWeeks(direction.toLong()) else selected.plusDays(direction.toLong())
         render()
@@ -159,7 +160,9 @@ class TimetableActivity : AppCompatActivity() {
         row.addView(scheduleButton(label, action).apply { minWidth = 0; minimumWidth = 0; minHeight = dp(36); minimumHeight = 0; textSize = 12f; setPadding(0, 0, 0, 0); isEnabled = source.ready && !busy && !source.applyingSnapshot },
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
     }
-    private fun render() {
+    private fun render() = renderPage(null)
+    private fun renderPage(promoted: PhonePage?) {
+        currentPage?.active = false
         swipeContent?.cancelMotion()
         swipeContent = null
         captureScroll()
@@ -215,59 +218,89 @@ class TimetableActivity : AppCompatActivity() {
             if (!source.readOnly) action(bar,"＋ 课程") { editors.entry() }
             if (!source.readOnly) action(bar,"日期调整") { editors.dayAdjustment(selected) }
         }
-        val body = scheduleColumn()
+        val body = promoted ?: buildPage(selected, profile)
         val swipe = TimetableSwipeLayout(this) { direction ->
-            moveDate(direction)
-            swipeContent?.arrive(direction)
-        }.apply { tag = "timetable-swipe"; swipeEnabled = swipeDates }
+            val preview = swipeContent?.takePreview() as? PhonePage
+            selected = if (weekView) selected.plusWeeks(direction.toLong()) else selected.plusDays(direction.toLong())
+            renderPage(preview)
+        }.apply {
+            tag = "timetable-swipe"; swipeEnabled = swipeDates
+            preparePreview = { direction ->
+                captureScroll()
+                buildPage(if (weekView) selected.plusWeeks(direction.toLong()) else selected.plusDays(direction.toLong()), profile)
+            }
+        }
         swipeContent = swipe
-        swipe.addView(body, android.widget.FrameLayout.LayoutParams(-1,-1))
+        currentPage = body
+        scroll = body.scroller; weekGrid = body.grid
+        body.active = true
+        swipe.addView(body, FrameLayout.LayoutParams(-1,-1))
         root.addView(swipe, LinearLayout.LayoutParams(-1,0,1f))
+        body.grid?.setClockActive(true)
+        if (promoted == null) restoreScroll() else restoringScroll = false
+    }
+    /** No source/session mutations: a preview is the same layout with an inactive interaction gate. */
+    private inner class PhonePage(val date: LocalDate) : LinearLayout(this@TimetableActivity) {
+        var active = false
+        lateinit var scroller: ScrollView
+        var grid: PhoneWeekView? = null
+        init { orientation = VERTICAL; tag = "phone-page-$date" }
+    }
+    private fun buildPage(date: LocalDate, profile: TermScheduleProfile?): PhonePage {
+        val body = PhonePage(date)
+        val pageMonday = date.minusDays((date.dayOfWeek.value-1).toLong())
+        val dark = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val days = row(body).apply { if (weekView) setPadding(dp(32), 0, 0, 0) }
         val labels = listOf("一", "二", "三", "四", "五", "六", "日")
         repeat(if (weekView && weekdaysOnly) 5 else 7) { i ->
-            val date = monday().plusDays(i.toLong())
-            days.addView(scheduleButton("${labels[i]}\n${date.dayOfMonth}") { selected = date; weekView = false; render() }.apply {
+            val date = pageMonday.plusDays(i.toLong())
+            days.addView(scheduleButton("${labels[i]}\n${date.dayOfMonth}") { if (body.active) { selected = date; weekView = false; render() } }.apply {
                 textSize = 12f; minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0; includeFontPadding = false; setPadding(0, 0, 0, 0)
-                isSelected = date == selected
+                isSelected = date == body.date
                 if (date == source.clock.today()) {
                     backgroundTintList = android.content.res.ColorStateList.valueOf(if (dark) 0xff263e53.toInt() else 0xffdceafa.toInt())
                     setTextColor(if (dark) android.graphics.Color.WHITE else android.graphics.Color.rgb(30,55,80))
                     setTypeface(typeface,android.graphics.Typeface.BOLD)
-                } else if (date == selected) {
+                } else if (date == body.date) {
                     setTypeface(typeface,android.graphics.Typeface.BOLD)
                     text = "${labels[i]} ·\n${date.dayOfMonth}"
                 }
                 if (date == source.clock.today()) text = "●${labels[i]}\n${date.dayOfMonth}"
                 if (source.state.daysByDate.containsKey(date.toString())) text = "$text *"
-                contentDescription = "$date${if (date == source.clock.today()) " 今天" else ""}${if (date == selected) " 已选择" else ""}"
+                contentDescription = "$date${if (date == source.clock.today()) " 今天" else ""}${if (date == body.date) " 已选择" else ""}"
             }, LinearLayout.LayoutParams(0, dp(maxOf(if (landscape) 40 else 48,(resources.configuration.fontScale*30).toInt()+8)), 1f))
         }
         val list = scheduleColumn()
-        scroll = ScrollView(this).apply { tag = "timetable-scroll"; addView(list); isFillViewport = true }
-        body.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        if (!source.ready) { if (!source.error) list.addView(scheduleLabel("正在读取课程…", 16f)); return }
+        val pageScroll = ScrollView(this).apply { tag = "timetable-scroll"; addView(list); isFillViewport = true }
+        body.scroller = pageScroll
+        body.addView(pageScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val anchor = weekAnchor
+        val dayOffset = scrollOffset
+        pageScroll.doOnLayout {
+            if (!body.active) pageScroll.scrollTo(0, if (weekView) body.grid?.let { it.top+it.offsetAt(anchor,date.dayOfWeek.value-1) } ?: 0 else dayOffset)
+        }
+        if (!source.ready) { if (!source.error) list.addView(scheduleLabel("正在读取课程…", 16f)); return body }
         if (!source.error && source.state.invalidRecords > 0) list.addView(scheduleLabel("存在无效记录，请检查。", 16f))
         if (busy) list.addView(scheduleLabel("正在处理文件…", 16f))
-        val projected = ScheduleProjection.week(source.state, monday(), source.clock.zone())
+        val projected = ScheduleProjection.week(source.state, pageMonday, source.clock.zone())
         if (weekView) {
             val effectiveProfile = profile ?: projected.mapNotNull { ScheduleProjection.profile(source.state,it) }.distinct().singleOrNull()
-            val grid = PhoneWeekView(this,projected,monday(),source.clock.zone(),editors::classDetail,
-                if (weekdaysOnly) 5 else 7,periodMode,effectiveProfile) { ScheduleProjection.profile(source.state,it) }
-            weekGrid = grid
+            val grid = PhoneWeekView(this,projected,pageMonday,source.clock.zone(),{ if (body.active) editors.classDetail(it) },
+                if (weekdaysOnly) 5 else 7,periodMode,effectiveProfile, { body.active }) { ScheduleProjection.profile(source.state,it) }
+            body.grid = grid
+            grid.setClockActive(false)
             if (periodMode && !grid.usesPeriods) {
                 // Keep the grid origin aligned with scroll anchors: explanation lives above the scroller.
                 val note = scheduleLabel("当前按时间显示：节次模式需要本周各日作息一致、有效且无重叠，起止为整分钟，时区与设备一致。点管理选择学期。",12f)
-                body.addView(note,body.indexOfChild(scroll))
+                body.addView(note,body.indexOfChild(pageScroll))
             }
             list.addView(grid)
-            restoreScroll()
-            return
+            return body
         }
-        restoreScroll()
-        val adjustment = source.state.daysByDate[selected.toString()]
-        list.addView(scheduleLabel("$selected${adjustment?.let { " · ${if (it.mode == "none") "无课" else "使用星期 ${it.weekday} 课表"}" }.orEmpty()}", 16f))
-        val classes = projected.filter { it.start < selected.plusDays(1).atStartOfDay(source.clock.zone()).toInstant() && it.end > selected.atStartOfDay(source.clock.zone()).toInstant() }
+        val adjustment = source.state.daysByDate[date.toString()]
+        list.addView(scheduleLabel("$date${adjustment?.let { " · ${if (it.mode == "none") "无课" else "使用星期 ${it.weekday} 课表"}" }.orEmpty()}", 16f))
+        val classes = projected.filter { it.start < date.plusDays(1).atStartOfDay(source.clock.zone()).toInstant() && it.end > date.atStartOfDay(source.clock.zone()).toInstant() }
         if (classes.isEmpty() && !source.error) list.addView(scheduleLabel(if (source.readOnly) source.editBlockReason ?: "课表正在验证或受迁移保护；本地数据保留，请从共享课表入口继续恢复。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV、XLS。", 18f))
         classes.forEach { item ->
             list.addView(scheduleButton(buildString {
@@ -277,8 +310,9 @@ class TimetableActivity : AppCompatActivity() {
                 if (item.entry.location.isNotBlank()) append("\n").append(item.entry.location)
                 if (item.teacher.isNotBlank()) append(" · ").append(item.teacher)
                 if (item.allWeeksEdited || item.thisWeekEdited) append("\n已应用本地修改")
-            }) { editors.classDetail(item) }.apply { gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14)) })
+            }) { if (body.active) editors.classDetail(item) }.apply { gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14)) })
         }
+        return body
     }
     private fun updateSharedStatus() {
         val p = sharedSync.presentation

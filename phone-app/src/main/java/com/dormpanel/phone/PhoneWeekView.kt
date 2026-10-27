@@ -14,6 +14,7 @@ import java.time.*
 internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, private val monday: LocalDate,
     private val zone: ZoneId, detail: (ClassOccurrence) -> Unit, val dayCount: Int = 7,
     periodMode: Boolean = false, profile: TermScheduleProfile? = null,
+    private val interactive: () -> Boolean = { true },
     profileFor: (ClassOccurrence) -> TermScheduleProfile? = { profile }) : LinearLayout(context) {
     private val density = resources.displayMetrics.density
     private val segments = WeekLayout.segments(items, monday, zone)
@@ -71,6 +72,7 @@ internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, pri
             val hitAreas = groups.map { WeekHitArea(it,offsetAt(it.minOf { s -> s.start }.toFloat(),day),
                 maxOf(offsetAt(it.minOf { s -> s.start }.toFloat(),day)+1,offsetAt(it.maxOf { s -> s.end }.toFloat(),day))) }
             fun open(group: List<ClassOccurrence>, nearby: Boolean = false) {
+                if (!interactive()) return
                 if (group.size == 1) detail(group.single()) else AlertDialog.Builder(context).setTitle(if (nearby) "附近课程" else "重叠课程")
                     .setItems(group.map { "${it.entry.title}\n${context.scheduleTime(it.start)}–${context.scheduleTime(it.end)} · ${it.entry.location}" }.toTypedArray()) { _,i -> detail(group[i]) }
                     .setNegativeButton("关闭",null).show()

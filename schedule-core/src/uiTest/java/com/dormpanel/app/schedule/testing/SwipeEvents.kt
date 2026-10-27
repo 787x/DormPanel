@@ -7,6 +7,19 @@ import android.view.ViewGroup
 
 /** Must be called on the UI thread. Goes through actual ViewGroup dispatch, not a gesture oracle. */
 object SwipeEvents {
+    class Stroke(private val view: View, private val x: Float = view.width*.5f, private val y: Float = view.height*.4f) {
+        private val start = SystemClock.uptimeMillis()
+        private var elapsed = 0L
+        private var dx = 0f
+        private var dy = 0f
+        init { send(MotionEvent.ACTION_DOWN) }
+        private fun send(action: Int) {
+            val event=MotionEvent.obtain(start,start+elapsed,action,x+dx,y+dy,0)
+            view.dispatchTouchEvent(event); event.recycle()
+        }
+        fun move(x: Float, y: Float = 0f) { dx=x; dy=y; elapsed+=200; send(MotionEvent.ACTION_MOVE) }
+        fun end(cancel: Boolean = false) { elapsed+=300; send(if(cancel) MotionEvent.ACTION_CANCEL else MotionEvent.ACTION_UP) }
+    }
     fun nativeDrag(from: Float, to: Float) = androidx.test.espresso.action.GeneralSwipeAction(
         androidx.test.espresso.action.Swipe.SLOW,
         { v -> val p=IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0]+v.width*from,p[1]+v.height*.55f) },
