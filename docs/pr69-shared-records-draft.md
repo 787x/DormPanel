@@ -26,9 +26,11 @@
 | SQLite 快照、备份验证、重开恢复颜色与未知记录 | Node 专项 PASS |
 | 迁移取消与发布响应丢失、Pending 回执期间新编辑、Checkpoint 透传 | 双端/Node 专项 PASS（以对应测试为准） |
 
-本轮没有运行 1024 增长或四小时 soak。Node 运行在本机 Windows 的 Node 24，复用 fnOS 正式 Workspace/Writer 实现；没有向 NAS 安装新 FPK 或替换日用服务。Linux fd/link、平台专有授权与完整加密 FPK 容器恢复未在本轮重跑，不能将本机 Node 结果报告为 fnOS 部署验收。
+本轮没有运行 1024 增长或四小时 soak。补充验收已在 WSL Ubuntu 的 ext4 临时目录，以及 fnOS 测试机的独立 /tmp 目录完成：两端各 **139 PASS、0 FAIL、0 SKIP**，使用 Node 22.18.0。fnOS 以 `dormpanel-schedule-manager` 应用 UID 运行，包含 Linux fd/link、安全目录、SIGKILL、完整加密备份恢复与维护测试。没有替换已安装 FPK 或日用服务。
 
-较广检查中 Catalog 的“非空加入不覆盖；备份、旧历史和连接切换有明确边界”存在已有断言失败：测试期待“v3 连接变更”，实际先触发“服务器、用户名或证书信任已变化，请重新输入密码”。已从 origin/main 导出隔离副本，实际复现同一失败；PR69 未修改该鉴权顺序或放宽测试。
+Catalog 失败已修复：原测试未提供新端点密码，却期望越过凭据保护直接触发 v3 端点变更限制。现在分别断言“缺新凭据时拒绝”和“提供新凭据后仍拒绝不支持的 v3 连接变更”，两道保护均覆盖；没有修改或放宽生产鉴权。该测试在 WSL 与原生 fnOS 均通过。
+
+可复现 Linux 入口：`tools/verify_pr69_linux.py`（SSH 参数由 stdin 输入；使用安装环境的隔离应用依赖与 Node 22）。原始本地日志为 `build/pr69-nas-linux.log`、`build/pr69-wsl-linux.log`。
 
 ## 真实 WebDAV 双向证据
 
@@ -51,3 +53,9 @@ Android 直连首次失败；随后使用 ADB reverse 和本机 TCP 转发承载
 扩展数据集的完整端点生命周期/目录迁移 UI 未做专项验收；不要据本记录在日用环境自动换端点或清理旧历史。Todo、Memo、偏好和附件同步没有启用。PR 不合并、不打 tag、不发布。
 
 补充实际兼容检查：从原 main 导出的 PR68 Node Writer 尝试打开本次扩展 Workspace，明确拒绝；比较正式 workspace 控制行校验和，失败前后相同。未将“新版模拟旧版”的断言当作这项实测。
+
+## 原生 fnOS 与 Kotlin 的 HTTPS 互操作补充
+
+新增独立 WebDAV 数据集：Kotlin Writer 发布课程颜色 123456 与 opaque 未知记录；在 fnOS 原生 Node 22、应用 UID、独立 Workspace 上接收并改为 abcdef；Kotlin 重启接收，随后 fnOS 重开再确认。双方完整业务哈希均为 `6e86c39551ba11cf85948a6b54880c38dc55669417c5b85b57a4bc51a5fe2167`。该项使用测试机本地直连 HTTPS，不经 ADB 转发。此前 Android Phone/X08E Room 实测与本项合起来覆盖 Android、Kotlin、原生 fnOS 实现。
+
+侧边浏览器已实际打开 fnOS 桌面与已有隔离应用，确认网页可达；未操作已有工作区的编辑或同步按钮，不将旧网页的可达性冒充 PR69 新 UI 验收。正式颜色管理 UI 仍按任务边界留给 PR70/71。
