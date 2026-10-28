@@ -115,4 +115,19 @@ class CourseBatchTest {
         assertEquals(setOf(monday,monday.plusDays(2)),rows.map{it.date}.toSet())
     }
 
+    @Test fun editingIndexKeepsSeriesCompletelyHiddenByDayComposition() {
+        val original=fixture("csv")
+        val candidate=CourseBatch.candidates(original).first{it.series.size>1}
+        val dates=original.imported.filter{it.seriesId==candidate.series.first()}.map{
+            Instant.ofEpochMilli(it.start).atZone(zone).toLocalDate().toString()
+        }.distinct()
+        val hidden=original.copy(dayAdjustments=dates.map{DayAdjustment(it,"none")})
+        val projected=CourseBatch.occurrences(hidden,candidate,zone,LocalDate.of(2026,10,26))
+        assertFalse(projected.any{it.seriesId==candidate.series.first()})
+        val editable=CourseBatch.editingOccurrences(hidden,candidate,zone,LocalDate.of(2026,10,26))
+        assertEquals(candidate.series.toSet(),editable.map{it.seriesId}.toSet())
+        assertEquals(original.imported.filter{it.seriesId in candidate.series}.map{it.id}.toSet(),editable.map{it.imported!!.id}.toSet())
+        assertEquals(dates.size,hidden.dayAdjustments.size)
+    }
+
 }

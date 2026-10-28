@@ -27,11 +27,15 @@ object CourseBatch {
             .distinctBy { Triple(it.seriesId, it.imported?.id, it.anchorDate) }
     }
 
+    /** Enumerate editable identities before day composition and specified-week exceptions. */
+    fun editingOccurrences(state: ScheduleState, candidate: CourseCandidate, zone: ZoneId, today: LocalDate) =
+        occurrences(state.copy(dayAdjustments = emptyList(), classOverrides = state.classOverrides.filter { it.anchorDate == null }), candidate, zone, today)
+
     fun validate(current: ScheduleState, expected: ScheduleState, items: List<ClassOverride>) {
         check(current.entries.toSet() == expected.entries.toSet() && current.sources.toSet() == expected.sources.toSet() &&
             current.imported.toSet() == expected.imported.toSet() && current.classOverrides.toSet() == expected.classOverrides.toSet() &&
             current.dayAdjustments.toSet() == expected.dayAdjustments.toSet() && current.profiles == expected.profiles &&
-            current.sync == expected.sync) { "课表或活动版本已变化；草稿保留，请重新加载后比较" }
+            current.sync == expected.sync) { "课表或活动版本已变化；草稿保留，请放弃草稿并重新加载" }
         require(items.isNotEmpty()) { "没有实际修改，请先选择时段并编辑字段" }
         require(items.map { it.key }.distinct().size == items.size) { "重复的时段修改" }
         items.forEach { item ->

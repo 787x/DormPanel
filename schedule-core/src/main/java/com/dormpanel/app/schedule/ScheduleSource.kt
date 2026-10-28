@@ -36,6 +36,9 @@ data class ScheduleState(val events: List<CalendarEvent> = emptyList(), val entr
     val editsByKey by lazy { classOverrides.associateBy { it.key } }
 }
 data class SnapshotIdentity(val datasetId: String, val revision: String, val pending: Boolean = false)
+data class ClassBatchSaveReceipt(val refreshed: Boolean) {
+    val message get() = if (refreshed) "已保存到本机" else "已保存到本机，但重新读取失败；修改已经提交。恢复读取前暂不可编辑或同步。"
+}
 class ScheduleLocalReadFailed : IllegalStateException("本机课表读取失败，暂不可编辑；原有数据保留，请重新读取成功后再操作")
 interface ScheduleStore {
     fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) { callback(Result.failure(UnsupportedOperationException())) }
@@ -204,11 +207,13 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         state = state.copy(classOverrides = state.classOverrides.filterNot { it.key == key } + listOfNotNull(item))
         store.putClassOverride(item, key, completion); refresh(); return true
     }
-    fun saveClassOverrides(expected: ScheduleState, items: List<ClassOverride>, callback: (Result<Unit>) -> Unit) {
+    fun saveClassOverrides(expected: ScheduleState, items: List<ClassOverride>, callback: (Result<ClassBatchSaveReceipt>) -> Unit) {
         if (!editable) { callback(Result.failure(IllegalStateException(editBlockReason ?: "课表忙碌，请稍后重试"))); return }
         store.putClassOverrides(expected, items) { result ->
-            if (result.isSuccess) reload { loaded -> localCommitted?.invoke(); callback(loaded) }
-            else callback(result)
+            if (result.isSuccess) reload { loaded ->
+                if (loaded.isSuccess) localCommitted?.invoke()
+                callback(Result.success(ClassBatchSaveReceipt(loaded.isSuccess)))
+            } else callback(Result.failure(requireNotNull(result.exceptionOrNull())))
         }
     }
     fun import(preview: ImportPreview, name: String, targetId: String?, callback: (Result<ImportCommit>) -> Unit) {
