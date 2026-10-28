@@ -40,10 +40,17 @@ class SharedCourseManagementTest {
             onView(withText("新增安排")).inRoot(isDialog()).perform(scrollTo(),click())
             onView(withContentDescription("有效周次（逗号分隔，1–104）")).inRoot(isDialog()).perform(scrollTo(),replaceText("1,3,5"),closeSoftKeyboard())
             onView(withText("保留草稿")).inRoot(isDialog()).perform(click())
+            onView(withText("管理原时段周次 / 复制 · draft")).inRoot(isDialog()).perform(scrollTo(),click())
+            onView(withContentDescription("有效周次（逗号分隔，1–104）")).inRoot(isDialog()).check(androidx.test.espresso.assertion.ViewAssertions.matches(withText("")))
+            onView(withContentDescription("有效周次（逗号分隔，1–104）")).inRoot(isDialog()).perform(scrollTo(),replaceText("1,3,5"),closeSoftKeyboard())
+            onView(withText("保留草稿")).inRoot(isDialog()).perform(click())
+            onView(withText("请明确确认无限重复改为有限范围的影响")).inRoot(isDialog()).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
+            onView(withText("明确将原无限重复课程改为所选有限周；范围外不再上课")).inRoot(isDialog()).perform(scrollTo(),click())
+            onView(withText("保留草稿")).inRoot(isDialog()).perform(click())
             scenario.recreate();Thread.sleep(800)
             scenario.onActivity { activity ->
                 val draft=editor(activity).captureDraft()!!
-                assertEquals(listOf(1,3,5),draft.slots.single().weeks)
+                assertEquals(2,draft.slots.size);assertTrue(draft.slots.all {it.weeks==listOf(1,3,5)})
                 assertEquals(true to "旋转保留教师",draft.common[1])
                 assertEquals(state,draft.expected)
             }

@@ -140,31 +140,32 @@ export class Workspace {
     return task;
   }
   courseSchedules() { return scheduleSlots(this.frame.local); }
-  previewCourseSchedules(slots, color, expected) {
-    this.guard?.();
-    const frame=this.snapshot();
-    ensure(expected===frame.revision,'请求版本过期，请重新读取');
-    ensure(frame.v3?.binding?.format===4,'Explicit shared dataset upgrade required');
-    const registry=new Registry(sharedTypes),current=wireRecords(frame.local.sharedRecords??[]);
-    registry.writable(current);
-    ensure(current.filter(r=>r.typeId==='course.schedule').every(r=>registry.supported(r)),'Unsupported schedule schema');
-    const records=[...current.filter(r=>r.typeId!=='course.schedule'),...slots.map(scheduleRecord)];
-    registry.writable(records);frame.local={...frame.local,sharedRecords:durableRecords(records)};registry.validateState(frame.local);
-    if(color)frame.local=changeSharedCourseColor(frame.local,color.sourceId,color.seriesId,color.rgb);
-    return {expectedRevision:expected,state:frame.local};
+  courseScheduleCandidate(state,slots,color,target) {
+    ensure(target && (target.sourceId===null||typeof target.sourceId==='string') && typeof target.ownerSeries==='string' && Array.isArray(target.deleteIds),'必须明确课程范围和删除 ID');
+    const registry=new Registry(sharedTypes),current=wireRecords(state.sharedRecords??[]);registry.writable(current);
+    ensure(target.sourceId===null?state.entries.some(e=>e.id===target.ownerSeries):state.sources.some(s=>s.id===target.sourceId)&&state.imported.some(r=>r.sourceId===target.sourceId&&r.seriesId===target.ownerSeries),'目标课程不存在');
+    const owns=s=>s.sourceId===target.sourceId&&s.ownerSeries===target.ownerSeries;
+    const existing=new Map(scheduleSlots(state).map(s=>[s.id,s]));
+    ensure(slots.every(owns)&&new Set(slots.map(s=>s.id)).size===slots.length,'安排超出目标课程范围');
+    ensure(target.deleteIds.every(id=>existing.has(id)&&owns(existing.get(id)))&&new Set(target.deleteIds).size===target.deleteIds.length,'删除目标不存在或超出课程范围');
+    ensure(slots.every(s=>!existing.has(s.id)||owns(existing.get(s.id))),'不能更改其他课程时段归属');
+    ensure(slots.every(s=>!target.deleteIds.includes(s.id)),'同一时段不能同时保存和删除');
+    let records=current;
+    for(const id of target.deleteIds) records=registry.remove(records,'course.schedule',id);
+    for(const slot of slots) records=registry.replace(records,scheduleRecord(slot));
+    let next={...state,sharedRecords:durableRecords(records)};registry.validateState(next);
+    if(color){ensure(color.sourceId===target.sourceId&&color.seriesId===target.ownerSeries&&Object.hasOwn(color,'rgb'),'颜色目标不匹配');next=changeSharedCourseColor(next,color.sourceId,color.seriesId,color.rgb);}
+    return next;
   }
-  saveCourseSchedules(slots, color, expected) {
-    return this.tx(f=>{
-      ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');
-      const registry=new Registry(sharedTypes),current=wireRecords(f.local.sharedRecords??[]);
-      registry.writable(current);
-      const next=[...current.filter(r=>r.typeId!=='course.schedule'),...slots.map(scheduleRecord)];
-      ensure(current.filter(r=>r.typeId==='course.schedule').every(r=>registry.supported(r)),'Unsupported schedule schema');
-      registry.writable(next);
-      f.local={...f.local,sharedRecords:durableRecords(next)};
-      validateScheduleParents(f.local);
-      if(color)f.local=changeSharedCourseColor(f.local,color.sourceId,color.seriesId,color.rgb);
-    },expected);
+  previewCourseSchedules(slots,color,expected,target) {
+    this.guard?.();const frame=this.snapshot();
+    ensure(Number.isSafeInteger(expected)&&expected===frame.revision,'请求版本过期，请重新读取');
+    ensure(frame.v3?.binding?.format===4,'Explicit shared dataset upgrade required');
+    return {expectedRevision:expected,state:this.courseScheduleCandidate(frame.local,slots,color,target)};
+  }
+  saveCourseSchedules(slots,color,expected,target) {
+    ensure(Number.isSafeInteger(expected),'必须提供 revision');
+    return this.tx(f=>{ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');f.local=this.courseScheduleCandidate(f.local,slots,color,target);},expected);
   }
   setSharedCourseColor(sourceId,seriesId,rgb,expected) {
     return this.tx(f=>{ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');f.local=changeSharedCourseColor(f.local,sourceId,seriesId,rgb);},expected);

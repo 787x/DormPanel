@@ -204,15 +204,42 @@ import {scheduleSlots} from '../src/shared-course-schedule.mjs';
 test('course schedule preview and protected atomic Workspace color commit survive reopen',async()=>{
  const root=await dir(),identity={writerId:randomUUID(),installationId:randomUUID()},remote=new FakeRemote();
  const a=await openV3Workspace(root,()=>{},identity),engine=new V3Engine(a.journal,identity.writerId);
- await engine.initialize(remote,{...emptyState(),entries:[entry('x')],sharedRecords:[]});
+ await engine.initialize(remote,{...emptyState(),entries:[entry('x'),entry('y')],sharedRecords:[]});
  for(let n=0;n<3;n++){const b=new Budget();try{await engine.round(remote,new IndexedV3Cache(root,b),b,{discoverySteps:32});}catch(e){if(!/incomplete/.test(e.message))throw e;}}
  const slot={id:'slot',sourceId:null,ownerSeries:'x',replacesSeries:null,week1:'2026-09-07',weeks:[1,3,5],weekday:2,startMinute:480,endMinute:540,periodStart:0,periodEnd:0,enabled:true,title:'Math',location:'A',teacher:'T',note:'N'};
+ const bslot={...slot,id:'bslot',ownerSeries:'y'};
+ await a.workspace.saveCourseSchedules([bslot],null,a.workspace.frame.revision,{sourceId:null,ownerSeries:'y',deleteIds:[]});
+ const bBefore=JSON.stringify(a.workspace.frame.local.sharedRecords);
  const revision=a.workspace.frame.revision,color={sourceId:null,seriesId:'x',rgb:0x123456};
- const preview=a.workspace.previewCourseSchedules([slot],color,revision);assert.equal(scheduleSlots(a.workspace.frame.local).length,0);assert.equal(scheduleSlots(preview.state).length,1);
- await assert.rejects(a.workspace.saveCourseSchedules([{...slot,ownerSeries:'missing'}],color,revision));
- assert.equal(a.workspace.frame.revision,revision);assert.equal(scheduleSlots(a.workspace.frame.local).length,0);
- await a.workspace.saveCourseSchedules([slot],color,revision);assert.equal(rgb(a.workspace.frame.local,null,'x'),0x123456);
- await assert.rejects(a.workspace.saveCourseSchedules([],null,revision));assert.equal(scheduleSlots(a.workspace.frame.local).length,1);
+ const preview=a.workspace.previewCourseSchedules([slot],color,revision,{sourceId:null,ownerSeries:'x',deleteIds:[]});assert.equal(scheduleSlots(a.workspace.frame.local).length,1);assert.equal(scheduleSlots(preview.state).length,2);
+ await assert.rejects(a.workspace.saveCourseSchedules([{...slot,ownerSeries:'missing'}],color,revision,{sourceId:null,ownerSeries:'x',deleteIds:[]}));
+ assert.equal(a.workspace.frame.revision,revision);assert.equal(scheduleSlots(a.workspace.frame.local).length,1);
+ await a.workspace.saveCourseSchedules([slot],color,revision,{sourceId:null,ownerSeries:'x',deleteIds:[]});assert.equal(rgb(a.workspace.frame.local,null,'x'),0x123456);assert.equal(businessHash(a.workspace.frame.local),businessHash(preview.state));assert.deepEqual(scheduleSlots(a.workspace.frame.local).find(s=>s.id==='bslot'),bslot);
+ await assert.rejects(a.workspace.saveCourseSchedules([],null,revision,{sourceId:null,ownerSeries:'x',deleteIds:['slot']}));assert.equal(scheduleSlots(a.workspace.frame.local).length,2);
+ await a.workspace.saveCourseSchedules([],null,a.workspace.frame.revision,{sourceId:null,ownerSeries:'x',deleteIds:['slot']});assert.deepEqual(scheduleSlots(a.workspace.frame.local),[bslot]);
  const digest=businessHash(a.workspace.frame.local);await a.journal.close();
  const reopened=await openV3Workspace(root,()=>{},identity);assert.equal(businessHash(reopened.workspace.frame.local),digest);assert.equal(reopened.workspace.courseSchedules().length,1);await reopened.journal.close();
+});
+
+test('source lifecycle protected transactions reject dangling references and reopen complete state',async()=>{
+ const {decode:decodeLegacy}=await import('../src/protocol.mjs');
+ const {scheduleRecord}=await import('../src/shared-course-schedule.mjs');
+ const {durableRecords}=await import('../src/shared-records.mjs');
+ const seed=decodeLegacy(await readFile(new URL('../../schedule-core/src/test/resources/sync-v2/complex-root.dpc',import.meta.url))).state;
+ const row=seed.imported[0],source=row.sourceId,root=await dir(),identity={writerId:randomUUID(),installationId:randomUUID()},remote=new FakeRemote();
+ const slot={id:'life-added',sourceId:source,ownerSeries:row.seriesId,replacesSeries:null,week1:'2026-09-07',weeks:[1,3],weekday:2,startMinute:480,endMinute:540,periodStart:0,periodEnd:0,enabled:true,title:'Math',location:'A',teacher:'T',note:'N'};
+ seed.sharedRecords=durableRecords([scheduleRecord(slot),scheduleRecord({...slot,id:'life-replaced',replacesSeries:row.seriesId})]);
+ const a=await openV3Workspace(root,()=>{},identity),engine=new V3Engine(a.journal,identity.writerId);await engine.initialize(remote,seed);
+ for(let n=0;n<3;n++){const b=new Budget();try{await engine.round(remote,new IndexedV3Cache(root,b),b,{discoverySteps:32});}catch(e){if(!/incomplete/.test(e.message))throw e;}}
+ const before=businessHash(a.workspace.frame.local),revision=a.workspace.frame.revision;
+ await assert.rejects(a.workspace.edit({kind:'source',action:'delete',id:source},revision),/请先/);assert.equal(businessHash(a.workspace.frame.local),before);
+ await assert.rejects(a.workspace.tx(f=>{f.local.imported=f.local.imported.map(r=>({...r,seriesId:'missing'}));},revision),/请先/);assert.equal(businessHash(a.workspace.frame.local),before);
+ await assert.rejects(a.workspace.tx(f=>{f.local.imported=[];throw Error('injected failure');},revision),/injected/);assert.equal(businessHash(a.workspace.frame.local),before);
+ await a.workspace.tx(f=>{f.local.imported=f.local.imported.map(r=>({...r,title:'replaced title'}));},revision);
+ assert.equal(scheduleSlots(a.workspace.frame.local).length,2);
+ await assert.rejects(a.workspace.edit({kind:'source',action:'delete',id:source},revision));
+ await a.workspace.saveCourseSchedules([],null,a.workspace.frame.revision,{sourceId:source,ownerSeries:row.seriesId,deleteIds:['life-added','life-replaced']});
+ await a.workspace.edit({kind:'source',action:'delete',id:source},a.workspace.frame.revision);
+ const digest=businessHash(a.workspace.frame.local);await a.journal.close();const reopened=await openV3Workspace(root,()=>{},identity);
+ assert.equal(businessHash(reopened.workspace.frame.local),digest);assert(!reopened.workspace.frame.local.sources.some(s=>s.id===source));assert.equal(scheduleSlots(reopened.workspace.frame.local).length,0);await reopened.journal.close();
 });

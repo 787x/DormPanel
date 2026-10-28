@@ -3,9 +3,16 @@ package com.dormpanel.app.schedule
 import java.time.*
 
 data class CourseCandidate(val sourceId: String?, val originalTitle: String, val series: List<String>)
+sealed class CourseColorEdit {
+    object Unchanged : CourseColorEdit()
+    data class Set(val rgb: Int?) : CourseColorEdit() // null explicitly restores automatic mode
+}
 object CourseBatch {
+    fun withColor(current: ScheduleState, expected: ScheduleState, items: List<ClassOverride>, candidate: CourseCandidate,
+        rgb: Int?, records: List<SharedRecord>? = null) = withColor(current,expected,items,candidate,CourseColorEdit.Set(rgb),records)
+
     fun withColor(current: ScheduleState, expected: ScheduleState, items: List<ClassOverride>,
-        candidate: CourseCandidate, rgb: Int?, records: List<SharedRecord>? = null): ScheduleState {
+        candidate: CourseCandidate, color: CourseColorEdit, records: List<SharedRecord>? = null): ScheduleState {
         check(SyncV3Codec.businessHash(current) == SyncV3Codec.businessHash(expected)) { "课表已变化，草稿保留，请重新预览" }
         requireNotNull(current.sharedRecords) { "共享颜色需要显式启用扩展格式" }
         if (items.isNotEmpty()) validate(current, expected.copy(sync=current.sync), items)
@@ -13,7 +20,8 @@ object CourseBatch {
         val next=records ?: current.sharedRecords!!
         registry.writable(next)
         check(current.sharedRecords!!.filterNot(registry::supported).toSet()==next.filterNot(registry::supported).toSet())
-        val future=SharedCourseColors.change(applyOverrides(current, items).copy(sharedRecords=next), candidate.sourceId, candidate.series.first(), rgb)
+        val business=applyOverrides(current, items).copy(sharedRecords=next)
+        val future=when(color) { CourseColorEdit.Unchanged -> business;is CourseColorEdit.Set -> SharedCourseColors.change(business,candidate.sourceId,candidate.series.first(),color.rgb) }
         SharedCourseSchedule.validateParents(future)
         return future
     }

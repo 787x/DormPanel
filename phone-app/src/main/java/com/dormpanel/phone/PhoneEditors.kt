@@ -424,8 +424,14 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 val teacherField=field("教师",original.teacher);val noteField=field("备注",original.note)
                 val week1=field("第1周周一 YYYY-MM-DD",original.week1)
                 val weeks=field("有效周次（逗号分隔，1–104）",original.weeks.joinToString(","))
+                val upper=field("单双周选择上限（明确指定）",original.weeks.maxOrNull()?.toString().orEmpty())
+                val finiteConsent=CheckBox(context).apply {text="明确将原无限重复课程改为所选有限周；范围外不再上课"}
+                if(original.sourceId==null && original.replacesSeries!=null) fields.addView(finiteConsent)
+                if(original.sourceId==null) fields.addView(context.scheduleLabel("新增安排必须明确指定有限周次。替换原无限重复课程会取消范围外所有重复课程，不是等价替换。",14f))
                 listOf("单周" to 1,"双周" to 2,"全部周" to 0).forEach { (label,parity) -> fields.addView(context.scheduleButton(label) {
-                    weeks.setText((1..(original.weeks.maxOrNull() ?: 20)).filter { parity==0 || it%2==parity%2 }.joinToString(","))
+                    val limit=upper.text.toString().toIntOrNull()
+                    if(limit==null || limit !in 1..104) {Toast.makeText(context,"请先明确指定周次上限",Toast.LENGTH_LONG).show();return@scheduleButton}
+                    weeks.setText((1..limit).filter { parity==0 || it%2==parity%2 }.joinToString(","))
                 }) }
                 val weekday=field("星期 1–7",original.weekday.toString())
                 fun time(minute: Int) = "%02d:%02d".format(minute/60,minute%60)
@@ -441,8 +447,10 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                             week1=week1.text.toString(),weeks=weeks.text.toString().split(",","，").filter { it.isNotBlank() }.map { it.trim().toInt() }.distinct().sorted(),
                             weekday=weekday.text.toString().toInt(),startMinute=LocalTime.parse(start.text.toString()).toSecondOfDay()/60,endMinute=LocalTime.parse(end.text.toString()).toSecondOfDay()/60,
                             periodStart=a.text.toString().toInt(),periodEnd=z.text.toString().toInt(),enabled=enabled.isChecked)
+                        require(next.weeks.isNotEmpty()) {"请明确选择有效周次，不能使用隐式默认范围"}
+                        require(original.sourceId!=null || original.replacesSeries==null || finiteConsent.isChecked) {"请明确确认无限重复改为有限范围的影响"}
                         SharedCourseSchedule.record(next);accept(next);editor.dismiss()
-                    }.onFailure { status.text=it.message ?: "安排无效，草稿保留" }
+                    }.onFailure { status.text=it.message ?: "安排无效，草稿保留"; status.post {status.requestRectangleOnScreen(android.graphics.Rect(0,0,status.width,status.height),false)} }
                 }
             }
             fun renderArrangements() {
@@ -462,13 +470,17 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 }
             }
             renderArrangements()
+            column.addView(context.scheduleButton("移除此课程的全部共享安排规则（恢复原始基线）") {
+                track(AlertDialog.Builder(context).setTitle("移除安排规则？").setMessage("独立新增安排将删除，替换规则将移除并恢复原始导入/重复课程。此操作尚需保存预览确认；之后才可删除或替换来源。")
+                    .setNegativeButton("取消",null).setPositiveButton("加入草稿") { _,_ -> scheduleDrafts.removeAll {it.sourceId==candidate.sourceId && it.ownerSeries in candidate.series};renderArrangements() }.create())
+            })
             fun initialSlot(series: String, replace: Boolean): CourseSlot {
                 val rows=occurrences.filter { it.seriesId==series }
                 val row=rows.first()
                 check(rows.map { Triple(it.academicDate.dayOfWeek,it.entry.startMinute,it.entry.endMinute) }.distinct().size==1) { "系列原有时间不一致，请先明确处理覆盖关系" }
                 val profile=ScheduleProjection.profile(expected,row)
                 val monday=profile?.week1Monday ?: row.academicDate.minusDays(row.academicDate.dayOfWeek.value-1L)
-                val weeks=if(candidate.sourceId==null) (1..20).toList() else rows.map { (Math.floorDiv(it.academicDate.toEpochDay()-monday.toEpochDay(),7L)+1).toInt() }.distinct().sorted()
+                val weeks=if(candidate.sourceId==null) emptyList() else rows.map { (Math.floorDiv(it.academicDate.toEpochDay()-monday.toEpochDay(),7L)+1).toInt() }.distinct().sorted()
                 return CourseSlot(java.util.UUID.randomUUID().toString(),candidate.sourceId,series,if(replace) series else null,monday.toString(),weeks,row.academicDate.dayOfWeek.value,
                     row.entry.startMinute,row.entry.endMinute,if(row.linked) ScheduleProjection.periods(row.periodLabel)?.first ?: 0 else 0,if(row.linked) ScheduleProjection.periods(row.periodLabel)?.second ?: 0 else 0,true,row.entry.title,row.entry.location,row.teacher,row.note)
             }
@@ -604,7 +616,9 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             } }
             if(recordResult.isFailure) {error.text=recordResult.exceptionOrNull()?.message ?: "安排无效，草稿保留";return@setOnClickListener}
             val finalRecords=recordResult.getOrThrow()
-            val valid = runCatching { if (sharedFormat) CourseBatch.withColor(source.state, expected, changes, candidate, colorDraft, finalRecords) else CourseBatch.validate(source.state, expected, changes) }
+            val colorEdit=if(colorDraft==originalColor) CourseColorEdit.Unchanged else CourseColorEdit.Set(colorDraft)
+            if(sharedFormat && changes.isEmpty() && finalRecords.orEmpty().toSet()==expected.sharedRecords.orEmpty().toSet() && colorEdit==CourseColorEdit.Unchanged) {Toast.makeText(context,"没有修改",Toast.LENGTH_SHORT).show();return@setOnClickListener}
+            val valid = runCatching { if (sharedFormat) CourseBatch.withColor(source.state, expected, changes, candidate, colorEdit, finalRecords) else CourseBatch.validate(source.state, expected, changes) }
             if (valid.isFailure) { error.text = valid.exceptionOrNull()?.message; return@setOnClickListener }
             val preview = changes.joinToString("\n\n") { change ->
                 val old = expected.editsByKey[change.key] ?: ClassOverride.of(change.sourceId, change.seriesId, null, ClassPatch())
@@ -626,7 +640,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 "$id："+when {newSlots[id]==null -> "删除新增安排";oldSlots[id]==null -> if(id in copiedSlots) "复制安排" else "新增安排";newSlots[id]?.enabled==false -> "停用安排";else -> "修改安排"}
             }
             val exceptionPreview = scheduleChanges+"\n"+CourseBatch.exceptionPreview(expected, changes, source.clock.zone()) +
-                (if(sharedFormat) "\n"+CourseBatch.schedulePreview(expected,CourseBatch.withColor(expected,expected,changes,candidate,colorDraft,finalRecords),candidate,source.clock.zone(),source.clock.today()) else "") +
+                (if(sharedFormat) "\n"+CourseBatch.schedulePreview(expected,CourseBatch.withColor(expected,expected,changes,candidate,colorEdit,finalRecords),candidate,source.clock.zone(),source.clock.today()) else "") +
                 if (sharedFormat) "\n安排最终草稿：\n" + scheduleDrafts.filter { it.sourceId==candidate.sourceId && it.ownerSeries in candidate.series }.joinToString("\n") {
                     "${it.id}：${if(it.enabled) "启用" else "停用"}；第${it.weeks.joinToString(",")}周；星期${it.weekday}；${it.startMinute}–${it.endMinute}分；${it.periodStart}–${it.periodEnd}节；${it.location}"
                 } else ""
@@ -654,7 +668,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                                 }
                             }
                     }
-                    if (sharedFormat) source.saveCourseWithColor(expected, changes, candidate, colorDraft, finalRecords, complete)
+                    if (sharedFormat) source.saveCourseEdit(expected, changes, candidate, colorEdit, finalRecords, complete)
                     else source.saveClassOverrides(expected, changes, complete)
                 }.create())
         }

@@ -33,7 +33,7 @@ export function validateScheduleParents(state){
  const importedIds=new Set(state.imported.map(r=>r.id));
  for(const s of scheduleSlots(state)){
   check(!local.has(s.id)&&!importedIds.has(s.id)&&!series.has(JSON.stringify([s.sourceId,s.id])));
-  check(s.sourceId===null?local.has(s.ownerSeries):sources.has(s.sourceId)&&series.has(JSON.stringify([s.sourceId,s.ownerSeries])));
+  if(!(s.sourceId===null?local.has(s.ownerSeries):sources.has(s.sourceId)&&series.has(JSON.stringify([s.sourceId,s.ownerSeries]))))throw Error(`安排 ${s.id} 引用 ${s.sourceId}/${s.ownerSeries} 已消失；来源操作未提交，请先显式删除受影响安排规则，再重试。保留新增安排时不能删除来源。`);
   if(s.enabled&&s.periodStart>0){
    const source=state.sources.find(v=>v.id===s.sourceId),profile=source&&state.profiles.find(p=>p.termKey===termKey(source));check(profile);
    for(const week of s.weeks){const d=Temporal.PlainDate.from(s.week1).add({weeks:week-1,days:s.weekday-1});

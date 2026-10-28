@@ -52,3 +52,18 @@ X08E 实机以合成导入来源、有效作息及扩展安排测试经典、实
 ![X08E 经典](screenshots/pr70/x08e-classic.png)
 ![X08E 实际时间](screenshots/pr70/x08e-time.png)
 ![X08E 节次](screenshots/pr70/x08e-periods.png)
+
+## 合并前四项审查修复（2026-10-29）
+
+基线 9ea8c83。实际复验：核心 JVM 25 PASS（SharedCourseScheduleTest 5、CourseBatchTest 14、SharedRecordsTest 6）；Node 定向 35 PASS；Phone / X08E Debug 构建 PASS。Phone 独立 testbed 的有限周确认及旋转草稿测试 1 PASS（8.762 秒）。首轮发现错误提示位于滚动区域外，已修复为自动滚动到错误并复跑通过。
+
+- 局部更新：正式 Workspace 先保存 B，再预览/保存 A；B 原记录保持相等，预览与提交业务哈希相等。过期删除拒绝，显式删除 A 后 B 仍在，重开哈希一致。所有调用已传明确 target 和 deleteIds。
+- 来源：相同 sourceId/seriesId 的替换候选保留两种关联规则；系列消失/身份改变及带关联规则的删除被拒绝，原哈希不变。注入事务异常不提交，过期 revision 拒绝；明确删除两条关联规则后，来源删除成功，重开无悬空引用。Kotlin 同样验证存续、缺失与显式清除规则后的引用完整性。Android 扩展格式来源入口增加事务内 expectedHash 校验，旧格式入口不增加该限制。
+- 颜色：只改教师且颜色 Unchanged 时扩展记录完全不变，与远端独立改色正常合并；已有手动色保留，Set(null) 明确产生 AUTO。Phone 无实际变更不提交，Node 缺省 color 不改色。
+- 无限重复：新增本地安排从空集合开始；实机断言原无限重复替换没有 20 周默认，未勾选影响确认时拒绝；确认后两条离散周草稿均在 Activity 重建后保留，Fake Store 禁止任何提前写入。
+
+保留的产品边界：不支持在保留来源依赖安排的同时删除来源，也不提供“来源+规则自动级联删除”组合操作。用户须先在独立课程草稿中明确移除关联规则、预览保存，再删除/替换来源；取消或任一步失败时，已存状态仍保持引用完整。没有按名称、文件名或新导入顺序猜测新系列身份。此安全边界属于本轮交付，而非隐式丢弃安排。
+
+本轮没有新增 Android 来源替换/删除故障注入实机验收、NAS 真 WebDAV 或 X08E 截图复拍；来源事务失败/重开专项为 Node 正式 SQLite Workspace，Android 的新增来源 hash 入口经编译验证。此前未修改 main 已复现的 1024 增长缓存断言失败继续保留原记录，未重跑或放宽断言。
+
+四项修复在上述明确产品边界下可进入人工 Review；仍保持 Draft，不自动合并、部署或发布。

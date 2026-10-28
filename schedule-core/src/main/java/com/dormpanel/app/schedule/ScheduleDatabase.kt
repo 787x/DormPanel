@@ -881,14 +881,16 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         (30..93).forEach { database.dao().deleteSyncRecord(it) }
     }
     fun saveCourseWithColor(expected: ScheduleState, items: List<ClassOverride>, candidate: CourseCandidate,
-        rgb: Int?, records: List<SharedRecord>?, callback: (Result<Unit>) -> Unit) = submit(callback) {
+        rgb: Int?, records: List<SharedRecord>?, callback: (Result<Unit>) -> Unit) = saveCourseEdit(expected,items,candidate,CourseColorEdit.Set(rgb),records,callback)
+    fun saveCourseEdit(expected: ScheduleState, items: List<ClassOverride>, candidate: CourseCandidate,
+        color: CourseColorEdit, records: List<SharedRecord>?, callback: (Result<Unit>) -> Unit) = submit(callback) {
         check(ActiveScheduleV3.active(database) && v3().localWritesAllowed())
         try {
             v3().engine.edit { before ->
                 check(expected.sync != null && v3().state().sync?.datasetId == expected.sync.datasetId) { "活动数据集已变化，草稿保留" }
                 check(v3().localWritesAllowed())
                 check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "迁移保护禁止编辑" }
-                CourseBatch.withColor(before, expected, items, candidate, rgb, records)
+                CourseBatch.withColor(before, expected, items, candidate, color, records)
             }
         } catch (error: Exception) {
             if (v3().journal.meta.requiresReopen()) { ScheduleCommitSignals.notifyChanged(); throw ScheduleCommitUnconfirmed(error) }
@@ -950,7 +952,10 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         items.forEach { if (it.patch().isEmpty()) database.dao().deleteClassOverride(it.key) else database.dao().put(it) }
     }
     override fun commitImport(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,
-        callback: (Result<ImportCommit>) -> Unit) = write(callback) {
+        callback: (Result<ImportCommit>) -> Unit) = commitImportExpected(source,occurrences,replace,null,callback)
+    fun commitImportExpected(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,
+        expectedHash: String?, callback: (Result<ImportCommit>) -> Unit) = write(callback) {
+        if(expectedHash!=null) check(SyncV3Codec.businessHash(readState())==expectedHash) {"来源预览已过期，请重新检查；未提交修改"}
         database.runInTransaction<ImportCommit> {
             val dao = database.dao()
             if (ActiveScheduleV3.active(database) || dao.checkpoint() != null || v2Commit(21) != null || v2Commit(23) != null) check(source.resolvedTermKey()?.let { it in fullState().profiles } != false) { "Missing term profile" }
@@ -970,7 +975,11 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
             }
         }
     }
-    override fun deleteImport(id: String, callback: (Result<Unit>) -> Unit) = write(callback) {
+    override fun deleteImport(id: String, callback: (Result<Unit>) -> Unit) = deleteImportExpected(id,null,callback)
+    fun deleteImportExpected(id: String, expectedHash: String?, callback: (Result<Unit>) -> Unit) = write(callback) {
+        if(expectedHash!=null) check(SyncV3Codec.businessHash(readState())==expectedHash) {"来源预览已过期，请重新检查；未删除"}
+        val linked=SharedCourseSchedule.slots(readState()).filter {it.sourceId==id}
+        check(linked.isEmpty()) {"来源仍被 ${linked.size} 条共享安排引用（${linked.joinToString {it.id}}）。未删除：请先在课程管理中显式移除相关规则并保存；保留新增安排时不能删除来源。"}
         database.runInTransaction { database.dao().deleteSourceOverrides(id); database.dao().deleteSource(id) }
     }
     @Synchronized override fun close() {

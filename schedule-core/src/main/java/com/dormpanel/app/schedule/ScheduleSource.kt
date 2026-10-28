@@ -221,9 +221,11 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         }
     }
     fun saveCourseWithColor(expected: ScheduleState, items: List<ClassOverride>, candidate: CourseCandidate,
-        rgb: Int?, records: List<SharedRecord>?, callback: (Result<ClassBatchSaveReceipt>) -> Unit) {
+        rgb: Int?, records: List<SharedRecord>?, callback: (Result<ClassBatchSaveReceipt>) -> Unit) = saveCourseEdit(expected,items,candidate,CourseColorEdit.Set(rgb),records,callback)
+    fun saveCourseEdit(expected: ScheduleState, items: List<ClassOverride>, candidate: CourseCandidate,
+        color: CourseColorEdit, records: List<SharedRecord>?, callback: (Result<ClassBatchSaveReceipt>) -> Unit) {
         if (!editable || syncStore == null) { callback(Result.failure(IllegalStateException(editBlockReason ?: "课表不可写"))); return }
-        syncStore!!.saveCourseWithColor(expected, items, candidate, rgb, records) { result ->
+        syncStore!!.saveCourseEdit(expected, items, candidate, color, records) { result ->
             if (result.isSuccess) reload { loaded ->
                 localCommitted?.invoke()
                 callback(Result.success(ClassBatchSaveReceipt(loaded.isSuccess)))
@@ -243,7 +245,13 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         if (error) { callback(Result.failure(ScheduleLocalReadFailed())); return }
         if (readOnly) { callback(Result.failure(ScheduleDatasetWriteProtected())); return }
         if (closed || !ready || readOnly || applyingSnapshot) return
-        IcsScheduleImporter().commit(preview, store, name, targetId, clock.instant().toEpochMilli()) { result ->
+        val guarded=if(state.sharedRecords!=null && syncStore!=null) {
+            val expectedHash=SyncV3Codec.businessHash(state)
+            object:ScheduleStore by store {
+                override fun commitImport(source:ImportSource, occurrences:List<ImportedClassOccurrence>, replace:Boolean, callback:(Result<ImportCommit>)->Unit) = syncStore!!.commitImportExpected(source,occurrences,replace,expectedHash,callback)
+            }
+        } else store
+        IcsScheduleImporter().commit(preview, guarded, name, targetId, clock.instant().toEpochMilli()) { result ->
             if (!closed) {
                 result.onSuccess { committed -> if (!committed.unchanged) {
                     val sources = state.sources.filterNot { it.id == committed.source.id } + committed.source
@@ -261,7 +269,11 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         if (error) { callback(Result.failure(ScheduleLocalReadFailed())); return }
         if (readOnly) { callback(Result.failure(ScheduleDatasetWriteProtected())); return }
         if (closed || !ready || readOnly || applyingSnapshot) return
-        store.deleteImport(id) { result -> if (!closed) {
+        val guarded=if(state.sharedRecords!=null && syncStore!=null) {
+            val expectedHash=SyncV3Codec.businessHash(state)
+            object:ScheduleStore by store {override fun deleteImport(id:String,callback:(Result<Unit>)->Unit)=syncStore!!.deleteImportExpected(id,expectedHash,callback)}
+        } else store
+        guarded.deleteImport(id) { result -> if (!closed) {
             result.onSuccess {
                 val sources = state.sources.filterNot { it.id == id }
                 state = state.copy(sources = sources, imported = state.imported.filterNot { it.sourceId == id },

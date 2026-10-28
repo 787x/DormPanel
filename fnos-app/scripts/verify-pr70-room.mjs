@@ -17,7 +17,7 @@ try{
  await engine.initialize(remote,object.state);
  const slots=scheduleSlots(object.state);assert(slots.length>0);assert.equal(rgb(object.state,null,'x'),0x336699);
  const changed=slots.map(s=>({...s,location:'Node 共享教室',note:'Node 事务确认'}));
- await store.workspace.saveCourseSchedules(changed,{sourceId:null,seriesId:'x',rgb:0x8844cc},store.workspace.frame.revision);
+ await store.workspace.saveCourseSchedules(changed,{sourceId:null,seriesId:'x',rgb:0x8844cc},store.workspace.frame.revision,{sourceId:null,ownerSeries:'x',deleteIds:[]});
  const state=store.workspace.frame.local;assert.equal(scheduleSlots(state)[0].location,'Node 共享教室');
  assert(projectWeek(state,'2026-09-07').some(r=>r.location==='Node 共享教室'));
  await writeFile(output,encode({...object,state}));

@@ -62,7 +62,7 @@ object SharedCourseSchedule : SharedTypeAdapter {
         val replacements=mutableSetOf<Pair<String?,String>>()
         slots(state).forEach { s ->
             require(s.id !in local && s.id !in importedIds && s.sourceId to s.id !in imported) { "新增时段身份与原课程冲突" }
-            require(if(s.sourceId==null) s.ownerSeries in local else s.sourceId in sources && s.sourceId to s.ownerSeries in imported) { "安排关联课程已不存在" }
+            require(if(s.sourceId==null) s.ownerSeries in local else s.sourceId in sources && s.sourceId to s.ownerSeries in imported) { "安排 ${s.id} 关联来源/系列 ${s.sourceId}/${s.ownerSeries} 已不存在。来源未变更：请先在课程管理中显式移除受影响共享安排规则并保存，再重试；保留新增安排时不能删除其来源。" }
             if(s.replacesSeries!=null) {
                 require(replacements.add(s.sourceId to s.replacesSeries)) { "同一原时段不能被重复替换" }
                 if(s.sourceId!=null) require(state.imported.filter { it.sourceId==s.sourceId && it.seriesId==s.replacesSeries }

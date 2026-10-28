@@ -27,3 +27,12 @@ test('replacement preserves original weekly anchor; copied slots do not inherit 
  state.sharedRecords=durableRecords([scheduleRecord({...replace,enabled:false})]);assert.equal(projectWeek(state,'2026-09-07').length,0);
  state.sharedRecords=durableRecords([scheduleRecord({...replace,startMinute:1380,endMinute:60})]);const night=projectWeek(state,'2026-09-07')[0];assert.equal(night.end-night.start,7200000);
 });
+
+import {validateScheduleParents} from '../src/shared-course-schedule.mjs';
+test('source lifecycle rejects missing or renamed series, preserves exact surviving identity',()=>{
+ const base={entries:[],sources:[{id:'s'}],imported:[{id:'raw',sourceId:'s',seriesId:'x',start:Date.parse('2026-09-08T00:00:00Z'),timezone:'Asia/Shanghai'}],profiles:[],sharedRecords:durableRecords([scheduleRecord({...slot,sourceId:'s'}),scheduleRecord({...slot,id:'replacement',sourceId:'s',replacesSeries:'x'})])};
+ validateScheduleParents(base);validateScheduleParents({...base,imported:base.imported.map(r=>({...r,title:'new'}))});
+ assert.throws(()=>validateScheduleParents({...base,imported:base.imported.map(r=>({...r,seriesId:'unknown'}))}),/请先/);
+ assert.throws(()=>validateScheduleParents({...base,sources:[],imported:[]}),/请先/);
+ validateScheduleParents({...base,sources:[],imported:[],sharedRecords:[]});
+});

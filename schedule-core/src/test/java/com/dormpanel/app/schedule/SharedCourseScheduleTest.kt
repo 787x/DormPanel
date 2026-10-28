@@ -6,6 +6,27 @@ import java.time.*
 
 class SharedCourseScheduleTest {
     private val slot = CourseSlot("slot-1", null, "x", null, "2026-09-07", listOf(1,3,5), 2, 480, 540, 0, 0, true, "Math", "A", "T", "N")
+    @Test fun unchangedColorMergesWithRemoteColorAndLifecycleRejectsDanglingParents() {
+        val base=ScheduleState(entries=listOf(TimetableEntry("x","Math",1,480,540)),sharedRecords=emptyList())
+        val candidate=CourseCandidate(null,"Math",listOf("x"))
+        val edit=ClassOverride.of(null,"x",null,ClassPatch(teacher="Teacher"))
+        val local=CourseBatch.withColor(base,base,listOf(edit),candidate,CourseColorEdit.Unchanged)
+        assertEquals(base.sharedRecords,local.sharedRecords)
+        val remote=SharedCourseColors.change(base,null,"x",0x123456)
+        val merged=ScheduleMerge.merge(base,local,remote)
+        assertTrue(merged.conflicts.isEmpty());assertEquals(0x123456,SharedCourseColors.rgb(merged.state,null,"x"))
+        val manual=CourseBatch.withColor(remote,remote,listOf(edit),candidate,CourseColorEdit.Unchanged)
+        assertEquals(remote.sharedRecords,manual.sharedRecords)
+        assertEquals(listOf(0.toByte()),CourseBatch.withColor(manual,manual,emptyList(),candidate,CourseColorEdit.Set(null)).sharedRecords!!.single().payload)
+        val fixture=ScheduleCommitCodec.decode(javaClass.getResourceAsStream("/sync-v2/complex-root.dpc")!!.readBytes()).state
+        val row=fixture.imported.first()
+        val extended=fixture.copy(sharedRecords=listOf(SharedCourseSchedule.record(slot.copy(id="review-slot",sourceId=row.sourceId,ownerSeries=row.seriesId))))
+        SharedCourseSchedule.validateParents(extended)
+        SharedCourseSchedule.validateParents(extended.copy(imported=extended.imported.map {it.copy(title="renamed")}))
+        assertTrue(runCatching {SharedCourseSchedule.validateParents(extended.copy(imported=emptyList()))}.exceptionOrNull()!!.message!!.contains("请先"))
+        assertTrue(runCatching {SharedCourseSchedule.validateParents(extended.copy(sources=emptyList()))}.isFailure)
+        SharedCourseSchedule.validateParents(extended.copy(sources=emptyList(),imported=emptyList(),sharedRecords=emptyList()))
+    }
     @Test fun strictCodecAndCapability() {
         val r = SharedCourseSchedule.record(slot)
         assertEquals(slot, SharedCourseSchedule.decode(r))
