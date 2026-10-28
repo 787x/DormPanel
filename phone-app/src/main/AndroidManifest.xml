@@ -1,12 +1,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <application android:usesCleartextTraffic="true" android:theme="@style/PhoneTheme" android:icon="@drawable/ic_timetable" android:dataExtractionRules="@xml/data_extraction_rules" android:label="DormPanel 课程表" android:allowBackup="false" android:fullBackupContent="false" android:supportsRtl="true">
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <application android:name=".PhoneApplication" android:usesCleartextTraffic="true" android:theme="@style/PhoneTheme" android:icon="@drawable/ic_timetable" android:dataExtractionRules="@xml/data_extraction_rules" android:label="DormPanel 课程表" android:allowBackup="false" android:fullBackupContent="false" android:supportsRtl="true">
         <activity android:name=".TimetableActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".WidgetTitleActivity" android:exported="true" android:label="课表名称" />
+        <receiver android:name=".TodayWidgetProvider" android:exported="false" android:label="@string/widget_compact_name">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/><action android:name="android.intent.action.DATE_CHANGED"/><action android:name="android.intent.action.TIME_SET"/><action android:name="android.intent.action.TIMEZONE_CHANGED"/><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_compact"/>
+        </receiver>
+        <receiver android:name=".WideTodayWidgetProvider" android:exported="false" android:label="@string/widget_wide_name">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/><action android:name="android.intent.action.DATE_CHANGED"/><action android:name="android.intent.action.TIME_SET"/><action android:name="android.intent.action.TIMEZONE_CHANGED"/><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_wide"/>
+        </receiver>
     </application>
 </manifest>

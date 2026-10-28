@@ -1,0 +1,8 @@
+
+com.dormpanel.phone.TodayWidgetTest:.
+
+Time: 0.26
+
+OK (1 test)
+
+

@@ -1,0 +1,9 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="12dp" android:background="@drawable/widget_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:includeFontPadding="false" android:id="@+id/widget_title" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="我的课表" android:textColor="@color/widget_secondary" android:textSize="12sp" android:maxLines="1" android:ellipsize="end"/>
+        <TextView android:includeFontPadding="false" android:id="@+id/widget_date" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="@color/widget_secondary" android:textSize="11sp" android:maxLines="1"/>
+        <TextView android:includeFontPadding="false" android:id="@+id/widget_weekday" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:textColor="#7184B0" android:textSize="11sp" android:maxLines="1"/>
+    </LinearLayout>
+    <TextView android:includeFontPadding="false" android:id="@+id/widget_message" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="课程仍在加载" android:textColor="@color/widget_secondary" android:textSize="13sp" android:maxLines="3" android:ellipsize="end"/>
+    <LinearLayout android:id="@+id/widget_courses" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="vertical"/>
+</LinearLayout>

@@ -1,0 +1,22 @@
+[
+  {
+    "mode": "readFailure",
+    "secondsFromTestInvocationToObservedText": 4.0,
+    "observed": true
+  },
+  {
+    "mode": "firstUse",
+    "secondsFromTestInvocationToObservedText": 4.1,
+    "observed": true
+  },
+  {
+    "mode": "noCourses",
+    "secondsFromTestInvocationToObservedText": 4.08,
+    "observed": true
+  },
+  {
+    "mode": "ended",
+    "secondsFromTestInvocationToObservedText": 3.8,
+    "observed": true
+  }
+]

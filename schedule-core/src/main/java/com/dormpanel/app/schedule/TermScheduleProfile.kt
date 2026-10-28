@@ -241,6 +241,7 @@ class TermScheduleProfileStore(context: Context) {
         overrides.forEach { (key, profile) -> root.put(key, toJson(profile)) }
         check(prefs.edit().putString(KEY_OVERRIDES, root.toString()).commit()) { "Term configuration save failed" }
         committed?.invoke()
+        ScheduleCommitSignals.notifyChanged()
     }
 
     private fun toJson(profile: TermScheduleProfile): JSONObject = JSONObject()

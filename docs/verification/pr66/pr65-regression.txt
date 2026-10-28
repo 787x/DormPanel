@@ -1,0 +1,9 @@
+
+com.dormpanel.phone.CourseManagementTest:.
+com.dormpanel.phone.CourseCommonUxTest:.
+
+Time: 29.07
+
+OK (2 tests)
+
+

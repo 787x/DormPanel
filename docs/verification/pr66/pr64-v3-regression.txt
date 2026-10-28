@@ -1,0 +1,9 @@
+
+com.dormpanel.phone.TimetableSwipeTest:..
+com.dormpanel.phone.CourseManagementTest:.
+
+Time: 56.3
+
+OK (3 tests)
+
+
