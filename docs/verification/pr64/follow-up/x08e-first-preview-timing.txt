@@ -1,0 +1,6 @@
+10-27 21:41:56.144  4898  4898 I System.out: PR64 preview x08e CLASSIC build-layout-ms=236.49834
+10-27 21:42:00.909  4898  4898 I System.out: PR64 preview x08e CLASSIC build-layout-ms=192.49194
+10-27 21:42:06.329  4898  4898 I System.out: PR64 preview x08e TIME build-layout-ms=227.7681
+10-27 21:42:10.791  4898  4898 I System.out: PR64 preview x08e TIME build-layout-ms=208.96648
+10-27 21:42:16.633  4898  4898 I System.out: PR64 preview x08e PERIODS build-layout-ms=275.6321
+10-27 21:42:21.179  4898  4898 I System.out: PR64 preview x08e PERIODS build-layout-ms=255.03365

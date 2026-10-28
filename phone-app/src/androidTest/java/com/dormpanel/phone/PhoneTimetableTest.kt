@@ -349,8 +349,8 @@ class PhoneTimetableTest {
                 val profile = BuiltInProfiles.term2026.copy(timezone=zone.id)
                 val g = PhoneWeekView(a,items,monday,zone,{ chosen=it },7,true,profile)
                 a.setContentView(android.widget.ScrollView(a).apply { addView(g) })
-                assertTrue(g.usesPeriods)
-                assertEquals(g.offsetAt(870f,0),g.offsetAt(840f,3))
+                assertFalse(g.usesPeriods) // One shared time gutter cannot describe a mid-week phase change.
+                assertEquals(g.offsetAt(870f,0),g.offsetAt(870f,3))
                 assertTrue(g.offsetAt(780f,0) < g.offsetAt(870f,0))
                 val mondayColumn = g.getChildAt(1) as android.widget.FrameLayout
                 val originals = (0 until mondayColumn.childCount).map { mondayColumn.getChildAt(it) }

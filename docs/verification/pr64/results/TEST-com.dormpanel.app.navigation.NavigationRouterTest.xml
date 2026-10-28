@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.navigation.NavigationRouterTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-27T12:21:23.540Z" hostname="LAPTOP-6ORBUU2C" time="0.037">
+  <properties/>
+  <testcase name="home routes in all four directions" classname="com.dormpanel.app.navigation.NavigationRouterTest" time="0.027"/>
+  <testcase name="custom routes can replace the default mapping" classname="com.dormpanel.app.navigation.NavigationRouterTest" time="0.0"/>
+  <testcase name="each destination has its inverse route home" classname="com.dormpanel.app.navigation.NavigationRouterTest" time="0.001"/>
+  <testcase name="unsupported swipe has no destination" classname="com.dormpanel.app.navigation.NavigationRouterTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

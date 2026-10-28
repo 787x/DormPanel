@@ -31,7 +31,7 @@ class AppsPageView(context: Context, private val source: InstalledAppSource,
         setPadding(24.dp, 0, 24.dp, 0)
         addView(LinearLayout(context).apply { orientation = VERTICAL; addView(heading); addView(hint) }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         addView(install, LayoutParams(170.dp, 56.dp))
-        addView(home, LayoutParams(144.dp, 56.dp))
+        addView(home, LayoutParams(176.dp, 56.dp))
     }
     private val adapter = AppsAdapter()
     private val grid = RecyclerView(context).apply {

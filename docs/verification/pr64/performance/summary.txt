@@ -1,0 +1,122 @@
+
+before: min/median/max ms
+CLASSIC n= 6
+  move 220.9/224.2/301.9
+  warmMove 0.7/0.9/1.0
+  up 1.4/1.5/2.0
+  target OnDraw 224.2/229.7/311.2
+  nested phase medians (DO NOT add):
+    card-text 4.0
+    card-views 56.4
+    layout 6.7
+    measure 58.3
+    mount 13.7
+    prepare 147.7
+    projection 44.6
+    theme 7.4
+  commit callback 37.6/47.2/87.8
+TIME n= 6
+  move 210.5/231.0/248.6
+  warmMove 0.5/0.6/1.0
+  up 0.9/1.1/1.6
+  target OnDraw 213.2/234.2/251.4
+  nested phase medians (DO NOT add):
+    card-text 3.5
+    card-views 52.0
+    geometry 6.4
+    layout 7.0
+    measure 45.5
+    mount 10.1
+    prepare 163.4
+    projection 44.7
+    theme 3.5
+  commit callback 37.1/39.7/58.6
+PERIODS n= 6
+  move 211.8/224.4/259.4
+  warmMove 0.4/0.5/0.7
+  up 0.8/1.1/1.2
+  target OnDraw 214.4/227.7/262.3
+  nested phase medians (DO NOT add):
+    card-text 3.1
+    card-views 50.7
+    geometry 2.9
+    layout 6.7
+    measure 57.8
+    mount 8.0
+    prepare 153.0
+    projection 46.0
+    theme 3.5
+  commit callback 31.6/34.9/46.1
+
+after: min/median/max ms
+CLASSIC n= 6
+  move 63.9/77.9/85.5
+  warmMove 0.8/1.2/25.9
+  up 0.8/1.2/16.4
+  target OnDraw 66.3/81.8/88.4
+  nested phase medians (DO NOT add):
+    card-views 22.0
+    drawable 1.0
+    layout 2.1
+    layout-visible 1.5
+    lock 0.0
+    measure 1.4
+    measure-visible 13.1
+    mount 2.2
+    move 76.0
+    prepare 19.2
+    theme 0.1
+    visible-views 31.8
+  commit callback 39.3/49.2/60.2
+TIME n= 6
+  move 58.1/63.8/65.9
+  warmMove 26.7/70.4/82.7
+  up 0.8/0.9/1.6
+  target OnDraw 59.8/65.9/68.7
+  nested phase medians (DO NOT add):
+    card-views 14.1
+    drawable 0.5
+    layout 1.3
+    layout-visible 1.5
+    lock 0.0
+    measure 2.3
+    measure-visible 9.6
+    mount 1.2
+    move 62.3
+    prepare 15.9
+    theme 0.4
+    visible-views 26.1
+  commit callback 39.8/44.8/51.4
+PERIODS n= 6
+  move 67.8/75.6/84.7
+  warmMove 32.3/67.7/71.1
+  up 0.8/0.9/1.4
+  target OnDraw 69.5/77.5/87.1
+  nested phase medians (DO NOT add):
+    card-views 15.3
+    drawable 0.6
+    layout 2.0
+    layout-visible 1.6
+    lock 0.0
+    measure 12.7
+    measure-visible 9.4
+    mount 1.4
+    move 73.6
+    prepare 16.3
+    theme 0.3
+    visible-views 27.9
+  commit callback 39.2/42.8/52.2
+
+native: real system injection, three forward/back/repeat gestures per layout
+CLASSIC 0 firstMove= 38.3 maxMove= 38.3 targetDraw= 40.8 maxStage= 21.2 maxFrame= 81.7 frames>32ms= 13/42
+CLASSIC 1 firstMove= 46.6 maxMove= 46.6 targetDraw= 48.4 maxStage= 19.1 maxFrame= 88.2 frames>32ms= 12/42
+CLASSIC 2 firstMove= 42.8 maxMove= 42.8 targetDraw= 44.3 maxStage= 22.9 maxFrame= 74.1 frames>32ms= 13/41
+CLASSIC firstMove 38.3/42.8/46.6
+TIME 0 firstMove= 38.3 maxMove= 38.3 targetDraw= 39.7 maxStage= 16.8 maxFrame= 81.3 frames>32ms= 13/56
+TIME 1 firstMove= 42.8 maxMove= 42.8 targetDraw= 44.3 maxStage= 20.8 maxFrame= 77.1 frames>32ms= 15/59
+TIME 2 firstMove= 41.1 maxMove= 41.1 targetDraw= 42.8 maxStage= 19.6 maxFrame= 81.7 frames>32ms= 23/56
+TIME firstMove 38.3/41.1/42.8
+PERIODS 0 firstMove= 48.0 maxMove= 48.0 targetDraw= 49.7 maxStage= 16.3 maxFrame= 72.1 frames>32ms= 18/56
+PERIODS 1 firstMove= 55.0 maxMove= 55.0 targetDraw= 56.3 maxStage= 15.3 maxFrame= 86.3 frames>32ms= 19/60
+PERIODS 2 firstMove= 43.8 maxMove= 43.8 targetDraw= 45.2 maxStage= 15.5 maxFrame= 90.1 frames>32ms= 14/57
+PERIODS firstMove 43.8/48.0/55.0

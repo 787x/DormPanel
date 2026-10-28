@@ -7,16 +7,16 @@ import com.dormpanel.app.appearance.*
 
 internal enum class X08eScheduleLayout { CLASSIC, TIME, PERIODS }
 internal data class X08eScheduleStyle(val layout: X08eScheduleLayout = X08eScheduleLayout.CLASSIC,
-    val colors: Boolean = false, val hierarchy: Boolean = false)
+    val colors: Boolean = false, val hierarchy: Boolean = false, val swipeWeeks: Boolean = false)
 
 /** Device UI only; deliberately separate from Room, term preferences and snapshots. */
 internal class X08eSchedulePreferences(context: Context, namespace: String = "x08e_schedule_display") {
     private val prefs = context.getSharedPreferences(namespace, Context.MODE_PRIVATE)
     fun read() = X08eScheduleStyle(
         X08eScheduleLayout.entries.firstOrNull { it.name == prefs.getString("layout", null) } ?: X08eScheduleLayout.CLASSIC,
-        prefs.getBoolean("colors", false), prefs.getBoolean("hierarchy", false))
+        prefs.getBoolean("colors", false), prefs.getBoolean("hierarchy", false), prefs.getBoolean("swipeWeeks", false))
     fun write(style: X08eScheduleStyle): Boolean = prefs.edit().putString("layout", style.layout.name)
-        .putBoolean("colors", style.colors).putBoolean("hierarchy", style.hierarchy).commit()
+        .putBoolean("colors", style.colors).putBoolean("hierarchy", style.hierarchy).putBoolean("swipeWeeks", style.swipeWeeks).commit()
 }
 
 internal fun Context.scheduleText(zh: String, en: String): String =
@@ -34,7 +34,8 @@ internal fun Context.scheduleStyleDialog(style: X08eScheduleStyle, appearance: A
     }
     val colors = CheckBox(this).apply { text = scheduleText("按课程配色", "Stable course colors"); isChecked = style.colors; minHeight = dp(48) }
     val hierarchy = CheckBox(this).apply { text = scheduleText("优化信息排版", "Information hierarchy"); isChecked = style.hierarchy; minHeight = dp(48) }
-    fields.addView(layout); fields.addView(colors); fields.addView(hierarchy)
+    val swipe = CheckBox(this).apply { text = scheduleText("横划切换周次", "Swipe to change week"); isChecked = style.swipeWeeks; minHeight = dp(48) }
+    fields.addView(layout); fields.addView(colors); fields.addView(hierarchy); fields.addView(swipe)
     fields.addView(scheduleLabel(scheduleText("取消勾选可恢复经典单色和经典排版。仅保存在本机，不参与课表同步。", "Uncheck to restore classic colors and text. Saved on this device only."), 16f))
     val dialog = AlertDialog.Builder(this).setTitle(scheduleText("课表显示设置", "Timetable display"))
         .setView(fields).setNegativeButton(scheduleText("取消", "Cancel"), null).setPositiveButton(scheduleText("保存", "Save"), null).create()
@@ -44,7 +45,7 @@ internal fun Context.scheduleStyleDialog(style: X08eScheduleStyle, appearance: A
     dialog.setOnDismissListener { appearance.removeListener(theme) }
     dialog.show(); dialog.matchActivityBrightness(); appearance.addListener(theme); theme(appearance.state)
     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-        if (save(X08eScheduleStyle(X08eScheduleLayout.entries[layout.selectedItemPosition], colors.isChecked, hierarchy.isChecked))) dialog.dismiss()
+        if (save(X08eScheduleStyle(X08eScheduleLayout.entries[layout.selectedItemPosition], colors.isChecked, hierarchy.isChecked, swipe.isChecked))) dialog.dismiss()
         else Toast.makeText(this, scheduleText("显示设置保存失败，请重试", "Could not save display settings. Try again."), Toast.LENGTH_LONG).show()
     }
     return dialog
