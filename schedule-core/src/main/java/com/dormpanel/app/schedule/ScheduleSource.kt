@@ -52,6 +52,9 @@ interface ScheduleStore {
     fun putClassOverride(item: ClassOverride?, key: String, callback: (Result<Unit>) -> Unit) {
         callback(Result.failure(UnsupportedOperationException("Class overrides unavailable")))
     }
+    fun putClassOverrides(expected: ScheduleState, items: List<ClassOverride>, callback: (Result<Unit>) -> Unit) {
+        callback(Result.failure(UnsupportedOperationException("Atomic class edits unavailable")))
+    }
     fun commitImport(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,
         callback: (Result<ImportCommit>) -> Unit) { callback(Result.failure(UnsupportedOperationException("Imports unavailable"))) }
     fun deleteImport(id: String, callback: (Result<Unit>) -> Unit) { callback(Result.failure(UnsupportedOperationException("Imports unavailable"))) }
@@ -200,6 +203,13 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
             item != null && existingCharacters + item.textCharacters() > 2_000_000L) return false
         state = state.copy(classOverrides = state.classOverrides.filterNot { it.key == key } + listOfNotNull(item))
         store.putClassOverride(item, key, completion); refresh(); return true
+    }
+    fun saveClassOverrides(expected: ScheduleState, items: List<ClassOverride>, callback: (Result<Unit>) -> Unit) {
+        if (!editable) { callback(Result.failure(IllegalStateException(editBlockReason ?: "课表忙碌，请稍后重试"))); return }
+        store.putClassOverrides(expected, items) { result ->
+            if (result.isSuccess) reload { loaded -> localCommitted?.invoke(); callback(loaded) }
+            else callback(result)
+        }
     }
     fun import(preview: ImportPreview, name: String, targetId: String?, callback: (Result<ImportCommit>) -> Unit) {
         if (error) { callback(Result.failure(ScheduleLocalReadFailed())); return }

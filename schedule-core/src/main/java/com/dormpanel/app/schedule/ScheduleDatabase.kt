@@ -875,6 +875,10 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
             else database.dao().entries().any { it.id == item.seriesId }) { "Course was deleted; reopen the timetable" }
         if (item == null) database.dao().deleteClassOverride(key) else database.dao().put(item)
     }
+    override fun putClassOverrides(expected: ScheduleState, items: List<ClassOverride>, callback: (Result<Unit>) -> Unit) = write(callback) {
+        CourseBatch.validate(fullState(), expected, items)
+        items.forEach { database.dao().put(it) }
+    }
     override fun commitImport(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,
         callback: (Result<ImportCommit>) -> Unit) = write(callback) {
         database.runInTransaction<ImportCommit> {
