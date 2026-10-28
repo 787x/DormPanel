@@ -7,11 +7,16 @@ import com.dormpanel.app.schedule.*
 /** A read-only resolver per loaded state; preferences never contain course content. */
 internal object CourseColors {
     private const val MAX_IDENTITIES = 60000 // RAW permits 10000 local entries plus 50000 imported instances.
-    val palette = intArrayOf(0x4789ff,0x719447,0xc06488,0x9670bf,0xb58b39,0x399d91,
-        0xd4764c,0x568eac,0xae6870,0x7a83bc,0x9b9146,0x4c9b72,0xb575ae,0x877560,0x5b96bb,0xb67b47)
+    // Slots remain unchanged; saturated accents retain separation after theme tinting.
+    val palette = intArrayOf(0x0040ff,0xbfff00,0xff0040,0x4000ff,0xffbf00,0x00ffff,
+        0xff4000,0x59acff,0x802d2d,0x2d806b,0x806000,0x00ff80,0xff00ff,0x00ff00,0x008000,0xbf43bf)
+    private const val MANUAL_WRITE = "manual_write"
+    // commit(false) may already have changed SharedPreferences' in-process map. Keep the
+    // previously confirmed value visible until an explicit manual save commits successfully.
+    private val uncertain = java.util.WeakHashMap<android.content.SharedPreferences, MutableMap<String, Int?>>()
     fun background(rgb: Int, dark: Boolean): Int {
-        fun channel(c: Int) = if (dark) (c * .30 + 14).toInt() else (c * .23 + 255 * .77).toInt()
-        return Color.rgb(channel(Color.red(rgb)),channel(Color.green(rgb)),channel(Color.blue(rgb)))
+        fun channel(c: Int) = if (dark) (c * .33 + 14).toInt() else (c * .32 + 255 * .68).toInt()
+        return (0xff shl 24) or (channel(rgb ushr 16 and 255) shl 16) or (channel(rgb ushr 8 and 255) shl 8) or channel(rgb and 255)
     }
     fun ink(dark: Boolean) = if (dark) Color.rgb(245,245,245) else Color.rgb(28,35,42)
     private fun prefs(context: Context) = context.getSharedPreferences("course_colors_v1",Context.MODE_PRIVATE)
@@ -26,7 +31,8 @@ internal object CourseColors {
         val identity = CourseColorIdentity(state)
         require(identity.active.size <= MAX_IDENTITIES) { "课程颜色超出本地预算" }
         val pref = prefs(context)
-        val stored = pref.all
+        val stored = pref.all.toMutableMap()
+        uncertain[pref]?.forEach { (key,value) -> if (value == null) stored.remove(key) else stored[key] = value }
         val auto = identity.active.mapNotNull { key -> (stored["a"+digest(key)] as? Int)?.let { key to it } }.toMap()
         val assigned = CourseColorAllocation.allocate(identity.active,auto,palette.size)
         val manual = identity.active.mapNotNull { key -> (stored["m"+digest(key)] as? Int)?.takeIf { it in 0..0xffffff }?.let { key to it } }.toMap()
@@ -40,6 +46,7 @@ internal object CourseColors {
                 hash !in activeHashes && seen in (day-30)..day
             }.sortedByDescending { stored["t"+it] as? Long ?: 0L }.take((maxOf(10000,activeHashes.size)-activeHashes.size).coerceAtLeast(0))
         val desired = mutableMapOf<String,Any>()
+        (stored[MANUAL_WRITE] as? String)?.let { desired[MANUAL_WRITE] = it }
         retained.forEach { hash -> listOf("a","m","t").forEach { prefix -> stored[prefix+hash]?.let { desired[prefix+hash] = it } } }
         assigned.forEach { (key,value) -> desired["a"+digest(key)] = value; desired["t"+digest(key)] = day }
         manual.forEach { (key,value) -> desired["m"+digest(key)] = value }
@@ -48,17 +55,27 @@ internal object CourseColors {
         // courses; this snapshot still uses the retained slots and deterministic allocation.
         runCatching {
             val edit = pref.edit().clear()
-            desired.forEach { (key,value) -> when(value) { is Int -> edit.putInt(key,value); is Long -> edit.putLong(key,value) } }
+            desired.forEach { (key,value) -> when(value) { is Int -> edit.putInt(key,value); is Long -> edit.putLong(key,value); is String -> edit.putString(key,value) } }
             check(edit.commit()) { "课程颜色配置保存失败" }
         }.onFailure { android.util.Log.w("CourseColors", "自动颜色缓存未持久化，继续使用当前显示分配", it) }
         return Snapshot(identity,assigned,manual)
     }
     @Synchronized fun save(context: Context, key: String, rgb: Int?) {
+        val pref = prefs(context)
+        val storedKey = "m"+digest(key)
+        val pending = uncertain.getOrPut(pref) { mutableMapOf() }
+        if (!pending.containsKey(storedKey)) pending[storedKey] =
+            (pref.all[storedKey] as? Int)?.takeIf { it in 0..0xffffff }
         runCatching {
-            val edit = prefs(context).edit()
-            if (rgb == null) edit.remove("m"+digest(key)) else edit.putInt("m"+digest(key),rgb and 0xffffff)
+            val edit = pref.edit()
+            if (rgb == null) edit.remove(storedKey) else edit.putInt(storedKey,rgb and 0xffffff)
+            // A fresh marker forces a real write even if a failed prior commit left the
+            // requested RGB in memory. A matching in-memory value is never a save receipt.
+            edit.putString(MANUAL_WRITE, java.util.UUID.randomUUID().toString())
             check(edit.commit()) { "颜色保存失败，草稿保留" }
         }.getOrElse { throw IllegalStateException("颜色保存失败，草稿保留",it) }
+        pending.remove(storedKey)
+        if (pending.isEmpty()) uncertain.remove(pref)
         TodayWidgetUpdates.request(context)
     }
 }

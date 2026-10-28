@@ -29,18 +29,35 @@ class CourseColorReliabilityTest {
     private class DiskFault(val backing: SharedPreferences) : SharedPreferences by backing {
         var fail = true
         var throwing = false
+        var memoryOnFailure = false
         var attempts = 0
+        var actualWrites = 0
+        var skippedNoOps = 0
+        private var memory = backing.all.toMutableMap()
+        override fun getAll(): Map<String, *> = if (memoryOnFailure) memory.toMap() else backing.all
         override fun edit(): SharedPreferences.Editor {
             val editor = backing.edit()
+            var clear = false
+            val changes = mutableMapOf<String,Any?>()
             return object : SharedPreferences.Editor by editor {
-                override fun clear(): SharedPreferences.Editor { editor.clear(); return this }
-                override fun remove(key: String): SharedPreferences.Editor { editor.remove(key); return this }
-                override fun putInt(key: String, value: Int): SharedPreferences.Editor { editor.putInt(key,value); return this }
-                override fun putLong(key: String, value: Long): SharedPreferences.Editor { editor.putLong(key,value); return this }
+                override fun clear(): SharedPreferences.Editor { clear=true; editor.clear(); return this }
+                override fun remove(key: String): SharedPreferences.Editor { changes[key]=null; editor.remove(key); return this }
+                override fun putInt(key: String, value: Int): SharedPreferences.Editor { changes[key]=value; editor.putInt(key,value); return this }
+                override fun putLong(key: String, value: Long): SharedPreferences.Editor { changes[key]=value; editor.putLong(key,value); return this }
+                override fun putString(key: String, value: String?): SharedPreferences.Editor { changes[key]=value; editor.putString(key,value); return this }
                 override fun commit(): Boolean {
                     attempts++
+                    val next = if (clear) mutableMapOf<String,Any?>() else all.toMutableMap()
+                    changes.forEach { (key,value) -> if(value==null) next.remove(key) else next[key]=value }
+                    val changed = next != all
+                    if (memoryOnFailure) memory = next
                     if (throwing) throw IllegalStateException("injected preference disk failure")
-                    return if (fail) false else editor.commit()
+                    if (fail) return false
+                    // Deliberately model a backend that treats an unchanged in-memory edit
+                    // as a successful no-op, even though a previous disk write failed.
+                    if (memoryOnFailure && !changed) { skippedNoOps++; return true }
+                    actualWrites++
+                    return editor.commit()
                 }
             }
         }
@@ -172,6 +189,114 @@ class CourseColorReliabilityTest {
             } finally { scenario.onActivity { editor.close() } }
         }
     }
+    @Test fun failedCommitMemoryIsQuarantinedAndSameValueRetryReallyWrites() = isolated { store,disk ->
+        await<Unit> { store.put(entry("memory"),it) }
+        ScheduleStores.overrideFactory = { store }
+        disk.memoryOnFailure = true
+        disk.fail = false
+        launchPhoneTestActivity().use { scenario ->
+            focus(scenario)
+            scenario.onActivity { activity ->
+                val wrapped = context(activity,disk)
+                val state = activity.source.state
+                val initial = CourseColors.snapshot(wrapped,state)
+                val key = initial.identity.key(null,"memory")!!
+                val storedKey = "m"+java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                CourseColors.save(wrapped,key,0x112233)
+                disk.fail = true
+                assertTrue(runCatching { CourseColors.save(wrapped,key,0xabcdef) }.isFailure)
+                assertEquals(0xabcdef,disk.all[storedKey])
+                assertEquals(0x112233,disk.backing.all[storedKey])
+                assertEquals(0x112233,CourseColors.snapshot(wrapped,state).manual(key))
+                val writes = disk.actualWrites
+                disk.fail = false
+                CourseColors.save(wrapped,key,0xabcdef)
+                assertEquals(writes+1,disk.actualWrites)
+                assertEquals(0xabcdef,disk.backing.all[storedKey])
+                assertEquals(0xabcdef,CourseColors.snapshot(wrapped,state).manual(key))
+                disk.fail = true
+                assertTrue(runCatching { CourseColors.save(wrapped,key,null) }.isFailure)
+                assertNull(disk.all[storedKey])
+                assertEquals(0xabcdef,CourseColors.snapshot(wrapped,state).manual(key))
+                disk.fail = false
+                CourseColors.save(wrapped,key,null)
+                assertNull(disk.backing.all[storedKey])
+                assertNull(CourseColors.snapshot(wrapped,state).manual(key))
+                disk.throwing = true
+                assertTrue(runCatching { CourseColors.save(wrapped,key,0x778899) }.isFailure)
+                assertEquals(0x778899,disk.all[storedKey])
+                assertNull(disk.backing.all[storedKey])
+                assertNull(CourseColors.snapshot(wrapped,state).manual(key))
+            }
+        }
+    }
+    @Test fun businessOnlyEditDoesNotAttemptManualColorSave() = isolated { store,disk ->
+        await<Unit> { store.put(entry("business"),it) }
+        var transactions = 0
+        ScheduleStores.overrideFactory = { object : ScheduleStore by store {
+            override fun putClassOverrides(expected: ScheduleState, items: List<ClassOverride>, callback: (Result<Unit>) -> Unit) {
+                transactions++; store.putClassOverrides(expected,items,callback)
+            }
+        } }
+        launchPhoneTestActivity().use { scenario ->
+            focus(scenario)
+            lateinit var editor: PhoneEditors
+            scenario.onActivity { editor=PhoneEditors(context(it,disk),it.source); editor.courseManagement() }
+            try {
+                onView(withText(startsWith("可靠性课程\n"))).inRoot(isDialog()).perform(click())
+                onView(withText("统一修改课程名称")).perform(scrollTo(),click())
+                onView(withContentDescription("课程名称")).perform(scrollTo(),replaceText("仅改业务"),closeSoftKeyboard())
+                onView(withText("保存修改")).perform(click())
+                onView(withText("确认保存")).perform(click())
+                onView(withText("保存修改")).check(doesNotExist())
+                onView(withText("颜色保存失败，草稿保留")).check(doesNotExist())
+                assertEquals(1,transactions)
+                assertEquals("仅改业务",await<ScheduleState>(store::load).classOverrides.single().title)
+                assertTrue(disk.backing.all.isEmpty())
+            } finally { scenario.onActivity { editor.close() } }
+        }
+    }
+    @Test fun paletteThemeScreenshot() = isolated { store,_ ->
+        await<Unit> { store.put(entry("palette"),it) }
+        ScheduleStores.overrideFactory = { store }
+        val dark=InstrumentationRegistry.getArguments().getString("dark")=="true"
+        i.runOnMainSync { androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(if(dark) 2 else 1) }
+        try { launchPhoneTestActivity().use { scenario ->
+            focus(scenario)
+            lateinit var paletteDialog: android.app.Dialog
+            scenario.onActivity { activity ->
+                val root=activity.scheduleColumn().apply {
+                    setPadding(activity.dp(8),0,activity.dp(8),0)
+                    setBackgroundColor(if(dark) 0xff121212.toInt() else 0xfffafafa.toInt())
+                }
+                root.addView(activity.scheduleLabel("16 色课程卡片 · ${if(dark) "深色" else "浅色"}",18f))
+                val names=listOf("纯蓝","黄绿","玫红","蓝紫","金黄","青色","橙色","浅蓝","深红","墨绿","棕黄","薄荷","洋红","草绿","深绿","灰紫")
+                val monday=LocalDate.now().with(DayOfWeek.MONDAY)
+                CourseColors.palette.toList().chunked(2).forEachIndexed { rowIndex,slots ->
+                    val row=android.widget.LinearLayout(activity)
+                    slots.forEachIndexed { columnIndex,rgb ->
+                        val index=rowIndex*2+columnIndex
+                        val state=ScheduleState(entries=listOf(entry("slot$index").copy(title="${index+1} · ${names[index]}",location="#%06X".format(rgb),startMinute=480,endMinute=540)))
+                        val item=ScheduleProjection.week(state,monday,ZoneId.systemDefault()).single()
+                        row.addView(CourseCard(activity,listOf(item),ZoneId.systemDefault(),rgb=rgb) {},android.widget.LinearLayout.LayoutParams(0,activity.dp(78),1f).apply { setMargins(activity.dp(3),activity.dp(2),activity.dp(3),activity.dp(2)) })
+                    }
+                    root.addView(row)
+                }
+                paletteDialog=android.app.Dialog(activity)
+                paletteDialog.setContentView(root)
+                paletteDialog.window!!.setWindowAnimations(0)
+                paletteDialog.show()
+                paletteDialog.window!!.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT)
+            }
+            onView(withText("16 色课程卡片 · ${if(dark) "深色" else "浅色"}")).inRoot(isDialog()).check(matches(isDisplayed()))
+            i.waitForIdleSync()
+            Thread.sleep(350) // Let the compositor finish the Activity/theme transition.
+            val screenshot=i.uiAutomation.takeScreenshot()
+            java.io.File(c.getExternalFilesDir(null),"pr68-palette-${if(dark) "dark" else "light"}.png").outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }
+            screenshot.recycle()
+            scenario.onActivity { paletteDialog.dismiss() }
+        } } finally { i.runOnMainSync { androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(-1) } }
+    }
     @Test fun pickerDistinguishesAutomaticFixedSameColorAndCancel() = isolated { store,_ ->
         await<Unit> { store.put(entry("picker"),it) }
         ScheduleStores.overrideFactory = { store }
@@ -198,7 +323,7 @@ class CourseColorReliabilityTest {
                 dialogView(withText("保持自动配色")).perform(click())
                 assertEquals(listOf<Int?>(null,0x4789ff,null),chosen)
                 open()
-                dialogView(withContentDescription("预设颜色 #719447")).perform(scrollTo(),click())
+                dialogView(withContentDescription("预设颜色 #%06X".format(CourseColors.palette[1]))).perform(scrollTo(),click())
                 dialogView(withText("取消")).perform(click())
                 assertEquals(3,chosen.size)
             } finally { scenario.onActivity { dialog.dismiss() } }

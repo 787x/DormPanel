@@ -231,15 +231,18 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         column.addView(context.scheduleLabel("颜色仅保存在本机，应用于整门课程；与时段勾选无关。业务保存成功后保存颜色。",14f))
         val colorError = context.scheduleLabel("",14f)
         column.addView(colorError)
-        fun saveColor(): Boolean = runCatching {
-            check(source.ready && !source.error) { "本地课程读取失败，颜色草稿保留" }
-            check(CourseColors.snapshot(context,source.state).identity.active.contains(colorKey)) { "课程已不存在，颜色草稿保留" }
-            CourseColors.save(context,colorKey,colorDraft)
-            source.refresh()
-        }.onFailure {
-            colorError.text = it.message ?: "颜色保存失败，草稿保留"
-            Toast.makeText(context,colorError.text,Toast.LENGTH_LONG).show()
-        }.isSuccess
+        fun saveColor(): Boolean {
+            if (colorDraft == originalColor) return true
+            return runCatching {
+                check(source.ready && !source.error) { "本地课程读取失败，颜色草稿保留" }
+                check(CourseColors.snapshot(context,source.state).identity.active.contains(colorKey)) { "课程已不存在，颜色草稿保留" }
+                CourseColors.save(context,colorKey,colorDraft)
+                source.refresh()
+            }.onFailure {
+                colorError.text = it.message ?: "颜色保存失败，草稿保留"
+                Toast.makeText(context,colorError.text,Toast.LENGTH_LONG).show()
+            }.isSuccess
+        }
         column.addView(context.scheduleLabel("公共信息 · 勾选后才统一应用", 18f))
         val editedCommon = mutableSetOf<EditText>()
         val commonStatus = linkedMapOf<EditText, TextView>()

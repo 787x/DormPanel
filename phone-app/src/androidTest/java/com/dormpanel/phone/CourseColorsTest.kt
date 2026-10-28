@@ -115,14 +115,14 @@ class CourseColorsTest {
                 shot("editor")
                 onView(withText(startsWith("课程颜色 ·"))).perform(scrollTo(),click())
                 shot("picker-light")
-                onView(withContentDescription("预设颜色 #4789FF")).perform(scrollTo(),click())
+                onView(withContentDescription("预设颜色 #%06X".format(CourseColors.palette[0]))).perform(scrollTo(),click())
                 onView(withText("取消")).perform(click())
                 assertNull(CourseColors.snapshot(c,state).manual(key))
                 onView(withText(startsWith("课程颜色 ·"))).perform(scrollTo(),click())
-                onView(withContentDescription("预设颜色 #4789FF")).perform(scrollTo(),click())
+                onView(withContentDescription("预设颜色 #%06X".format(CourseColors.palette[0]))).perform(scrollTo(),click())
                 onView(withText("使用此颜色")).perform(click())
                 onView(withText("保存修改")).perform(click())
-                assertEquals(0x4789ff,CourseColors.snapshot(c,state).manual(key))
+                assertEquals(CourseColors.palette[0],CourseColors.snapshot(c,state).manual(key))
                 assertTrue(await(store::load).classOverrides.isEmpty())
             }
         } finally { i.runOnMainSync { androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(-1) }; ScheduleStores.overrideFactory=null; store.close(); executor.shutdown() }

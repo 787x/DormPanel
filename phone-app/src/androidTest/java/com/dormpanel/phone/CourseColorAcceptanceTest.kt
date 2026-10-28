@@ -37,7 +37,7 @@ class CourseColorAcceptanceTest {
         onView(withId(android.R.id.button1)).perform(click())
         onView(withHint("自定义颜色 #RRGGBB")).check(matches(isDisplayed()))
         // A preset must clear a prior validation error, then custom input must override it.
-        onView(withContentDescription("预设颜色 #4789FF")).perform(scrollTo(),click())
+        onView(withContentDescription("预设颜色 #%06X".format(CourseColors.palette[0]))).perform(scrollTo(),click())
         onView(withHint("自定义颜色 #RRGGBB")).perform(scrollTo(),replaceText("#B49138"),closeSoftKeyboard())
         onView(withText("使用此颜色")).perform(click())
     }

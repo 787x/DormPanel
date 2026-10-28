@@ -64,3 +64,26 @@ MIUI 测试中曾出现窗口焦点和底层日视图同名按钮误匹配；验
 最终日志：`artifacts/pr68/pref-final-ui.log`（`OK (4 tests)`，24.974 秒）、`artifacts/pr68/pref-final-build.log`。新增 UI 测试使用独立 Room 和独立偏好命名空间；没有写入日用数据。首轮 RemoteViews 测试误用了 Activity 的 AppCompat inflater，选色断言也曾遇到 MIUI 根窗口焦点选择问题；测试已改用 application context 作为 RemoteViews 宿主，并明确匹配 Dialog，修正后的上述四项一轮通过。
 
 本次不重复 PR65/66 完整矩阵、Sync v3 RC、长时 soak 或 X08E 实机部署；没有合并或发布。
+
+## 最后小范围优化（2026-10-28）
+
+### 调色板与提交边界
+
+- 重新选择 16 个强调色，并将浅色背景混合系数从 0.23 调至 0.32、深色从 0.30 调至 0.33，以保留柔和背景、低亮度夜间背景和颜色区分。色位仍为原来的 0–15，身份编码、分组及 `CourseColorAllocation` 分配规则均未改变；本次只更新各色位的视觉呈现。
+- `saveColor()` 在草稿与编辑器打开时的手动颜色相同时直接返回，不读写手动偏好。因此只提交业务字段时，即使颜色存储不能写入，也不会出现无关的“颜色保存失败”。有实际颜色修改时仍保留业务先提交及失败恢复规则。
+- 不再将 SharedPreferences 的当前内存值当成成功回执。一次手动提交失败后，以弱引用、按偏好实例隔离的表保留该键此前确认值；后续 snapshot 会隔离未确认的内存值，自动缓存整理也只采用确认值。失败的设置/恢复自动必须等待显式保存成功才解除隔离。
+- 每次实际手动保存，在同一 Editor 中写入新的随机提交标记，并要求 commit 成功。即使失败后 RGB/删除操作已在内存生效，重试也会产生新的脏写入，避免“内存相同，因此跳过写盘并返回成功”。该标记只属于 Phone 私有显示偏好，不进入业务数据、同步协议或凭据。
+
+### 本轮实际执行
+
+| 检查 | 结果 |
+| --- | --- |
+| 颜色 JVM 定向测试 | PASS：仅运行 `CourseColorIdentityTest` 2 项与新增 `CoursePaletteTest` 1 项，共 3 项。对转换后的深浅色背景检查两两 CIE76 距离 >= 12、文字对比度 >= 4.5；保留身份与分配规则回归。量化阈值是分色回归辅助，不代替实机核对。 |
+| 课程编辑/颜色 UI | PASS：`CourseColorReliabilityTest` 六项和原有 `committedBusinessReadFailureCanRecoverWithoutLosingColorDraft` 一项同轮通过，`OK (7 tests)`，33.637 秒。包括仅业务编辑在颜色写入故障时成功、手动失败保留草稿、空变更/自动/手动/取消、自动缓存失败继续渲染，以及业务已提交但回读失败的恢复规则。 |
+| 失败后的内存变化 | PASS：故障偏好 Editor 先改变可读取内存再返回 false/抛异常；其独立 backing 保持旧值。snapshot 仍返回旧确认色；模拟相同内存值会成功空操作的后端，再提交相同 RGB 时必须发生一次实际 backing 写入。另验证恢复自动失败后仍保留旧手动色，以及成功重试后的确清除。 |
+| 深浅色截图 | PASS：MIX 2S 使用实际 `CourseCard` 展示全部 16 色，分别获取浅色、深色原始截图并目视核对。截图专用 Dialog 禁用入场动画并断言标题显示，避免页面异步刷新或过渡帧影响颜色核对。 |
+| 构建与差异 | Phone 隔离 APK/测试 APK 构建通过；`git diff --check` 通过。未升级日用包。 |
+
+本轮日志：`artifacts/pr68/optimization-build.log`、`optimization-ui.log`、`optimization-palette-light.log`、`optimization-palette-dark.log`（均在 `artifacts/pr68/`）。原始截图：`artifacts/pr68/evidence/pr68-palette-light.png`、`pr68-palette-dark.png`。早期调色板截图的过渡帧不作为本轮最终证据。
+
+本轮只执行上述受影响的颜色/编辑检查及构建；没有修改课程分组、Sync v3、Widget 协调器或正式版本号，没有重复完整网络矩阵或长时间测试，没有合并或发布。
