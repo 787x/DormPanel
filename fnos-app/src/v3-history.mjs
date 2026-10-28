@@ -1,5 +1,7 @@
+import {Registry,wireRecords} from './shared-records.mjs';
+import {sharedTypes} from './shared-types.mjs';
 import { ensure } from './protocol.mjs';
-import { sha, businessHash, encode } from './v3-protocol.mjs';
+import { sha, businessHash, encode, decode } from './v3-protocol.mjs';
 import { objectPath, datasetScope, scopeInfo, file, match } from './v3-store.mjs';
 import { merge, same } from './merge.mjs';
 import { randomUUID } from 'node:crypto';
@@ -48,11 +50,13 @@ export class V3Discovery {
 /** Indexed immutable certificates, incremental frontier and persistent proof work queues.
  * SQLite checksums are verified only for rows actually used. No startup table enumeration. */
 export class V3History {
-  constructor(journal, cache, remote, descriptorPath, descriptorHash, budget) {
-    Object.assign(this, { journal, cache, remote, descriptorPath, descriptorHash, budget }); this.meta = journal.meta;
-    this.meta.budget = budget; this.loaded = new Map(); this.newObjects = 0; this.expanded = 0; this.work = 0; this.proofWork = 256;
+  constructor(journal, cache, remote, descriptorPath, descriptorHash, budget, registry = new Registry(sharedTypes)) {
+    Object.assign(this, { journal, cache, remote, descriptorPath, descriptorHash, budget, registry }); this.meta = journal.meta;
+    this.domainValidated=new Set(); this.meta.budget = budget; this.loaded = new Map(); this.newObjects = 0; this.expanded = 0; this.work = 0; this.proofWork = 256;
     this.nodes = new Proxy({}, { get: (_, path) => typeof path === 'string' ? this.node(path) : undefined, ownKeys: () => { throw Error('v3 use paged metadata queries'); } });
   }
+  rememberDomain(path){if(this.domainValidated.size>=256)this.domainValidated.delete(this.domainValidated.values().next().value);this.domainValidated.add(path);}
+  async withRegistry(registry){return registry===this.registry?this:new V3History(this.journal,this.cache,this.remote,this.descriptorPath,this.descriptorHash,this.budget,registry).open();}
   node(path) {
     if (this.loaded.has(path)) return this.loaded.get(path);
     const node = this.meta.get('node', path); if (!node) return undefined;
@@ -67,11 +71,12 @@ export class V3History {
     return this;
   }
   async record(path, bytes, o) {
-    await this.cache.pin(path, 'referenced-history');
+    if(o.state)this.registry.validate(wireRecords(o.state.sharedRecords??[]));
+    this.rememberDomain(path); await this.cache.pin(path, 'referenced-history');
     const { state, ...metadata } = o, m = this.meta, hash = sha(bytes), refs = causal(o), primary = refs[0] ? this.node(refPath(this.datasetId, refs[0])) : null;
     const jumps = primary ? [refPath(this.datasetId, refs[0])] : [];
     for (let n = 1; jumps[n - 1]; n++) { const next = this.node(jumps[n - 1]).jumps[n - 1]; if (!next) break; jumps.push(next); }
-    const node = { ...metadata, hash, size: bytes.length, verifiedAt: Date.now(), businessHash: state ? businessHash(state) : null, root: o.type === 2 ? path : primary?.root ?? null, depth: primary ? primary.depth + 1 : 0, jumps };
+    const node = { ...metadata, hash, size: bytes.length, verifiedAt: Date.now(), businessHash: state ? businessHash(state,{registry:this.registry}) : null, root: o.type === 2 ? path : primary?.root ?? null, depth: primary ? primary.depth + 1 : 0, jumps };
     m.atomic(() => {
       const identity = m.get('identity', o.objectId), old = m.get('node', path); ensure(!identity || identity.path === path, 'v3 duplicate objectId'); ensure(!old || old.hash === hash, 'v3 identity changed');
       if (!old && o.type !== 1) ensure(m.count('members:' + o.epochId) < 256, 'v3 epoch capacity');
@@ -126,7 +131,7 @@ export class V3History {
       catch (e) { if (!/budget/i.test(e.message)) m.atomic(() => { m.put('error', row.key, { reason: String(e.message), expectedHash: row.value.hash }); m.put('control', 'objectAudit', progress); }); throw e; }
     }
   }
-  async value(path, expectedHash = null) { const raw = await this.cache.load(path, this.remote, expectedHash ?? this.node(path)?.hash); ensure(raw, 'v3 missing ancestor'); const o = match(path, raw); ensure(!this.node(path) || this.node(path).hash === sha(raw), 'v3 identity changed'); return o; }
+  async value(path, expectedHash = null) { const raw = await this.cache.load(path, this.remote, expectedHash ?? this.node(path)?.hash); ensure(raw, 'v3 missing ancestor'); const o = decode(raw,{registry:this.registry}); ensure(objectPath(o)===path); ensure(!this.node(path) || this.node(path).hash === sha(raw), 'v3 identity changed'); if(o.state)this.registry.validate(wireRecords(o.state.sharedRecords??[])); this.rememberDomain(path); return o; }
   tick() { this.budget.work('ancestry', 32768); }
   primaryAncestor(a, b) {
     const left = this.node(a); let right = this.node(b); ensure(left && right, 'v3 unverified ancestor'); if (left.depth > right.depth) return false;
@@ -168,11 +173,11 @@ export class V3History {
     const base = (await this.value(this.common(paths))).state, branches = [], bytes = paths.reduce((n, p) => n + this.node(p).size, 0);
     this.budget.work('merge bytes', 64 * 1024 * 1024, bytes * paths.length);
     for (const p of paths) branches.push((await this.value(p)).state);
-    for (let i = 0; i < branches.length; i++) for (let j = i + 1; j < branches.length; j++) ensure(!merge(base, branches[i], branches[j]).conflicts.length, 'v3 unresolved branch conflict');
-    let result = branches[0]; for (const b of branches.slice(1)) { const next = merge(base, result, b); ensure(!next.conflicts.length, 'v3 unresolved branch conflict'); result = next.state; } return result;
+    for (let i = 0; i < branches.length; i++) for (let j = i + 1; j < branches.length; j++) ensure(!merge(base, branches[i], branches[j],null,new Set(),[...this.registry.adapters.values()]).conflicts.length, 'v3 unresolved branch conflict');
+    let result = branches[0]; for (const b of branches.slice(1)) { const next = merge(base, result, b,null,new Set(),[...this.registry.adapters.values()]); ensure(!next.conflicts.length, 'v3 unresolved branch conflict'); result = next.state; } return result;
   }
   async verify(path, expectedHash = null) {
-    if (this.node(path)) { ensure(!expectedHash || this.node(path).hash === expectedHash, 'v3 reference identity changed'); this.meta.atomic(() => this.meta.remove('todo', path)); return this.node(path); }
+    if (this.node(path)) { if(!this.domainValidated.has(path))await this.value(path,expectedHash); ensure(!expectedHash || this.node(path).hash === expectedHash, 'v3 reference identity changed'); this.meta.atomic(() => this.meta.remove('todo', path)); return this.node(path); }
     const m = this.meta; let control = m.get('control', 'walk');
     if (!control) m.atomic(() => { control = { root: path, depth: 1, id: randomUUID() }; m.put('control', 'walk', control); m.put('stack:' + control.id, '0', { path, expectedHash }); });
     ensure(control.id, 'v3 unsupported private validation cursor'); const stack = 'stack:' + control.id, visiting = 'visiting:' + control.id;
@@ -191,8 +196,8 @@ export class V3History {
     if (!this.node(path)) return this.verify(path, expectedHash); ensure(!expectedHash || this.node(path).hash === expectedHash, 'v3 reference identity changed'); return this.node(path);
   }
   async verifyReady(path, expectedHash, fresh = null) {
-    if (this.node(path)) return; this.budget.work('validation', 256);
-    const bytes = fresh ? encode(fresh) : await this.cache.load(path, this.remote, expectedHash); ensure(bytes, 'v3 missing object'); const o = fresh ?? match(path, bytes); ensure(o.datasetId === this.datasetId && o.descriptorHash === this.descriptorHash && o.type !== 1, 'v3 descriptor identity');
+    if (this.node(path)) {if(!this.domainValidated.has(path))await this.value(path,expectedHash);return;} this.budget.work('validation', 256);
+    const bytes = fresh ? encode(fresh,{registry:this.registry}) : await this.cache.load(path, this.remote, expectedHash); ensure(bytes, 'v3 missing object'); const o = fresh ?? decode(bytes,{registry:this.registry}); ensure(objectPath(o)===path); if(o.state)this.registry.validate(wireRecords(o.state.sharedRecords??[])); ensure(o.datasetId === this.datasetId && o.descriptorHash === this.descriptorHash && o.type !== 1 && (o.format??3)===(this.node(this.descriptorPath).format??3), 'v3 descriptor identity');
     for (const r of o.refs) { const target = this.node(refPath(this.datasetId, r)); ensure(target && target.hash === r.hash && target.type === r.type && target.epochId === r.epochId && target.epochNumber === r.epochNumber && target.objectId === r.objectId && target.descriptorHash === this.descriptorHash, 'v3 reference identity'); }
     if (o.type === 2 && o.epochNumber > 1) { const source = o.refs.map(r => refPath(this.datasetId, r)); ensure(this.frontier(source).length === source.length, 'v3 checkpoint redundant frontier'); ensure(same(o.state, await this.merged(source)), 'v3 checkpoint extra edit'); }
     if (o.type === 3) { const parents = o.refs.filter(r => r.role === 1).map(r => this.node(refPath(this.datasetId, r))); ensure(parents.every(p => p.root && p.root === parents[0].root), 'v3 parent common root'); const late = o.refs.filter(r => r.role === 3); if (late.length) ensure(this.commonCandidates(o.refs.filter(r => [1, 3].includes(r.role)).map(r => refPath(this.datasetId, r))).includes(refPath(this.datasetId, o.refs.find(r => r.role === 4))), 'v3 unproven BASELINE'); }

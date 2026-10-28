@@ -30,7 +30,8 @@ data class ScheduleState(val events: List<CalendarEvent> = emptyList(), val entr
     val imported: List<ImportedClassOccurrence> = emptyList(),
     val dayAdjustments: List<DayAdjustment> = emptyList(), val classOverrides: List<ClassOverride> = emptyList(),
     val profiles: Map<String, TermScheduleProfile> = emptyMap(), val sync: SnapshotIdentity? = null,
-    val customProfileKeys: Set<String> = emptySet()) {
+    val customProfileKeys: Set<String> = emptySet(), val sharedRecords: List<SharedRecord>? = null) {
+    val sharedCourseParents by lazy { SharedCourseColors.parents(this) }
     val importedIndex by lazy { ImportedOccurrenceIndex(imported) }
     val daysByDate by lazy { dayAdjustments.associateBy { it.date } }
     val editsByKey by lazy { classOverrides.associateBy { it.key } }

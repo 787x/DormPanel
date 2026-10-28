@@ -20,6 +20,7 @@ object ScheduleSnapshotCodec {
     fun validate(s: ScheduleSnapshot) {
         uuid(s.datasetId); uuid(s.revision); s.parentRevision?.let { uuid(it); require(it != s.revision) }
         require(s.createdAt > 0 && s.state.invalidRecords == 0 && s.generation > 0 && (s.generation == 1L) == (s.parentRevision == null)) { "Invalid snapshot metadata" }
+        require(s.state.sharedRecords == null) { "Extended state requires DPV3/4; legacy export refused" }
         val v = s.state
         require(v.sync == null) { "Snapshot must contain schedule data, not local binding state" }
         fun <T> unique(rows: List<T>, max: Int, key: (T) -> String) {

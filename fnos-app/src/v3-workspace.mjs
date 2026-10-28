@@ -1,3 +1,6 @@
+import {sharedTypes} from './shared-types.mjs';
+import {Registry,wireRecords} from './shared-records.mjs';
+import {courseColorAdapter} from './shared-course-colors.mjs';
 import { randomUUID } from 'node:crypto';
 import { ensure } from './protocol.mjs';
 import { same } from './merge.mjs';
@@ -36,6 +39,11 @@ export async function openV3Workspace(directory, writable, installationIdentity 
     workspace.guard = writable; const engineFrames = new WeakSet();
     workspace.mutationGuard = (previous, next) => {
       writable(); const internal = engineFrames.delete(next);
+      if(!internal && !same(previous.local,next.local) && previous.local.sharedRecords!==undefined){
+        const registry=new Registry(sharedTypes);registry.writable(wireRecords(previous.local.sharedRecords));registry.writable(wireRecords(next.local.sharedRecords??[]));
+        const opaque=rows=>rows.filter(r=>!registry.supported(r));
+        ensure(JSON.stringify(opaque(previous.local.sharedRecords))===JSON.stringify(opaque(next.local.sharedRecords??[])),'Unknown optional records are read-only');
+      }
       ensure(internal || previous.v3?.hostIntent !== 'JOIN' || previous.v3?.baselinePath || same(previous.local,next.local), '首次加入历史验证未完成；暂停编辑，请继续同步');
       if (!internal && previous.v3 && !same(previous.local, next.local)) next.v3 = { ...previous.v3, revision: previous.v3.revision + 1, decision: null };
     };

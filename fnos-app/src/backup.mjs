@@ -30,7 +30,7 @@ async function readAt(file, bytes, position) {
   return bytes;
 }
 const privateV3File = name => {
-  const m=/^local-data\/(.*?)dormpanel-sync-v3\/(dataset-.*\.dpv)$/.exec(name);if(!m)return false;
+  const m=/^local-data\/(.*?)dormpanel-sync-v3(?:-shared)?\/(dataset-.*\.dpv)$/.exec(name);if(!m)return false;
   try{segments(m[1].replace(/\/$/,''));v3Path(m[2]);return true;}catch{return false;}
 };
 const privateFile = name => {
@@ -117,7 +117,8 @@ async function inventory(root, configPath) {
           const relative=logicalName.slice('local-data/'.length), marker=relative.indexOf('/dormpanel-sync-v3');
           if(marker>=0) {
             segments(relative.slice(0,marker));
-            const suffix=relative.slice(marker+'/dormpanel-sync-v3'.length);
+            const namespace=relative.slice(marker).startsWith('/dormpanel-sync-v3-shared')?'/dormpanel-sync-v3-shared':'/dormpanel-sync-v3';
+            const suffix=relative.slice(marker+namespace.length);
             ensure(!suffix || suffix.startsWith('/'),'私有 v3 协议目录无效');v3ScopeInfo(suffix?suffix.slice(1)+'/':'');
           }else segments(relative);
         }
@@ -177,7 +178,7 @@ async function verifyFiles(root, m, identity, configPath = null) {
   for (const f of m.files) {
     const b = await readBounded(configPath && f.name === 'config/webdav.json' ? configPath : await safePath(root, f.name));
     ensure(b.length === f.size && digest(b) === f.sha256, '备份文件长度或 SHA-256 不匹配');
-    if(privateV3File(f.name))v3Match(f.name.split('/dormpanel-sync-v3/')[1],b);
+    if(privateV3File(f.name))v3Match(f.name.split(/\/dormpanel-sync-v3(?:-shared)?\//)[1],b);
     if (f.name.endsWith('.dpc')) decode(b, /commit-([0-9a-f-]+)\.dpc$/.exec(f.name)[1]);
   }
   const store = new Store(root); store.identity = identity;

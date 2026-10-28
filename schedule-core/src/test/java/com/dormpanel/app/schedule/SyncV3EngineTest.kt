@@ -23,8 +23,8 @@ class SyncV3EngineTest {
         fun round(): String { val budget = V3Budget(); return engine.round(remote, remote, V3IndexedCache(dir, budget), budget, 32) }
         fun settle(rounds: Int = 3): String { var result = ""; repeat(rounds) { try { result = round() } catch (e: IllegalStateException) { if (!e.message.orEmpty().contains("incomplete")) throw e } }; return result }
     }
-    private fun client(remote: Remote, binding: JSONObject? = null): Client {
-        val dir = directory(); val journal = V3Journal(dir); val engine = V3Engine(journal, id())
+    private fun client(remote: Remote, binding: JSONObject? = null, registry: SharedTypeRegistry = SharedTypeRegistry(listOf(SharedCourseColor))): Client {
+        val dir = directory(); val journal = V3Journal(dir); val engine = V3Engine(journal, id(), registry)
         if (binding != null) engine.bind(SyncV3Codec.decode(requireNotNull(remote.read(binding.getString("descriptorPath")))), binding.getString("descriptorHash"))
         return Client(dir, journal, engine, remote)
     }
@@ -36,6 +36,146 @@ class SyncV3EngineTest {
         b.engine.edit(b.engine.local().copy(entries = b.engine.local().entries.map { if (it.id == "a") entry("a", "right") else it }))
         a.settle(); assertEquals("CONFLICT", b.settle(1)); val conflict = b.journal.snapshot().getJSONObject("conflict")
         b.engine.resolve(conflict.getString("id"), ScheduleMerge.Choice.LOCAL); b.settle(); a.settle(); assertEquals("right", a.engine.local().entries.single { it.id == "a" }.title)
+    }
+    private fun linkedRegistry() = SharedTypeRegistry(listOf(SharedCourseColor,object: SharedTypeAdapter {
+        override val typeId="test.note";override val schemaVersion=1;override val maxPayload=32
+        override fun validate(record:SharedRecord, records:List<SharedRecord>){require(record.payload.isNotEmpty())}
+        override fun relatedKeys(record:SharedRecord,state:ScheduleState)=setOf("class:x")
+    }))
+    @Test fun colorEditUsesInjectedRegistryAndPreservesRequiredAndOpaqueRecords() {
+        val required=SharedRecord("test.note","one",1,required=true,payload=listOf(97.toByte()))
+        val opaque=SharedRecord("future.optional","opaque",2,payload=listOf(0,127,-1).map(Int::toByte))
+        val initial=SharedCourseColors.change(ScheduleState(entries=listOf(entry("x"),entry("y")),
+            events=listOf(CalendarEvent("event","保留事件",1000,2000)),sharedRecords=emptyList()),null,"x",0x123456)
+            .let { it.copy(sharedRecords=it.sharedRecords!!+required+opaque) }
+        val a=client(Remote(),registry=linkedRegistry())
+        a.engine.initialize(a.remote,initial);a.settle();val before=a.engine.local()
+        fun preserved() {
+            val after=a.engine.local()
+            assertEquals(before.copy(sharedRecords=null),after.copy(sharedRecords=null))
+            assertEquals(before.sharedRecords!!.filter { it.typeId!="course.color" },after.sharedRecords!!.filter { it.typeId!="course.color" })
+            assertArrayEquals(SharedRecordCodec.encode(listOf(required,opaque)),SharedRecordCodec.encode(after.sharedRecords!!.filter { it.typeId!="course.color" }))
+        }
+        a.engine.setCourseColor(null,"x",0xabcdef)
+        assertEquals(0xabcdef,SharedCourseColors.rgb(a.engine.local(),null,"x"));preserved()
+        a.engine.setCourseColor(null,"x",null)
+        assertEquals("AUTO",SharedCourseColors.display(a.engine.local(),null,"x").status);preserved()
+        val current=a.engine.local()
+        val futureColor=current.copy(sharedRecords=current.sharedRecords!!.map { if(it.typeId=="course.color")it.copy(schemaVersion=2) else it })
+        assertThrows(Exception::class.java) { SharedCourseColors.change(futureColor,null,"x",0xff0000,linkedRegistry()) }
+        val unknownDependency=current.copy(sharedRecords=current.sharedRecords!!.map { if(it.typeId=="test.note")it.copy(dependencies=listOf("future.dependency")) else it })
+        assertThrows(Exception::class.java) { SharedCourseColors.change(unknownDependency,null,"x",0xff0000,linkedRegistry()) }
+        val writer=a.journal.snapshot().getString("writerId")
+        val defaultEngine=V3Engine(a.journal,writer)
+        assertThrows(Exception::class.java) { defaultEngine.setCourseColor(null,"x",0xff0000) }
+        assertEquals(current,defaultEngine.local())
+        assertThrows(Exception::class.java) { a.engine.setCourseColor(null,"x",0xff0000,expectedHash="stale") }
+        assertEquals(current,a.engine.local())
+        a.journal.meta.fault={if(it=="before-commit")error("injected rollback")}
+        assertThrows(Exception::class.java) { a.engine.setCourseColor(null,"x",0xff0000) }
+        a.journal.meta.fault=null;assertEquals(current,a.engine.local());a.journal.close()
+    }
+    @Test fun customRegistryRejectsMalformedHistoryAndUnregisteredPeerPreservesIt() {
+        val remote=Remote();val seed=client(remote);val binding=seed.engine.initialize(remote,ScheduleState(entries=listOf(entry("x")),sharedRecords=emptyList()));seed.settle()
+        val known=client(remote,binding,linkedRegistry());known.settle();val before=known.journal.snapshot()
+        val parentRaw=remote.objects.getValue(before.getString("baselinePath"));val parent=SyncV3Codec.decode(parentRaw)
+        val note=SharedRecord("test.note","one",1,payload=emptyList())
+        val bad=parent.copy(type=3,objectId=id(),refs=listOf(V3Ref(1,parent.type,parent.epochId,parent.epochNumber,parent.objectId,SyncV3Codec.hash(parentRaw))),state=parent.state!!.copy(sharedRecords=listOf(note)))
+        remote.objects[V3Paths.path(bad)]=SyncV3Codec.encode(bad)
+        var rejected=false;repeat(5){if(!rejected)try{known.round()}catch(e:Exception){rejected=true}};assertTrue(rejected)
+        val after=known.journal.snapshot();listOf("local","baseline","pending").forEach{assertEquals(before.opt(it)?.toString(),after.opt(it)?.toString())}
+        val old=client(remote,binding);old.settle(5);assertEquals(listOf(note),old.engine.local().sharedRecords)
+        val writer=known.journal.snapshot().getString("writerId");known.journal.close();val j=V3Journal(known.dir);val resumed=Client(known.dir,j,V3Engine(j,writer,linkedRegistry()),remote)
+        assertThrows(Exception::class.java){resumed.round()};resumed.journal.close();seed.journal.close();old.journal.close()
+    }
+    @Test fun customAssociationCoversHistoryPlanAndReopenedDecision() {
+        val registry=linkedRegistry();val remote=Remote();val a=client(remote,registry=registry)
+        val note=SharedRecord("test.note","one",1,payload=listOf(97.toByte()))
+        val base=ScheduleState(entries=listOf(entry("x"),entry("y")),sharedRecords=listOf(note))
+        val binding=a.engine.initialize(remote,base);a.settle();val raw=remote.objects.getValue(a.journal.snapshot().getString("baselinePath"));val parent=SyncV3Codec.decode(raw)
+        val left=base.copy(entries=listOf(entry("y")));val right=base.copy(sharedRecords=listOf(note.copy(payload=listOf(98.toByte()))))
+        assertEquals(1,ScheduleMerge.merge(base,left,right,sharedRegistry=registry).conflicts.size)
+        assertTrue(ScheduleMerge.merge(base,base.copy(entries=listOf(entry("x"),entry("y","changed"))),right,sharedRegistry=registry).conflicts.isEmpty())
+        fun branch(state:ScheduleState)=parent.copy(type=3,objectId=id(),refs=listOf(V3Ref(1,parent.type,parent.epochId,parent.epochNumber,parent.objectId,SyncV3Codec.hash(raw))),state=state)
+        val l=branch(left);val r=branch(right);listOf(l,r).forEach{remote.objects[V3Paths.path(it)]=SyncV3Codec.encode(it)}
+        val budget=V3Budget();val h=V3History(a.journal,V3IndexedCache(a.dir,budget),remote,binding.getString("descriptorPath"),binding.getString("descriptorHash"),budget,registry).open()
+        listOf(l,r).forEach{h.verify(V3Paths.path(it))};assertThrows(Exception::class.java){h.merged(listOf(V3Paths.path(l),V3Paths.path(r)))}
+        assertEquals("CONFLICT",a.settle());val writer=a.journal.snapshot().getString("writerId");a.journal.close()
+        val j=V3Journal(a.dir);val resumed=Client(a.dir,j,V3Engine(j,writer,registry),remote)
+        resumed.engine.resolve(j.snapshot().getJSONObject("conflict").getString("id"),ScheduleMerge.Choice.LOCAL);resumed.settle()
+        assertEquals(listOf(note),resumed.engine.local().sharedRecords);assertTrue(resumed.engine.local().entries.any{it.id=="x"});assertEquals("b4496b6ccdaed04e6bd25b6494ec72bd9a22f21018e844dafecfb21f92eac7de",SyncV3Codec.businessHash(resumed.engine.local(),registry));j.close()
+    }
+    @Test fun secondRegisteredTypeUsesSameWriterAndOlderClientPreservesIt() {
+        val adapter=object: SharedTypeAdapter {
+            override val typeId="test.note";override val schemaVersion=1;override val maxPayload=32
+            override fun validate(record: SharedRecord, records: List<SharedRecord>) { require(record.payload.isNotEmpty()) }
+        }
+        val remote=Remote();val a=client(remote,registry=SharedTypeRegistry(listOf(SharedCourseColor,adapter)))
+        val binding=a.engine.initialize(remote,ScheduleState(entries=listOf(entry("x")),sharedRecords=emptyList()));a.settle()
+        val record=SharedRecord("test.note","one",1,payload="opaque".toByteArray().toList())
+        a.engine.edit { it.copy(sharedRecords=listOf(record)) };a.settle()
+        val b=client(remote,binding);b.settle();b.engine.edit { it.copy(entries=listOf(entry("x","older edit"))) };b.settle();a.settle()
+        assertEquals(listOf(record),a.engine.local().sharedRecords)
+        val budget=V3Budget();val cache=V3IndexedCache(a.dir,budget)
+        val history=V3History(a.journal,cache,remote,binding.getString("descriptorPath"),binding.getString("descriptorHash"),budget).open()
+        val path=a.journal.snapshot().getString("baselinePath");history.verify(path);val epoch=history.objectMetadata(path).epochId
+        a.engine.rotate(history,remote,epoch,history.epochTips(epoch));a.settle();b.settle()
+        assertEquals(listOf(record),b.engine.local().sharedRecords)
+        a.journal.close();b.journal.close()
+    }
+    @Test fun malformedKnownRemotePreservesLocalBaselineAndPending() {
+        val remote=Remote();val a=client(remote);a.engine.initialize(remote,ScheduleState(entries=listOf(entry("x")),sharedRecords=emptyList()));a.settle()
+        a.engine.setCourseColor(null,"x",0x010203);a.settle();val before=a.journal.snapshot()
+        val parentBytes=remote.objects.getValue(before.getString("baselinePath"));val parent=SyncV3Codec.decode(parentBytes)
+        val child=parent.copy(type=3,objectId=id(),refs=listOf(V3Ref(1,parent.type,parent.epochId,parent.epochNumber,parent.objectId,SyncV3Codec.hash(parentBytes))))
+        val bytes=SyncV3Codec.encode(child);val body=bytes.copyOfRange(0,bytes.size-32);val marker=byteArrayOf(0,0,0,4,1,1,2,3)
+        val pos=(0..body.size-marker.size).first { body.copyOfRange(it,it+marker.size).contentEquals(marker) };body[pos+4]=2
+        remote.objects[V3Paths.path(child)]=body+java.security.MessageDigest.getInstance("SHA-256").digest(body)
+        var refused=false;repeat(6){if(!refused)try{a.round()}catch(e:Exception){refused=true}}
+        assertTrue(refused);val after=a.journal.snapshot()
+        listOf("local","baseline","pending").forEach { assertEquals(before.opt(it)?.toString(),after.opt(it)?.toString()) };a.journal.close()
+    }
+    @Test fun sharedUpgradeRejectsIdenticalBytesAfterUnpublishedSourceEdit() {
+        val remote=Remote();val source=client(remote);source.engine.initialize(remote,ScheduleState(entries=listOf(entry("x"))));source.settle()
+        val capture=remote.objects.getValue(source.journal.snapshot().getString("baselinePath"));val target=client(remote)
+        val p=target.engine.previewSharedUpgrade(capture,source.engine)
+        source.engine.edit { it.copy(entries=listOf(entry("x","unpublished"))) }
+        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(p.getString("id"),capture,remote,source.engine)}
+        assertThrows(Exception::class.java){target.engine.previewSharedUpgrade(capture,source.engine)}
+        assertFalse(target.journal.snapshot().has("binding"));source.settle()
+        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(p.getString("id"),capture,remote,source.engine)}
+        target.journal.close();source.journal.close()
+    }
+    @Test fun sharedUpgradeCancellationAndReadbackRecoveryPreservesSource() {
+        val remote=Remote();val source=client(remote);source.engine.initialize(remote,ScheduleState(entries=listOf(entry("x"))));source.settle()
+        val original=source.journal.snapshot().toString();val capture=remote.objects.getValue(source.journal.snapshot().getString("baselinePath"))
+        val target=client(remote);val cancelled=target.engine.previewSharedUpgrade(capture,source.engine);target.engine.cancelSharedUpgrade(cancelled.getString("id"))
+        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(cancelled.getString("id"),capture,remote,source.engine)}
+        assertFalse(target.journal.snapshot().has("binding"))
+        val preview=target.engine.previewSharedUpgrade(capture,source.engine);remote.loseResponse=true
+        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(preview.getString("id"),capture,remote,source.engine)}
+        target.journal.close();val reopened=V3Journal(target.dir)
+        val resumed=Client(target.dir,reopened,V3Engine(reopened,reopened.snapshot().getString("writerId")),remote)
+        remote.loseResponse=false;resumed.engine.confirmSharedUpgrade(preview.getString("id"),capture,remote,source.engine);resumed.settle()
+        assertEquals(emptyList<SharedRecord>(),resumed.engine.local().sharedRecords);assertEquals(original,source.journal.snapshot().toString())
+        assertEquals(preview.getString("targetDatasetId"),resumed.journal.snapshot().getJSONObject("binding").getString("datasetId"))
+        resumed.journal.close();source.journal.close()
+    }
+    @Test fun extendedUnknownSurvivesWriterReceiptAndReopen() {
+        val remote = Remote(); val a = client(remote)
+        val extra = SharedRecord("test.note", "one", 1, payload = "opaque".toByteArray().toList())
+        val initial = ScheduleState(entries = listOf(entry("x")), sharedRecords = listOf(extra))
+        val binding = a.engine.initialize(remote, initial); a.settle()
+        val b = client(remote, binding); b.settle()
+        assertEquals(listOf(extra), b.engine.local().sharedRecords)
+        b.engine.edit { it.copy(entries = listOf(entry("x", "renamed"))) }; b.settle(); a.settle()
+        assertEquals("renamed", a.engine.local().entries.single().title)
+        assertEquals(listOf(extra), a.engine.local().sharedRecords)
+        assertEquals(4, SyncV3Codec.decode(remote.read(binding.getString("descriptorPath"))!!).format)
+        assertNotEquals(SyncV3Codec.businessHash(initial), SyncV3Codec.businessHash(initial.copy(sharedRecords = emptyList())))
+        b.journal.close(); val reopened = V3Journal(b.dir)
+        assertEquals(listOf(extra), V3Engine(reopened, reopened.snapshot().getString("writerId")).local().sharedRecords)
+        reopened.close(); a.journal.close()
     }
     @Test fun indexedCacheMoreThan4096EntriesAndColdStart() {
         val root = directory(); var cache = V3IndexedCache(root, V3Budget()); var last: V3Object? = null

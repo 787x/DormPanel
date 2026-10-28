@@ -6,7 +6,7 @@ data class ScheduleV2Frame(val local: ScheduleState, val baseline: ScheduleCommi
     val writerId: String, val pending: ByteArray?, val attempted: Boolean, val conflict: ScheduleV2Plan?, val abandoned: Map<String, String> = emptyMap(), val unverifiable: Set<String> = emptySet())
 
 /** Immutable inputs to a durable conflict decision. Branch order is commit UUID order, not priority. */
-data class ScheduleV2Plan(val base: ScheduleCommit, val localBase: ScheduleCommit, val branches: List<ScheduleCommit>) {
+data class ScheduleV2Plan(val base: ScheduleCommit, val localBase: ScheduleCommit, val branches: List<ScheduleCommit>, private val sharedRegistry: SharedTypeRegistry = SharedTypes.registry()) {
     fun merge(local: ScheduleState, choice: ScheduleMerge.Choice? = null): ScheduleMerge.Result {
         val conflicts = linkedMapOf<String, ScheduleMerge.Conflict>()
         val details = mutableMapOf<String, LinkedHashSet<String>>()
@@ -17,7 +17,7 @@ data class ScheduleV2Plan(val base: ScheduleCommit, val localBase: ScheduleCommi
             conflicts[c.key] = if (old == null) c else old.copy(keys = old.keys + c.keys)
         }
         branches.forEachIndexed { i, a -> branches.drop(i + 1).forEachIndexed { offset, b ->
-            ScheduleMerge.merge(base.state, a.state, b.state, maxConflicts = 256).conflicts.forEach { c ->
+            ScheduleMerge.merge(base.state, a.state, b.state, maxConflicts = 256, sharedRegistry = sharedRegistry).conflicts.forEach { c ->
                 remember(c)
                 val text = c.description.replace("\n本地：", "\n远端版本 ${i + 1}：")
                     .replace("\n远端：", "\n远端版本 ${i + offset + 2}：").take(4000)
@@ -29,11 +29,11 @@ data class ScheduleV2Plan(val base: ScheduleCommit, val localBase: ScheduleCommi
         } }
         var remote = branches.first().state
         branches.drop(1).forEach {
-            val next = ScheduleMerge.merge(base.state, remote, it.state, ScheduleMerge.Choice.REMOTE, maxConflicts = 256)
+            val next = ScheduleMerge.merge(base.state, remote, it.state, ScheduleMerge.Choice.REMOTE, maxConflicts = 256, sharedRegistry = sharedRegistry)
             remote = next.state; next.conflicts.forEach(::remember)
         }
-        val result = ScheduleMerge.merge(localBase.state, local, remote, choice, conflicts.values.flatMap { it.keys }.toSet(), maxConflicts = 256)
-        val displayed = (result.conflicts + conflicts.values).distinctBy { it.key }.map { c ->
+        val result = ScheduleMerge.merge(localBase.state, local, remote, choice, conflicts.values.flatMap { it.keys }.toSet(), maxConflicts = 256, sharedRegistry = sharedRegistry)
+        val displayed = (result.conflicts + conflicts.values).groupBy { it.key }.values.map { rows -> rows.first().copy(keys=rows.flatMap { it.keys }.toSet()) }.map { c ->
             val related = c.keys.flatMap { details[it].orEmpty() }.distinct()
             if (related.isEmpty()) c else c.copy(description = c.description + "\n远端版本之间的差异：\n" + related.take(8).joinToString("\n") +
                 if (related.size > 8 || c.keys.any { it in truncated }) "\n另有远端差异已完整保存；可暂不处理。" else "")
@@ -45,7 +45,7 @@ data class ScheduleV2Plan(val base: ScheduleCommit, val localBase: ScheduleCommi
         branches.sortedBy { it.commitId }.forEach { append(digest(ScheduleCommitCodec.encode(it))) }
     }.toByteArray(Charsets.US_ASCII))
     fun remoteState(): ScheduleState = branches.drop(1).fold(branches.first().state) { state, branch ->
-        ScheduleMerge.merge(base.state, state, branch.state, ScheduleMerge.Choice.REMOTE, maxConflicts = 256).state
+        ScheduleMerge.merge(base.state, state, branch.state, ScheduleMerge.Choice.REMOTE, maxConflicts = 256, sharedRegistry = sharedRegistry).state
     }
 }
 

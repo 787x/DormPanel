@@ -62,6 +62,7 @@ class Writer {
 }
 export function stateBytes(state) { const w = new Writer(); for (const [name, , key, schema] of schemas) w.rows(state[name], schema, key); return w.bytes(); }
 export function encode(commit) {
+  ensure(commit.state.sharedRecords===undefined, "Extended state requires DPV3/4");
   validate(commit.state); [commit.datasetId, commit.commitId, commit.writerId, ...commit.parents].forEach(uuid);
   ensure(commit.parents.length <= 64 && new Set(commit.parents).size === commit.parents.length && !commit.parents.includes(commit.commitId));
   const p = new Writer(); p.t(commit.datasetId); p.t(commit.commitId); p.value('n', null); p.l(1); p.l(1); p.add(stateBytes(commit.state));

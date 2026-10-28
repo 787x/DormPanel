@@ -67,7 +67,8 @@ test('Catalog v3: 非空加入不覆盖；备份、旧历史和连接切换有�
   await assert.rejects(b.sync({ bind: true, ...candidate }), /本地非空/);
   assert.equal(b.db().frame.datasetId, null); assert.equal(b.db().frame.local.entries[0].title, 'retained');
   const c = b.catalog.connection(b.catalog.row(b.id).connectionId);
-  await assert.rejects(b.manage({ action: 'connection.save', connectionId: c.id, url: 'https://other.test/' }), /v3 连接变更/);
+  await assert.rejects(b.manage({ action: 'connection.save', connectionId: c.id, url: 'https://other.test/' }), /重新输入密码/);
+  await assert.rejects(b.manage({ action: 'connection.save', connectionId: c.id, url: 'https://other.test/', password: 'new-test-password' }), /v3 连接变更/);
   const backup = new BackupManager({ catalog: b.catalog, configPath: b.options.configPath });
   await assert.rejects(backup.create({}), /口令/);
   await assert.rejects(backup.restore({}), /预览/);

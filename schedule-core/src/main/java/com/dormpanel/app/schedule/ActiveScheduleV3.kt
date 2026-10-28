@@ -160,7 +160,7 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
     fun prepare(seed: ScheduleState, folder: String, descriptor: ByteArray? = null,
         migration: ScheduleV3MigrationPreview? = null, validateBefore: () -> Unit = {}) {
         check(!active(database)) { "已有活动协议；禁止重复切换" }
-        val mode = JSONObject().put("protocol", "v3").put("folder", folder).put("intent", if (descriptor == null) "CREATE" else "JOIN").put("phase","CREATING")
+        val mode = JSONObject().put("format", if (descriptor != null) SyncV3Codec.decode(descriptor).format else if (seed.sharedRecords != null) 4 else 3).put("protocol", "v3").put("folder", folder).put("intent", if (descriptor == null) "CREATE" else "JOIN").put("phase","CREATING")
         if (migration != null) mode.put("migrationId", migration.transactionId).put("phase", "MIGRATING")
         if (descriptor != null) {
             val d = SyncV3Codec.decode(descriptor); require(d.type == 1)
@@ -173,14 +173,14 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
             validateBefore()
             if(migration!=null) journal.meta.put("hostMigration",migration.transactionId,migration.evidence())
             val raw = ScheduleSnapshotCodec.encode(ScheduleSnapshot(UUID.randomUUID().toString(), UUID.randomUUID().toString(), null,
-                System.currentTimeMillis(), (migration?.frame?.local ?: seed).copy(sync = null), 1))
+                System.currentTimeMillis(), (migration?.frame?.local ?: seed).copy(sync = null, sharedRecords = null), 1))
             database.dao().checkpoint(ScheduleSyncCheckpoint(ORIGINAL_LOCAL, raw))
             database.dao().checkpoint(ScheduleSyncCheckpoint(MODE, mode.toString().toByteArray(Charsets.UTF_8)))
             frame.put("writerId", writer).put("local", encoded).put("revision", 0)
         }
     }
     fun synchronize(account: WebDavAccount): String = synchronized(journal.networkGate) {
-        val b = binding(); val budget = V3Budget(); val remote = V3WebDavStore(account, b.getString("folder"), budget)
+        val b = binding(); val budget = V3Budget(); val remote = V3WebDavStore(account, b.getString("folder"), budget, sharedFormat = b.optInt("format",3) == 4)
         val accessKey=endpointKey(remote,account)
         if(!b.has("endpointKey")) {
             check(!journal.controlSummary().has("binding")) { "旧草案绑定缺少端点身份；保留本地数据与候选，拒绝猜测新帐号身份" }

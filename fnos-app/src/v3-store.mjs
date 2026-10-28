@@ -73,8 +73,8 @@ export function parseListing(xml, base, parent) {
 export class V3WebDavStore {
   constructor(config, budget) {
     this.config = config; this.budget = budget; const u = new URL(config.url);
-    ensure(!u.pathname.split('/').some(p => ['dormpanel-sync-v2', 'dormpanel-sync-v3'].includes(decodeURIComponent(p))));
-    this.base = new URL('dormpanel-sync-v3/', u); new WebDav(config);
+    ensure(!u.pathname.split('/').some(p => ['dormpanel-sync-v2', 'dormpanel-sync-v3', 'dormpanel-sync-v3-shared'].includes(decodeURIComponent(p))));
+    this.base = new URL(config.sharedFormat===1?'dormpanel-sync-v3-shared/':'dormpanel-sync-v3/', u); new WebDav(config);
   }
   async request(method, path, max, bytes) {
     this.budget.charge(bytes?.length ?? 0);
@@ -87,9 +87,9 @@ export class V3WebDavStore {
     // A missing collection is explicit failure, never evidence of an empty/unique dataset.
     ensure(raw !== null, 'v3 missing collection'); return parseListing(new TextDecoder('utf8', { fatal: true }).decode(raw), new URL(parent, this.base), parent);
   }
-  async read(path) { file(path); const raw = await this.request('GET', path, MAX_OBJECT); if (raw) match(path, raw); return raw; }
+  async read(path) { file(path); const raw = await this.request('GET', path, MAX_OBJECT); if (raw) ensure((match(path, raw).format??3)===(this.config.sharedFormat===1?4:3),'Protocol namespace mismatch'); return raw; }
   /** One transport PUT only. A durable V3Publisher owns attempted/readback/receipt. */
-  async putOnce(path, raw) { match(path, raw); await this.request('PUT', path, 65536, raw); }
+  async putOnce(path, raw) { ensure((match(path, raw).format??3)===(this.config.sharedFormat===1?4:3),'Protocol namespace mismatch'); await this.request('PUT', path, 65536, raw); }
   checkPutBudget(size) { this.budget.charge(0, 0); ensure(size <= this.budget.bytes && this.budget.requests >= 1, 'v3 budget exhausted before PUT intent'); }
   async prepareForIsolatedTest(parent) { return this.prepare(parent); }
   async prepare(parent) {
@@ -102,7 +102,7 @@ export class V3WebDavStore {
     }
   }
   async createForIsolatedTest(path, raw, beforeWriteIntent) {
-    match(path, raw); const old = await this.read(path); if (old) { ensure(old.equals(raw), 'v3 occupied'); return; }
+    ensure((match(path,raw).format??3)===(this.config.sharedFormat===1?4:3),'Protocol namespace mismatch'); const old = await this.read(path); if (old) { ensure(old.equals(raw), 'v3 occupied'); return; }
     await beforeWriteIntent(); await this.request('PUT', path, 65536, raw);
     ensure((await this.read(path))?.equals(raw), 'v3 uncertain write; do not retry PUT');
   }
@@ -116,7 +116,7 @@ export class V3LocalStore {
     this.budget.charge();
     const selected = await this.grants.directory(this.config.rootId, this.config.relative, this.config.directoryIdentity);
     try {
-      ensure(!selected.path.split('/').some(p => ['dormpanel-sync-v2', 'dormpanel-sync-v3'].includes(p)), 'v3 parent is inside protocol namespace');
+      ensure(!selected.path.split('/').some(p => ['dormpanel-sync-v2', 'dormpanel-sync-v3', 'dormpanel-sync-v3-shared'].includes(p)), 'v3 parent is inside protocol namespace');
       if (this.config.protected) ensure(((await selected.fd.stat()).mode & 0o777) === 0o700, 'v3 protected permissions changed');
       return selected;
     } catch (e) { await selected.fd.close(); throw e; }
@@ -124,7 +124,7 @@ export class V3LocalStore {
   async directory(parent, create = false) {
     scope(parent); let { fd } = await this.parent();
     try {
-      for (const part of ['dormpanel-sync-v3', ...parent.split('/').filter(Boolean)]) {
+      for (const part of [this.config.sharedFormat===1?'dormpanel-sync-v3-shared':'dormpanel-sync-v3', ...parent.split('/').filter(Boolean)]) {
         if (create) { try { await mkdir(fdPath(fd, part), { mode: 0o700 }); await fd.sync(); } catch (e) { if (e.code !== 'EEXIST') throw e; } }
         const next = await open(fdPath(fd, part), dirs); await fd.close(); fd = next;
       }
@@ -153,7 +153,7 @@ export class V3LocalStore {
       const after = await f.stat(); ensure(n === s.size && s.size === after.size && s.ctimeMs === after.ctimeMs && s.mtimeMs === after.mtimeMs);
       const current = await open(fdPath(fd, path.split('/').at(-1)), C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
       try { const actual = await current.stat(); ensure(actual.dev === s.dev && actual.ino === s.ino, 'v3 local path replaced'); } finally { await current.close(); }
-      const raw = b.subarray(0, n); match(path, raw); return raw;
+      const raw = b.subarray(0, n); ensure((match(path,raw).format??3)===(this.config.sharedFormat===1?4:3),'Protocol namespace mismatch'); return raw;
     } catch (e) { if (e.code === 'ENOENT') return null; throw e; } finally { await f?.close(); await fd?.close(); }
   }
   async createForIsolatedTest(path, raw, beforeWriteIntent) { return this.publishNew(path, raw, beforeWriteIntent); }
@@ -162,7 +162,7 @@ export class V3LocalStore {
   async putOnce(path, raw) { return this.publishNew(path, raw, async () => {}); }
   async publishNew(path, raw, beforeWriteIntent) {
     raw = Buffer.from(raw);
-    match(path, raw); const old = await this.read(path); if (old) { ensure(old.equals(raw), 'v3 occupied'); return; }
+    ensure((match(path,raw).format??3)===(this.config.sharedFormat===1?4:3),'Protocol namespace mismatch'); const old = await this.read(path); if (old) { ensure(old.equals(raw), 'v3 occupied'); return; }
     let protocol, parent, stage, f, created = false;
     const stageName = '.v3-stage-' + randomUUID();
     try {

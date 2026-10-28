@@ -47,7 +47,7 @@ object V3Paths {
         requireNotNull(match); ScheduleCommitCodec.uuid(match.groupValues[2]); require(match.groupValues[2] != SyncV3Codec.ZERO)
         require(if (match.groupValues[1] == "descriptor") info.kind == "dataset" else info.kind == "epoch")
     }
-    fun match(path: String, raw: ByteArray): V3Object { file(path); return SyncV3Codec.decode(raw).also { require(path(it) == path) } }
+    fun match(path: String, raw: ByteArray, registry: SharedTypeRegistry = SharedTypes.registry()): V3Object { file(path); return SyncV3Codec.decode(raw,registry).also { require(path(it) == path) } }
     fun child(scope: String, name: String, directory: Boolean): String {
         val info = describe(scope)
         val p = scope + name + if (directory) "/" else ""
@@ -74,11 +74,11 @@ interface V3ObjectStore {
 }
 
 class V3WebDavStore(private val account: WebDavAccount, folder: String,
-    val budget: V3Budget, private val client: WebDavClient = WebDavClient()) : V3ObjectStore, V3PublicationStore {
+    val budget: V3Budget, private val client: WebDavClient = WebDavClient(), private val sharedFormat: Boolean = false) : V3ObjectStore, V3PublicationStore {
     private val base = client.url(folder).also {
-        require(it.encodedPath.endsWith('/') && it.pathSegments.none { s -> s in listOf("dormpanel-sync-v2", "dormpanel-sync-v3") || '/' in s || '\\' in s || '\u0000' in s })
+        require(it.encodedPath.endsWith('/') && it.pathSegments.none { s -> s in listOf("dormpanel-sync-v2", "dormpanel-sync-v3", "dormpanel-sync-v3-shared") || '/' in s || '\\' in s || '\u0000' in s })
         require(it.scheme == client.url(account.baseUrl).scheme && it.host == client.url(account.baseUrl).host && it.port == client.url(account.baseUrl).port)
-    }.newBuilder().addPathSegment("dormpanel-sync-v3").addPathSegment("").build().toString()
+    }.newBuilder().addPathSegment(if (sharedFormat) "dormpanel-sync-v3-shared" else "dormpanel-sync-v3").addPathSegment("").build().toString()
     private fun url(path: String) = base + path
     fun endpointIdentity() = base
     override fun list(scope: String): List<String> {
@@ -98,7 +98,7 @@ class V3WebDavStore(private val account: WebDavAccount, folder: String,
     }
     override fun read(path: String): ByteArray? {
         V3Paths.file(path); budget.charge()
-        return client.readResource(account, url(path), budget.readLimit(SyncV3Codec.MAX_BYTES))?.bytes?.also { budget.charge(it.size.toLong(), 0); V3Paths.match(path, it) }
+        return client.readResource(account, url(path), budget.readLimit(SyncV3Codec.MAX_BYTES))?.bytes?.also { budget.charge(it.size.toLong(), 0); require(V3Paths.match(path, it).format == if (sharedFormat) 4 else 3) }
     }
     private val listingHttp = okhttp3.OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
@@ -146,11 +146,11 @@ class V3WebDavStore(private val account: WebDavAccount, folder: String,
         var p = ""; scope.split('/').filter { it.isNotEmpty() }.forEach { part -> p += "$part/"; budget.charge(); client.makeCollection(account, url(p)) }
     }
     override fun putOnce(path: String, raw: ByteArray) {
-        V3Paths.match(path, raw); budget.charge(raw.size.toLong()); client.ordinaryPut(account, url(path), raw)
+        require(V3Paths.match(path, raw).format == if (sharedFormat) 4 else 3); budget.charge(raw.size.toLong()); client.ordinaryPut(account, url(path), raw)
     }
     fun checkPutBudget(size: Int) = budget.checkPut(size)
     override fun createForIsolatedTest(path: String, bytes: ByteArray, beforeWriteIntent: () -> Unit) {
-        V3Paths.match(path, bytes)
+        require(V3Paths.match(path, bytes).format == if (sharedFormat) 4 else 3)
         val existing = read(path)
         if (existing != null) { check(existing.contentEquals(bytes)) { "v3 occupied" }; return }
         budget.charge(bytes.size.toLong()); beforeWriteIntent()

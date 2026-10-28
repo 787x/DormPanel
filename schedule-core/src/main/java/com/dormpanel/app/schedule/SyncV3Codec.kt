@@ -11,7 +11,7 @@ data class V3Ref(val role: Int, val type: Int, val epochId: String, val epochNum
 data class V3Object(val type: Int, val datasetId: String, val objectId: String, val writerId: String,
     val epochId: String = SyncV3Codec.ZERO, val epochNumber: Int = 0,
     val descriptorHash: String = SyncV3Codec.ZERO_HASH, val refs: List<V3Ref> = emptyList(),
-    val state: ScheduleState? = null)
+    val state: ScheduleState? = null, val format: Int = if (state?.sharedRecords != null) 4 else 3)
 
 object SyncV3Codec {
     const val ZERO = "00000000-0000-0000-0000-000000000000"
@@ -23,18 +23,32 @@ object SyncV3Codec {
     fun hashValue(s: String) { require(s.matches(Regex("[0-9a-f]{64}"))) }
     private fun unhex(s: String): ByteArray { hashValue(s); return s.chunked(2).map { it.toInt(16).toByte() }.toByteArray() }
     private fun canonicalSnapshot(s: ScheduleState): ByteArray = ScheduleCommitCodec.encode(
-        ScheduleCommit(ZERO, ZERO, ZERO, emptyList(), s)).let { it.copyOfRange(124, it.size - 32) }
+        ScheduleCommit(ZERO, ZERO, ZERO, emptyList(), s.copy(sharedRecords = null))).let { it.copyOfRange(124, it.size - 32) }
     /** The eight canonical DPSS collections, without snapshot identities or envelope. */
-    fun stateBytes(s: ScheduleState): ByteArray = canonicalSnapshot(s).let { it.copyOfRange(109, it.size - 32) }
-    fun businessHash(s: ScheduleState): String = hash("DPBS".toByteArray(Charsets.US_ASCII) + byteArrayOf(0, 0, 0, 1) +
-        stateBytes(s.copy(sources = s.sources.map { it.copy(importedAt = 0) })))
-    private fun readState(raw: ByteArray): ScheduleState {
+    fun legacyStateBytes(s: ScheduleState): ByteArray = canonicalSnapshot(s).let { it.copyOfRange(109, it.size - 32) }
+    fun stateBytes(s: ScheduleState, registry: SharedTypeRegistry = SharedTypes.registry()): ByteArray {
+        val records = s.sharedRecords ?: return legacyStateBytes(s)
+        registry.validate(records)
+        val legacy = legacyStateBytes(s); val ext = SharedRecordCodec.encode(records)
+        return ByteArrayOutputStream().also { b -> DataOutputStream(b).use {
+            it.writeInt(0x44505853); it.writeInt(1); it.writeInt(legacy.size); it.write(legacy); it.writeInt(ext.size); it.write(ext)
+        } }.toByteArray().also { require(it.size <= ScheduleSnapshotCodec.MAX_BYTES) }
+    }
+    fun businessHash(s: ScheduleState, registry: SharedTypeRegistry = SharedTypes.registry()): String = hash("DPBS".toByteArray(Charsets.US_ASCII) + byteArrayOf(0, 0, 0, 1) +
+        stateBytes(s.copy(sources = s.sources.map { it.copy(importedAt = 0) }),registry))
+    private fun readState(raw: ByteArray, format: Int = 3, registry: SharedTypeRegistry = SharedTypes.registry()): ScheduleState {
+        if (format == 4) return DataInputStream(raw.inputStream()).use { input ->
+            require(input.readInt() == 0x44505853 && input.readInt() == 1)
+            fun block(): ByteArray { val n = input.readInt(); require(n >= 0 && n <= input.available()); return ByteArray(n).also(input::readFully) }
+            val legacy = block(); val ext = block(); require(input.available() == 0)
+            readState(legacy, registry=registry).copy(sharedRecords = SharedRecordCodec.decode(ext)).also { require(stateBytes(it,registry).contentEquals(raw)) }
+        }
         val prefix = canonicalSnapshot(ScheduleState()).copyOfRange(12, 109)
         val payload = prefix + raw
         val b = ByteArrayOutputStream()
         DataOutputStream(b).use { it.writeInt(0x44505353); it.writeInt(1); it.writeInt(payload.size); it.write(payload); it.write(unhex(hash(payload))) }
         val state = ScheduleSnapshotCodec.decode(b.toByteArray()).state
-        require(stateBytes(state).contentEquals(raw)) { "Noncanonical business state" }
+        require(stateBytes(state,registry).contentEquals(raw)) { "Noncanonical business state" }
         return state
     }
     private fun refBytes(r: V3Ref): ByteArray = ByteArrayOutputStream().also { b -> DataOutputStream(b).use {
@@ -45,6 +59,7 @@ object SyncV3Codec {
     private fun validate(o: V3Object) {
         listOf(o.datasetId, o.objectId, o.writerId, o.epochId).forEach(ScheduleCommitCodec::uuid)
         require(o.datasetId != ZERO && o.objectId != ZERO && o.writerId != ZERO)
+        require(o.format in 3..4 && (o.state == null || (o.format == 4) == (o.state.sharedRecords != null)))
         hashValue(o.descriptorHash); require(o.type in 1..4 && o.refs.size <= 128)
         require(o.refs.map(::refKey).distinct().size == o.refs.size)
         require(o.refs.map { it.epochId to it.objectId }.distinct().size == o.refs.size)
@@ -79,12 +94,12 @@ object SyncV3Codec {
             }
         }
     }
-    fun encode(o: V3Object): ByteArray {
+    fun encode(o: V3Object, registry: SharedTypeRegistry = SharedTypes.registry()): ByteArray {
         validate(o)
-        val state = o.state?.let(::stateBytes) ?: byteArrayOf()
+        val state = o.state?.let { stateBytes(it,registry) } ?: byteArrayOf()
         val b = ByteArrayOutputStream()
         DataOutputStream(b).use { out ->
-            out.writeInt(0x44505633); out.writeInt(3); out.writeInt(o.type)
+            out.writeInt(0x44505633); out.writeInt(o.format); out.writeInt(o.type)
             listOf(o.datasetId, o.objectId, o.writerId, o.epochId).forEach { out.write(it.toByteArray(Charsets.US_ASCII)) }
             out.writeInt(o.epochNumber); out.write(unhex(o.descriptorHash)); out.writeInt(o.refs.size)
             o.refs.sortedBy(::refKey).forEach { out.write(refBytes(it)) }
@@ -93,12 +108,12 @@ object SyncV3Codec {
         val body = b.toByteArray(); require(body.size + 32 <= MAX_BYTES)
         return body + unhex(hash(body))
     }
-    fun decode(bytes: ByteArray): V3Object {
+    fun decode(bytes: ByteArray, registry: SharedTypeRegistry = SharedTypes.registry()): V3Object {
         require(bytes.size in 232..MAX_BYTES)
         val body = bytes.copyOfRange(0, bytes.size - 32)
         require(MessageDigest.isEqual(unhex(hash(body)), bytes.copyOfRange(bytes.size - 32, bytes.size))) { "v3 checksum" }
         return DataInputStream(body.inputStream()).use { input ->
-            require(input.readInt() == 0x44505633 && input.readInt() == 3)
+            require(input.readInt() == 0x44505633); val format = input.readInt(); require(format in 3..4)
             fun id() = ByteArray(36).also(input::readFully).toString(Charsets.US_ASCII).also(ScheduleCommitCodec::uuid)
             fun h() = ByteArray(32).also(input::readFully).joinToString("") { "%02x".format(it) }
             val type = input.readInt(); val dataset = id(); val objectId = id(); val writer = id(); val epoch = id()
@@ -106,8 +121,8 @@ object SyncV3Codec {
             val refs = List(count) { V3Ref(input.readInt(), input.readInt(), id(), input.readInt(), id(), h()) }
             val n = input.readInt(); require(n in 0..ScheduleSnapshotCodec.MAX_BYTES && n == input.available())
             val raw = ByteArray(n).also(input::readFully)
-            V3Object(type, dataset, objectId, writer, epoch, number, descriptor, refs, if (n == 0) null else readState(raw)).also {
-                require(encode(it).contentEquals(bytes)) { "Noncanonical v3 object" }
+            V3Object(type, dataset, objectId, writer, epoch, number, descriptor, refs, if (n == 0) null else readState(raw, format,registry), format).also {
+                require(encode(it,registry).contentEquals(bytes)) { "Noncanonical v3 object" }
             }
         }
     }

@@ -1,3 +1,5 @@
+import {sharedTypes} from './shared-types.mjs';
+import {canonicalRecords,wireRecords,Registry} from './shared-records.mjs';
 import { schemas, termKey, ensure } from "./protocol.mjs";
 
 export const emptyState = () =>
@@ -65,6 +67,7 @@ export function records(state) {
       value,
       custom: s.customProfileKeys.includes(value.termKey),
     });
+  for(const r of canonicalRecords(state.sharedRecords??[]))rows.set(`shared:${r.typeId}/${r.recordId}`,r);
   return rows;
 }
 const comparable = (key, value) =>
@@ -79,7 +82,8 @@ export function same(a, b) {
     l.size === r.size && [...l].every(([k, v]) => rowEqual(k, v, r.get(k)))
   );
 }
-export function merge(base, local, remote, choice = null, forced = new Set()) {
+export function merge(base, local, remote, choice = null, forced = new Set(), adapters = sharedTypes) {
+  const registry=new Registry(adapters);[base,local,remote].forEach(s=>registry.validate(wireRecords(s.sharedRecords??[])));
   const b = records(base),
     l = records(local),
     r = records(remote),
@@ -93,6 +97,11 @@ export function merge(base, local, remote, choice = null, forced = new Set()) {
   const join = (a, c) => {
     if (parents.has(a) && parents.has(c)) parents.set(root(c), root(a));
   };
+  const types=new Map(adapters.map(a=>[a.typeId,a]));
+  const prepared=new Map(states.map(state=>[state,new Map(adapters.filter(a=>(state.sharedRecords??[]).some(r=>r.typeId===a.typeId)).map(a=>[a.typeId,a.prepareRelations?.(state)]))]));
+  for(const state of states)for(const record of state.sharedRecords??[]){const adapter=types.get(record.typeId);if(adapter?.schemaVersion!==record.schemaVersion)continue;
+   for(const parent of adapter.relatedKeys?.(wireRecords([record])[0],state,prepared.get(state).get(record.typeId))??[])if(!rowEqual(parent,l.get(parent),b.get(parent))||!rowEqual(parent,r.get(parent),b.get(parent)))join(parent,`shared:${record.typeId}/${record.recordId}`);
+  }
   for (const edit of states.flatMap((s) => s.classOverrides)) {
     const p =
       edit.sourceId === null
@@ -156,9 +165,11 @@ export function merge(base, local, remote, choice = null, forced = new Set()) {
     for (const k of group) if (selected.has(k)) merged.set(k, selected.get(k));
   }
   const state = emptyState();
+  if(states.some(s=>s.sharedRecords!==undefined))state.sharedRecords=[];
   for (const [key, v] of [...merged].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const type = key.slice(0, key.indexOf(":"));
-    if (type === "source") {
+    if(type === "shared")state.sharedRecords.push(v);
+    else if (type === "source") {
       state.sources.push(v.source);
       state.imported.push(...v.occurrences);
     } else if (type === "term") {
@@ -174,11 +185,12 @@ export function merge(base, local, remote, choice = null, forced = new Set()) {
         }[type]
       ].push(v);
   }
+  registry.validate(wireRecords(state.sharedRecords??[]));
   return { state, conflicts };
 }
 
 // 与 ScheduleV2Plan 相同：逐对检测同基线冲突，然后 UUID 顺序生成待确认远端方案。
-export function mergePlan(plan, local, choice = null) {
+export function mergePlan(plan, local, choice = null, adapters = sharedTypes) {
   const branches = [...plan.branches].sort((a, b) =>
       a.commitId < b.commitId ? -1 : 1,
     ),
@@ -197,7 +209,7 @@ export function mergePlan(plan, local, choice = null) {
       const conflicts = merge(
         plan.base,
         branches[i].state,
-        branches[j].state,
+        branches[j].state, null, new Set(), adapters
       ).conflicts;
       conflicts.forEach(remember);
       // 完整分支保存在 plan；摘要仅存分支身份和相关 keys，避免 N² 复制大快照。
@@ -210,7 +222,7 @@ export function mergePlan(plan, local, choice = null) {
     }
   let remote = branches[0].state;
   for (const branch of branches.slice(1)) {
-    const next = merge(plan.base, remote, branch.state, "remote");
+    const next = merge(plan.base, remote, branch.state, "remote",new Set(),adapters);
     remote = next.state;
     next.conflicts.forEach(remember);
   }
@@ -219,11 +231,11 @@ export function mergePlan(plan, local, choice = null) {
     local,
     remote,
     choice,
-    new Set([...found.values()].flatMap((c) => c.keys)),
+    new Set([...found.values()].flatMap((c) => c.keys)), adapters,
   );
   const displayed = new Map(result.conflicts.map((c) => [c.key, c]));
   for (const c of found.values())
-    if (!displayed.has(c.key)) displayed.set(c.key, c);
+    displayed.set(c.key, displayed.has(c.key)?{...displayed.get(c.key),keys:[...new Set([...displayed.get(c.key).keys,...c.keys])]}:c);
   ensure(displayed.size <= 256, "冲突单位超限");
   return {
     state: result.state,
