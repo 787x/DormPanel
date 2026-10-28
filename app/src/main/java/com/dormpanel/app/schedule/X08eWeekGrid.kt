@@ -119,8 +119,12 @@ internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, priv
             val today = week.plusDays(day.toLong()) == now.toLocalDate()
             column.setBackgroundColor(if (today) { if (appearance.state.themeMode == ThemeMode.DARK) 0xff101a22.toInt() else 0xffe4ecf4.toInt() } else palette.background)
             val minute = now.toLocalTime().toSecondOfDay() / 60f
-            lines[day].visibility = if (today && minute in axis.points.first().first..axis.points.last().first) VISIBLE else GONE
-            (lines[day].layoutParams as FrameLayout.LayoutParams).let { it.topMargin = offset(minute); lines[day].layoutParams = it }
+            val shown=today && minute in axis.points.first().first..axis.points.last().first
+            lines[day].visibility = if(shown) VISIBLE else GONE
+            if(shown) (lines[day].layoutParams as FrameLayout.LayoutParams).let {
+                val top=offset(minute)
+                if(it.topMargin!=top) { it.topMargin=top; lines[day].layoutParams=it }
+            }
         }
     }
     override fun applyAppearance(state: AppearanceState) = X08ePreviewTrace.section("theme") {

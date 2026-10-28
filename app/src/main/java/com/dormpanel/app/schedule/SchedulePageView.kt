@@ -30,6 +30,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     private var grid: X08eWeekGrid? = null
     private var swipeContent: TimetableSwipeLayout? = null
     private var currentBody: TimetableBody? = null
+    private var weekRange: TextView? = null
     private val displayCache=X08eDisplayCache()
     private var paintedTheme=appearance.state.themeMode
     private var settingsDialog: androidx.appcompat.app.AlertDialog? = null
@@ -54,6 +55,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     private fun button(text: String, action: () -> Unit) = context.scheduleButton(text, action)
     private fun render() = renderPage(null)
     private fun renderPage(promoted: TimetableBody?) {
+        weekRange=null
         if(promoted==null) displayCache.invalidate()
         currentBody?.active = false; currentBody = null
         swipeContent?.cancelMotion(); swipeContent = null
@@ -156,15 +158,25 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
                 .setNegativeButton(tr("关闭", "Close"), null).show().also { it.matchActivityBrightness(); applyAppearanceTree(it.window!!.decorView, appearance.state) }
         })
         actions.addView(button("‹") { session.weekStart = session.weekStart.minusWeeks(1); render() }.apply { contentDescription = tr("上一周", "Previous week") })
-        actions.addView(context.scheduleLabel("${session.weekStart} – ${session.weekStart.plusDays(6)}", 18f), LayoutParams(0, context.dp(52), 1f))
+        weekRange=context.scheduleLabel("${session.weekStart} – ${session.weekStart.plusDays(6)}",18f)
+        actions.addView(weekRange,LayoutParams(0,context.dp(52),1f))
         actions.addView(button("›") { session.weekStart = session.weekStart.plusWeeks(1); render() }.apply { contentDescription = tr("下一周", "Next week") })
         actions.addView(button(tr("本周", "This week")) { session.today(source.clock); render() })
         addView(actions)
         val body = promoted ?: buildTimetable(session.weekStart)
         val swipe = TimetableSwipeLayout(context) { direction ->
-            val preview = swipeContent?.takePreview() as? TimetableBody
+            currentBody?.active=false
+            // Keep the old detach/rebuild path solely for instrumentation A/B controls.
+            val legacyControl=X08ePreviewTrace.cardOverride!=null
+            val preview = (if(legacyControl) swipeContent?.takePreview() else swipeContent?.promotePreviewInPlace()) as? TimetableBody
             session.weekStart = session.weekStart.plusWeeks(direction.toLong())
-            renderPage(preview)
+            if(legacyControl || preview==null) renderPage(preview) else {
+                currentBody=preview; preview.active=true; grid=preview.grid
+                preview.captureViewport.forEach { it() }
+                preview.grid?.clockAllowed=true
+                weekRange?.text="${session.weekStart} – ${session.weekStart.plusDays(6)}"
+                warmDisplayData()
+            }
         }.apply {
             tag = "timetable-swipe"; swipeEnabled = style.swipeWeeks
             preparePreview = { direction -> warmDisplayData(); buildTimetable(session.weekStart.plusWeeks(direction.toLong()), deferred=true) }

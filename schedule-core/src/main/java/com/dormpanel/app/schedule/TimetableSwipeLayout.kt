@@ -180,6 +180,16 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
     }
 
     /** Transfer ownership on successful navigation; reuse the preview's measured tree. */
+    fun promotePreviewInPlace(): View? = preview?.also { page ->
+        (page as? TimetablePreviewContent)?.cancelPreparation()
+        val old=content
+        preview=null; previewDirection=0
+        if(old!==page) removeView(old)
+        page.translationX=0f; offset=0f
+        if(page is ViewGroup) page.descendantFocusability=previewFocusability
+        page.importantForAccessibility=IMPORTANT_FOR_ACCESSIBILITY_AUTO
+    }
+
     fun takePreview(): View? = preview?.also { page ->
         (page as? TimetablePreviewContent)?.cancelPreparation()
         preview = null; previewDirection = 0

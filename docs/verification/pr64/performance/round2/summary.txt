@@ -1,0 +1,88 @@
+
+SCENE jump (min/median/max ms)
+before CLASSIC n= 6 move= 60.8/67.9/105.7 jump= 0.8/1.0/1.3 up= 0.9/1.3/3.0
+ commit= 40.9/56.0/89.1
+ firstDraw= 63.3/72.0/113.4
+before TIME n= 6 move= 59.0/66.2/74.5 jump= 54.8/69.3/81.6 up= 0.8/1.0/1.6
+ commit= 40.0/46.1/60.6
+ firstDraw= 61.2/68.6/76.6
+before PERIODS n= 6 move= 69.1/73.5/85.6 jump= 48.7/62.9/81.4 up= 0.6/1.0/1.3
+ commit= 39.7/46.1/52.5
+ firstDraw= 70.7/75.1/87.3
+after CLASSIC n= 6 move= 69.1/73.4/107.7 jump= 0.8/1.1/50.6 up= 0.9/1.1/2.5
+ commit= 7.1/8.9/14.8
+ firstDraw= 73.1/78.5/117.1
+after TIME n= 6 move= 40.3/50.1/63.6 jump= 38.3/47.2/53.4 up= 0.6/0.9/1.0
+ commit= 7.7/9.6/14.7
+ firstDraw= 43.8/53.1/67.2
+after PERIODS n= 6 move= 46.5/53.6/63.8 jump= 0.8/7.5/49.6 up= 0.6/0.8/1.0
+ commit= 5.9/8.7/10.0
+ firstDraw= 48.3/55.3/65.9
+
+SCENE release (min/median/max ms)
+before CLASSIC n= 6 move= 55.5/72.3/108.1 jump= 0.0/0.0/0.0 up= 1.5/2.2/5.6
+ commit= 47.2/65.3/97.2
+ firstDraw= 58.4/78.0/118.9
+before TIME n= 6 move= 61.8/64.8/67.8 jump= 0.0/0.0/0.0 up= 0.9/1.3/1.6
+ commit= 41.1/47.7/52.7
+ firstDraw= 64.6/66.9/70.8
+before PERIODS n= 6 move= 69.1/70.9/87.2 jump= 0.0/0.0/0.0 up= 1.0/1.1/1.7
+ commit= 39.3/46.6/62.3
+ firstDraw= 71.5/73.5/90.0
+after CLASSIC n= 6 move= 63.0/68.3/105.6 jump= 0.0/0.0/0.0 up= 1.2/1.9/3.8
+ commit= 6.7/8.5/11.5
+ firstDraw= 66.4/73.5/114.4
+after TIME n= 6 move= 41.4/45.8/53.7 jump= 0.0/0.0/0.0 up= 1.1/2.2/3.2
+ commit= 6.5/9.4/10.4
+ firstDraw= 45.6/49.0/57.6
+after PERIODS n= 6 move= 46.3/55.1/68.0 jump= 0.0/0.0/0.0 up= 0.8/1.0/1.3
+ commit= 6.8/8.0/9.6
+ firstDraw= 48.0/57.7/71.6
+
+SCENE cold (min/median/max ms)
+before CLASSIC n= 6 move= 112.1/131.2/159.2 jump= 0.8/1.1/1.6 up= 1.3/1.7/1.9
+ commit= 45.8/52.3/85.3
+ firstDraw= 115.6/135.4/166.6
+before TIME n= 6 move= 106.2/119.6/140.4 jump= 49.8/69.8/76.3 up= 0.6/1.2/1.9
+ commit= 36.4/40.7/44.8
+ firstDraw= 108.5/122.1/146.2
+before PERIODS n= 6 move= 110.9/125.5/141.4 jump= 48.5/68.1/74.3 up= 0.8/1.2/10.8
+ commit= 32.1/39.3/54.0
+ firstDraw= 112.3/127.6/144.4
+after CLASSIC n= 6 move= 107.3/129.2/167.5 jump= 0.9/3.2/58.9 up= 0.9/1.4/3.5
+ commit= 7.3/9.1/11.1
+ firstDraw= 111.3/132.9/175.5
+after TIME n= 6 move= 90.0/99.7/130.5 jump= 46.2/46.9/60.2 up= 0.7/0.9/1.1
+ commit= 7.9/9.1/10.3
+ firstDraw= 92.1/102.7/134.3
+after PERIODS n= 6 move= 100.7/106.0/154.4 jump= 0.6/0.9/32.0 up= 0.8/1.2/1.7
+ commit= 5.5/6.6/9.7
+ firstDraw= 103.2/108.4/158.4
+
+SCENE zero (min/median/max ms)
+before CLASSIC n= 6 move= 62.6/70.2/107.8 jump= 0.0/0.0/0.0 up= 138.9/171.9/270.6
+ commit= 45.5/59.8/110.3
+ firstDraw= 67.7/74.0/116.0
+before TIME n= 6 move= 59.8/67.9/89.7 jump= 0.0/0.0/0.0 up= 145.5/154.0/204.7
+ commit= 31.7/37.0/42.0
+ firstDraw= 63.2/71.6/94.3
+before PERIODS n= 6 move= 64.6/71.1/88.3 jump= 0.0/0.0/0.0 up= 130.3/139.5/148.1
+ commit= 33.0/35.5/38.1
+ firstDraw= 66.8/75.1/92.7
+after CLASSIC n= 6 move= 60.7/67.4/110.1 jump= 0.0/0.0/0.0 up= 110.3/126.6/153.1
+ commit= 5.4/6.5/10.6
+ firstDraw= 64.4/70.9/117.9
+after TIME n= 6 move= 43.4/47.1/53.2 jump= 0.0/0.0/0.0 up= 62.4/73.6/88.0
+ commit= 5.0/6.3/7.8
+ firstDraw= 47.7/50.8/56.7
+after PERIODS n= 6 move= 43.9/55.0/69.8 jump= 0.0/0.0/0.0 up= 61.0/64.6/69.2
+ commit= 4.8/5.3/6.7
+ firstDraw= 45.8/57.9/72.5
+
+SCENE native (min/median/max ms)
+before CLASSIC gestures= 3 P95= 138.4 max= 228.5 over32= 34 / 105 stage max= 35.1
+before TIME gestures= 3 P95= 70.5 max= 119.0 over32= 76 / 174 stage max= 17.6
+before PERIODS gestures= 3 P95= 59.1 max= 130.7 over32= 65 / 172 stage max= 21.8
+after CLASSIC gestures= 3 P95= 143.7 max= 170.9 over32= 31 / 99 stage max= 32.7
+after TIME gestures= 3 P95= 40.6 max= 83.0 over32= 48 / 177 stage max= 11.3
+after PERIODS gestures= 3 P95= 36.0 max= 110.2 over32= 19 / 164 stage max= 10.6

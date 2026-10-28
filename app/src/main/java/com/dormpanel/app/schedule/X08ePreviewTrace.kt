@@ -2,6 +2,8 @@ package com.dormpanel.app.schedule
 
 /** Optional instrumentation sink. No retained samples, polling, or work when disconnected. */
 internal object X08ePreviewTrace {
+    // Instrumentation-only A/B renderer injection; null in normal application use.
+    var cardOverride: ((android.content.Context,ClassOccurrence,Boolean,String,String,String?,String,()->Unit)->android.view.View)? = null
     @Volatile var observer: ((String, Long, Long) -> Unit)? = null
     inline fun <T> section(name: String, block: () -> T): T {
         val sink=observer ?: return block()

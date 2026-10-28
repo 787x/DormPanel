@@ -60,8 +60,13 @@ class X08eScheduleDisplayTest {
             ImportedClassOccurrence("overnight", "source", "overnight", null, instant(4,23,30), "跨午夜研讨", instant(4,23,30), instant(5,0,30), zone.id, "线上", "", null))
         return ScheduleState(sources = listOf(owner), imported = imported + extras, profiles = mapOf(profile.termKey to profile))
     }
-    @Before fun setup() { saved = X08eSchedulePreferences(context).read() }
-    @After fun restore() { X08eSchedulePreferences(context).write(saved); if (::source.isInitialized) instrumentation.runOnMainSync { source.close() } }
+    @Before fun setup() {
+        saved = X08eSchedulePreferences(context).read()
+        if(InstrumentationRegistry.getArguments().getString("renderer")=="legacy") X08ePreviewTrace.cardOverride={ c,item,color,title,time,period,status,click ->
+            X08eLegacyCourseCard(c,item,color,title,time,period,status,click)
+        }
+    }
+    @After fun restore() { X08ePreviewTrace.cardOverride=null; X08eSchedulePreferences(context).write(saved); if (::source.isInitialized) instrumentation.runOnMainSync { source.close() } }
     private fun views(root: View): List<View> = listOf(root) + if (root is ViewGroup) (0 until root.childCount).flatMap { views(root.getChildAt(it)) } else emptyList()
     private fun install(activity: MainActivity, style: X08eScheduleStyle, theme: ThemeMode = ThemeMode.DARK, session: ScheduleSession? = null, persistStyle: Boolean = true,
         locale: Locale = Locale.SIMPLIFIED_CHINESE, homeAction: () -> Unit = {}) {
@@ -142,9 +147,9 @@ class X08eScheduleDisplayTest {
                 assertEquals(X08eScheduleStyle(X08eScheduleLayout.PERIODS,true,true), X08eSchedulePreferences(context).read())
                 val scroll = views(page).filterIsInstance<ScrollView>().single(); assertTrue(scroll.scrollY > 0); scroll.scrollTo(0, 200)
                 val grid = views(page).filterIsInstance<X08eWeekGrid>().single()
-                val card = views(grid).filterIsInstance<X08eCourseCard>().first()
+                val card = views(grid).filterIsInstance<X08eCourseTile>().map { it as View }.first()
                 appearance.setTheme(ThemeMode.LIGHT); page.applyAppearance(appearance.state)
-                assertSame(card, views(grid).filterIsInstance<X08eCourseCard>().first())
+                assertSame(card, views(grid).filterIsInstance<X08eCourseTile>().map { it as View }.first())
                 source.refresh()
             }
             instrumentation.waitForIdleSync()
@@ -303,9 +308,67 @@ class X08eScheduleDisplayTest {
             sources=fixtureData.sources.map { it.copy(occurrenceCount=imported.size,firstStart=imported.minOf { c -> c.start },lastEnd=imported.maxOf { c -> c.end }) })
         source.reload()
     }
+    @Test fun pr64CompactCardMatchesNativePixels() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario -> scenario.onActivity { a ->
+            install(a,X08eScheduleStyle(X08eScheduleLayout.TIME,true,true,true))
+            val item=ScheduleProjection.week(source.state,week,zone).first()
+            for(scale in listOf(1f,1.3f,1.6f)) {
+            val cfg=Configuration(a.resources.configuration).apply { fontScale=scale }
+            val ctx=android.view.ContextThemeWrapper(a.createConfigurationContext(cfg),com.dormpanel.app.R.style.Theme_DormPanel)
+            for(theme in listOf(ThemeMode.DARK,ThemeMode.LIGHT)) for(width in listOf(44,80,166)) for(height in listOf(1,20,48,72,180,-1)) {
+                val cards=listOf<View>(X08eLegacyCourseCard(ctx,item,true,"很长的课程名称 CJK 测试","08:00–09:40","第1–2节","已修改") {},
+                    X08eCourseCard(ctx,item,true,"很长的课程名称 CJK 测试","08:00–09:40","第1–2节","已修改") {})
+                val images=cards.map { v ->
+                    (v as AppearanceAware).applyAppearance(AppearanceState(theme))
+                    v.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(maxOf(0,height),if(height<0) View.MeasureSpec.UNSPECIFIED else View.MeasureSpec.EXACTLY))
+                    v.layout(0,0,v.measuredWidth,v.measuredHeight)
+                    Bitmap.createBitmap(v.width,v.height,Bitmap.Config.ARGB_8888).also { v.draw(android.graphics.Canvas(it)) }
+                }
+                assertEquals("height $width/$height",cards[0].height,cards[1].height)
+                assertTrue("pixels $theme $width/$height",images[0].sameAs(images[1]))
+                images.forEach { it.recycle() }
+            }
+            }
+        } }
+    }
+    @Test fun pr64QuarterReleaseAndFlingAlwaysFinishComplete() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for(layout in X08eScheduleLayout.entries) for(fling in listOf(false,true)) {
+                val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+                scenario.onActivity { install(it,X08eScheduleStyle(layout,true,true,true),session=session); datedPreviewFixture() }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity {
+                    val v=views(page).filterIsInstance<TimetableSwipeLayout>().single()
+                    if(fling) SwipeEvents.drag(v,-80f,duration=35) else {
+                        val stroke=SwipeEvents.Stroke(v,v.width*.9f); stroke.move(-v.width*.25f); stroke.end()
+                    }
+                }
+                Thread.sleep(500); instrumentation.waitForIdleSync()
+                scenario.onActivity {
+                    val target=week.plusWeeks(1)
+                    assertEquals(target,session.weekStart)
+                    val v=views(page).filterIsInstance<TimetableSwipeLayout>().single()
+                    assertEquals(1,v.childCount)
+                    val body=v.getChildAt(0)
+                    val pending=body.javaClass.getDeclaredField("pending").let { it.isAccessible=true; it.get(body) as List<*> }
+                    assertTrue("No orphan final-frame work: $layout fling=$fling",pending.isEmpty())
+                    val courses=views(body).filter { it is X08eCourseTile || it is X08eClassicCourseButton }
+                    assertEquals(21,courses.size)
+                    assertTrue(courses.all { it.isClickable && it.hasOnClickListeners() })
+                    for(day in 0..6) {
+                        val date=target.plusDays(day.toLong())
+                        assertEquals(1,views(body).filterIsInstance<Button>().count { it.contentDescription?.startsWith("日期调整 $date")==true })
+                        assertEquals(3,courses.count { c -> if(c is TextView) c.text.contains("真实 $date") else c.contentDescription.contains("真实 $date") })
+                    }
+                    if(layout!=X08eScheduleLayout.CLASSIC) assertEquals(7,views(body).filterIsInstance<Button>().count { it.text.startsWith("查看 3 门") })
+                }
+            }
+        }
+    }
     @Test fun pr64PreviewPerformanceSamples() {
         val samples=org.json.JSONArray()
         val label=InstrumentationRegistry.getArguments().getString("perfLabel") ?: "sample"
+        val perfScenario=InstrumentationRegistry.getArguments().getString("perfScenario") ?: "jump"
         val firstFraction=InstrumentationRegistry.getArguments().getString("perfFraction")?.toFloat() ?: .25f
         val main=android.os.Looper.getMainLooper().thread.id
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -341,11 +404,17 @@ class X08eScheduleDisplayTest {
                             v=views(page).filterIsInstance<TimetableSwipeLayout>().single(); v.previewTiming=sink
                             a.window.decorView.viewTreeObserver.addOnDrawListener(draw)
                             stroke=SwipeEvents.Stroke(v,v.width*.9f)
+                            if(perfScenario=="cold") {
+                                val cache=SchedulePageView::class.java.getDeclaredField("displayCache").let { it.isAccessible=true; it.get(page) as X08eDisplayCache }
+                                cache.clear()
+                            }
                             lock=System.nanoTime(); stroke.move(-v.width*firstFraction); firstMove=System.nanoTime()-lock
                         }
-                        Thread.sleep(80); instrumentation.waitForIdleSync()
-                        scenario.onActivity { val start=System.nanoTime(); stroke.move(-v.width*.8f); warmMove=System.nanoTime()-start }
-                        Thread.sleep(50); instrumentation.waitForIdleSync()
+                        if(perfScenario!="release") {
+                            Thread.sleep(80); instrumentation.waitForIdleSync()
+                            scenario.onActivity { val start=System.nanoTime(); stroke.move(-v.width*.8f); warmMove=System.nanoTime()-start }
+                            Thread.sleep(50); instrumentation.waitForIdleSync()
+                        }
                         scenario.onActivity { val start=System.nanoTime(); stroke.end(); up=System.nanoTime()-start }
                         Thread.sleep(350); instrumentation.waitForIdleSync()
                         scenario.onActivity {
@@ -360,7 +429,7 @@ class X08eScheduleDisplayTest {
                         }
                     }
                     val sample=org.json.JSONObject().put("layout",layout.name).put("index",index).put("path",if(index==0||index==3) "new-page" else "repeat")
-                        .put("firstFraction",firstFraction).put("lock",lock).put("end",end).put("move",firstMove).put("warmMove",warmMove).put("up",up)
+                        .put("scenario",perfScenario).put("firstFraction",firstFraction).put("lock",lock).put("end",end).put("move",firstMove).put("warmMove",warmMove).put("up",up)
                         .put("currentDraw",currentDraw).put("targetDraw",targetDraw)
                     synchronized(events) { sample.put("events",org.json.JSONArray(events)) }
                     synchronized(frames) { sample.put("frames",org.json.JSONArray(frames)) }
@@ -541,7 +610,7 @@ class X08eScheduleDisplayTest {
                 scenario.onActivity {
                     val v=views(page).filterIsInstance<TimetableSwipeLayout>().single()
                     val stroke=SwipeEvents.Stroke(v); stroke.move(-v.width*.5f)
-                    assertTrue(views(v.getChildAt(1)).filterIsInstance<TextView>().any { t -> t.text.startsWith("新值") })
+                    assertTrue(views(v.getChildAt(1)).any { t -> if(t is TextView) t.text.startsWith("新值") else t.contentDescription?.startsWith("新值")==true })
                     stroke.end(cancel=true); v.cancelMotion()
                     assertEquals(1,v.childCount); assertEquals(week,session.weekStart)
                 }
@@ -581,9 +650,9 @@ class X08eScheduleDisplayTest {
                             assertEquals(v.width,preview.width); assertEquals(v.height,preview.height)
                             assertEquals(week,session.weekStart)
                             val visibleDate=if(direction==1) target else target.plusDays(6)
-                            assertTrue(views(preview).filterIsInstance<TextView>().any { it.text.contains("真实 $visibleDate") })
+                            assertTrue(views(preview).any { if(it is TextView) it.text.contains("真实 $visibleDate") else it.contentDescription?.contains("真实 $visibleDate")==true })
                             views(preview).filterIsInstance<Button>().forEach { it.performClick() }
-                            views(preview).filterIsInstance<X08eCourseCard>().firstOrNull()?.performClick()
+                            views(preview).filterIsInstance<X08eCourseTile>().map { it as View }.firstOrNull()?.performClick()
                             assertTrue(page.hasWindowFocus())
                             views(preview).filterIsInstance<X08eWeekGrid>().forEach { g ->
                                 assertFalse(g.clockAllowed)
@@ -601,7 +670,7 @@ class X08eScheduleDisplayTest {
                     }
                     if(direction==1) {
                         scenario.onActivity {
-                            views(preview).first { it is X08eCourseCard || it is X08eClassicCourseButton }.performClick()
+                            views(preview).first { it is X08eCourseTile || it is X08eClassicCourseButton }.performClick()
                         }
                         onView(withText("真实 $target")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
                             .check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
@@ -668,7 +737,7 @@ class X08eScheduleDisplayTest {
             onView(withText("短课程（1分钟）")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
             onView(withText(org.hamcrest.Matchers.containsString("12:05–12:06"))).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
             onView(withText("关闭")).perform(click())
-            scenario.onActivity { views(page).filterIsInstance<X08eCourseCard>().single { v -> v.contentDescription.startsWith("重叠课程，") }.performClick() }
+            scenario.onActivity { views(page).filterIsInstance<X08eCourseTile>().map { it as View }.single { v -> v.contentDescription.startsWith("重叠课程，") }.performClick() }
             onView(withText("重叠课程")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
             onView(withText(org.hamcrest.Matchers.containsString("地点：实验楼"))).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
             screenshot("overlap-direct-detail")
@@ -808,7 +877,7 @@ class X08eScheduleDisplayTest {
                 assertTrue(xs.zipWithNext().all { (a,b) -> b>a })
                 val expected=ScheduleProjection.week(source.state,week,zone).filter { it.date==week }.map { it.entry.title }
                 val actual=views(scrolls[0]).filterIsInstance<X08eClassicCourseButton>().map { it.text.toString().substringBefore('\n') }
-                assertEquals(expected,actual); assertTrue(views(page).filterIsInstance<X08eCourseCard>().isEmpty())
+                assertEquals(expected,actual); assertTrue(views(page).filterIsInstance<X08eCourseTile>().map { it as View }.isEmpty())
                 firstScroll=scrolls.first()
             }
             onView(org.hamcrest.Matchers.sameInstance(firstScroll)).perform(androidx.test.espresso.action.ViewActions.swipeUp())
