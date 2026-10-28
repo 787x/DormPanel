@@ -876,7 +876,13 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         if (item == null) database.dao().deleteClassOverride(key) else database.dao().put(item)
     }
     override fun putClassOverrides(expected: ScheduleState, items: List<ClassOverride>, callback: (Result<Unit>) -> Unit) = write(callback) {
-        CourseBatch.validate(fullState(), expected, items)
+        val loaded = readState()
+        val current = if (loaded.sync != null) loaded else loaded.copy(profiles = loaded.sources.mapNotNull { source ->
+            source.resolvedTermKey()?.let { key ->
+                (profiles?.preferenceCatalog()?.first?.get(key) ?: BuiltInProfiles.builtIn(key))?.let { key to it }
+            }
+        }.toMap())
+        CourseBatch.validate(current, expected, items)
         items.forEach { database.dao().put(it) }
     }
     override fun commitImport(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,

@@ -171,7 +171,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         val expected = source.state
         val editableCandidate = if (candidate.sourceId == null) candidate.copy(series = expected.entries.map { it.id }) else candidate
         val occurrences = CourseBatch.occurrences(expected, editableCandidate, source.clock.zone(), source.clock.today())
-        val representatives = occurrences.distinctBy { it.seriesId }
+        val representatives = occurrences.distinctBy { it.seriesId }.map { ClassEditSession(expected, it, true, source.clock.zone()).draft }
         val column = context.scheduleColumn()
         column.setPadding(context.dp(16), context.dp(8), context.dp(16), context.dp(8))
         column.addView(context.scheduleLabel("公共信息 · 勾选后才统一应用", 18f))
@@ -226,7 +226,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 old.copy(title = if (title.first.isChecked) title.second.text.toString().trim() else old.title,
                     teacher = if (teacher.first.isChecked) teacher.second.text.toString().trim() else old.teacher,
                     note = if (note.first.isChecked) note.second.text.toString().trim() else old.note)
-            }.filter { it != expected.editsByKey[it.key] && it.patch() != ClassPatch() }
+            }.filter { it != expected.editsByKey[it.key] && (expected.editsByKey[it.key] != null || it.patch() != ClassPatch()) }
             val valid = runCatching { CourseBatch.validate(source.state, expected, changes) }
             if (valid.isFailure) { error.text = valid.exceptionOrNull()?.message; return@setOnClickListener }
             val preview = changes.joinToString("\n\n") { change ->
