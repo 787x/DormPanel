@@ -15,6 +15,7 @@ internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, pri
     private val zone: ZoneId, detail: (ClassOccurrence) -> Unit, val dayCount: Int = 7,
     periodMode: Boolean = false, profile: TermScheduleProfile? = null,
     private val interactive: () -> Boolean = { true },
+    colors: CourseColors.Snapshot? = null,
     profileFor: (ClassOccurrence) -> TermScheduleProfile? = { profile }) : LinearLayout(context) {
     private val density = resources.displayMetrics.density
     private val segments = WeekLayout.segments(items, monday, zone)
@@ -94,7 +95,7 @@ internal class PhoneWeekView(context: Context, items: List<ClassOccurrence>, pri
                 val group = area.group
                 val top = area.top
                 val bottom = area.bottom
-                column.addView(CourseCard(context,group.map { it.item },zone,profileFor) { open(group.map { it.item }) },
+                column.addView(CourseCard(context,group.map { it.item },zone,profileFor, colors?.rgb(group.first().item) ?: CourseColors.palette[0]) { open(group.map { it.item }) },
                     FrameLayout.LayoutParams(-1,maxOf(1,bottom-top)).apply { topMargin = top; marginStart = context.dp(1); marginEnd = context.dp(1) })
             }
             val line = View(context).apply { setBackgroundColor(Color.rgb(224,88,76)); contentDescription = "当前时间"; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }

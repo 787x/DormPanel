@@ -146,6 +146,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
     }
 
     fun courseManagement(target: ClassOccurrence? = null) {
+        if (!source.ready || source.error) { Toast.makeText(context,"本地课程尚未成功读取，请恢复读取后重试",Toast.LENGTH_LONG).show(); return }
         val candidates = CourseBatch.candidates(source.state)
         if (target != null) {
             candidates.firstOrNull { it.sourceId == target.sourceId && target.seriesId in it.series }?.let { courseEditor(it) }
@@ -154,24 +155,35 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         val column = context.scheduleColumn()
         fun renderList() {
             column.removeAllViews()
+            if (!source.ready || source.error) { column.addView(context.scheduleLabel("本地课程读取失败，请关闭并恢复读取")); return }
             val current = CourseBatch.candidates(source.state)
-            current.forEach { candidate ->
+            val colors = CourseColors.snapshot(context,source.state)
+            val dark = context.resources.configuration.uiMode and 48 == 32
+            val columns = if (context.resources.configuration.screenWidthDp >= 360 && context.resources.configuration.fontScale < 1.5f) 2 else 1
+            var row = LinearLayout(context)
+            current.forEachIndexed { index, candidate ->
+                if (index % columns == 0) { row = LinearLayout(context); column.addView(row) }
                 val owner = source.state.sources.firstOrNull { it.id == candidate.sourceId }?.displayName ?: "本地课程"
                 val titles = candidate.series.map { series ->
                     source.state.editsByKey[ClassOverride.key(candidate.sourceId, series, null)]?.title ?: candidate.originalTitle
                 }.distinct()
                 val displayed = titles.singleOrNull() ?: "${candidate.originalTitle}（各时段名称不同）"
-                val localSchedule = if (candidate.sourceId == null) source.state.entries.firstOrNull { it.id == candidate.series.singleOrNull() }?.let {
-                    "\n星期${it.day} · ${context.scheduleTime(it.startMinute)}–${context.scheduleTime(it.endMinute)}"
-                }.orEmpty() else ""
                 val original = if (displayed != candidate.originalTitle) "\n原始名称：${candidate.originalTitle}" else ""
-                column.addView(context.scheduleButton("$displayed$original\n${candidate.series.size} 个时段 · $owner · ${if (source.editable) "可编辑" else "只读"}$localSchedule") {
+                row.addView(context.scheduleButton("$displayed$original\n${candidate.series.size} 个时段 · $owner\n${if (source.editable) "可编辑" else "只读"}") {
                     courseEditor(candidate)
                 }.apply {
-                    setTextColor(android.graphics.Color.BLACK)
-                    backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(
-                        210 + (candidate.originalTitle.hashCode() and 15), 220, 235))
-                })
+                    setTextColor(CourseColors.ink(dark))
+                    val content = text.toString()
+                    val split = content.indexOf('\n').coerceAtLeast(0)
+                    text = android.text.SpannableString(content).apply {
+                        setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD),0,split,0)
+                        setSpan(android.text.style.RelativeSizeSpan(.75f),split,length,0)
+                    }
+                    setPadding(context.dp(12),context.dp(16),context.dp(12),context.dp(16))
+                    minHeight = context.dp(112)
+                    gravity = android.view.Gravity.CENTER
+                    backgroundTintList = android.content.res.ColorStateList.valueOf(CourseColors.background(colors.rgb(colors.key(candidate)!!),dark))
+                }, LinearLayout.LayoutParams(0,-2,1f).apply { setMargins(context.dp(3),context.dp(3),context.dp(3),context.dp(3)) })
             }
             if (current.isEmpty()) column.addView(context.scheduleLabel("暂无课程"))
         }
@@ -191,6 +203,29 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         val representatives = occurrences.distinctBy { it.seriesId }.map { ClassEditSession(expected.copy(dayAdjustments = emptyList()), it, true, source.clock.zone()).draft }.toMutableList()
         val column = context.scheduleColumn()
         column.setPadding(context.dp(16), context.dp(8), context.dp(16), context.dp(8))
+        val colorSnapshot = CourseColors.snapshot(context,expected)
+        val colorKey = colorSnapshot.key(candidate) ?: return
+        val originalColor = colorSnapshot.manual(colorKey)
+        var colorDraft = originalColor
+        val colorButton = context.scheduleButton("") {}
+        fun refreshColor() {
+            val dark = context.resources.configuration.uiMode and 48 == 32
+            colorButton.text = "课程颜色 · ${if (colorDraft == null) "自动" else "手动"}\n${candidate.originalTitle}"
+            colorButton.backgroundTintList = android.content.res.ColorStateList.valueOf(CourseColors.background(colorSnapshot.rgb(colorKey,colorDraft),dark))
+            colorButton.setTextColor(CourseColors.ink(dark))
+        }
+        refreshColor()
+        colorButton.setOnClickListener {
+            CourseColorPicker.show(context, colorSnapshot.rgb(colorKey,colorDraft), colorDraft, candidate.originalTitle, colorSnapshot.rgb(colorKey,null)) { colorDraft = it; refreshColor() }
+        }
+        column.addView(colorButton)
+        column.addView(context.scheduleLabel("颜色仅保存在本机，应用于整门课程；与时段勾选无关。业务保存成功后保存颜色。",14f))
+        fun saveColor(): Boolean = runCatching {
+            check(source.ready && !source.error) { "本地课程读取失败，颜色草稿保留" }
+            check(CourseColors.snapshot(context,source.state).identity.active.contains(colorKey)) { "课程已不存在，颜色草稿保留" }
+            CourseColors.save(context,colorKey,colorDraft)
+            source.refresh()
+        }.onFailure { Toast.makeText(context,it.message,Toast.LENGTH_LONG).show() }.isSuccess
         column.addView(context.scheduleLabel("公共信息 · 勾选后才统一应用", 18f))
         val editedCommon = mutableSetOf<EditText>()
         val commonStatus = linkedMapOf<EditText, TextView>()
@@ -335,7 +370,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         track(dialog)
         dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         val save = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-        save.isEnabled = source.editable
+        save.isEnabled = source.ready && !source.error
         column.addView(context.scheduleButton("放弃草稿并重新加载") {
             track(AlertDialog.Builder(context).setTitle("放弃未保存草稿？")
                 .setMessage("重新读取成功后关闭本页，按最新数据重新进入课程；本页所有未保存修改将被放弃。")
@@ -351,7 +386,9 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                     }
                 }.create())
         })
+        var businessSaved = false
         save.setOnClickListener {
+            if (businessSaved) { if (saveColor()) dialog.dismiss(); return@setOnClickListener }
             val excluded = drafts.filter { (_, edit) -> selected[edit.seriesId]?.isChecked != true && edit != expected.editsByKey[edit.key] }
             if (excluded.isNotEmpty()) {
                 track(AlertDialog.Builder(context).setTitle("存在未参与保存的已编辑时段")
@@ -368,6 +405,11 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                     teacher = if (teacher.first.isChecked) teacher.second.text.toString().trim() else old.teacher,
                     note = if (note.first.isChecked) note.second.text.toString().trim() else old.note)
             }.filter { it != expected.editsByKey[it.key] && (expected.editsByKey[it.key] != null || it.patch() != ClassPatch()) }
+            if (changes.isEmpty() && colorDraft != originalColor) {
+                if (saveColor()) dialog.dismiss()
+                return@setOnClickListener
+            }
+            if (!source.editable) { error.text = "当前课表只读，业务草稿保留"; return@setOnClickListener }
             val valid = runCatching { CourseBatch.validate(source.state, expected, changes) }
             if (valid.isFailure) { error.text = valid.exceptionOrNull()?.message; return@setOnClickListener }
             val preview = changes.joinToString("\n\n") { change ->
@@ -392,6 +434,8 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                     source.saveClassOverrides(expected, changes) { result ->
                         save.isEnabled = source.editable; dialog.setCancelable(true)
                         result.onSuccess { receipt ->
+                            businessSaved = true
+                            if (!saveColor()) { error.text = "业务修改已提交；颜色保存失败，请重试颜色保存"; return@onSuccess }
                             dialog.dismiss()
                             if (receipt.refreshed) Toast.makeText(context, receipt.message, Toast.LENGTH_LONG).show()
                             else track(AlertDialog.Builder(context).setTitle("修改已提交，刷新失败")

@@ -56,6 +56,7 @@ class TodayCoursesTest {
     }
     @Test fun stableColorSurvivesRenameAndOverride() {
         val item = TodayCourses.project(ScheduleState(entries=listOf(a)),now(8),zone).all.single()
-        assertEquals(TodayCourses.colorIndex(item),TodayCourses.colorIndex(item.copy(entry=a.copy(title="新名称"))))
+        val identities = CourseColorIdentity(ScheduleState(entries=listOf(a)))
+        assertEquals(identities.key(item.sourceId,item.seriesId),CourseColorIdentity(ScheduleState(entries=listOf(a.copy(title="新名称")))).key(item.sourceId,item.seriesId))
     }
 }

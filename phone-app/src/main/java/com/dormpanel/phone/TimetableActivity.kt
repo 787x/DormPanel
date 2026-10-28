@@ -293,7 +293,7 @@ class TimetableActivity : AppCompatActivity() {
         if (weekView) {
             val effectiveProfile = profile ?: projected.mapNotNull { ScheduleProjection.profile(source.state,it) }.distinct().singleOrNull()
             val grid = PhoneWeekView(this,projected,pageMonday,source.clock.zone(),{ if (body.active) editors.classDetail(it) },
-                if (weekdaysOnly) 5 else 7,periodMode,effectiveProfile, { body.active }) { ScheduleProjection.profile(source.state,it) }
+                if (weekdaysOnly) 5 else 7,periodMode,effectiveProfile, { body.active }, CourseColors.snapshot(this,source.state)) { ScheduleProjection.profile(source.state,it) }
             body.grid = grid
             grid.setClockActive(false)
             if (periodMode && !grid.usesPeriods) {
@@ -308,6 +308,7 @@ class TimetableActivity : AppCompatActivity() {
         list.addView(scheduleLabel("$date${adjustment?.let { " · ${if (it.mode == "none") "无课" else "使用星期 ${it.weekday} 课表"}" }.orEmpty()}", 16f))
         val classes = projected.filter { it.start < date.plusDays(1).atStartOfDay(source.clock.zone()).toInstant() && it.end > date.atStartOfDay(source.clock.zone()).toInstant() }
         if (classes.isEmpty() && !source.error) list.addView(scheduleLabel(if (source.readOnly) source.editBlockReason ?: "课表正在验证或受迁移保护；本地数据保留，请从共享课表入口继续恢复。" else "今天没有课程。可新增本地课程或从管理中导入 ICS / 湖北大学 CSV、XLS。", 18f))
+        val colors = if (!source.error) CourseColors.snapshot(this,source.state) else null
         classes.forEach { item ->
             list.addView(scheduleButton(buildString {
                 append(item.entry.title).append("\n")
@@ -316,7 +317,7 @@ class TimetableActivity : AppCompatActivity() {
                 if (item.entry.location.isNotBlank()) append("\n").append(item.entry.location)
                 if (item.teacher.isNotBlank()) append(" · ").append(item.teacher)
                 if (item.allWeeksEdited || item.thisWeekEdited) append("\n已应用本地修改")
-            }) { if (body.active) editors.classDetail(item) }.apply { gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14)) })
+            }) { if (body.active) editors.classDetail(item) }.apply { backgroundTintList = android.content.res.ColorStateList.valueOf(CourseColors.background(colors?.rgb(item) ?: CourseColors.palette[0], resources.configuration.uiMode and 48 == 32)); setTextColor(CourseColors.ink(resources.configuration.uiMode and 48 == 32)); gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14)) })
         }
         return body
     }

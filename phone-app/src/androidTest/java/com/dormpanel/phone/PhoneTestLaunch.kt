@@ -30,7 +30,7 @@ internal fun launchPhoneTestActivity(): ActivityScenario<TimetableActivity> {
     }
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val pkg = instrumentation.targetContext.packageName
-    require(pkg == "com.dormpanel.timetable.testbed") { "Root UI assist is restricted to the isolated test package" }
+    require(pkg == "com.dormpanel.timetable.testbed" || (pkg == "com.dormpanel.timetable.pr68testbed" && InstrumentationRegistry.getArguments().getString("shellUi") == "true")) { "Root UI assist is restricted to the isolated test package" }
     val caller = Thread.currentThread()
     val failure = AtomicReference<Throwable>()
     val completed = java.util.concurrent.atomic.AtomicBoolean(false)
