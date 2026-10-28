@@ -880,20 +880,44 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         listOf(25, 26, 27).forEach { database.dao().deleteSyncRecord(it) }
         (30..93).forEach { database.dao().deleteSyncRecord(it) }
     }
+    fun saveCourseWithColor(expected: ScheduleState, items: List<ClassOverride>, candidate: CourseCandidate,
+        rgb: Int?, records: List<SharedRecord>?, callback: (Result<Unit>) -> Unit) = submit(callback) {
+        check(ActiveScheduleV3.active(database) && v3().localWritesAllowed())
+        try {
+            v3().engine.edit { before ->
+                check(expected.sync != null && v3().state().sync?.datasetId == expected.sync.datasetId) { "活动数据集已变化，草稿保留" }
+                check(v3().localWritesAllowed())
+                check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "迁移保护禁止编辑" }
+                CourseBatch.withColor(before, expected, items, candidate, rgb, records)
+            }
+        } catch (error: Exception) {
+            if (v3().journal.meta.requiresReopen()) { ScheduleCommitSignals.notifyChanged(); throw ScheduleCommitUnconfirmed(error) }
+            throw error
+        }
+        onCommitted?.invoke(); Unit
+    }
+    private fun sharedResult(operation: () -> Unit) {
+        try {operation()} catch(error: Exception) {
+            if(v3().journal.meta.requiresReopen()) {ScheduleCommitSignals.notifyChanged();throw ScheduleCommitUnconfirmed(error)}
+            throw error
+        }
+    }
     fun setSharedCourseColor(sourceId: String?, seriesId: String, rgb: Int?, expectedHash: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
         check(ActiveScheduleV3.active(database) && v3().localWritesAllowed())
-        v3().engine.setCourseColor(sourceId, seriesId, rgb, expectedHash)
+        sharedResult {v3().engine.setCourseColor(sourceId, seriesId, rgb, expectedHash)}
         onCommitted?.invoke(); Unit
     }
     fun putSharedRecords(records: List<SharedRecord>, expectedHash: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
         check(ActiveScheduleV3.active(database) && v3().localWritesAllowed())
-        v3().engine.edit { before ->
-            check(SyncV3Codec.businessHash(before) == expectedHash)
-            val current = requireNotNull(before.sharedRecords)
-            val registry = SharedTypes.registry(); registry.writable(current); registry.writable(records)
-            check(current.filterNot(registry::supported).toSet() == records.filterNot(registry::supported).toSet())
-            records.filter { it !in current && it.typeId == "course.color" }.forEach { require(it.recordId in before.sharedCourseParents) { "Unknown logical course identity" } }
-            before.copy(sharedRecords = records)
+        sharedResult {
+            v3().engine.edit { before ->
+                check(SyncV3Codec.businessHash(before) == expectedHash)
+                val current = requireNotNull(before.sharedRecords)
+                val registry = SharedTypes.registry(); registry.writable(current); registry.writable(records)
+                check(current.filterNot(registry::supported).toSet() == records.filterNot(registry::supported).toSet())
+                records.filter { it !in current && it.typeId == "course.color" }.forEach { require(it.recordId in before.sharedCourseParents) { "Unknown logical course identity" } }
+                before.copy(sharedRecords = records)
+            }
         }
         onCommitted?.invoke(); Unit
     }

@@ -1,3 +1,5 @@
+import {rgb as sharedCourseRgb} from './shared-course-colors.mjs';
+import {scheduleSlots} from './shared-course-schedule.mjs';
 import { Temporal } from '@js-temporal/polyfill';
 import { date, overrideKey, termKey } from './protocol.mjs';
 
@@ -62,7 +64,19 @@ export function projectWeek(state, first, zone = 'Asia/Shanghai') {
       if (academic < mon || academic >= addDays(mon, 7)) continue;
       base.push({ ...r, start: Number(r.start), end: Number(r.end), date: display, academicDate: academic, anchorDate: academic, startMinute: start.hour * 60 + start.minute, endMinute: end.hour * 60 + end.minute, teacher: '', note: '' });
     }
-    const templates = base.map(v => { v = { ...v, linked: !!profile(v) && periods(v.periodLabel) !== null }; const e = edits.get(overrideKey(v.sourceId, v.seriesId, null)); return e ? patch(v, e) ?? v : v; });
+    const slots=scheduleSlots(state);
+    const projected=base.filter(v=>!slots.some(s=>s.sourceId===v.sourceId&&s.replacesSeries===v.seriesId));
+    for(const s of slots){
+      const week=Math.floor(dayDiff(s.week1,mon)/7)+1;if(!s.enabled||!s.weeks.includes(week))continue;
+      const d=addDays(mon,s.weekday-1),p=profiles.get(termKey(sources.get(s.sourceId)??{termKey:null,filename:''}));
+      const origin=state.imported.find(r=>r.sourceId===s.sourceId&&r.seriesId===s.ownerSeries);
+      const timingZone=p?.timezone??origin?.timezone??zone;
+      const anchorDay=s.replacesSeries===null?s.weekday:s.sourceId===null?(state.entries.find(e=>e.id===s.ownerSeries)?.day??s.weekday):(origin?local(origin.start,origin.timezone).dayOfWeek:s.weekday);
+      const times=s.periodStart>0?(p?linkedTimes(p,d,s.periodStart,s.periodEnd):null):[instant(d,s.startMinute,timingZone),instant(addDays(d,s.endMinute<s.startMinute?1:0),s.endMinute,timingZone)];
+      if(!times)continue;const from=local(times[0],zone),to=local(times[1],zone);
+      projected.push({...s,id:s.id,seriesId:s.replacesSeries??s.id,colorSeriesId:s.ownerSeries,date:from.toPlainDate().toString(),academicDate:d,anchorDate:addDays(mon,anchorDay-1),start:times[0],end:times[1],startMinute:from.hour*60+from.minute,endMinute:to.hour*60+to.minute,periodLabel:s.periodStart>0?`[${s.periodStart}-${s.periodEnd}节]`:null});
+    }
+    const templates = projected.map(v => { v = { ...v, linked: !!profile(v) && periods(v.periodLabel) !== null }; const e = edits.get(overrideKey(v.sourceId, v.seriesId, null)); return e ? patch(v, e) ?? v : v; });
     const composed = [];
     for (let i = 0; i < 7; i++) {
       const target = addDays(mon, i), d = days.get(target);
@@ -79,7 +93,7 @@ export function projectWeek(state, first, zone = 'Asia/Shanghai') {
         composed.push(copied);
       }
     }
-    return composed.map(v => { const e = edits.get(overrideKey(v.sourceId, v.seriesId, v.anchorDate)); return e ? patch(v, e) ?? v : v; }).filter(v => days.get(v.date)?.mode !== 'none');
+    return composed.map(v => { const e = edits.get(overrideKey(v.sourceId, v.seriesId, v.anchorDate)); return e ? patch(v, e) ?? v : v; }).filter(v => days.get(v.date)?.mode !== 'none').map(v=>state.sharedRecords===undefined?v:{...v,sharedRgb:sharedCourseRgb(state,v.sourceId,v.colorSeriesId??v.seriesId)});
   }
   const start = instant(first, 0, zone), end = instant(addDays(first, 7), 0, zone);
   return [-7, 0, 7].flatMap(n => academicWeek(addDays(first, n))).filter(v => v.start < end && v.end > start).sort((a, b) => a.start - b.start || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0) || (a.id < b.id ? -1 : 1));

@@ -18,7 +18,10 @@ internal fun courseBackground(context: Context, item: ClassOccurrence, colored: 
         else intArrayOf(0xdceaf4, 0xe4ecd9, 0xf1dfe7, 0xe9e1f2, 0xf0e7d4, 0xdaece7)
     val shape = GradientDrawable().apply {
         cornerRadius = context.dp(6).toFloat()
-        setColor(if (colored) colors[X08eWeekGeometry.colorIndex(item)] or (0xff shl 24) else PanelPalette.forMode(state.themeMode).surface)
+        setColor(if (colored) (item.sharedRgb?.let { rgb ->
+            fun channel(shift: Int) = ((rgb ushr shift and 255) * (if (dark) .24 else .30) + (if (dark) 22 else 175)).toInt()
+            (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
+        } ?: colors[X08eWeekGeometry.colorIndex(item)]) or (0xff shl 24) else PanelPalette.forMode(state.themeMode).surface)
     }
     return RippleDrawable(ColorStateList.valueOf(0x40777777), shape, null).also {
         X08ePreviewTrace.observer?.invoke("drawable",start,System.nanoTime())

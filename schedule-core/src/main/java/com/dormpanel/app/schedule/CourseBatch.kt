@@ -4,6 +4,36 @@ import java.time.*
 
 data class CourseCandidate(val sourceId: String?, val originalTitle: String, val series: List<String>)
 object CourseBatch {
+    fun withColor(current: ScheduleState, expected: ScheduleState, items: List<ClassOverride>,
+        candidate: CourseCandidate, rgb: Int?, records: List<SharedRecord>? = null): ScheduleState {
+        check(SyncV3Codec.businessHash(current) == SyncV3Codec.businessHash(expected)) { "课表已变化，草稿保留，请重新预览" }
+        requireNotNull(current.sharedRecords) { "共享颜色需要显式启用扩展格式" }
+        if (items.isNotEmpty()) validate(current, expected.copy(sync=current.sync), items)
+        val registry=SharedTypes.registry()
+        val next=records ?: current.sharedRecords!!
+        registry.writable(next)
+        check(current.sharedRecords!!.filterNot(registry::supported).toSet()==next.filterNot(registry::supported).toSet())
+        val future=SharedCourseColors.change(applyOverrides(current, items).copy(sharedRecords=next), candidate.sourceId, candidate.series.first(), rgb)
+        SharedCourseSchedule.validateParents(future)
+        return future
+    }
+
+    /** Preview final composed times, including day adjustments and specified-week exceptions. */
+    fun schedulePreview(before: ScheduleState, after: ScheduleState, candidate: CourseCandidate, zone: ZoneId, today: LocalDate): String {
+        val slots=(SharedCourseSchedule.slots(before)+SharedCourseSchedule.slots(after)).filter { it.sourceId==candidate.sourceId && it.ownerSeries in candidate.series }
+        val weeks=(slots.flatMap { slot -> slot.weeks.map { java.time.LocalDate.parse(slot.week1).plusWeeks(it-1L) } } +
+            before.imported.filter { it.sourceId==candidate.sourceId && it.seriesId in candidate.series }.map { Instant.ofEpochMilli(it.start).atZone(zone).toLocalDate().let { d -> d.minusDays(d.dayOfWeek.value-1L) } } +
+            listOf(today.minusDays(today.dayOfWeek.value-1L))).distinct().sorted()
+        fun rows(state: ScheduleState) = weeks.flatMap { ScheduleProjection.academicWeek(state,it,zone) }.filter {
+            it.sourceId==candidate.sourceId && (it.seriesId in candidate.series || it.colorSeriesId in candidate.series)
+        }.map { "${it.academicDate} · ${it.start.atZone(zone).toLocalDateTime()}–${it.end.atZone(zone).toLocalDateTime()} · ${it.entry.title} · ${it.entry.location} · ${it.teacher} · ${it.note}" }.toSet()
+        val old=rows(before);val next=rows(after)
+        val removed=old-next;val added=next-old
+        return "核对范围：${weeks.first()} 至 ${weeks.last().plusDays(6)}；修改前 ${old.size} 次，修改后 ${next.size} 次。\n" +
+            "取消/改变原显示 ${removed.size} 次：\n"+removed.take(100).joinToString("\n")+
+            "\n新增/改变后显示 ${added.size} 次：\n"+added.take(100).joinToString("\n")+
+            if(removed.size>100 || added.size>100) "\n各列仅显示前100项；以上总数覆盖全部核对范围。" else ""
+    }
     fun candidates(state: ScheduleState): List<CourseCandidate> {
         val series = state.imported.groupBy { it.sourceId to it.seriesId }
         val regular = series.filterValues { rows -> rows.map { it.title }.distinct().size == 1 }

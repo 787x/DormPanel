@@ -40,7 +40,7 @@ export async function openV3Workspace(directory, writable, installationIdentity 
     workspace.mutationGuard = (previous, next) => {
       writable(); const internal = engineFrames.delete(next);
       if(!internal && !same(previous.local,next.local) && previous.local.sharedRecords!==undefined){
-        const registry=new Registry(sharedTypes);registry.writable(wireRecords(previous.local.sharedRecords));registry.writable(wireRecords(next.local.sharedRecords??[]));
+        const registry=new Registry(sharedTypes);registry.writable(wireRecords(previous.local.sharedRecords));registry.writable(wireRecords(next.local.sharedRecords??[]));registry.validateState(next.local);
         const opaque=rows=>rows.filter(r=>!registry.supported(r));
         ensure(JSON.stringify(opaque(previous.local.sharedRecords))===JSON.stringify(opaque(next.local.sharedRecords??[])),'Unknown optional records are read-only');
       }

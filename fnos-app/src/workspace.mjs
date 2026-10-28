@@ -1,3 +1,6 @@
+import {scheduleSlots, scheduleRecord, validateScheduleParents} from './shared-course-schedule.mjs';
+import {Registry, wireRecords, durableRecords} from './shared-records.mjs';
+import {sharedTypes} from './shared-types.mjs';
 import {change as changeSharedCourseColor} from './shared-course-colors.mjs';
 import {canonicalRecords} from './shared-records.mjs';
 import { stat } from 'node:fs/promises';
@@ -135,6 +138,33 @@ export class Workspace {
     });
     this.queue = task.finally(() => { this.writing--; }).catch(() => {});
     return task;
+  }
+  courseSchedules() { return scheduleSlots(this.frame.local); }
+  previewCourseSchedules(slots, color, expected) {
+    this.guard?.();
+    const frame=this.snapshot();
+    ensure(expected===frame.revision,'请求版本过期，请重新读取');
+    ensure(frame.v3?.binding?.format===4,'Explicit shared dataset upgrade required');
+    const registry=new Registry(sharedTypes),current=wireRecords(frame.local.sharedRecords??[]);
+    registry.writable(current);
+    ensure(current.filter(r=>r.typeId==='course.schedule').every(r=>registry.supported(r)),'Unsupported schedule schema');
+    const records=[...current.filter(r=>r.typeId!=='course.schedule'),...slots.map(scheduleRecord)];
+    registry.writable(records);frame.local={...frame.local,sharedRecords:durableRecords(records)};registry.validateState(frame.local);
+    if(color)frame.local=changeSharedCourseColor(frame.local,color.sourceId,color.seriesId,color.rgb);
+    return {expectedRevision:expected,state:frame.local};
+  }
+  saveCourseSchedules(slots, color, expected) {
+    return this.tx(f=>{
+      ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');
+      const registry=new Registry(sharedTypes),current=wireRecords(f.local.sharedRecords??[]);
+      registry.writable(current);
+      const next=[...current.filter(r=>r.typeId!=='course.schedule'),...slots.map(scheduleRecord)];
+      ensure(current.filter(r=>r.typeId==='course.schedule').every(r=>registry.supported(r)),'Unsupported schedule schema');
+      registry.writable(next);
+      f.local={...f.local,sharedRecords:durableRecords(next)};
+      validateScheduleParents(f.local);
+      if(color)f.local=changeSharedCourseColor(f.local,color.sourceId,color.seriesId,color.rgb);
+    },expected);
   }
   setSharedCourseColor(sourceId,seriesId,rgb,expected) {
     return this.tx(f=>{ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');f.local=changeSharedCourseColor(f.local,sourceId,seriesId,rgb);},expected);

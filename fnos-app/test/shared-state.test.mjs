@@ -199,3 +199,20 @@ test('custom relatedKeys applies to direct merge, multi-branch history and merge
  const writer=a.engine.writerId;await a.journal.close();a.journal=await new V3Journal(a.root).open();a.engine=new V3Engine(a.journal,writer,registry);
  await a.engine.resolve(a.journal.value.conflict.id,'local');await settle(a);assert.equal(a.journal.value.local.sharedRecords[0].payload,'61');assert(a.journal.value.local.entries.some(e=>e.id==='x'));assert.equal(businessHash(a.journal.value.local),'b4496b6ccdaed04e6bd25b6494ec72bd9a22f21018e844dafecfb21f92eac7de');await a.journal.close();
 });
+
+import {scheduleSlots} from '../src/shared-course-schedule.mjs';
+test('course schedule preview and protected atomic Workspace color commit survive reopen',async()=>{
+ const root=await dir(),identity={writerId:randomUUID(),installationId:randomUUID()},remote=new FakeRemote();
+ const a=await openV3Workspace(root,()=>{},identity),engine=new V3Engine(a.journal,identity.writerId);
+ await engine.initialize(remote,{...emptyState(),entries:[entry('x')],sharedRecords:[]});
+ for(let n=0;n<3;n++){const b=new Budget();try{await engine.round(remote,new IndexedV3Cache(root,b),b,{discoverySteps:32});}catch(e){if(!/incomplete/.test(e.message))throw e;}}
+ const slot={id:'slot',sourceId:null,ownerSeries:'x',replacesSeries:null,week1:'2026-09-07',weeks:[1,3,5],weekday:2,startMinute:480,endMinute:540,periodStart:0,periodEnd:0,enabled:true,title:'Math',location:'A',teacher:'T',note:'N'};
+ const revision=a.workspace.frame.revision,color={sourceId:null,seriesId:'x',rgb:0x123456};
+ const preview=a.workspace.previewCourseSchedules([slot],color,revision);assert.equal(scheduleSlots(a.workspace.frame.local).length,0);assert.equal(scheduleSlots(preview.state).length,1);
+ await assert.rejects(a.workspace.saveCourseSchedules([{...slot,ownerSeries:'missing'}],color,revision));
+ assert.equal(a.workspace.frame.revision,revision);assert.equal(scheduleSlots(a.workspace.frame.local).length,0);
+ await a.workspace.saveCourseSchedules([slot],color,revision);assert.equal(rgb(a.workspace.frame.local,null,'x'),0x123456);
+ await assert.rejects(a.workspace.saveCourseSchedules([],null,revision));assert.equal(scheduleSlots(a.workspace.frame.local).length,1);
+ const digest=businessHash(a.workspace.frame.local);await a.journal.close();
+ const reopened=await openV3Workspace(root,()=>{},identity);assert.equal(businessHash(reopened.workspace.frame.local),digest);assert.equal(reopened.workspace.courseSchedules().length,1);await reopened.journal.close();
+});

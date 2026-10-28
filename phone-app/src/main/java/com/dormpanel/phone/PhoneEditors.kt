@@ -29,6 +29,18 @@ internal fun Context.scheduleColumn() = LinearLayout(this).apply { orientation =
 
 internal class PhoneEditors(private val context: Context, private val source: ScheduleSource,
     private val enabled: () -> Boolean = { true }) {
+    data class CourseDraft(val candidate: CourseCandidate, val expected: ScheduleState, val slots: List<CourseSlot>,
+        val overrides: Map<String,ClassOverride>, val selected: Set<String>, val color: Int?, val common: List<Pair<Boolean,String>>, val copied: Set<String>)
+    private var captureCourse: (() -> CourseDraft)? = null
+    fun captureDraft(): CourseDraft? = captureCourse?.invoke()
+    fun restoreDraft(draft: CourseDraft?) {
+        if(draft==null) return
+        var restored=false
+        val listener=object: () -> Unit {
+            override fun invoke() { if(!restored && source.ready && !source.error) { restored=true;source.unsubscribe(this);courseEditor(draft.candidate,draft) } }
+        }
+        source.subscribe(listener);listener()
+    }
     private val dialogs = mutableListOf<android.content.DialogInterface>()
     private fun blocked(): Boolean {
         val reason = source.editBlockReason ?: return false
@@ -104,9 +116,11 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
     fun classDetail(item: ClassOccurrence) {
         if (!enabled() || !source.ready || source.applyingSnapshot) return
         val owner = source.state.sources.firstOrNull { it.id == item.sourceId }
+        val managedSlot = source.state.courseSlots.any { it.id==item.entry.id }
         val info = buildString {
             append(scheduleDate(item.date)).append(" · ").append(item.date.dayOfWeek)
             append("\n").append(context.scheduleTime(item.start)).append(" – ").append(context.scheduleTime(item.end))
+            if(item.end.atZone(source.clock.zone()).toLocalDate()!=item.date) append("（结束日期：").append(item.end.atZone(source.clock.zone()).toLocalDate()).append("）")
             CoursePresentation.detailPeriods(item,ScheduleProjection.profile(source.state,item))?.let { append("\n").append(it) }
             if (item.entry.location.isNotBlank()) append("\nLocation: ").append(item.entry.location)
             if (item.teacher.isNotBlank()) append("\nTeacher: ").append(item.teacher)
@@ -132,7 +146,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             if (blocked()) return@scheduleButton
             source.saveClassOverride(item.sourceId, item.seriesId, null, null); dialog.dismiss()
         })
-        if (item.imported == null && !source.readOnly) content.addView(context.scheduleButton("Delete recurring class") {
+        if (item.sourceId == null && !managedSlot && !source.readOnly) content.addView(context.scheduleButton("Delete recurring class") {
             if (blocked()) return@scheduleButton
             source.deleteEntry(item.seriesId); dialog.dismiss()
         })
@@ -142,14 +156,14 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         source.editBlockReason?.let { content.addView(context.scheduleLabel(it, 16f)) }
         track(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = source.editable
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { if (!blocked()) { dialog.dismiss(); editClass(item) } }
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { if (!blocked()) { dialog.dismiss(); if(managedSlot) courseManagement(item) else editClass(item) } }
     }
 
     fun courseManagement(target: ClassOccurrence? = null) {
         if (!source.ready || source.error) { Toast.makeText(context,"本地课程尚未成功读取，请恢复读取后重试",Toast.LENGTH_LONG).show(); return }
         val candidates = CourseBatch.candidates(source.state)
         if (target != null) {
-            candidates.firstOrNull { it.sourceId == target.sourceId && target.seriesId in it.series }?.let { courseEditor(it) }
+            candidates.firstOrNull { it.sourceId == target.sourceId && target.colorSeriesId in it.series }?.let { courseEditor(it) }
             return
         }
         val column = context.scheduleColumn()
@@ -161,6 +175,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         fun renderList() {
             column.removeAllViews()
             if (!source.ready || source.error) { column.addView(context.scheduleLabel("本地课程读取失败，请关闭并恢复读取")); return }
+            if (source.state.sharedRecords != null) column.addView(context.scheduleButton("预览迁入 PR68 本机颜色") { migrateColors() })
             val current = CourseBatch.candidates(source.state)
             val colors = CourseColors.snapshot(context,source.state)
             val dark = context.resources.configuration.uiMode and 48 == 32
@@ -173,7 +188,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 }.distinct()
                 val displayed = titles.singleOrNull() ?: "${candidate.originalTitle}（各时段名称不同）"
                 val original = if (displayed != candidate.originalTitle) "\n原始名称：${candidate.originalTitle}" else ""
-                row.addView(context.scheduleButton("$displayed$original\n${candidate.series.size} 个时段 · $owner\n${if (source.editable) "可编辑" else "只读"}") {
+                row.addView(context.scheduleButton("$displayed$original\n${candidate.series.size + SharedCourseSchedule.slots(source.state).count { it.sourceId==candidate.sourceId && it.ownerSeries in candidate.series && it.replacesSeries==null }} 个时段 · $owner\n${if (source.editable) "可编辑" else "只读"}") {
                     courseEditor(candidate)
                 }.apply {
                     setTextColor(CourseColors.ink(dark))
@@ -205,17 +220,67 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         dialog.setOnDismissListener { source.unsubscribe(listener); dialogs.remove(dialog) }
     }
 
-    private fun courseEditor(candidate: CourseCandidate) {
-        val expected = source.state
+    private fun migrateColors() {
+        val preview = runCatching { SharedColorMigration.preview(context, source.state) }.getOrElse {
+            Toast.makeText(context, it.message, Toast.LENGTH_LONG).show(); return
+        }
+        val decisions = mutableMapOf<String, SharedColorMigration.Decision>()
+        val column = context.scheduleColumn()
+        column.addView(context.scheduleLabel("本机设置 ${preview.previousRgb.size} 门；自动色视觉变化 ${preview.automaticVisualChanges.size} 门。已有共享色默认保留。确认前逐门选择；取消或失败保留旧配置。", 16f))
+        val names=CourseBatch.candidates(source.state).associate { SharedCourseColors.identity(source.state,it.sourceId,it.series.first()) to it.originalTitle }
+        fun setting(record: SharedRecord): String = if(record.schemaVersion!=1) "不支持的版本 ${record.schemaVersion}（原始值只读）" else if(record.payload==listOf(0.toByte())) "自动" else "#%06X".format(record.payload.drop(1).fold(0) { n,v -> (n shl 8) or (v.toInt() and 255) })
+        preview.previousRgb.forEach { (id, rgb) ->
+            val existing = source.state.sharedRecords.orEmpty().any { it.typeId == "course.color" && it.recordId == id }
+            column.addView(context.scheduleLabel("${names[id] ?: id.take(12)} · 本机 #%06X · 新自动 #%06X · ${if (existing) "已有共享设置" else "只有本机设置"}${if(id in preview.automaticVisualChanges) " · 自动颜色有视觉变化" else ""}".format(rgb,preview.automaticRgb.getValue(id)),14f))
+        }
+        preview.conflicts.forEach { conflict ->
+            column.addView(context.scheduleLabel(conflict.courseTitles.joinToString(" / ")+"\n共享：${setting(conflict.shared)}；本机：${setting(conflict.local)}",18f))
+            val group = RadioGroup(context)
+            listOf("保留共享颜色" to SharedColorMigration.Decision.KEEP_SHARED,
+                "使用本机颜色（覆盖共享设置）" to SharedColorMigration.Decision.USE_LOCAL,
+                "跳过" to SharedColorMigration.Decision.SKIP).forEach { (label, decision) ->
+                group.addView(RadioButton(context).apply {
+                    id = View.generateViewId(); text = label
+                    setOnCheckedChangeListener { _, checked -> if (checked) decisions[conflict.recordId] = decision }
+                })
+            }
+            column.addView(group)
+        }
+        val status = context.scheduleLabel("",14f); column.addView(status)
+        val dialog = AlertDialog.Builder(context).setTitle("预览迁入本机颜色")
+            .setView(ScrollView(context).apply { addView(column) }).setNegativeButton("取消",null)
+            .setPositiveButton("确认迁入",null).create()
+        track(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            if(source.syncStore==null) return@setOnClickListener
+            val approved = runCatching { SharedColorMigration.decide(preview,decisions) }
+            if (approved.isFailure) { status.text = approved.exceptionOrNull()?.message; return@setOnClickListener }
+            val button = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            button.isEnabled = false
+            source.saveSharedRecords(approved.getOrThrow(),preview.expectedHash) { result ->
+                button.isEnabled = true
+                result.onSuccess { receipt -> TodayWidgetUpdates.request(context); dialog.dismiss(); Toast.makeText(context,receipt.message,Toast.LENGTH_LONG).show() }
+                    .onFailure { status.text = it.message ?: "迁入失败，选择与旧配置保留";if(it is ScheduleCommitUnconfirmed) {button.isEnabled=false;source.refresh()} }
+            }
+        }
+    }
+
+    private fun courseEditor(candidate: CourseCandidate, restored: CourseDraft? = null) {
+        val expected = restored?.expected ?: source.state
         var editableCandidate = candidate
-        var occurrences = CourseBatch.editingOccurrences(expected, editableCandidate, source.clock.zone(), source.clock.today())
+        var occurrences = CourseBatch.editingOccurrences(expected.copy(sharedRecords=expected.sharedRecords?.filterNot { it.typeId=="course.schedule" && it.schemaVersion==1 }), editableCandidate, source.clock.zone(), source.clock.today())
         val representatives = occurrences.distinctBy { it.seriesId }.map { ClassEditSession(expected.copy(dayAdjustments = emptyList()), it, true, source.clock.zone()).draft }.toMutableList()
         val column = context.scheduleColumn()
         column.setPadding(context.dp(16), context.dp(8), context.dp(16), context.dp(8))
+        val copiedSlots=restored?.copied.orEmpty().toMutableSet()
+        val scheduleDrafts = (restored?.slots ?: SharedCourseSchedule.slots(expected)).toMutableList()
+        fun draftRecords(): List<SharedRecord>? = expected.sharedRecords?.filterNot { it.typeId == "course.schedule" && it.schemaVersion == 1 }?.plus(scheduleDrafts.map(SharedCourseSchedule::record))
         val colorSnapshot = CourseColors.snapshot(context,expected)
         val colorKey = colorSnapshot.key(candidate) ?: return
+        val sharedFormat = expected.sharedRecords != null
+        val unsupportedColor = sharedFormat && SharedCourseColors.display(expected,candidate.sourceId,candidate.series.first()).status=="UNSUPPORTED"
         val originalColor = colorSnapshot.manual(colorKey)
-        var colorDraft = originalColor
+        var colorDraft = if(restored!=null) restored.color else originalColor
         val colorButton = context.scheduleButton("") {}
         fun refreshColor() {
             val dark = context.resources.configuration.uiMode and 48 == 32
@@ -224,15 +289,16 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             colorButton.setTextColor(CourseColors.ink(dark))
         }
         refreshColor()
+        if(unsupportedColor) {colorButton.text="共享颜色版本不受支持（只读，保留原始记录）";colorButton.isEnabled=false}
         colorButton.setOnClickListener {
             track(CourseColorPicker.show(context, colorSnapshot.rgb(colorKey,colorDraft), colorDraft, candidate.originalTitle, colorSnapshot.rgb(colorKey,null)) { colorDraft = it; refreshColor() })
         }
         column.addView(colorButton)
-        column.addView(context.scheduleLabel("颜色仅保存在本机，应用于整门课程；与时段勾选无关。业务保存成功后保存颜色。",14f))
+        column.addView(context.scheduleLabel(if (sharedFormat) "共享颜色与课程修改在同一事务保存到本机，发布状态请查看同步页面。旧本机颜色尚未自动迁入。" else "颜色仅保存在本机，应用于整门课程；与时段勾选无关。",14f))
         val colorError = context.scheduleLabel("",14f)
         column.addView(colorError)
         fun saveColor(): Boolean {
-            if (colorDraft == originalColor) return true
+            if (sharedFormat || colorDraft == originalColor) return true
             return runCatching {
                 check(source.ready && !source.error) { "本地课程读取失败，颜色草稿保留" }
                 check(CourseColors.snapshot(context,source.state).identity.active.contains(colorKey)) { "课程已不存在，颜色草稿保留" }
@@ -266,7 +332,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         val teacher = common("教师", representatives.map { it.teacher })
         val note = common("备注", representatives.map { it.note })
         val selected = linkedMapOf<String, CheckBox>()
-        val drafts = linkedMapOf<String, ClassOverride>()
+        val drafts = linkedMapOf<String, ClassOverride>().apply { restored?.overrides?.let(::putAll) }
         val resetDraftViews = linkedMapOf<String, () -> Unit>()
         val commonScope = context.scheduleLabel("", 14f)
         column.addView(commonScope)
@@ -349,6 +415,87 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             }.apply { isEnabled = source.editable })
         }
         representatives.toList().forEach { addSlot(it, true) }
+        if (sharedFormat) {
+            val arrangements=context.scheduleColumn(); column.addView(arrangements)
+            fun editArrangement(original: CourseSlot, accept: (CourseSlot) -> Unit) {
+                val fields=context.scheduleColumn()
+                fun field(label: String, value: String): EditText = input(label,value,label=="备注").also { fields.addView(context.scheduleLabel(label,14f));fields.addView(it) }
+                val name=field("名称",original.title);val location=field("教室",original.location)
+                val teacherField=field("教师",original.teacher);val noteField=field("备注",original.note)
+                val week1=field("第1周周一 YYYY-MM-DD",original.week1)
+                val weeks=field("有效周次（逗号分隔，1–104）",original.weeks.joinToString(","))
+                listOf("单周" to 1,"双周" to 2,"全部周" to 0).forEach { (label,parity) -> fields.addView(context.scheduleButton(label) {
+                    weeks.setText((1..(original.weeks.maxOrNull() ?: 20)).filter { parity==0 || it%2==parity%2 }.joinToString(","))
+                }) }
+                val weekday=field("星期 1–7",original.weekday.toString())
+                fun time(minute: Int) = "%02d:%02d".format(minute/60,minute%60)
+                val start=field("开始时间 HH:mm",time(original.startMinute));val end=field("结束时间 HH:mm（早于开始表示跨午夜）",time(original.endMinute))
+                val a=field("起始节次（0 使用自定义时间）",original.periodStart.toString());val z=field("结束节次",original.periodEnd.toString())
+                val enabled=CheckBox(context).apply { text="启用此安排";isChecked=original.enabled };fields.addView(enabled)
+                val status=context.scheduleLabel("",14f);fields.addView(status)
+                val editor=AlertDialog.Builder(context).setTitle("编辑安排草稿").setView(ScrollView(context).apply { addView(fields) })
+                    .setNegativeButton("取消",null).setPositiveButton("保留草稿",null).create();track(editor)
+                editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    runCatching {
+                        val next=original.copy(title=name.text.toString(),location=location.text.toString(),teacher=teacherField.text.toString(),note=noteField.text.toString(),
+                            week1=week1.text.toString(),weeks=weeks.text.toString().split(",","，").filter { it.isNotBlank() }.map { it.trim().toInt() }.distinct().sorted(),
+                            weekday=weekday.text.toString().toInt(),startMinute=LocalTime.parse(start.text.toString()).toSecondOfDay()/60,endMinute=LocalTime.parse(end.text.toString()).toSecondOfDay()/60,
+                            periodStart=a.text.toString().toInt(),periodEnd=z.text.toString().toInt(),enabled=enabled.isChecked)
+                        SharedCourseSchedule.record(next);accept(next);editor.dismiss()
+                    }.onFailure { status.text=it.message ?: "安排无效，草稿保留" }
+                }
+            }
+            fun renderArrangements() {
+                arrangements.removeAllViews()
+                arrangements.addView(context.scheduleLabel("完整安排 · 新增时段独立保存身份；导入时段停用保留原始数据。既有全周覆盖与指定周例外继续优先。",16f))
+                scheduleDrafts.filter { it.sourceId==candidate.sourceId && it.ownerSeries in candidate.series }.toList().forEach { slot ->
+                    arrangements.addView(context.scheduleLabel("${slot.title} · 星期${slot.weekday} · 第${slot.weeks.joinToString(",")}周\n${slot.startMinute}–${slot.endMinute} 分 · ${slot.location} · ${if(slot.enabled) "启用" else "停用"}",16f))
+                    arrangements.addView(context.scheduleButton("编辑安排") { editArrangement(slot) { next -> scheduleDrafts[scheduleDrafts.indexOf(slot)]=next;renderArrangements() } })
+                    arrangements.addView(context.scheduleButton("复制安排") { editArrangement(slot.copy(id=java.util.UUID.randomUUID().toString(),replacesSeries=null)) { next -> copiedSlots.add(next.id);scheduleDrafts.add(next);renderArrangements() } })
+                    arrangements.addView(context.scheduleButton(if(slot.replacesSeries==null) "删除新增安排" else "停用导入/原有安排") {
+                        track(AlertDialog.Builder(context).setTitle("确认停止显示此安排？").setMessage("原始导入数据保留。指定周例外不会应用于不相关的新时段。")
+                            .setNegativeButton("取消",null).setPositiveButton("确认") { _,_ ->
+                                if(slot.replacesSeries==null) scheduleDrafts.remove(slot) else scheduleDrafts[scheduleDrafts.indexOf(slot)]=slot.copy(enabled=false)
+                                renderArrangements()
+                            }.create())
+                    })
+                }
+            }
+            renderArrangements()
+            fun initialSlot(series: String, replace: Boolean): CourseSlot {
+                val rows=occurrences.filter { it.seriesId==series }
+                val row=rows.first()
+                check(rows.map { Triple(it.academicDate.dayOfWeek,it.entry.startMinute,it.entry.endMinute) }.distinct().size==1) { "系列原有时间不一致，请先明确处理覆盖关系" }
+                val profile=ScheduleProjection.profile(expected,row)
+                val monday=profile?.week1Monday ?: row.academicDate.minusDays(row.academicDate.dayOfWeek.value-1L)
+                val weeks=if(candidate.sourceId==null) (1..20).toList() else rows.map { (Math.floorDiv(it.academicDate.toEpochDay()-monday.toEpochDay(),7L)+1).toInt() }.distinct().sorted()
+                return CourseSlot(java.util.UUID.randomUUID().toString(),candidate.sourceId,series,if(replace) series else null,monday.toString(),weeks,row.academicDate.dayOfWeek.value,
+                    row.entry.startMinute,row.entry.endMinute,if(row.linked) ScheduleProjection.periods(row.periodLabel)?.first ?: 0 else 0,if(row.linked) ScheduleProjection.periods(row.periodLabel)?.second ?: 0 else 0,true,row.entry.title,row.entry.location,row.teacher,row.note)
+            }
+            column.addView(context.scheduleButton("新增安排") {
+                runCatching { initialSlot(candidate.series.first(),false) }.onSuccess { initial -> editArrangement(initial) { next -> scheduleDrafts.add(next);renderArrangements() } }
+                    .onFailure { Toast.makeText(context,it.message,Toast.LENGTH_LONG).show() }
+            })
+            column.addView(context.scheduleButton("隐藏整门课程全部安排") {
+                track(AlertDialog.Builder(context).setTitle("隐藏全部相关安排？")
+                    .setMessage("仅停止课表显示；保留手动课程身份和导入来源。所有修改仍需预览后原子保存。")
+                    .setNegativeButton("取消",null).setPositiveButton("加入草稿") { _,_ ->
+                        runCatching {
+                            val replacements=candidate.series.map { series -> scheduleDrafts.find { it.sourceId==candidate.sourceId && it.replacesSeries==series } ?: initialSlot(series,true) }
+                            scheduleDrafts.removeAll { it.sourceId==candidate.sourceId && it.ownerSeries in candidate.series }
+                            scheduleDrafts.addAll(replacements.map { it.copy(enabled=false) });renderArrangements()
+                        }.onFailure { Toast.makeText(context,it.message,Toast.LENGTH_LONG).show() }
+                    }.create())
+            })
+            candidate.series.forEach { series -> column.addView(context.scheduleButton("管理原时段周次 / 复制 · $series") {
+                val existing=scheduleDrafts.find { it.sourceId==candidate.sourceId && it.replacesSeries==series }
+                runCatching { existing ?: initialSlot(series,true) }.onSuccess { initial -> editArrangement(initial) { next ->
+                    if(existing!=null) scheduleDrafts.remove(existing)
+                    scheduleDrafts.add(next);renderArrangements()
+                } }.onFailure { Toast.makeText(context,it.message,Toast.LENGTH_LONG).show() }
+            }) }
+        } else column.addView(context.scheduleLabel("精确周次、新增、复制和停用安排需要已显式启用 DPV3/4 扩展格式的数据集。本页不会升级或切换绑定。",14f))
+
         updateCommon()
         if (candidate.sourceId == null) column.addView(context.scheduleButton("添加其他本地课程") {
             val others = expected.entries.filter { it.id !in editableCandidate.series }
@@ -387,7 +534,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         track(dialog)
         dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         val save = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-        save.isEnabled = source.ready && !source.error
+        save.isEnabled = source.ready && !source.error && !unsupportedColor && (!sharedFormat || source.editable)
         column.addView(context.scheduleButton("放弃草稿并重新加载") {
             track(AlertDialog.Builder(context).setTitle("放弃未保存草稿？")
                 .setMessage("重新读取成功后关闭本页，按最新数据重新进入课程；本页所有未保存修改将被放弃。")
@@ -403,6 +550,13 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                     }
                 }.create())
         })
+        restored?.let { old ->
+            selected.forEach { (series,check) -> check.isChecked=series in old.selected }
+            listOf(title,teacher,note).zip(old.common).forEach { (field,value) -> field.first.isChecked=value.first;field.second.setText(value.second) }
+        }
+        captureCourse = { CourseDraft(candidate,expected,scheduleDrafts.toList(),drafts.toMap(),selected.filterValues { it.isChecked }.keys,
+            colorDraft,listOf(title,teacher,note).map { it.first.isChecked to it.second.text.toString() },copiedSlots.toSet()) }
+        dialog.setOnDismissListener { captureCourse=null;dialogs.remove(dialog) }
         var businessSaved = false
         column.addView(context.scheduleButton("重试本地读取（保留草稿）") {
             save.isEnabled = false
@@ -431,7 +585,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                     teacher = if (teacher.first.isChecked) teacher.second.text.toString().trim() else old.teacher,
                     note = if (note.first.isChecked) note.second.text.toString().trim() else old.note)
             }.filter { it != expected.editsByKey[it.key] && (expected.editsByKey[it.key] != null || it.patch() != ClassPatch()) }
-            if (changes.isEmpty()) {
+            if (changes.isEmpty() && !sharedFormat) {
                 if (colorDraft == originalColor) {
                     Toast.makeText(context,"没有修改",Toast.LENGTH_SHORT).show()
                     dialog.dismiss()
@@ -439,7 +593,18 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 return@setOnClickListener
             }
             if (!source.editable) { error.text = "当前课表只读，业务草稿保留"; return@setOnClickListener }
-            val valid = runCatching { CourseBatch.validate(source.state, expected, changes) }
+            val recordResult=runCatching { draftRecords()?.map { record ->
+                if(record.typeId=="course.schedule" && record.schemaVersion==1) {
+                    val slot=SharedCourseSchedule.decode(record)
+                    if(slot.sourceId==candidate.sourceId && slot.ownerSeries in candidate.series && selected[slot.ownerSeries]?.isChecked==true)
+                        SharedCourseSchedule.record(slot.copy(title=if(title.first.isChecked) title.second.text.toString().trim() else slot.title,
+                            teacher=if(teacher.first.isChecked) teacher.second.text.toString().trim() else slot.teacher,
+                            note=if(note.first.isChecked) note.second.text.toString().trim() else slot.note)) else record
+                } else record
+            } }
+            if(recordResult.isFailure) {error.text=recordResult.exceptionOrNull()?.message ?: "安排无效，草稿保留";return@setOnClickListener}
+            val finalRecords=recordResult.getOrThrow()
+            val valid = runCatching { if (sharedFormat) CourseBatch.withColor(source.state, expected, changes, candidate, colorDraft, finalRecords) else CourseBatch.validate(source.state, expected, changes) }
             if (valid.isFailure) { error.text = valid.exceptionOrNull()?.message; return@setOnClickListener }
             val preview = changes.joinToString("\n\n") { change ->
                 val old = expected.editsByKey[change.key] ?: ClassOverride.of(change.sourceId, change.seriesId, null, ClassPatch())
@@ -455,12 +620,21 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 .filter { it.first.first.isChecked }
                 .joinToString("；") { "${it.second} → ${it.first.second.text.toString().trim().ifEmpty { "（清空）" }}" }
                 .ifEmpty { "未统一修改公共信息" }
-            val exceptionPreview = CourseBatch.exceptionPreview(expected, changes, source.clock.zone())
-            track(AlertDialog.Builder(context).setTitle("变更预览 · ${changes.size} 个时段")
-                .setMessage("统一信息：$commonSummary\n\n各时段实际差异：\n$preview\n\n$exceptionPreview\n\n${commonScope.text}所有指定周例外继续生效，例外字段优先；未改字段与原始导入身份保留。")
+            val oldSlots=expected.courseSlots.associateBy { it.id }
+            val newSlots=finalRecords.orEmpty().filter {it.typeId=="course.schedule" && it.schemaVersion==1}.map(SharedCourseSchedule::decode).associateBy {it.id}
+            val scheduleChanges=(oldSlots.keys+newSlots.keys).filter {oldSlots[it]!=newSlots[it]}.joinToString("\n") { id ->
+                "$id："+when {newSlots[id]==null -> "删除新增安排";oldSlots[id]==null -> if(id in copiedSlots) "复制安排" else "新增安排";newSlots[id]?.enabled==false -> "停用安排";else -> "修改安排"}
+            }
+            val exceptionPreview = scheduleChanges+"\n"+CourseBatch.exceptionPreview(expected, changes, source.clock.zone()) +
+                (if(sharedFormat) "\n"+CourseBatch.schedulePreview(expected,CourseBatch.withColor(expected,expected,changes,candidate,colorDraft,finalRecords),candidate,source.clock.zone(),source.clock.today()) else "") +
+                if (sharedFormat) "\n安排最终草稿：\n" + scheduleDrafts.filter { it.sourceId==candidate.sourceId && it.ownerSeries in candidate.series }.joinToString("\n") {
+                    "${it.id}：${if(it.enabled) "启用" else "停用"}；第${it.weeks.joinToString(",")}周；星期${it.weekday}；${it.startMinute}–${it.endMinute}分；${it.periodStart}–${it.periodEnd}节；${it.location}"
+                } else ""
+            track(AlertDialog.Builder(context).setTitle(if(sharedFormat) "课程保存预览" else "变更预览 · ${changes.size} 个时段")
+                .setMessage("颜色：${if (colorDraft == null) "自动" else "#%06X".format(colorDraft)}；${if (sharedFormat) "共享设置" else "本机设置"}\n\n统一信息：$commonSummary\n\n各时段实际差异：\n$preview\n\n$exceptionPreview\n\n${commonScope.text}所有指定周例外继续生效，例外字段优先；未改字段与原始导入身份保留。")
                 .setNegativeButton("继续编辑", null).setPositiveButton("确认保存") { _, _ ->
                     save.isEnabled = false; dialog.setCancelable(false)
-                    source.saveClassOverrides(expected, changes) { result ->
+                    val complete: (Result<ClassBatchSaveReceipt>) -> Unit = { result ->
                         save.isEnabled = source.editable; dialog.setCancelable(true)
                         result.onSuccess { receipt ->
                             businessSaved = true
@@ -480,6 +654,8 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                                 }
                             }
                     }
+                    if (sharedFormat) source.saveCourseWithColor(expected, changes, candidate, colorDraft, finalRecords, complete)
+                    else source.saveClassOverrides(expected, changes, complete)
                 }.create())
         }
     }

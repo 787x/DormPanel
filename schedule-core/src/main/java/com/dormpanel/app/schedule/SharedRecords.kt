@@ -61,6 +61,7 @@ interface SharedTypeAdapter {
     val maxRecords: Int get() = 4096
     fun validate(record: SharedRecord, records: List<SharedRecord>)
     fun relatedKeys(record: SharedRecord, state: ScheduleState): Set<String> = emptySet()
+    fun validateState(state: ScheduleState) {}
 }
 
 class SharedTypeRegistry(adapters: List<SharedTypeAdapter>) {
@@ -74,6 +75,10 @@ class SharedTypeRegistry(adapters: List<SharedTypeAdapter>) {
         records.filter(::supported).forEach { r -> types.getValue(r.typeId).let {
             require(r.payload.size <= it.maxPayload); it.validate(r, records)
         } }
+    }
+    fun validateState(state: ScheduleState) {
+        validate(state.sharedRecords.orEmpty())
+        types.values.forEach { it.validateState(state) }
     }
     fun writable(records: List<SharedRecord>) {
         validate(records)
