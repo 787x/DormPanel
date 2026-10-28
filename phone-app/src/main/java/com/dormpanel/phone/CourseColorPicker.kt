@@ -8,7 +8,7 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 
 internal object CourseColorPicker {
-    fun show(context: Context, initial: Int, manual: Int?, title: String, automatic: Int, accept: (Int?) -> Unit) {
+    fun show(context: Context, initial: Int, manual: Int?, title: String, automatic: Int, accept: (Int?) -> Unit): AlertDialog {
         var draft: Int? = manual
         val hsv = FloatArray(3)
         Color.colorToHSV(initial or (0xff shl 24),hsv)
@@ -16,9 +16,14 @@ internal object CourseColorPicker {
         val preview = context.scheduleLabel("当前课程预览",18f)
         val hex = EditText(context).apply { hint = "自定义颜色 #RRGGBB"; setSingleLine() }
         var updating = false
+        var squareView: View? = null
+        var hueBar: SeekBar? = null
         fun update(rgb: Int?) {
             draft = rgb
             val value = rgb ?: automatic
+            Color.colorToHSV(value or (0xff shl 24),hsv)
+            squareView?.invalidate(); hueBar?.progress = hsv[0].toInt()
+            hex.error = null
             val dark = context.resources.configuration.uiMode and 48 == 32
             preview.setBackgroundColor(CourseColors.background(value,dark)); preview.setTextColor(CourseColors.ink(dark))
             preview.text = if (rgb == null) "自动颜色 · $title" else "手动颜色 · $title"
@@ -27,7 +32,7 @@ internal object CourseColorPicker {
         column.addView(preview)
         CourseColors.palette.toList().chunked(4).forEach { colors ->
             val row = LinearLayout(context)
-            colors.forEachIndexed { index, rgb -> row.addView(context.scheduleButton("●") { update(rgb) }.apply {
+            colors.forEach { rgb -> row.addView(context.scheduleButton("●") { update(rgb) }.apply {
                 setTextColor(rgb or (0xff shl 24)); contentDescription = "预设颜色 #%06X".format(rgb)
             },LinearLayout.LayoutParams(0,context.dp(48),1f)) }
             column.addView(row)
@@ -54,8 +59,10 @@ internal object CourseColorPicker {
             }
             override fun performClick(): Boolean { super.performClick(); return true }
         }.apply { contentDescription = "自定义饱和度和亮度，亦可输入十六进制颜色" }
+        squareView = square
         column.addView(square,LinearLayout.LayoutParams(-1,context.dp(160)))
         column.addView(SeekBar(context).apply {
+            hueBar = this
             max = 359; progress = hsv[0].toInt(); contentDescription = "自定义色相"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) { if (fromUser) { hsv[0]=progress.toFloat(); update(Color.HSVToColor(hsv) and 0xffffff); square.invalidate() } }
@@ -70,7 +77,7 @@ internal object CourseColorPicker {
                 if (!updating) {
                     val text = s.toString().removePrefix("#")
                     if (text.matches(Regex("[0-9a-fA-F]{6}"))) {
-                        draft = text.toInt(16); Color.colorToHSV(draft!! or (0xff shl 24),hsv)
+                        draft = text.toInt(16); Color.colorToHSV(draft!! or (0xff shl 24),hsv); hueBar?.progress = hsv[0].toInt()
                         val dark = context.resources.configuration.uiMode and 48 == 32
                         preview.setBackgroundColor(CourseColors.background(draft!!,dark)); preview.text = "手动颜色 · $title"; square.invalidate(); hex.error = null
                     } else hex.error = "请输入六位十六进制颜色"
@@ -86,6 +93,6 @@ internal object CourseColorPicker {
         dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             if (hex.error == null) { accept(draft); dialog.dismiss() }
         } }
-        dialog.show()
+        return dialog
     }
 }

@@ -6,6 +6,7 @@ import com.dormpanel.app.schedule.*
 
 /** A read-only resolver per loaded state; preferences never contain course content. */
 internal object CourseColors {
+    private const val MAX_IDENTITIES = 60000 // RAW permits 10000 local entries plus 50000 imported instances.
     val palette = intArrayOf(0x4789ff,0x719447,0xc06488,0x9670bf,0xb58b39,0x399d91,
         0xd4764c,0x568eac,0xae6870,0x7a83bc,0x9b9146,0x4c9b72,0xb575ae,0x877560,0x5b96bb,0xb67b47)
     fun background(rgb: Int, dark: Boolean): Int {
@@ -23,7 +24,7 @@ internal object CourseColors {
     }
     @Synchronized fun snapshot(context: Context, state: ScheduleState): Snapshot {
         val identity = CourseColorIdentity(state)
-        require(identity.active.size <= 10000) { "课程颜色超出本地预算" }
+        require(identity.active.size <= MAX_IDENTITIES) { "课程颜色超出本地预算" }
         val pref = prefs(context)
         val stored = pref.all
         val auto = identity.active.mapNotNull { key -> (stored["a"+digest(key)] as? Int)?.let { key to it } }.toMap()
@@ -37,7 +38,7 @@ internal object CourseColors {
             .map { it.substring(1) }.filter { hash ->
                 val seen = stored["t"+hash] as? Long ?: 0L
                 hash !in activeHashes && seen in (day-30)..day
-            }.sortedByDescending { stored["t"+it] as? Long ?: 0L }.take((10000-activeHashes.size).coerceAtLeast(0))
+            }.sortedByDescending { stored["t"+it] as? Long ?: 0L }.take((maxOf(10000,activeHashes.size)-activeHashes.size).coerceAtLeast(0))
         val desired = mutableMapOf<String,Any>()
         retained.forEach { hash -> listOf("a","m","t").forEach { prefix -> stored[prefix+hash]?.let { desired[prefix+hash] = it } } }
         assigned.forEach { (key,value) -> desired["a"+digest(key)] = value; desired["t"+digest(key)] = day }

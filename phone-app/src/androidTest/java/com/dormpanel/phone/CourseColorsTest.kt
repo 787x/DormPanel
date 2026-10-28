@@ -12,6 +12,61 @@ import org.junit.Test
 import java.util.concurrent.*
 
 class CourseColorsTest {
+    @Test fun launcherUpdatesBothPlacedWidgetsWithoutBusinessCommit() {
+        val i=InstrumentationRegistry.getInstrumentation();val c=i.targetContext
+        require(c.packageName.endsWith(".pr68testbed"))
+        val manager=android.appwidget.AppWidgetManager.getInstance(c)
+        val compact=manager.getAppWidgetIds(android.content.ComponentName(c,TodayWidgetProvider::class.java))
+        val wide=manager.getAppWidgetIds(android.content.ComponentName(c,WideTodayWidgetProvider::class.java))
+        assertTrue(compact.isNotEmpty());assertTrue(wide.isNotEmpty())
+        val f=CompletableFuture<Result<ScheduleState>>();ScheduleStores.create(c).load{f.complete(it)}
+        val state=f.get(10,TimeUnit.SECONDS).getOrThrow()
+        val candidate=CourseBatch.candidates(state).single{it.originalTitle=="高等数学 B-1"}
+        val colors=CourseColors.snapshot(c,state);val key=colors.key(candidate)!!
+        c.getSharedPreferences("pr68-test-evidence",0).edit().putInt("automatic",colors.rgb(key,null)).commit()
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(i.uiAutomation.executeShellCommand("input keyevent 3")).use{it.readBytes()}
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(i.uiAutomation.executeShellCommand("input swipe 900 1000 100 1000 350")).use{it.readBytes()}
+        Thread.sleep(500)
+        fun matchesBoth(rgb:Int):Boolean {
+            val nodes=mutableListOf<android.view.accessibility.AccessibilityNodeInfo>()
+            fun visit(node:android.view.accessibility.AccessibilityNodeInfo?){if(node==null)return;if(node.viewIdResourceName==c.packageName+":id/widget_course_color")nodes.add(node);for(n in 0 until node.childCount)visit(node.getChild(n))}
+            visit(i.uiAutomation.rootInActiveWindow)
+            if(nodes.size<2)return false
+            val image=i.uiAutomation.takeScreenshot()
+            val matches=nodes.all { node->
+                val r=android.graphics.Rect();node.getBoundsInScreen(r)
+                var red=0L;var green=0L;var blue=0L;var count=0
+                for(y in r.top+3 until r.bottom-3 step 2)for(x in r.left+2 until r.right-2){val pixel=image.getPixel(x,y);red+=android.graphics.Color.red(pixel);green+=android.graphics.Color.green(pixel);blue+=android.graphics.Color.blue(pixel);count++}
+                count>0 && kotlin.math.abs(red/count-android.graphics.Color.red(rgb))<15 && kotlin.math.abs(green/count-android.graphics.Color.green(rgb))<15 && kotlin.math.abs(blue/count-android.graphics.Color.blue(rgb))<15
+            }
+            image.recycle();return matches
+        }
+        fun waitForColor(rgb:Int) { val until=System.currentTimeMillis()+10000;while(System.currentTimeMillis()<until){if(matchesBoth(rgb))return;Thread.sleep(150)};fail("Launcher did not display saved accent in both widgets") }
+        fun shot(name:String) {val b=i.uiAutomation.takeScreenshot();java.io.File(c.getExternalFilesDir(null),"pr68-launcher-$name.png").outputStream().use{b.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};b.recycle()}
+        CourseColors.save(c,key,0xb49138)
+        waitForColor(0xffb49138.toInt())
+        fun titleCount(node:android.view.accessibility.AccessibilityNodeInfo?):Int {if(node==null)return 0;return (if(node.text?.toString()=="高等数学 B-1")1 else 0)+(0 until node.childCount).sumOf{titleCount(node.getChild(it))}}
+        assertTrue("Both Launcher widgets contain math",titleCount(i.uiAutomation.rootInActiveWindow)>=2)
+        shot("manual")
+        CourseColors.save(c,key,null)
+        waitForColor(colors.rgb(key,null) or (0xff shl 24));shot("automatic")
+        CourseColors.save(c,key,0xb49138);waitForColor(0xffb49138.toInt())
+        val after=CompletableFuture<Result<ScheduleState>>();ScheduleStores.create(c).load{after.complete(it)}
+        assertEquals(state,after.get(10,TimeUnit.SECONDS).getOrThrow())
+    }
+    @Test fun verifyRestartRetainsImportedManualColor() {
+        val c=InstrumentationRegistry.getInstrumentation().targetContext
+        require(c.packageName.endsWith(".pr68testbed"))
+        val f=CompletableFuture<Result<ScheduleState>>();ScheduleStores.create(c).load{f.complete(it)}
+        val state=f.get(10,TimeUnit.SECONDS).getOrThrow()
+        val candidate=CourseBatch.candidates(state).single{it.originalTitle=="高等数学 B-1"}
+        val colors=CourseColors.snapshot(c,state);val key=colors.key(candidate)!!
+        assertEquals(0xb49138,colors.manual(key))
+        assertEquals(c.getSharedPreferences("pr68-test-evidence",0).getInt("automatic",-1),colors.rgb(key,null))
+        val projected=ScheduleProjection.week(state,java.time.LocalDate.now().with(java.time.DayOfWeek.MONDAY),java.time.ZoneId.systemDefault())
+        assertEquals(3,projected.filter{it.seriesId in candidate.series}.size)
+        assertTrue(projected.filter{it.seriesId in candidate.series}.all{colors.rgb(it)==0xb49138})
+    }
     @Test fun remoteViewsUseSavedLogicalAccentAndRenderReadErrors() {
         val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
         require(c.packageName.endsWith(".pr68testbed"))
@@ -44,15 +99,15 @@ class CourseColorsTest {
         fun shot(name:String) { i.waitForIdleSync(); val b=i.uiAutomation.takeScreenshot(); java.io.File(c.getExternalFilesDir(null),"pr68-$name-${if (dark) "dark" else "light"}.png").outputStream().use { b.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }; b.recycle() }
         try {
             repeat(9) { index -> await<Unit> { store.put(TimetableEntry("course$index",listOf("高等数学 B-1","大学英语","管理学原理","大学体育基础素质课","管理科学与工程导论","思想道德与法治","大学生心理健康教育","程序设计","物理实验")[index],index%7+1,480+index%3*120,570+index%3*120,"A101"),it) } }
-            android.util.Log.i("PR68","rows saved"); val state=await(store::load)
-            android.util.Log.i("PR68","loaded"); val snapshot=CourseColors.snapshot(c,state); val key=snapshot.identity.key(null,"course0")!!
-            android.util.Log.i("PR68","snapshot"); CourseColors.save(c,key,0xb49138); android.util.Log.i("PR68","saved")
+            val state=await(store::load)
+            val snapshot=CourseColors.snapshot(c,state); val key=snapshot.identity.key(null,"course0")!!
+            CourseColors.save(c,key,0xb49138); android.util.Log.i("PR68","saved")
             assertEquals(0xb49138,CourseColors.snapshot(c,state).manual(key))
             assertEquals(0xb49138,CourseColors.snapshot(c,state.copy(entries=state.entries.map { it.copy(title="改名") })).manual(key))
             CourseColors.save(c,key,null)
             assertNull(CourseColors.snapshot(c,state).manual(key))
             ScheduleStores.overrideFactory={store}
-            android.util.Log.i("PR68","launch"); launchPhoneTestActivity().use { scenario ->
+            launchPhoneTestActivity().use { scenario ->
                 Thread.sleep(1200); shot("week-light")
                 scenario.onActivity { PhoneEditors(it,it.source).courseManagement() }
                 Thread.sleep(300); shot("management-light")

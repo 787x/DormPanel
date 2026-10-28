@@ -153,13 +153,17 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             return
         }
         val column = context.scheduleColumn()
+        fun countColumns(widthPx: Int): Int {
+            val widthDp = widthPx / context.resources.displayMetrics.density
+            return if (widthDp >= 300 * context.resources.configuration.fontScale) 2 else 1
+        }
+        var columns = countColumns(context.resources.displayMetrics.widthPixels - context.dp(64))
         fun renderList() {
             column.removeAllViews()
             if (!source.ready || source.error) { column.addView(context.scheduleLabel("本地课程读取失败，请关闭并恢复读取")); return }
             val current = CourseBatch.candidates(source.state)
             val colors = CourseColors.snapshot(context,source.state)
             val dark = context.resources.configuration.uiMode and 48 == 32
-            val columns = if (context.resources.configuration.screenWidthDp >= 360 && context.resources.configuration.fontScale < 1.5f) 2 else 1
             var row = LinearLayout(context)
             current.forEachIndexed { index, candidate ->
                 if (index % columns == 0) { row = LinearLayout(context); column.addView(row) }
@@ -185,7 +189,12 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                     backgroundTintList = android.content.res.ColorStateList.valueOf(CourseColors.background(colors.rgb(colors.key(candidate)!!),dark))
                 }, LinearLayout.LayoutParams(0,-2,1f).apply { setMargins(context.dp(3),context.dp(3),context.dp(3),context.dp(3)) })
             }
+            if (current.size % columns != 0) row.addView(View(context),LinearLayout.LayoutParams(0,1,1f))
             if (current.isEmpty()) column.addView(context.scheduleLabel("暂无课程"))
+        }
+        column.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
+            val actual = countColumns(right-left)
+            if (actual != columns) { columns = actual; column.post { renderList() } }
         }
         renderList()
         val dialog = AlertDialog.Builder(context).setTitle("课程管理").setView(ScrollView(context).apply { addView(column) })
@@ -216,7 +225,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         }
         refreshColor()
         colorButton.setOnClickListener {
-            CourseColorPicker.show(context, colorSnapshot.rgb(colorKey,colorDraft), colorDraft, candidate.originalTitle, colorSnapshot.rgb(colorKey,null)) { colorDraft = it; refreshColor() }
+            track(CourseColorPicker.show(context, colorSnapshot.rgb(colorKey,colorDraft), colorDraft, candidate.originalTitle, colorSnapshot.rgb(colorKey,null)) { colorDraft = it; refreshColor() })
         }
         column.addView(colorButton)
         column.addView(context.scheduleLabel("颜色仅保存在本机，应用于整门课程；与时段勾选无关。业务保存成功后保存颜色。",14f))
@@ -387,6 +396,15 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 }.create())
         })
         var businessSaved = false
+        column.addView(context.scheduleButton("重试本地读取（保留草稿）") {
+            save.isEnabled = false
+            source.reload { result ->
+                save.isEnabled = result.isSuccess
+                error.text = if (result.isSuccess) {
+                    if (businessSaved) "业务已保存；颜色草稿保留，请保存颜色。" else "已恢复读取，草稿保留；保存时继续核对课程版本。"
+                } else "读取失败，业务和颜色草稿保留。"
+            }
+        })
         save.setOnClickListener {
             if (businessSaved) { if (saveColor()) dialog.dismiss(); return@setOnClickListener }
             val excluded = drafts.filter { (_, edit) -> selected[edit.seriesId]?.isChecked != true && edit != expected.editsByKey[edit.key] }
