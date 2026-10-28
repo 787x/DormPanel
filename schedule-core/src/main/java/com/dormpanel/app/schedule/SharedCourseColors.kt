@@ -22,13 +22,13 @@ object SharedCourseColors {
             else frame("import", sourceId, rows.first().title)
     }
     fun identity(state: ScheduleState, sourceId: String?, seriesId: String) = SyncV3Codec.hash(legacyKey(state, sourceId, seriesId).toByteArray(Charsets.UTF_8))
-    fun change(state: ScheduleState, sourceId: String?, seriesId: String, rgb: Int?): ScheduleState {
+    fun change(state: ScheduleState, sourceId: String?, seriesId: String, rgb: Int?, registry: SharedTypeRegistry = SharedTypes.registry()): ScheduleState {
         require(rgb == null || rgb in 0..0xffffff)
         val id = identity(state, sourceId, seriesId)
         val payload = if (rgb == null) listOf(0.toByte()) else listOf(1, rgb shr 16, rgb shr 8, rgb).map(Int::toByte)
         val record = SharedRecord("course.color", id, 1, payload = payload)
         val rows = requireNotNull(state.sharedRecords) { "Explicit shared format upgrade required" }
-        return state.copy(sharedRecords = SharedTypes.registry().replace(rows, record))
+        return state.copy(sharedRecords = registry.replace(rows, record))
     }
     data class Display(val rgb: Int, val status: String)
     fun display(state: ScheduleState, sourceId: String?, seriesId: String): Display {

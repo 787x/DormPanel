@@ -96,7 +96,10 @@ class V3Engine(private val journal: V3Journal, private val writerId: String, pri
         p.put("status", "TARGET_READBACK_CONFIRMED"); journal.meta.localOperation { journal.meta.atomic { journal.meta.put("sharedUpgrade", token, p) } }
         return result
     }
-    fun setCourseColor(sourceId: String?, seriesId: String, rgb: Int?) = edit { SharedCourseColors.change(it, sourceId, seriesId, rgb) }
+    fun setCourseColor(sourceId: String?, seriesId: String, rgb: Int?, expectedHash: String? = null) = edit { before ->
+        check(expectedHash == null || SyncV3Codec.businessHash(before,sharedRegistry) == expectedHash) { "课程已变化，请重新读取" }
+        SharedCourseColors.change(before, sourceId, seriesId, rgb, sharedRegistry)
+    }
     fun edit(local: ScheduleState) = edit { local }
     /** Host DAO edits run inside the journal's own transaction, before encoding/commit.
      * Do not wrap this in an outer transaction: the journal publishes memory after COMMIT. */

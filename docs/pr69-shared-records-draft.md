@@ -81,3 +81,11 @@ Kotlin/Node 均新增 test.note/1（非空 payload，并声明关联 class:x）�
 - 无关课程修改自动合并；真实引擎保存冲突、重开并重新注入 Registry 后选择本地方案，双端最终业务哈希均为 `b4496b6ccdaed04e6bd25b6494ec72bd9a22f21018e844dafecfb21f92eac7de`。
 
 实际执行：Node 67 项中 63 PASS、4 Linux 平台专项跳过；Kotlin schedule-core 40 PASS、Phone 迁移 4 PASS；Phone/app assembleDebug PASS。包括固定向量、未来颜色版本、未知透传、Checkpoint/LATE、Pending/Workspace 事务、备份恢复及 v2 合并回归。本轮未重复已有 Linux 139 项、真实 WebDAV/设备、1024 增长或 soak。当前修复可进入人工 Review，仍保持 Draft；应用重启必须由宿主重新装配 Registry，远端不携带可执行规则。
+
+## 课程颜色修改 Registry 最终定向修复
+
+已确认 c4c6ed1 的 SharedCourseColors.change 仍创建默认 Registry。现在辅助函数接受可选 Registry，V3Engine 传当前注入实例；Room 颜色入口复用引擎并保留事务内 expectedHash 检查。其余旧调用继续使用默认产品装配。
+
+新增 colorEditUsesInjectedRegistryAndPreservesRequiredAndOpaqueRecords：真实隔离 V3Journal/Engine 初始状态包含课程、事件、已有颜色、自定义必需 test.note 和未知可选原始字节；手动修改、恢复自动均成功，其他业务数据完全相等，非颜色扩展的规范编码字节相同。默认 Registry 仍拒绝；未来颜色版本、未知依赖、过期哈希及 before-commit 故障均拒绝且不改原状态。
+
+实际运行：schedule-core 定向 11 PASS（SharedRecordsTest 6、V3Engine 5），Phone 迁移 4 PASS；app/phone-app Kotlin Debug 编译通过。未重跑 Linux 139 项、实机、真实 WebDAV、增长或 soak；本次不涉及其实现。未发现新增实质性合并阻塞，满足转 Ready for Review 条件，仍须人工 Review 与后续 CI，不自动合并或发布。

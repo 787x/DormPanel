@@ -42,6 +42,39 @@ class SyncV3EngineTest {
         override fun validate(record:SharedRecord, records:List<SharedRecord>){require(record.payload.isNotEmpty())}
         override fun relatedKeys(record:SharedRecord,state:ScheduleState)=setOf("class:x")
     }))
+    @Test fun colorEditUsesInjectedRegistryAndPreservesRequiredAndOpaqueRecords() {
+        val required=SharedRecord("test.note","one",1,required=true,payload=listOf(97.toByte()))
+        val opaque=SharedRecord("future.optional","opaque",2,payload=listOf(0,127,-1).map(Int::toByte))
+        val initial=SharedCourseColors.change(ScheduleState(entries=listOf(entry("x"),entry("y")),
+            events=listOf(CalendarEvent("event","保留事件",1000,2000)),sharedRecords=emptyList()),null,"x",0x123456)
+            .let { it.copy(sharedRecords=it.sharedRecords!!+required+opaque) }
+        val a=client(Remote(),registry=linkedRegistry())
+        a.engine.initialize(a.remote,initial);a.settle();val before=a.engine.local()
+        fun preserved() {
+            val after=a.engine.local()
+            assertEquals(before.copy(sharedRecords=null),after.copy(sharedRecords=null))
+            assertEquals(before.sharedRecords!!.filter { it.typeId!="course.color" },after.sharedRecords!!.filter { it.typeId!="course.color" })
+            assertArrayEquals(SharedRecordCodec.encode(listOf(required,opaque)),SharedRecordCodec.encode(after.sharedRecords!!.filter { it.typeId!="course.color" }))
+        }
+        a.engine.setCourseColor(null,"x",0xabcdef)
+        assertEquals(0xabcdef,SharedCourseColors.rgb(a.engine.local(),null,"x"));preserved()
+        a.engine.setCourseColor(null,"x",null)
+        assertEquals("AUTO",SharedCourseColors.display(a.engine.local(),null,"x").status);preserved()
+        val current=a.engine.local()
+        val futureColor=current.copy(sharedRecords=current.sharedRecords!!.map { if(it.typeId=="course.color")it.copy(schemaVersion=2) else it })
+        assertThrows(Exception::class.java) { SharedCourseColors.change(futureColor,null,"x",0xff0000,linkedRegistry()) }
+        val unknownDependency=current.copy(sharedRecords=current.sharedRecords!!.map { if(it.typeId=="test.note")it.copy(dependencies=listOf("future.dependency")) else it })
+        assertThrows(Exception::class.java) { SharedCourseColors.change(unknownDependency,null,"x",0xff0000,linkedRegistry()) }
+        val writer=a.journal.snapshot().getString("writerId")
+        val defaultEngine=V3Engine(a.journal,writer)
+        assertThrows(Exception::class.java) { defaultEngine.setCourseColor(null,"x",0xff0000) }
+        assertEquals(current,defaultEngine.local())
+        assertThrows(Exception::class.java) { a.engine.setCourseColor(null,"x",0xff0000,expectedHash="stale") }
+        assertEquals(current,a.engine.local())
+        a.journal.meta.fault={if(it=="before-commit")error("injected rollback")}
+        assertThrows(Exception::class.java) { a.engine.setCourseColor(null,"x",0xff0000) }
+        a.journal.meta.fault=null;assertEquals(current,a.engine.local());a.journal.close()
+    }
     @Test fun customRegistryRejectsMalformedHistoryAndUnregisteredPeerPreservesIt() {
         val remote=Remote();val seed=client(remote);val binding=seed.engine.initialize(remote,ScheduleState(entries=listOf(entry("x")),sharedRecords=emptyList()));seed.settle()
         val known=client(remote,binding,linkedRegistry());known.settle();val before=known.journal.snapshot()

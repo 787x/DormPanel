@@ -882,10 +882,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     }
     fun setSharedCourseColor(sourceId: String?, seriesId: String, rgb: Int?, expectedHash: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
         check(ActiveScheduleV3.active(database) && v3().localWritesAllowed())
-        v3().engine.edit { before ->
-            check(SyncV3Codec.businessHash(before) == expectedHash)
-            SharedCourseColors.change(before, sourceId, seriesId, rgb)
-        }
+        v3().engine.setCourseColor(sourceId, seriesId, rgb, expectedHash)
         onCommitted?.invoke(); Unit
     }
     fun putSharedRecords(records: List<SharedRecord>, expectedHash: String, callback: (Result<Unit>) -> Unit) = submit(callback) {

@@ -91,3 +91,9 @@ Kotlin ScheduleV2Plan（v3 复用的冲突方案）与 Node mergePlan 增加带�
 codec 的 encode/decode/stateBytes 接口可显式传 Registry（Node encode/decode 为 `{registry}` 选项）；缺省仍使用产品装配，旧调用保持兼容。业务哈希同样可带上下文，字节规则不变。重建引擎时必须重注入同样的产品/测试 Registry，并复验持久本地、基线、冲突与待确认状态；回执解码、发布和恢复使用引擎上下文。注册表不写入线格式，不由远端提供，也不把测试类型加到产品默认装配。
 
 此前合法透传的未知记录在升级为已知类型后若校验失败，拒绝业务接纳并保留原材料；不能为继续同步而忽略失败。新增类型仍只需实现适配器与产品装配，不需更改 RAW、历史或传输核心。
+
+## 课程颜色修改的 Registry 上下文
+
+SharedCourseColors.change 增加可选 Registry 参数，默认仍为产品装配，旧的纯业务调用兼容。V3Engine.setCourseColor 显式传入引擎的 sharedRegistry；RoomScheduleStore.setSharedCourseColor 统一委托引擎入口，将 expectedHash 校验放在同一次 edit 事务内，并按同一 Registry 计算业务哈希。没有删减 writable、未知依赖或既存颜色 schema 的保护。
+
+本次仅修复 Kotlin 业务辅助函数的上下文传递，不修改类型身份、颜色模式、线格式、历史、网络、回执、Phone 迁移决策或 fnOS 实现。
