@@ -1,34 +1,88 @@
-# PR65 验证记录
+# PR65 验收记录
 
-基线：6832986d825e8ad62348f5cbe18b8b065fff13d2。
+基线：PR64 合并后的 `6832986d825e8ad62348f5cbe18b8b065fff13d2`。验收日期：2026-10-28。
 
-Phone 课程管理支持原始来源与名称候选分组、系列去重、时段选择、本地条目显式加入、公共字段勾选、复用单系列编辑器的时段草稿、变更预览与持久完成回执。Room 批量接口使用已有 write / v3 engine.edit 入口，在事务中重新检查课表基线、身份、活动版本、记录合法性与覆盖预算。
+## 实现与实机修复
 
-## 已执行验证（2026-10-28）
+Phone 增加课程管理列表与课程详情中的“管理整门课”。候选分组只读取原始来源、名称和系列身份，跨来源分开，本地条目保持独立；同一系列原始实例名称不同只显示一个明确标注的歧义候选。列表显示当前全周课程名称，保留原始名称提示，并订阅保存后的状态刷新。
 
-- Phone Debug 与隔离 x08eTest 构建通过；CourseBatchTest 5 项通过；git diff --check 通过。
-- MIX 2S（210b601e）仅安装更新 `com.dormpanel.timetable.testbed` 及测试 APK，没有升级日用包。
-- CourseManagementTest.roomBatchAndCourseUi：通过。真实 Room 两系列提交、过期基线拒绝、失效系列整批拒绝、第二条写入 SQLite trigger 故障整批回滚、管理入口、公共名称预览确认、关闭数据库后重开恢复。
-- CourseManagementTest.activeV3BatchPublishesExistingRecords：通过。先建立隔离活动 v3，再调用正式批量 API，保存后执行同步检查，验证不可变发布对象包含两个覆盖。未将此项称为自动后台发布时序验收。
-- CourseManagementTest.lightCourseUi：通过。浅色管理入口、编辑与确认保存；同时保留深色截图。测试机原有 font_scale 为 1.25，未改变系统设置。
-- TimetableSwipeTest.nativeTouchAnimationAndDateContentStayTogether：通过，原生左右横划、日/周切换、日期与内容一致。
-- Android 实测导出的 v2 DPC 和活动 v3 DPV 对象，通过 SSH 在 fnOS 测试机 192.168.3.153 的已安装隔离应用解码器读取，均得到 2 条覆盖和一致名称。仅上传到随机 `/tmp/dormpanel-pr65-*`，未修改原有工作区或共享绑定。
-- fnOS 侧边浏览器确认隔离应用可访问。此次跨端结果是实际对象读取兼容性，不能替代三端网络收敛验收。
+编辑器支持显式选择参与时段、勾选统一名称/教师/备注、独立星期/节次/自定义时间/教室草稿、取消、预览和一次保存。实际教学周逐项列举；较长日期集合可展开查看全部日期。预览分别列出统一信息、时段实际差异及指定周例外的最终投影值。保留原有单系列编辑、单周例外、原始导入关联和精确的 null/空字符串语义。
 
-实机发现并修复：批量事务原先错误使用要求同步目录的 fullState；改用正式 readState，未绑定时补齐实际学期配置，保留活动 sync 身份比较。公共信息取排除单周例外的 all-weeks 草稿，避免把例外值误用作统一默认值；允许将已有覆盖恢复为继承原始值。
+批量 API 复用 Room `write` / 活动 v3 `engine.edit`，在事务中重新检查捕获的课表、活动版本、写入资格、来源与系列、记录/文本预算和有效课程字段。全部提交后才回执“已保存到本机”，复用现有后续同步安排。没有改协议对象、业务字段、Writer 身份或数据库结构。
+
+实机发现并修复：
+- 未绑定 Room 不应调用需要完整同步目录的 fullState；使用正式读取状态，补齐实际学期配置后比较。
+- 投影对非法时间覆盖的回退不能作为合法性判断；事务内先用 ClassEditSession 验证提交字段。
+- 独立修改教室/时间时保留原覆盖中未触及字段的精确继承/清空意图。
+- 公共默认值取排除指定周例外的全周草稿；预览通过同一投影计算例外最终显示。
+
+## 本机定向验证
+
+- Phone 与 X08E 隔离 `x08eTest` 应用和测试 APK 构建通过；没有更新日用包。
+- JVM 定向 42 项通过：CourseBatchTest 13、ClassEditSessionTest 3、CsvImportFingerprintTest 5、CsvImportReplacementTest 4、HubeiCsvTimetableParserTest 13、HubeiXlsReaderTest 4。
+- 覆盖同名跨来源、本地同名独立、同系列多星期与原始实例名称变化、不连续实际日期、补课复制日期、CSV/XLS 等价分组与投影、过期捕获、来源消失、非法时间/文本/记录预算、null 与空字符串、指定周最终预览。
+- git diff --check 与网络脚本 Python 编译检查通过。
+
+## MIX 2S 实机验收
+
+设备 `210b601e`，包 `com.dormpanel.timetable.testbed`，原有 font_scale=1.25。
+
+集中 9 项全部通过（181.431 秒）：CourseManagementTest 5 项、CourseBatchProtectionTest 3 项、PR64 原生横划定向回归 1 项。最后的列表刷新修改又通过相关 3 项表单回归；课程详情入口与键盘覆盖又通过深浅色 2 项验证（31.331 秒），实际截图确认软键盘出现时保存/取消仍可见。
+
+- 管理列表、原始名称提示、全门课草稿、预览、确认保存、数据库关闭重开。
+- CSV 和 XLS 两个真实脱敏夹具通过正式导入流程持久化，并混入同名本地条目；只修改选中系列的名称、教室与不同节次，保留未选中系列、不同教师/备注、单周例外和全部原始实例。
+- 保存预览后继续编辑、取消整个表单不写入半成品；自定义 11:20–12:10、星期三及教室独立保存。
+- 深浅色、1.25 字体、竖屏、只读可浏览且保存禁用；表单位于独立对话框，不向课表转发横划。
+- 本地读取失败和应用快照期间，在调用 Store 前拒绝批量写入。
+- 事务执行时的迁移保护、失效第二系列、导入替换和来源删除均拒绝整批草稿。
+- 第二条 Room 写入触发 SQLite 故障时全部回滚。
+- 活动 v3 提交前故障回滚；提交后确认故障进入保护，重新打开后恢复完整两条修改，再正常发布。
+- PR64 左右横划、日/周切换与日期内容一致通过。
+- 既有单系列全周/指定周编辑、日期调整、替换/删除来源，以及 CSV/XLS 文件选择器确认与重开回归通过（3 项，61.541 秒）。
+
+## 真实 v2/v3 三端网络往返
+
+Android：Phone MIX 2S 与 X08E `28605/A0UH93770`，均为隔离 testbed 包。fnOS：192.168.3.153 的官方 WebDAV，Node 22 运行当前源码的 Catalog/Workspace/活动 Writer；数据保存在随机 `/tmp/dormpanel-pr65-network-*`，不写日用工作区。
+
+Android 所在网络不能直接路由到 fnOS，实测路径为 **ADB TCP → Windows TCP 转发 → fnOS 官方 WebDAV 5005**；fnOS Catalog 直接访问同一真实服务。转发只传输 TCP 字节，没有模拟 DAV 响应或改写协议。脚本完成后清理自身转发及临时参数文件。
+
+两个协议分别使用随机目录，最后一次完整重跑：
+- v2：`/dormpanel/pr65-v2-44aba3a4-2692-4deb-9f96-547ff74057c0/`
+- v3：`/dormpanel/pr65-v3-6059049b-fe96-41c3-a74b-0279401eaf9d/`
+
+每个协议执行：Phone 正式 Store 导入与创建 → Phone 批量 API 同事务修改两个系列名称/教师 → fnOS 通过正式 Catalog 加入与接收 → X08E 使用既有单系列 API 修改 a 的教室 → fnOS 通过 Workspace 编辑 b 的备注 → Phone、X08E 冷进程重新同步 → fnOS 重开 Catalog 后同步比较。
+
+三端分别确认：两条全周覆盖名称为“PR65整门课程”、教师为“统一教师”，a 的教室为“X08E教室”，b 的备注为“fnOS备注”，指定周教室和例外教师保留。原始来源/系列/实例保持身份。两个协议的三端最终完整业务字节哈希均为：
+
+`7fff424e2feab8cba363f81526334cb5eff7240a2164e347c8fff243bc4fc96f`
+
+[机器可读三端回读结果](pr65-network-evidence.json)。此结论只覆盖本次已知测试端，不宣称未知设备接收或旧历史停写。
+
+fnOS 侧边浏览器还通过现有隔离 FPK 页面新建“PR65 三端同步验收”工作区，明确选择既有 Descriptor 加入，完成同步，实际显示批量名称和指定周教室/教师。原工作区保留。
+
+## 可复现入口
+
+- `CourseBatchTest`、`CourseManagementTest`、`CourseBatchProtectionTest`。
+- `CourseBatchNetworkTest` 同时编入 Phone / X08E testbed 测试 APK。
+- `tools/verify_pr65_network.py` 从标准输入读取 host/username/password，自动安装隔离 APK、创建随机 DAV 目录、运行两协议三端往返并比较结果。
+- `fnos-app/scripts/verify-course-batch.mjs` 只允许指定的随机 `/tmp` 测试根和 PR65 DAV 子目录，复用正式 Catalog / Workspace 接口。
 
 ## 实际截图
 
 ![课程管理列表](images/pr65/list.png)
-![课程编辑](images/pr65/editor.png)
+![多时段编辑](images/pr65/editor.png)
 ![保存预览](images/pr65/preview.png)
+![CSV 选择、独立节次与指定周最终结果](images/pr65/csv-preview.png)
+![fnOS 侧边浏览器最终显示](images/pr65/fnos-final.png)
+![软键盘与可访问的保存取消](images/pr65/keyboard.png)
 
-## 未完成与限制
+## 范围与验证边界
 
-保持 Draft，尚未满足全部验收条件：
-- 尚无 Phone → 真实 WebDAV → X08E / fnOS 的三端完整网络同步操作验收。
-- 活动 v3 批量写入的断电/回执故障与迁移保护、只读、导入替换专项仍待补充；Room 已验证第二条写入故障回滚与重开持久恢复。
-- UI 取消、独立时间/节次编辑、多来源歧义、多星期系列与湖北大学 CSV/XLS 实例组合仍需更完整的实机覆盖；当前操作实测使用针对性 ICS 形态合成数据。
-- 日期列表直接列出实际日期，长学期数据的显示密度仍需优化；预览目前统一说明例外优先，字段级最终投影提示仍需完善。
-- 保守并发检测比较完整课表，其他课程变更也可能要求重新加载。
-- 初次全量 schedule-core JVM 测试与另一 Gradle 测试任务重叠，因 in-progress-results-generic.bin 丢失失败；随后串行定向测试通过，未报告全量通过。
+- 并发校验保守地比较完整课表，其他课程变更也会要求重新加载比较。
+- 多星期共用一个 seriesId 时沿用现有模型的星期修改限制；不拆分身份，不编辑导入周次，不复制/删除原始时段。
+- 中断恢复使用提交前/后的故障注入和多次进程、数据库重开；没有执行物理拔电。
+- 没有执行跨网段 Wi-Fi 直连、全套 Sync v3 RC、1024 次增长或四小时 soak；本 PR 使用定向原子性、投影与真实往返验证。
+- 初期一次全量 JVM 运行与另一 Gradle 测试任务重叠，因中间结果文件丢失失败；后续定向串行测试通过。没有声称全量 JVM 通过。
+- GitHub 当前没有为此分支报告自动检查；以上结果均来自实际本机/测试机执行。
+
+没有修改正式版本号、升级日用包、合并、打 tag 或发布。

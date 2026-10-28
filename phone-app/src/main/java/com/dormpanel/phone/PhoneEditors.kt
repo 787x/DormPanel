@@ -152,19 +152,33 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             return
         }
         val column = context.scheduleColumn()
-        candidates.forEach { candidate ->
-            val owner = source.state.sources.firstOrNull { it.id == candidate.sourceId }?.displayName ?: "本地课程"
-            column.addView(context.scheduleButton("${candidate.originalTitle}\n${candidate.series.size} 个时段 · $owner · ${if (source.editable) "可编辑" else "只读"}") {
-                courseEditor(candidate)
-            }.apply {
-                setTextColor(android.graphics.Color.BLACK)
-                backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(
-                    210 + (candidate.originalTitle.hashCode() and 15), 220, 235))
-            })
+        fun renderList() {
+            column.removeAllViews()
+            val current = CourseBatch.candidates(source.state)
+            current.forEach { candidate ->
+                val owner = source.state.sources.firstOrNull { it.id == candidate.sourceId }?.displayName ?: "本地课程"
+                val titles = candidate.series.map { series ->
+                    source.state.editsByKey[ClassOverride.key(candidate.sourceId, series, null)]?.title ?: candidate.originalTitle
+                }.distinct()
+                val displayed = titles.singleOrNull() ?: "${candidate.originalTitle}（各时段名称不同）"
+                val original = if (displayed != candidate.originalTitle) "\n原始名称：${candidate.originalTitle}" else ""
+                column.addView(context.scheduleButton("$displayed$original\n${candidate.series.size} 个时段 · $owner · ${if (source.editable) "可编辑" else "只读"}") {
+                    courseEditor(candidate)
+                }.apply {
+                    setTextColor(android.graphics.Color.BLACK)
+                    backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(
+                        210 + (candidate.originalTitle.hashCode() and 15), 220, 235))
+                })
+            }
+            if (current.isEmpty()) column.addView(context.scheduleLabel("暂无课程"))
         }
-        if (candidates.isEmpty()) column.addView(context.scheduleLabel("暂无课程"))
-        track(AlertDialog.Builder(context).setTitle("课程管理").setView(ScrollView(context).apply { addView(column) })
-            .setNegativeButton("返回", null).create())
+        renderList()
+        val dialog = AlertDialog.Builder(context).setTitle("课程管理").setView(ScrollView(context).apply { addView(column) })
+            .setNegativeButton("返回", null).create()
+        track(dialog)
+        val listener: () -> Unit = { renderList() }
+        source.subscribe(listener)
+        dialog.setOnDismissListener { source.unsubscribe(listener); dialogs.remove(dialog) }
     }
 
     private fun courseEditor(candidate: CourseCandidate) {
@@ -191,19 +205,45 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             val key = ClassOverride.key(item.sourceId, item.seriesId, null)
             val check = CheckBox(context).apply { text = "时段 ${index + 1} · 参与本次修改"; isChecked = item.seriesId in candidate.series; minHeight = context.dp(48) }
             selected[item.seriesId] = check; column.addView(check)
-            val dates = occurrences.filter { it.seriesId == item.seriesId }.map { it.date }.distinct().sorted()
-            column.addView(context.scheduleLabel("实际日期：${dates.joinToString("、")}\n${item.periodLabel.orEmpty()} · ${context.scheduleTime(item.start)}–${context.scheduleTime(item.end)}\n教室：${item.entry.location} · 教师：${item.teacher}\n备注：${item.note}", 16f))
+            val slotOccurrences = occurrences.filter { it.seriesId == item.seriesId }
+            val dates = slotOccurrences.map { it.date }.distinct().sorted()
+            fun summary(rows: List<ClassOccurrence>, display: ClassOccurrence): String {
+                val actualDates = rows.map { it.date }.distinct().sorted()
+                val weekdays = actualDates.map { it.dayOfWeek }.distinct().sortedBy { it.value }
+                    .joinToString("、") { it.getDisplayName(java.time.format.TextStyle.FULL, source.clock.locale()) }
+                val weeks = ScheduleProjection.profile(expected, item)?.let { profile ->
+                    rows.map { Math.floorDiv(it.academicDate.toEpochDay() - profile.week1Monday.toEpochDay(), 7L) + 1 }
+                        .distinct().sorted().joinToString("、", prefix = "第", postfix = "周")
+                }
+                return "$weekdays · ${weeks ?: if (item.sourceId == null) "本地每周课程" else "${actualDates.size} 次实际安排"}\n" +
+                    "实际日期：${actualDates.take(5).joinToString("、")}${if (actualDates.size > 5) " 等 ${actualDates.size} 次" else ""}\n" +
+                    "${display.periodLabel.orEmpty()} · ${context.scheduleTime(display.start)}–${context.scheduleTime(display.end)}\n" +
+                    "教室：${display.entry.location} · 教师：${display.teacher}\n备注：${display.note}"
+            }
+            val details = context.scheduleLabel(summary(slotOccurrences, item), 16f)
+            column.addView(details)
+            if (dates.size > 5) column.addView(context.scheduleButton("查看全部 ${dates.size} 次日期") {
+                val state = expected.copy(classOverrides = expected.classOverrides.filterNot { it.key in drafts } + drafts.values)
+                val actual = CourseBatch.occurrences(state, editableCandidate, source.clock.zone(), source.clock.today()).filter { it.seriesId == item.seriesId }
+                track(AlertDialog.Builder(context).setTitle("时段 ${index + 1} · 实际日期")
+                    .setMessage(actual.map { it.date }.distinct().sorted().joinToString("\n"))
+                    .setPositiveButton("关闭", null).create())
+            })
             column.addView(context.scheduleButton("编辑时段 ${index + 1}") {
                 val state = expected.copy(classOverrides = expected.classOverrides.filterNot { it.key in drafts } + drafts.values)
                 classEditor(item, true, state) { patch ->
                     drafts[key] = ClassOverride.of(item.sourceId, item.seriesId, null, patch)
                     check.text = "时段 ${index + 1} · 已修改草稿"
+                    val future = expected.copy(classOverrides = expected.classOverrides.filterNot { it.key in drafts } + drafts.values)
+                    val rows = CourseBatch.occurrences(future, editableCandidate, source.clock.zone(), source.clock.today()).filter { it.seriesId == item.seriesId }
+                    val display = rows.firstOrNull()?.let { ClassEditSession(future, it, true, source.clock.zone()).draft }
+                    if (display != null) details.text = summary(rows, display)
                 }
             }.apply { isEnabled = source.editable })
         }
         val exceptions = expected.classOverrides.filter { it.sourceId == candidate.sourceId && it.seriesId in editableCandidate.series && it.anchorDate != null }
         column.addView(context.scheduleLabel(exceptions.joinToString("\n") {
-            "指定周 ${it.anchorDate}：${it.patch()}（继续优先生效）"
+            "指定周 ${it.anchorDate} 有单独修改，继续优先生效；保存前显示最终结果"
         }, 14f))
         column.addView(context.scheduleButton("重新加载并查看当前课程（保留本页草稿）") {
             source.reload { result ->
@@ -239,8 +279,13 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 "时段 ${representatives.map { it.seriesId }.indexOf(change.seriesId) + 1}：" + fields.filter { it.second.first != it.second.second }
                     .joinToString("；") { "${it.first} → ${it.second.second ?: "继承原始值"}" }
             }
+            val commonSummary = listOf(title to "课程名称", teacher to "教师", note to "备注")
+                .filter { it.first.first.isChecked }
+                .joinToString("；") { "${it.second} → ${it.first.second.text.toString().trim().ifEmpty { "（清空）" }}" }
+                .ifEmpty { "未统一修改公共信息" }
+            val exceptionPreview = CourseBatch.exceptionPreview(expected, changes, source.clock.zone())
             track(AlertDialog.Builder(context).setTitle("变更预览 · ${changes.size} 个时段")
-                .setMessage("$preview\n\n统一字段只应用于勾选时段。所有指定周例外继续生效，例外字段优先；未改字段与原始导入身份保留。")
+                .setMessage("统一信息：$commonSummary\n\n各时段实际差异：\n$preview\n\n$exceptionPreview\n\n统一字段只应用于勾选时段。所有指定周例外继续生效，例外字段优先；未改字段与原始导入身份保留。")
                 .setNegativeButton("继续编辑", null).setPositiveButton("确认保存") { _, _ ->
                     save.isEnabled = false; dialog.setCancelable(false)
                     source.saveClassOverrides(expected, changes) { result ->
@@ -274,6 +319,10 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         var start = draft.entry.startMinute
         var end = draft.entry.endMinute
         val existingRange = ScheduleProjection.periods(draft.periodLabel)
+        val normalizedBefore = if (accept != null) runCatching { session.patch(draft.entry.title, draft.entry.location,
+            draft.teacher, draft.note, selectedDate, selectedWeekday, draft.linked,
+            existingRange?.first, existingRange?.second, start, end) }.getOrNull() else null
+
         val firstPeriod = input("First period", existingRange?.first?.toString().orEmpty())
         val lastPeriod = input("Last period", existingRange?.second?.toString().orEmpty())
         val fields = context.scheduleColumn()
@@ -281,6 +330,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         val dateButton = context.scheduleButton("Date · $selectedDate") {}
         val days = DayOfWeek.entries
         val weekdaySpinner = Spinner(context).apply {
+            contentDescription = "Class weekday"
             adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item,
                 days.map { it.name.lowercase().replaceFirstChar(Char::uppercase) })
             setSelection(days.indexOf(selectedWeekday))
@@ -367,7 +417,10 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
                 teacher.text.toString(), note.text.toString(), selected, selectedWeekday, linked,
                 firstPeriod.text.toString().toIntOrNull(), lastPeriod.text.toString().toIntOrNull(), start, end) }
             patch.fold(onSuccess = {
-                if (accept != null) { accept(it); null }
+                if (accept != null) {
+                    val original = draftState.editsByKey[session.key]?.patch() ?: ClassPatch()
+                    accept(normalizedBefore?.let { before -> session.preserveUntouched(original, before, it) } ?: it); null
+                }
                 else if (source.saveClassOverride(item.sourceId, item.seriesId, if (allWeeks) null else date, it)) null
                 else "Could not save class edit."
             }, onFailure = { it.message ?: "Invalid class edit." })

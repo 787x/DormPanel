@@ -83,6 +83,113 @@ class CourseManagementTest {
         }
     }
 
+    @Test fun csvXlsMixedSourcesIndependentDraftCancelAndSelection() {
+        require(c.packageName.endsWith(".testbed"))
+        val name="pr65-csv-${UUID.randomUUID()}"
+        TermScheduleProfileStore.overrideNamespace=name;WebDavSettings.overrideNamespace=name
+        val executor=Executors.newSingleThreadExecutor();val profiles=TermScheduleProfileStore(c)
+        val store=RoomScheduleStore(Room.databaseBuilder(c,ScheduleDatabase::class.java,"$name.db").build(),executor,profiles=profiles)
+        try {
+            fun imported(ext:String):ImportCommit {
+                val bytes=i.context.assets.open("hubei_2026-2027-1.$ext").readBytes()
+                val preview=TimetableImporter().parse(ScheduleArtifact("fixture.$ext",bytes))
+                return await { IcsScheduleImporter().commit(preview,store,"$ext 测试来源",null,1,it) }
+            }
+            val csv=imported("csv");imported("xls")
+            await<Unit>{store.put(TimetableEntry("local-a","高等数学B-1",1,540,600),it)}
+            await<Unit>{store.put(TimetableEntry("local-b","高等数学B-1",2,540,600),it)}
+            val initial=await<ScheduleState>(store::load).copy(profiles=mapOf(BuiltInProfiles.term2026.termKey to BuiltInProfiles.term2026))
+            val group=CourseBatch.candidates(initial).single{it.sourceId==csv.source.id&&it.originalTitle=="高等数学B-1"}.let { group ->
+                group.copy(series=CourseBatch.occurrences(initial,group,ZoneId.systemDefault(),LocalDate.of(2026,10,26)).map{it.seriesId}.distinct())
+            }
+            assertTrue(group.series.size>=2)
+            val old=group.series.mapIndexed{n,id->ClassOverride.of(csv.source.id,id,null,ClassPatch(teacher="教师$n",note=if(n==0)"" else "保留备注"))}
+            await<Unit>{store.putClassOverrides(initial,old,it)}
+            val occurrence=CourseBatch.occurrences(initial,group,ZoneId.systemDefault(),LocalDate.of(2026,10,26)).first{it.seriesId==group.series.first()}
+            val sourceRange=ScheduleProjection.periods(occurrence.periodLabel)
+            val newFirst=if(sourceRange?.first==1)3 else 1
+            val newLast=newFirst+1
+            val weekly=ClassOverride.of(csv.source.id,group.series.first(),occurrence.anchorDate.toString(),ClassPatch(title="指定周名称",teacher="例外教师",location="例外教室"))
+            await<Unit>{store.putClassOverride(weekly,weekly.key,it)}
+            val baseline=await<ScheduleState>(store::load)
+            ScheduleStores.overrideFactory={store}
+            c.getSharedPreferences("com.dormpanel.phone.TimetableActivity",0).edit().putString("date","2026-10-26").commit()
+            launchPhoneTestActivity().use { scenario ->
+                Thread.sleep(800)
+                onView(withText("管理")).perform(click());onView(withText("课程管理")).perform(click())
+                fun openGroup() {onView(withText(org.hamcrest.Matchers.allOf(org.hamcrest.Matchers.startsWith("高等数学B-1\n"),org.hamcrest.Matchers.containsString("csv 测试来源")))).perform(scrollTo(),click())}
+                fun draft() {
+                    onView(withText("编辑时段 1")).perform(scrollTo(),click())
+                    onView(withContentDescription("Location")).perform(scrollTo(),replaceText("独立教室"),closeSoftKeyboard())
+                    onView(withContentDescription("First period")).perform(scrollTo(),replaceText(newFirst.toString()),closeSoftKeyboard())
+                    onView(withContentDescription("Last period")).perform(scrollTo(),replaceText(newLast.toString()),closeSoftKeyboard())
+                    onView(withText("Save")).perform(click())
+                    onView(withText("时段 2 · 参与本次修改")).perform(scrollTo(),click())
+                    onView(withText("统一修改课程名称")).perform(scrollTo(),click())
+                    onView(withContentDescription("课程名称")).perform(scrollTo(),replaceText("CSV整门课草稿"),closeSoftKeyboard())
+                }
+                openGroup();draft()
+                assertEquals(baseline.classOverrides,await<ScheduleState>(store::load).classOverrides)
+                onView(withText("保存修改")).perform(click())
+                onView(withText("继续编辑")).perform(click())
+                onView(withText("取消")).inRoot(isDialog()).perform(click())
+                assertEquals(baseline.classOverrides,await<ScheduleState>(store::load).classOverrides)
+                openGroup();draft();onView(withText("保存修改")).perform(click());shot("csv-preview")
+                onView(withText("确认保存")).perform(click());Thread.sleep(800)
+                val saved=await<ScheduleState>(store::load)
+                assertEquals(baseline.imported,saved.imported)
+                assertEquals(weekly,saved.classOverrides.single{it.key==weekly.key})
+                val changed=saved.classOverrides.single{it.seriesId==group.series.first()&&it.anchorDate==null}
+                assertEquals("CSV整门课草稿",changed.title);assertEquals("教师0",changed.teacher);assertEquals("",changed.note)
+                assertEquals("独立教室",changed.location);assertEquals(newFirst,changed.periodStart);assertEquals(newLast,changed.periodEnd)
+                assertEquals(old[1],saved.classOverrides.single{it.key==old[1].key})
+            }
+        } finally {ScheduleStores.overrideFactory=null;TermScheduleProfileStore.overrideNamespace=null;WebDavSettings.overrideNamespace=null;store.close();executor.shutdown();executor.awaitTermination(20,TimeUnit.SECONDS)}
+    }
+
+    @Test fun localCustomTimeWeekdayAndReadOnlyBrowsing() {
+        require(c.packageName.endsWith(".testbed"))
+        val name="pr65-custom-${UUID.randomUUID()}"
+        val executor=Executors.newSingleThreadExecutor()
+        val db=Room.databaseBuilder(c,ScheduleDatabase::class.java,"$name.db").build()
+        val store=RoomScheduleStore(db,executor)
+        WebDavSettings.overrideNamespace=name
+        try {
+            await<Unit>{store.put(TimetableEntry("manual","本地自定义",1,540,600,"原教室"),it)}
+            ScheduleStores.overrideFactory={store}
+            launchPhoneTestActivity().use {
+                Thread.sleep(800)
+                onView(withText("管理")).perform(click());onView(withText("课程管理")).perform(click())
+                onView(withText(org.hamcrest.Matchers.startsWith("本地自定义\n"))).perform(click())
+                onView(withText("编辑时段 1")).perform(scrollTo(),click())
+                onView(withContentDescription("Class weekday")).perform(scrollTo(),click())
+                onView(withText("Wednesday")).inRoot(androidx.test.espresso.matcher.RootMatchers.isPlatformPopup()).perform(click())
+                fun time(prefix:String,hour:Int,minute:Int) {
+                    onView(withText(org.hamcrest.Matchers.startsWith(prefix))).perform(scrollTo(),click())
+                    onView(isAssignableFrom(android.widget.TimePicker::class.java)).perform(object:androidx.test.espresso.ViewAction {
+                        override fun getConstraints()=isAssignableFrom(android.widget.TimePicker::class.java)
+                        override fun getDescription()="Choose custom class time"
+                        override fun perform(controller:androidx.test.espresso.UiController,view:android.view.View) {
+                            (view as android.widget.TimePicker).apply{this.hour=hour;this.minute=minute};controller.loopMainThreadUntilIdle()
+                        }
+                    })
+                    onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                }
+                time("Start ·",11,20);time("End ·",12,10)
+                onView(withContentDescription("Location")).perform(scrollTo(),replaceText("自定义教室"),closeSoftKeyboard())
+                onView(withText("Save")).perform(click());onView(withText("保存修改")).perform(click());onView(withText("确认保存")).perform(click())
+                Thread.sleep(800)
+                val edit=await<ScheduleState>(store::load).classOverrides.single()
+                assertEquals(3,edit.weekday);assertEquals(680,edit.startMinute);assertEquals(730,edit.endMinute);assertEquals("自定义教室",edit.location)
+                executor.submit{db.dao().checkpoint(ScheduleSyncCheckpoint(200,byteArrayOf(1)))}.get()
+                onView(withText(org.hamcrest.Matchers.startsWith("本地自定义\n"))).perform(click())
+                onView(withText("保存修改")).check(androidx.test.espresso.assertion.ViewAssertions.matches(org.hamcrest.Matchers.not(isEnabled())))
+                onView(withText("取消")).perform(click())
+                executor.submit{db.dao().deleteSyncRecord(200)}.get()
+            }
+        } finally {ScheduleStores.overrideFactory=null;WebDavSettings.overrideNamespace=null;store.close();executor.shutdown();executor.awaitTermination(20,TimeUnit.SECONDS)}
+    }
+
     @Test fun lightCourseUi() {
         screenshotSuffix = "-light"
         i.runOnMainSync { androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO) }
@@ -129,9 +236,16 @@ class CourseManagementTest {
                 Thread.sleep(800)
                 onView(withText("管理")).perform(click())
                 onView(withText("课程管理")).perform(click()); shot("list")
-                onView(withText(org.hamcrest.Matchers.startsWith("高等数学 B-1\n"))).perform(click()); shot("editor")
+                onView(withText("返回")).perform(click())
+                onView(withText("日视图")).perform(click())
+                onView(withText(org.hamcrest.Matchers.startsWith("批量数学\n"))).perform(scrollTo(),click())
+                onView(withText("管理整门课")).perform(scrollTo(),click()); shot("editor")
                 onView(withText("统一修改课程名称")).perform(click())
-                onView(withContentDescription("课程名称")).perform(replaceText("整门课新名称"), closeSoftKeyboard())
+                onView(withContentDescription("课程名称")).perform(replaceText("整门课新名称"),click())
+                onView(withText("保存修改")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
+                onView(withText("取消")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()))
+                shot("keyboard")
+                onView(withContentDescription("课程名称")).perform(closeSoftKeyboard())
                 onView(withText("保存修改")).perform(click()); shot("preview")
                 onView(withText("确认保存")).perform(click())
                 Thread.sleep(800)

@@ -24,6 +24,20 @@ class ClassEditSession(state: ScheduleState, val item: ClassOccurrence, val allW
         it.sourceId == item.sourceId && it.seriesId == item.seriesId
     }.map { Instant.ofEpochMilli(it.start).atZone(zone).dayOfWeek }.distinct().size > 1
 
+    /** Preserve exact inheritance/clear intent when a form field was not changed. */
+    fun preserveUntouched(original: ClassPatch, before: ClassPatch, after: ClassPatch) = ClassPatch(
+        title = if (after.title == before.title) original.title else after.title,
+        weekday = if (after.weekday == before.weekday) original.weekday else after.weekday,
+        date = if (after.date == before.date) original.date else after.date,
+        periodStart = if (after.periodStart == before.periodStart) original.periodStart else after.periodStart,
+        periodEnd = if (after.periodEnd == before.periodEnd) original.periodEnd else after.periodEnd,
+        timingMode = if (after.timingMode == before.timingMode) original.timingMode else after.timingMode,
+        startMinute = if (after.startMinute == before.startMinute) original.startMinute else after.startMinute,
+        endMinute = if (after.endMinute == before.endMinute) original.endMinute else after.endMinute,
+        location = if (after.location == before.location) original.location else after.location,
+        teacher = if (after.teacher == before.teacher) original.teacher else after.teacher,
+        note = if (after.note == before.note) original.note else after.note)
+
     fun patch(title: String, location: String, teacher: String, note: String,
         selected: LocalDate, selectedWeekday: DayOfWeek, linked: Boolean,
         first: Int?, last: Int?, start: Int, end: Int): ClassPatch {
