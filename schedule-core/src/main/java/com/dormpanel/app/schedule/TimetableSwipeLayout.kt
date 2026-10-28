@@ -11,12 +11,23 @@ import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import kotlin.math.abs
 
+/** Optional bounded materialization for complex pages. All calls run on the UI thread.
+ * Only genuinely visible columns are required synchronously; owners may fill hidden columns
+ * in finite frame-sized batches and must stop that preparation when ownership ends.
+ */
+interface TimetablePreviewContent {
+    fun reveal(left: Int, right: Int): Boolean
+    fun startPreparation()
+    fun cancelPreparation()
+}
+
 /** Local arbitration and a two-page clipped viewport. Owners supply read-only date projections.
  * No preview is built for DOWN, taps or vertical scrolling. The owner can promote the exact
  * preview tree with takePreview() during navigate; otherwise it is released after navigation.
  */
 class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit) : FrameLayout(context) {
     var preparePreview: ((Int) -> View)? = null
+    var previewTiming: ((String, Long, Long) -> Unit)? = null
     var swipeEnabled = false
         set(value) { if (field != value) cancelMotion(); field = value }
     private val config = ViewConfiguration.get(context)
@@ -64,13 +75,14 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
         if (event.actionMasked == MotionEvent.ACTION_MOVE && !horizontal && !rejected && maxOf(abs(dx), abs(dy)) > slop) {
             if (abs(dx) > abs(dy) * 1.7f) {
                 horizontal = true
+                previewTiming?.let { val now=System.nanoTime(); it("lock",now,now) }
                 cancelChild(event)
                 parent?.requestDisallowInterceptTouchEvent(true)
             } else rejected = true
         }
         if (horizontal) {
             when (event.actionMasked) {
-                MotionEvent.ACTION_MOVE -> drag(dx)
+                MotionEvent.ACTION_MOVE -> previewPhase("move") { drag(dx) }
                 MotionEvent.ACTION_UP -> {
                     drag(dx) // UP may contain a final reversal not delivered in a MOVE.
                     velocity?.computeCurrentVelocity(1000, config.scaledMaximumFlingVelocity.toFloat())
@@ -103,24 +115,40 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
         if (direction != 0 && direction != previewDirection) {
             releasePreview()
             previewDirection = direction
-            preparePreview?.invoke(direction)?.let { page ->
+            previewPhase("prepare") { preparePreview?.invoke(direction) }?.let { page ->
                 preview = page
                 page.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 if (page is ViewGroup) {
                     previewFocusability = page.descendantFocusability
                     page.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
                 }
-                addView(page, LayoutParams(-1,-1))
+                previewPhase("mount") { addView(page, LayoutParams(-1,-1)) }
                 // Restore its scroll anchor before exposing the first strip.
-                page.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(height,MeasureSpec.EXACTLY))
-                page.layout(0,0,width,height)
+                previewPhase("measure") { page.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(height,MeasureSpec.EXACTLY)) }
+                previewPhase("layout") { page.layout(0,0,width,height) }
+                (page as? TimetablePreviewContent)?.startPreparation()
             }
         }
         position(dx.coerceIn(-width.toFloat(),width.toFloat()))
     }
 
+    private inline fun <T> previewPhase(name: String, block: () -> T): T {
+        val sink=previewTiming ?: return block()
+        val start=System.nanoTime()
+        try { return block() } finally { sink(name,start,System.nanoTime()) }
+    }
+
     private fun position(x: Float) {
         offset = x
+        preview?.let { page ->
+            val origin=previewDirection*width+x
+            val left=maxOf(0f,-origin).toInt()
+            val right=kotlin.math.ceil(minOf(width.toFloat(),width-origin).toDouble()).toInt()
+            if(right>left && (page as? TimetablePreviewContent)?.reveal(left,right)==true) {
+                previewPhase("measure-visible") { page.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(height,MeasureSpec.EXACTLY)) }
+                previewPhase("layout-visible") { page.layout(0,0,width,height) }
+            }
+        }
         content?.translationX = x
         preview?.translationX = previewDirection * width + x
     }
@@ -135,7 +163,7 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
         val complete = {
             if (expectedGeneration == generation) {
                 settling = false; committing = false; animator = null
-                if (direction != 0) navigate(direction)
+                if (direction != 0) previewPhase("commit") { navigate(direction) }
                 if (expectedGeneration == generation) { releasePreview(); position(0f) }
             }
         }
@@ -153,6 +181,7 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
 
     /** Transfer ownership on successful navigation; reuse the preview's measured tree. */
     fun takePreview(): View? = preview?.also { page ->
+        (page as? TimetablePreviewContent)?.cancelPreparation()
         preview = null; previewDirection = 0
         removeView(page); page.translationX = 0f
         if (page is ViewGroup) page.descendantFocusability = previewFocusability
@@ -160,7 +189,7 @@ class TimetableSwipeLayout(context: Context, private val navigate: (Int) -> Unit
     }
 
     private fun releasePreview() {
-        preview?.let { removeView(it) }
+        preview?.let { (it as? TimetablePreviewContent)?.cancelPreparation(); removeView(it) }
         preview = null; previewDirection = 0
     }
 

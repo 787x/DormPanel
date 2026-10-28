@@ -7,6 +7,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.*
 import androidx.core.view.doOnLayout
+import androidx.core.view.doOnNextLayout
+import androidx.core.view.doOnPreDraw
 import com.dormpanel.app.appearance.*
 import com.dormpanel.app.ui.PageInteraction
 import java.time.*
@@ -28,6 +30,8 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     private var grid: X08eWeekGrid? = null
     private var swipeContent: TimetableSwipeLayout? = null
     private var currentBody: TimetableBody? = null
+    private val displayCache=X08eDisplayCache()
+    private var paintedTheme=appearance.state.themeMode
     private var settingsDialog: androidx.appcompat.app.AlertDialog? = null
     private fun tr(zh: String, en: String) = context.scheduleText(zh, en)
     private fun scroll(key: String, content: View, body: TimetableBody, initial: Int = 0, minuteAt: ((Int) -> Float)? = null) = ScrollView(context).apply {
@@ -44,12 +48,13 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     init { orientation = VERTICAL; setPadding(context.dp(20), context.dp(10), context.dp(20), context.dp(10)); render() }
     override fun shouldObservePageSwipe(event: MotionEvent) = false
     override fun onAttachedToWindow() { super.onAttachedToWindow(); display.visibility(isShown) }
-    override fun onDetachedFromWindow() { swipeContent?.cancelMotion(); display.visibility(false); settingsDialog?.dismiss(); editors.close(); super.onDetachedFromWindow() }
-    override fun onVisibilityAggregated(isVisible: Boolean) { super.onVisibilityAggregated(isVisible); visible = isVisible; display.visibility(isVisible) }
-    override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); display.visibility(visible && visibility == VISIBLE) }
+    override fun onDetachedFromWindow() { displayCache.clear(); swipeContent?.cancelMotion(); display.visibility(false); settingsDialog?.dismiss(); editors.close(); super.onDetachedFromWindow() }
+    override fun onVisibilityAggregated(isVisible: Boolean) { super.onVisibilityAggregated(isVisible); visible = isVisible; if(!isVisible) displayCache.clear(); display.visibility(isVisible) }
+    override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); if(visibility!=VISIBLE) displayCache.clear(); display.visibility(visible && visibility == VISIBLE) }
     private fun button(text: String, action: () -> Unit) = context.scheduleButton(text, action)
     private fun render() = renderPage(null)
     private fun renderPage(promoted: TimetableBody?) {
+        if(promoted==null) displayCache.invalidate()
         currentBody?.active = false; currentBody = null
         swipeContent?.cancelMotion(); swipeContent = null
         grid?.setClockActive(false); grid = null
@@ -137,6 +142,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         addView(body, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
     }
     private fun timetable(promoted: TimetableBody?) {
+        warmDisplayData()
         val actions = LinearLayout(context)
         if (style.layout == X08eScheduleLayout.CLASSIC) {
             actions.addView(button(tr("+ 添加课程", "+ Add class")) { editors.entry() }.apply { isEnabled = source.editable })
@@ -161,7 +167,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
             renderPage(preview)
         }.apply {
             tag = "timetable-swipe"; swipeEnabled = style.swipeWeeks
-            preparePreview = { direction -> buildTimetable(session.weekStart.plusWeeks(direction.toLong())) }
+            preparePreview = { direction -> warmDisplayData(); buildTimetable(session.weekStart.plusWeeks(direction.toLong()), deferred=true) }
         }
         swipeContent = swipe
         currentBody = body
@@ -171,14 +177,43 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         addView(swipe, LayoutParams(-1,0,1f))
         body.grid?.clockAllowed = true
     }
-    private inner class TimetableBody(val weekStart: LocalDate) : LinearLayout(context), AppearanceAware {
+    private inner class TimetableBody(val weekStart: LocalDate, val deferred: Boolean) : LinearLayout(context), AppearanceAware, TimetablePreviewContent {
         var active = false
         var grid: X08eWeekGrid? = null
         val accents = mutableListOf<() -> Unit>()
         val captureViewport = mutableListOf<() -> Unit>()
+        private val pending=mutableListOf<Pair<View,()->Unit>>()
+        private var preparing=false
+        private var visibleLeft=0
+        private var visibleRight=0
+        fun prepareColumn(view: View, build: () -> Unit) { pending += view to build }
+        override fun reveal(left: Int, right: Int): Boolean {
+            visibleLeft=left; visibleRight=right
+            val needed=pending.filter { (v,_) -> v.right>left && v.left<right }
+            needed.forEach { entry -> pending.remove(entry); X08ePreviewTrace.section("visible-views") { entry.second() } }
+            return needed.isNotEmpty()
+        }
+        private val fill=object : Runnable {
+            override fun run() {
+                if(!preparing || !isAttachedToWindow || pending.isEmpty()) return
+                val next=pending.minBy { (v,_) -> when { v.right<=visibleLeft -> visibleLeft-v.right; v.left>=visibleRight -> v.left-visibleRight; else -> 0 } }
+                pending.remove(next)
+                X08ePreviewTrace.section("staged-views") { next.second() }
+                if(pending.isNotEmpty()) postOnAnimationDelayed(this,16)
+            }
+        }
+        override fun startPreparation() {
+            if(deferred && pending.isNotEmpty()) {
+                preparing=true
+                // Never let a hidden-column batch run ahead of the first visible response.
+                doOnPreDraw { post { if(preparing && isAttachedToWindow) postOnAnimationDelayed(fill,16) } }
+            }
+        }
+        override fun cancelPreparation() { preparing=false; removeCallbacks(fill) }
+        override fun onDetachedFromWindow() { cancelPreparation(); super.onDetachedFromWindow() }
         init { orientation = VERTICAL; tag = "x08e-page-$weekStart" }
         override fun applyAppearance(state: AppearanceState) = styleViews(state, includeGrid = true)
-        fun styleViews(state: AppearanceState, includeGrid: Boolean) {
+        fun styleViews(state: AppearanceState, includeGrid: Boolean) = X08ePreviewTrace.section("theme") {
             for (i in 0 until childCount) {
                 val child=getChildAt(i)
                 // A new grid has already styled its cards and clock in its constructor.
@@ -188,11 +223,21 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
             accents.forEach { it() }
         }
     }
-    private fun buildTimetable(weekStart: LocalDate): TimetableBody {
-        val body = TimetableBody(weekStart)
-        val occurrences = ScheduleProjection.week(source.state,weekStart,source.clock.zone())
+    private fun warmDisplayData() {
+        if(!style.swipeWeeks || session.mode!=ScheduleMode.TIMETABLE || !source.ready || !isAttachedToWindow || !isShown) { displayCache.clear(); return }
+        val config=resources.configuration
+        displayCache.configure(source.state,source.clock.zone(),style,config.locales[0],
+            "${resources.displayMetrics.widthPixels}:${resources.displayMetrics.heightPixels}:${config.densityDpi}:${config.fontScale}:$paintedTheme")
+        displayCache.warm(session.weekStart)
+    }
+    private fun buildTimetable(weekStart: LocalDate, deferred: Boolean = false): TimetableBody {
+        val body = TimetableBody(weekStart,deferred)
+        val prepared=displayCache.get(weekStart) ?: X08ePreviewTrace.section("cache-miss") {
+            X08eWeekDisplay.prepare(source.state,weekStart,source.clock.zone(),style,resources.configuration.locales[0]).also(displayCache::put)
+        }
+        val occurrences = prepared.items
         if (style.layout != X08eScheduleLayout.CLASSIC) {
-            timeGrid(occurrences,body)
+            timeGrid(occurrences,body,prepared)
             body.styleViews(appearance.state, includeGrid = false)
             return body
         }
@@ -208,28 +253,44 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
                 else -> ""
             }
             val headingText = "${day.getDisplayName(TextStyle.SHORT, source.clock.locale())} ${date.monthValue}/${date.dayOfMonth}$suffix"
-            val heading = button(headingText) { if (body.active) editors.dayAdjustment(date) }.apply {
+            fun heading() = button(headingText) { if (body.active) editors.dayAdjustment(date) }.apply {
                 textSize = 16f; minWidth = 0; minimumWidth = 0; setPadding(0, 0, 0, 0)
                 contentDescription = tr("日期调整 $date", "Day adjustment $date${if (adjustment?.mode == "weekday") " uses ${DayOfWeek.of(adjustment.weekday!!)}" else ""}")
             }
-            column.addView(heading)
-            body.accents += { if (date == source.clock.today()) { heading.setTextColor(PanelPalette.forMode(appearance.state.themeMode).accent); heading.text = "• $headingText" } }
+            val headingSlot=FrameLayout(context).apply { minimumHeight=context.dp(48) }
+            column.addView(headingSlot,LayoutParams(-1,LayoutParams.WRAP_CONTENT))
             val classes = context.scheduleColumn()
-            val entries = occurrences.filter { it.date == date || (offset == 0L && it.date < date) }
-            if (entries.isEmpty()) classes.addView(context.scheduleLabel("—", 18f))
-            entries.forEach { occurrence ->
-                classes.addView(context.courseView(listOf(occurrence), source.state, style, source.clock.zone()) { if (body.active) editors.classDetail(occurrence) },
-                    LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { bottomMargin = context.dp(4) })
+            val entries = prepared.days[offset.toInt()]
+            val scroller=scroll("classic-$offset", classes, body)
+            val saved=scrollOffsets["classic-$offset"] ?: 0
+            val fill={
+                val heading=heading()
+                headingSlot.addView(heading,FrameLayout.LayoutParams(-1,LayoutParams.WRAP_CONTENT))
+                val accent={ if(date==source.clock.today()) { heading.setTextColor(PanelPalette.forMode(appearance.state.themeMode).accent); heading.text="• $headingText" } }
+                body.accents+=accent
+                if(deferred) { applyAppearanceTree(heading,appearance.state); accent() }
+                if(entries.isEmpty()) classes.addView(context.scheduleLabel("—",18f))
+                entries.forEach { occurrence ->
+                    val card=context.courseView(listOf(occurrence),source.state,style,source.clock.zone(),prepared.texts[occurrence]) { if(body.active) editors.classDetail(occurrence) }
+                    if(deferred) applyAppearanceTree(card,appearance.state)
+                    classes.addView(card,LayoutParams(-1,-2).apply { bottomMargin=context.dp(4) })
+                }
+                if(deferred) scroller.doOnNextLayout { scroller.scrollTo(0,saved.coerceAtMost((classes.height-scroller.height).coerceAtLeast(0))) }
             }
-            column.addView(scroll("classic-$offset", classes, body), LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+            if(deferred) body.prepareColumn(column,fill) else fill()
+            column.addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
             week.addView(column, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         }
         body.addView(week, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         body.applyAppearance(appearance.state)
         return body
     }
-    private fun timeGrid(items: List<ClassOccurrence>, body: TimetableBody) {
-        val content = X08eWeekGrid(context, items, body.weekStart, source, style, appearance, { if (body.active) editors.classDetail(it) }, { body.active })
+    private fun timeGrid(items: List<ClassOccurrence>, body: TimetableBody, prepared: X08eWeekDisplay) {
+        val content = X08eWeekGrid(context, items, body.weekStart, source, style, appearance, { if (body.active) editors.classDetail(it) }, { body.active },prepared,body.deferred)
+        if(body.deferred) {
+            content.preparations.forEach { (view,fill) -> body.prepareColumn(view,fill) }
+            content.preparations.clear()
+        }
         body.grid = content
         content.clockAllowed = false
         if (style.layout == X08eScheduleLayout.PERIODS && !content.usesPeriods) body.addView(context.scheduleLabel(
@@ -244,24 +305,43 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
                 "weekday" -> " →${DayOfWeek.of(adjustment.weekday!!).getDisplayName(TextStyle.SHORT, source.clock.locale())}"
                 else -> ""
             }
-            val heading = button("${date.dayOfWeek.getDisplayName(TextStyle.SHORT, source.clock.locale())} ${date.monthValue}/${date.dayOfMonth}$suffix") { if (body.active) editors.dayAdjustment(date) }.apply {
+            fun heading() = button("${date.dayOfWeek.getDisplayName(TextStyle.SHORT, source.clock.locale())} ${date.monthValue}/${date.dayOfMonth}$suffix") { if (body.active) editors.dayAdjustment(date) }.apply {
                 minWidth = 0; minimumWidth = 0; textSize = 16f; setPadding(0, 0, 0, 0)
                 contentDescription = tr("日期调整 $date", "Day adjustment $date")
             }
-            headings.addView(heading, LayoutParams(0, context.dp(56), 1f))
-            body.accents += { if (date == source.clock.today()) heading.setTextColor(PanelPalette.forMode(appearance.state.themeMode).accent) }
+            val slot=FrameLayout(context)
+            headings.addView(slot,LayoutParams(0,context.dp(56),1f))
+            val fill={
+                val heading=heading(); slot.addView(heading,FrameLayout.LayoutParams(-1,-1))
+                val accent={ if(date==source.clock.today()) heading.setTextColor(PanelPalette.forMode(appearance.state.themeMode).accent) }
+                body.accents+=accent
+                if(body.deferred) { applyAppearanceTree(heading,appearance.state); accent() }
+            }
+            if(body.deferred) body.prepareColumn(slot,fill) else fill()
         }
         body.addView(headings)
         body.addView(scroll("grid", content, body, content.offset(viewport.gridMinute ?: 480f).coerceAtLeast(0), content::minuteAt), LayoutParams(-1, 0, 1f))
         val footer = LinearLayout(context)
         footer.addView(Space(context), LayoutParams(context.dp(76), context.dp(48)))
-        repeat(7) { day -> footer.addView(button(tr("查看 ${content.dayCount(day)} 门", "View ${content.dayCount(day)}")) { if (body.active) content.openDay(day) }.apply {
-            minWidth = 0; minimumWidth = 0; textSize = 14f; setPadding(0, 0, 0, 0); isEnabled = content.dayCount(day) > 0
-        }, LayoutParams(0, context.dp(48), 1f)) }
+        repeat(7) { day ->
+            val slot=FrameLayout(context)
+            footer.addView(slot,LayoutParams(0,context.dp(48),1f))
+            val fill={
+                val button=button(tr("查看 ${content.dayCount(day)} 门", "View ${content.dayCount(day)}")) { if(body.active) content.openDay(day) }.apply {
+                    minWidth=0; minimumWidth=0; textSize=14f; setPadding(0,0,0,0); isEnabled=content.dayCount(day)>0
+                }
+                slot.addView(button,FrameLayout.LayoutParams(-1,-1))
+                if(body.deferred) applyAppearanceTree(button,appearance.state)
+            }
+            if(body.deferred) body.prepareColumn(slot,fill) else fill()
+        }
         body.addView(footer)
     }
     override fun applyAppearance(state: AppearanceState) = paintAppearance(state, includeContent = true)
     private fun paintAppearance(state: AppearanceState, includeContent: Boolean) {
+        if(paintedTheme!=state.themeMode) {
+            paintedTheme=state.themeMode; displayCache.invalidate(); swipeContent?.cancelMotion(); warmDisplayData()
+        }
         setBackgroundColor(PanelPalette.forMode(state.themeMode).background)
         for (index in 0 until childCount) {
             val child=getChildAt(index)

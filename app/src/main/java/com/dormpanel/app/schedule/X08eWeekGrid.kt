@@ -12,18 +12,20 @@ import kotlin.math.roundToInt
 internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, private val week: LocalDate,
     private val source: ScheduleSource, private val style: X08eScheduleStyle,
     private val appearance: AppearanceController, private val detail: (ClassOccurrence) -> Unit,
-    private val interactive: () -> Boolean = { true }) : LinearLayout(context), AppearanceAware {
-    private val segments = X08eWeekGeometry.segments(items, week, source.clock.zone())
-    private val range = X08eWeekGeometry.range(segments)
-    private val periodAxis = if (style.layout == X08eScheduleLayout.PERIODS)
-        X08eWeekGeometry.periods(source.state, items, week, source.clock.zone(), range.first, range.second) else null
+    private val interactive: () -> Boolean = { true },
+    private val prepared: X08eWeekDisplay? = null, private val deferred: Boolean = false) : LinearLayout(context), AppearanceAware {
+    private val segments = prepared?.segments ?: X08ePreviewTrace.section("geometry") { X08eWeekGeometry.segments(items, week, source.clock.zone()) }
+    private val range = prepared?.range ?: X08ePreviewTrace.section("geometry") { X08eWeekGeometry.range(segments) }
+    private val periodAxis = if(prepared!=null) prepared.axis.takeIf { prepared.usesPeriods } else X08ePreviewTrace.section("geometry") { if (style.layout == X08eScheduleLayout.PERIODS)
+        X08eWeekGeometry.periods(source.state, items, week, source.clock.zone(), range.first, range.second) else null }
     val usesPeriods get() = periodAxis != null
-    val axis = periodAxis ?: X08eWeekGeometry.time(range.first, range.second)
-    private val columns = mutableListOf<FrameLayout>()
+    val axis = prepared?.axis ?: X08ePreviewTrace.section("geometry") { periodAxis ?: X08eWeekGeometry.time(range.first, range.second) }
+    private val columns = mutableListOf<RuleColumn>()
+    val preparations = mutableListOf<Pair<View, () -> Unit>>()
+    private val built = BooleanArray(7)
     private val lines = mutableListOf<View>()
     private val cards = mutableListOf<View>()
     private val labels = mutableListOf<TextView>()
-    private val rules = mutableListOf<View>()
     private var chooser: AlertDialog? = null
     private var active = false
     var clockAllowed = true
@@ -49,32 +51,52 @@ internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, priv
             gutter.addView(label, FrameLayout.LayoutParams(-1, context.dp(if (usesPeriods) 64 else 28)).apply { topMargin = offset(minute) })
         }
         repeat(7) { day ->
-            val column = FrameLayout(context); columns += column
+            val column = RuleColumn(); columns += column
             addView(column, LayoutParams(0, height, 1f))
-            axis.labels.forEach { (minute, _) ->
-                val rule = View(context); rules += rule
-                column.addView(rule, FrameLayout.LayoutParams(-1, context.dp(1).coerceAtLeast(1)).apply { topMargin = offset(minute) })
-            }
-            X08eWeekGeometry.groups(segments.filter { it.day == day }).forEach { group ->
-                val top = offset(group.minOf { it.start }); val bottom = offset(group.maxOf { it.end })
-                val row = LinearLayout(context)
-                X08eWeekGeometry.lanes(group).forEach { lane ->
-                    val laneView = FrameLayout(context)
-                    lane.forEach { segment ->
-                        val card = context.courseView(listOf(segment.item), source.state, style, source.clock.zone()) { detail(segment.item) }
-                        cards += card
-                        laneView.addView(card, FrameLayout.LayoutParams(-1, maxOf(1, offset(segment.end) - offset(segment.start))).apply {
-                            topMargin = offset(segment.start) - top; marginStart = context.dp(2); marginEnd = context.dp(2)
-                        })
-                    }
-                    row.addView(laneView, LayoutParams(0, -1, 1f))
-                }
-                column.addView(row, FrameLayout.LayoutParams(-1, maxOf(1, bottom - top)).apply { topMargin = top })
-            }
             val line = View(context).apply { setBackgroundColor(0xffbb655e.toInt()); contentDescription = context.scheduleText("当前时间", "Current time"); importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
             lines += line; column.addView(line, FrameLayout.LayoutParams(-1, context.dp(2)))
+            val prepareDay = {
+                if(!built[day]) {
+                    built[day]=true
+                    val groups=prepared?.lanes?.get(day) ?: X08ePreviewTrace.section("geometry") {
+                        X08eWeekGeometry.groups(segments.filter { it.day==day }).map(X08eWeekGeometry::lanes)
+                    }
+                    groups.forEach { lanes ->
+                        val group=lanes.flatten()
+                        val top=offset(group.minOf { it.start }); val bottom=offset(group.maxOf { it.end })
+                        val row=LinearLayout(context)
+                        lanes.forEach { lane ->
+                            val laneView=FrameLayout(context)
+                            lane.forEach { segment ->
+                                val card=context.courseView(listOf(segment.item),source.state,style,source.clock.zone(),prepared?.texts?.get(segment.item)) { detail(segment.item) }
+                                cards+=card
+                                if(deferred) applyAppearanceTree(card,appearance.state)
+                                laneView.addView(card,FrameLayout.LayoutParams(-1,maxOf(1,offset(segment.end)-offset(segment.start))).apply {
+                                    topMargin=offset(segment.start)-top; marginStart=context.dp(2); marginEnd=context.dp(2)
+                                })
+                            }
+                            row.addView(laneView,LayoutParams(0,-1,1f))
+                        }
+                        column.addView(row,column.childCount-1,FrameLayout.LayoutParams(-1,maxOf(1,bottom-top)).apply { topMargin=top })
+                    }
+                }
+            }
+            if(deferred) preparations += column to prepareDay else prepareDay()
         }
         applyAppearance(appearance.state)
+    }
+    /** Draw the same rules below children without allocating 7 x tick-count Views. */
+    private inner class RuleColumn : FrameLayout(context) {
+        var ruleColor=if(appearance.state.themeMode==ThemeMode.DARK) 0xff303030.toInt() else 0xffd0d7d4.toInt()
+        private val paint=android.graphics.Paint()
+        private val positions=axis.labels.map { offset(it.first).toFloat() }
+        init { setWillNotDraw(false) }
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            super.onDraw(canvas)
+            paint.color=ruleColor
+            val height=context.dp(1).coerceAtLeast(1).toFloat()
+            positions.forEach { y -> canvas.drawRect(0f,y,width.toFloat(),y+height,paint) }
+        }
     }
     /** Always available from the fixed day footer, even for one-minute or heavily overlapping courses. */
     fun openDay(day: Int) = open(segments.filter { it.day == day }.map { it.item })
@@ -101,11 +123,12 @@ internal class X08eWeekGrid(context: Context, items: List<ClassOccurrence>, priv
             (lines[day].layoutParams as FrameLayout.LayoutParams).let { it.topMargin = offset(minute); lines[day].layoutParams = it }
         }
     }
-    override fun applyAppearance(state: AppearanceState) {
+    override fun applyAppearance(state: AppearanceState) = X08ePreviewTrace.section("theme") {
         labels.forEach { it.setTextColor(PanelPalette.forMode(state.themeMode).secondary) }
-        rules.forEach { it.setBackgroundColor(if (state.themeMode == ThemeMode.DARK) 0xff303030.toInt() else 0xffd0d7d4.toInt()) }
+        columns.forEach { it.ruleColor=if(state.themeMode==ThemeMode.DARK) 0xff303030.toInt() else 0xffd0d7d4.toInt(); it.invalidate() }
         cards.forEach { applyAppearanceTree(it, state) }; updateNow()
         chooser?.window?.decorView?.let { applyAppearanceTree(it, state) }
+        Unit
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); setClockActive(isShown) }
     override fun onDetachedFromWindow() { setClockActive(false); chooser?.dismiss(); super.onDetachedFromWindow() }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.schedule.X08eWeekDisplayTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-27T15:40:10.110Z" hostname="LAPTOP-6ORBUU2C" time="0.117">
+  <properties/>
+  <testcase name="immutableEpochDropsLateWorkAndBoundsCachedWeeks" classname="com.dormpanel.app.schedule.X08eWeekDisplayTest" time="0.081"/>
+  <testcase name="pureSnapshotRetainsProjectionGeometryLanesAndText" classname="com.dormpanel.app.schedule.X08eWeekDisplayTest" time="0.013"/>
+  <testcase name="displaySettingsLocaleZoneAndConfigurationStartNewEpoch" classname="com.dormpanel.app.schedule.X08eWeekDisplayTest" time="0.017"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

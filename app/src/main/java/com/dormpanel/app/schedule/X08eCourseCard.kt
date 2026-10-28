@@ -12,6 +12,7 @@ import android.widget.*
 import com.dormpanel.app.appearance.*
 
 internal fun courseBackground(context: Context, item: ClassOccurrence, colored: Boolean, state: AppearanceState): android.graphics.drawable.Drawable {
+    val start=if(X08ePreviewTrace.observer!=null) System.nanoTime() else 0L
     val dark = state.themeMode == ThemeMode.DARK
     val colors = if (dark) intArrayOf(0x294454, 0x384831, 0x523743, 0x443b56, 0x51452f, 0x2e4a46)
         else intArrayOf(0xdceaf4, 0xe4ecd9, 0xf1dfe7, 0xe9e1f2, 0xf0e7d4, 0xdaece7)
@@ -19,7 +20,9 @@ internal fun courseBackground(context: Context, item: ClassOccurrence, colored: 
         cornerRadius = context.dp(6).toFloat()
         setColor(if (colored) colors[X08eWeekGeometry.colorIndex(item)] or (0xff shl 24) else PanelPalette.forMode(state.themeMode).surface)
     }
-    return RippleDrawable(ColorStateList.valueOf(0x40777777), shape, null)
+    return RippleDrawable(ColorStateList.valueOf(0x40777777), shape, null).also {
+        X08ePreviewTrace.observer?.invoke("drawable",start,System.nanoTime())
+    }
 }
 
 internal fun Context.occurrenceTime(item: ClassOccurrence, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String {
@@ -91,7 +94,13 @@ internal class X08eCourseCard(context: Context, private val item: ClassOccurrenc
 
 internal fun Context.courseView(items: List<ClassOccurrence>, state: ScheduleState, style: X08eScheduleStyle,
     zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+    prepared: X08eCourseText? = null,
     click: () -> Unit): View {
+    if(prepared!=null) return X08ePreviewTrace.section("card-views") {
+        if(style.hierarchy) X08eCourseCard(this,items.first(),style.colors,prepared.title,prepared.time,prepared.periods,prepared.status,click)
+        else X08eClassicCourseButton(this,items.first(),style.colors,prepared.classic,click)
+    }
+    val textStart=if (X08ePreviewTrace.observer != null) System.nanoTime() else 0L
     val item = items.first()
     val title = if (items.size == 1) item.entry.title else scheduleText("${items.size} 门重叠 · ${item.entry.title}", "${items.size} overlapping · ${item.entry.title}")
     val periods = X08eWeekGeometry.currentPeriods(item, ScheduleProjection.profile(state, item))?.let {
@@ -101,8 +110,9 @@ internal fun Context.courseView(items: List<ClassOccurrence>, state: ScheduleSta
     val status = listOfNotNull(if (item.thisWeekEdited || item.allWeeksEdited) scheduleText("已修改", "Edited") else null,
         if (item.copiedFrom != null) scheduleText("补课", "Makeup") else null).joinToString(" · ")
     val time = occurrenceTime(item, zone)
-    return if (style.hierarchy) X08eCourseCard(this, item, style.colors, title, time, periods, status, click)
+    X08ePreviewTrace.observer?.invoke("card-text",textStart,System.nanoTime())
+    return X08ePreviewTrace.section("card-views") { if (style.hierarchy) X08eCourseCard(this, item, style.colors, title, time, periods, status, click)
     else X08eClassicCourseButton(this, item, style.colors,
         listOf(title, time.replace("–", "\n– "), item.entry.location, listOfNotNull(periods, status.takeIf { it.isNotBlank() }).joinToString(" · "))
-            .filter { it.isNotBlank() }.joinToString("\n"), click)
+            .filter { it.isNotBlank() }.joinToString("\n"), click) }
 }

@@ -303,6 +303,122 @@ class X08eScheduleDisplayTest {
             sources=fixtureData.sources.map { it.copy(occurrenceCount=imported.size,firstStart=imported.minOf { c -> c.start },lastEnd=imported.maxOf { c -> c.end }) })
         source.reload()
     }
+    @Test fun pr64PreviewPerformanceSamples() {
+        val samples=org.json.JSONArray()
+        val label=InstrumentationRegistry.getArguments().getString("perfLabel") ?: "sample"
+        val firstFraction=InstrumentationRegistry.getArguments().getString("perfFraction")?.toFloat() ?: .25f
+        val main=android.os.Looper.getMainLooper().thread.id
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for(layout in X08eScheduleLayout.entries) {
+                val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+                scenario.onActivity { install(it,X08eScheduleStyle(layout,true,true,true),session=session); datedPreviewFixture() }
+                instrumentation.waitForIdleSync()
+                for(index in 0 until 6) {
+                    val events=java.util.Collections.synchronizedList(mutableListOf<org.json.JSONObject>())
+                    val frames=java.util.Collections.synchronizedList(mutableListOf<org.json.JSONObject>())
+                    var lock=0L; var end=0L; var currentDraw=0L; var targetDraw=0L
+                    var firstMove=0L; var warmMove=0L; var up=0L
+                    lateinit var stroke: SwipeEvents.Stroke
+                    lateinit var v: TimetableSwipeLayout
+                    val sink: (String,Long,Long)->Unit = { name,a,b -> events.add(org.json.JSONObject().put("phase",name).put("start",a).put("end",b).put("main",Thread.currentThread().id==main)) }
+                    val draw=android.view.ViewTreeObserver.OnDrawListener {
+                        if(lock>0 && currentDraw==0L && v.getChildAt(0).translationX!=0f) currentDraw=System.nanoTime()
+                        if(lock>0 && targetDraw==0L && v.childCount==2 && kotlin.math.abs(v.getChildAt(1).translationX)<v.width) targetDraw=System.nanoTime()
+                    }
+                    val listener=android.view.Window.OnFrameMetricsAvailableListener { _,m,dropped ->
+                        frames.add(org.json.JSONObject().put("vsync",m.getMetric(android.view.FrameMetrics.INTENDED_VSYNC_TIMESTAMP))
+                            .put("total",m.getMetric(android.view.FrameMetrics.TOTAL_DURATION)).put("dropped",dropped))
+                    }
+                    try {
+                        scenario.onActivity { a ->
+                            X08ePreviewTrace.observer=sink
+                            session.weekStart=week; viewport.gridMinute=480f; viewport.offsets.clear()
+                            if(index==0 || index==3) install(a,X08eScheduleStyle(layout,true,true,true),session=session) else source.refresh()
+                            a.window.addOnFrameMetricsAvailableListener(listener,android.os.Handler(android.os.Looper.getMainLooper()))
+                        }
+                        instrumentation.waitForIdleSync(); Thread.sleep(50)
+                        scenario.onActivity { a ->
+                            v=views(page).filterIsInstance<TimetableSwipeLayout>().single(); v.previewTiming=sink
+                            a.window.decorView.viewTreeObserver.addOnDrawListener(draw)
+                            stroke=SwipeEvents.Stroke(v,v.width*.9f)
+                            lock=System.nanoTime(); stroke.move(-v.width*firstFraction); firstMove=System.nanoTime()-lock
+                        }
+                        Thread.sleep(80); instrumentation.waitForIdleSync()
+                        scenario.onActivity { val start=System.nanoTime(); stroke.move(-v.width*.8f); warmMove=System.nanoTime()-start }
+                        Thread.sleep(50); instrumentation.waitForIdleSync()
+                        scenario.onActivity { val start=System.nanoTime(); stroke.end(); up=System.nanoTime()-start }
+                        Thread.sleep(350); instrumentation.waitForIdleSync()
+                        scenario.onActivity {
+                            end=System.nanoTime()
+                            assertEquals(week.plusWeeks(1),session.weekStart)
+                        }
+                    } finally {
+                        scenario.onActivity { a ->
+                            X08ePreviewTrace.observer=null
+                            a.window.decorView.viewTreeObserver.removeOnDrawListener(draw)
+                            a.window.removeOnFrameMetricsAvailableListener(listener)
+                        }
+                    }
+                    val sample=org.json.JSONObject().put("layout",layout.name).put("index",index).put("path",if(index==0||index==3) "new-page" else "repeat")
+                        .put("firstFraction",firstFraction).put("lock",lock).put("end",end).put("move",firstMove).put("warmMove",warmMove).put("up",up)
+                        .put("currentDraw",currentDraw).put("targetDraw",targetDraw)
+                    synchronized(events) { sample.put("events",org.json.JSONArray(events)) }
+                    synchronized(frames) { sample.put("frames",org.json.JSONArray(frames)) }
+                    samples.put(sample)
+                }
+            }
+        }
+        java.io.File(context.getExternalFilesDir(null),"pr64-perf-$label.json").writeText(samples.toString(2))
+    }
+    @Test fun pr64NativeFramePerformanceSamples() {
+        val samples=org.json.JSONArray()
+        val label=InstrumentationRegistry.getArguments().getString("perfLabel") ?: "native"
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for(layout in X08eScheduleLayout.entries) {
+                val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+                scenario.onActivity { install(it,X08eScheduleStyle(layout,true,true,true),session=session); datedPreviewFixture() }
+                instrumentation.waitForIdleSync()
+                for(index in 0..2) {
+                    val events=java.util.Collections.synchronizedList(mutableListOf<org.json.JSONObject>())
+                    val frames=java.util.Collections.synchronizedList(mutableListOf<org.json.JSONObject>())
+                    var lock=0L; var targetDraw=0L; var end=0L
+                    lateinit var v: TimetableSwipeLayout
+                    val sink: (String,Long,Long)->Unit = { n,a,b ->
+                        if(n=="lock") lock=a
+                        events.add(org.json.JSONObject().put("phase",n).put("start",a).put("end",b).put("main",Thread.currentThread()==android.os.Looper.getMainLooper().thread))
+                    }
+                    val draw=android.view.ViewTreeObserver.OnDrawListener {
+                        if(lock>0 && targetDraw==0L && v.childCount==2 && kotlin.math.abs(v.getChildAt(1).translationX)<v.width) targetDraw=System.nanoTime()
+                    }
+                    val listener=android.view.Window.OnFrameMetricsAvailableListener { _,m,dropped -> frames.add(org.json.JSONObject()
+                        .put("vsync",m.getMetric(android.view.FrameMetrics.INTENDED_VSYNC_TIMESTAMP)).put("total",m.getMetric(android.view.FrameMetrics.TOTAL_DURATION)).put("dropped",dropped)) }
+                    try {
+                        scenario.onActivity { a ->
+                            v=views(page).filterIsInstance<TimetableSwipeLayout>().single(); v.previewTiming=sink
+                            X08ePreviewTrace.observer=sink
+                            a.window.decorView.viewTreeObserver.addOnDrawListener(draw)
+                            a.window.addOnFrameMetricsAvailableListener(listener,android.os.Handler(android.os.Looper.getMainLooper()))
+                        }
+                        val target=withTagValue(org.hamcrest.Matchers.equalTo("timetable-swipe" as Any))
+                        onView(target).perform(SwipeEvents.nativeDrag(if(index==1) .1f else .9f,if(index==1) .9f else .1f))
+                        Thread.sleep(300); instrumentation.waitForIdleSync()
+                        scenario.onActivity { end=System.nanoTime(); assertEquals(if(index==1) week else week.plusWeeks(1),session.weekStart) }
+                    } finally {
+                        scenario.onActivity { a -> X08ePreviewTrace.observer=null; a.window.decorView.viewTreeObserver.removeOnDrawListener(draw); a.window.removeOnFrameMetricsAvailableListener(listener) }
+                    }
+                    val row=org.json.JSONObject().put("layout",layout.name).put("index",index).put("lock",lock).put("targetDraw",targetDraw).put("end",end)
+                    synchronized(events) {
+                        val viewPhases=setOf("card-views","visible-views","staged-views","mount","measure","layout","commit")
+                        assertTrue(events.filter { it.getString("phase") in viewPhases }.all { it.getBoolean("main") })
+                        row.put("events",org.json.JSONArray(events))
+                    }
+                    synchronized(frames) { row.put("frames",org.json.JSONArray(frames)) }
+                    samples.put(row)
+                }
+            }
+        }
+        java.io.File(context.getExternalFilesDir(null),"pr64-perf-$label.json").writeText(samples.toString(2))
+    }
     @Test fun pr64NativeDistinctWeeksPreviewRecording() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
@@ -315,6 +431,121 @@ class X08eScheduleDisplayTest {
             scenario.onActivity { assertEquals(week.plusWeeks(1),session.weekStart) }
             onView(target).perform(SwipeEvents.nativeDrag(.1f,.9f)); Thread.sleep(450)
             scenario.onActivity { assertEquals(week,session.weekStart); assertEquals(1,views(page).filterIsInstance<TimetableSwipeLayout>().single().childCount) }
+        }
+    }
+    @Test fun pr64StagedPreviewCleanupAndReadonlyViewport() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            fun idle() { instrumentation.waitForIdleSync(); Thread.sleep(120); instrumentation.waitForIdleSync() }
+            for(layout in X08eScheduleLayout.entries) {
+                val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+                scenario.onActivity { install(it,X08eScheduleStyle(layout,true,true,true),session=session); datedPreviewFixture() }; idle()
+                if(layout==X08eScheduleLayout.CLASSIC) {
+                    scenario.onActivity { views(page).filterIsInstance<ScrollView>().forEach { it.getChildAt(0).minimumHeight=2000; it.requestLayout() } }; idle()
+                    scenario.onActivity { views(page).filterIsInstance<ScrollView>().forEachIndexed { i,v -> v.scrollTo(0,80+i*10) } }
+                } else scenario.onActivity {
+                    val grid=views(page).filterIsInstance<X08eWeekGrid>().single()
+                    views(page).filterIsInstance<ScrollView>().single().scrollTo(0,grid.offset(600f))
+                }
+                lateinit var v: TimetableSwipeLayout
+                lateinit var preview: View
+                lateinit var stroke: SwipeEvents.Stroke
+                val before=viewport.offsets.toMap(); val minute=viewport.gridMinute
+                scenario.onActivity {
+                    v=views(page).filterIsInstance<TimetableSwipeLayout>().single()
+                    if(layout==X08eScheduleLayout.CLASSIC) {
+                        val make=v.preparePreview!!
+                        v.preparePreview={ d -> make(d).also { views(it).filterIsInstance<ScrollView>().forEach { s -> s.getChildAt(0).minimumHeight=2000 } } }
+                    }
+                    stroke=SwipeEvents.Stroke(v,v.width*.9f); stroke.move(-v.width*.25f); preview=v.getChildAt(1)
+                    assertEquals(before,viewport.offsets); assertEquals(minute,viewport.gridMinute)
+                }; idle()
+                scenario.onActivity {
+                    assertEquals(before,viewport.offsets); assertEquals(minute,viewport.gridMinute)
+                    stroke.move(-v.width*.8f); stroke.end()
+                }; Thread.sleep(400); idle()
+                scenario.onActivity {
+                    assertEquals(week.plusWeeks(1),session.weekStart)
+                    assertSame(preview,views(page).filterIsInstance<TimetableSwipeLayout>().single().getChildAt(0))
+                    if(layout==X08eScheduleLayout.CLASSIC) assertEquals(before,viewport.offsets) else assertEquals(minute!!,viewport.gridMinute!!,1f)
+                    v=views(page).filterIsInstance<TimetableSwipeLayout>().single()
+                    stroke=SwipeEvents.Stroke(v); stroke.move(-v.width*.05f); preview=v.getChildAt(1)
+                    source.refresh(); stroke.end()
+                    assertFalse(preview.isAttachedToWindow)
+                }
+                val count=views(preview).size; idle()
+                scenario.onActivity { assertEquals(count,views(preview).size); assertEquals(week.plusWeeks(1),session.weekStart) }
+                scenario.onActivity {
+                    v=views(page).filterIsInstance<TimetableSwipeLayout>().single()
+                    stroke=SwipeEvents.Stroke(v); stroke.move(v.width*.05f); preview=v.getChildAt(1)
+                    v.onWindowFocusChanged(false); stroke.end()
+                    assertFalse(preview.isAttachedToWindow); assertEquals(1,v.childCount)
+                }; idle()
+                // A mode change clears both pending View batches and immutable display data.
+                onView(withText("日历")).perform(click()); idle()
+                scenario.onActivity {
+                    val cache=SchedulePageView::class.java.getDeclaredField("displayCache").let { it.isAccessible=true; it.get(page) as X08eDisplayCache }
+                    assertNull(cache.get(session.weekStart)); assertNull(cache.get(session.weekStart.plusWeeks(1)))
+                }
+                onView(withText("课表")).perform(click()); idle()
+                scenario.onActivity {
+                    v=views(page).filterIsInstance<TimetableSwipeLayout>().single(); stroke=SwipeEvents.Stroke(v)
+                    stroke.move(-v.width*.05f); preview=v.getChildAt(1)
+                }
+                scenario.recreate(); idle()
+                assertFalse(preview.isAttachedToWindow)
+                Thread.sleep(1100)
+                assertTrue(Thread.getAllStackTraces().keys.none { it.name=="x08e-display-data" && it.isAlive })
+            }
+        }
+    }
+    @Test fun pr64DelayedSnapshotCancelAndRefreshCannotPublishStaleData() {
+        val entered=java.util.concurrent.CountDownLatch(1)
+        val release=java.util.concurrent.CountDownLatch(1)
+        val once=java.util.concurrent.atomic.AtomicBoolean(true)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val session=ScheduleSession(clock).apply { mode=ScheduleMode.TIMETABLE }
+            try {
+                scenario.onActivity {
+                    install(it,X08eScheduleStyle(X08eScheduleLayout.TIME,true,true,true),session=session); datedPreviewFixture()
+                    X08ePreviewTrace.observer={ name,_,_ ->
+                        if(name=="projection" && Thread.currentThread().name=="x08e-display-data" && once.compareAndSet(true,false)) {
+                            entered.countDown()
+                            var waiting=true
+                            while(waiting) try { release.await(); waiting=false } catch(_: InterruptedException) { }
+                        }
+                    }
+                    source.refresh()
+                }
+                assertTrue(entered.await(5,java.util.concurrent.TimeUnit.SECONDS))
+                scenario.onActivity {
+                    val v=views(page).filterIsInstance<TimetableSwipeLayout>().single()
+                    val stroke=SwipeEvents.Stroke(v); stroke.move(-v.width*.25f)
+                    assertEquals(2,v.childCount); val preview=v.getChildAt(1)
+                    assertEquals(week,session.weekStart)
+                    stroke.end(cancel=true); v.cancelMotion()
+                    assertFalse(preview.isAttachedToWindow)
+                    fixtureData=fixtureData.copy(imported=fixtureData.imported.map { c -> c.copy(title="新值 ${c.title}") })
+                    source.reload()
+                }
+                release.countDown()
+                var ready=false; val deadline=System.currentTimeMillis()+5000
+                while(!ready && System.currentTimeMillis()<deadline) {
+                    scenario.onActivity {
+                        val cache=SchedulePageView::class.java.getDeclaredField("displayCache").let { f -> f.isAccessible=true; f.get(page) as X08eDisplayCache }
+                        val data=cache.get(week.plusWeeks(1))
+                        ready=data!=null && data.items.all { c -> c.entry.title.startsWith("新值") }
+                    }
+                    if(!ready) Thread.sleep(10)
+                }
+                assertTrue(ready)
+                scenario.onActivity {
+                    val v=views(page).filterIsInstance<TimetableSwipeLayout>().single()
+                    val stroke=SwipeEvents.Stroke(v); stroke.move(-v.width*.5f)
+                    assertTrue(views(v.getChildAt(1)).filterIsInstance<TextView>().any { t -> t.text.startsWith("新值") })
+                    stroke.end(cancel=true); v.cancelMotion()
+                    assertEquals(1,v.childCount); assertEquals(week,session.weekStart)
+                }
+            } finally { release.countDown(); scenario.onActivity { X08ePreviewTrace.observer=null } }
         }
     }
     @Test fun pr64RealAdjacentPreviewGeometryPromotionAndCleanupAcrossLayouts() {
@@ -349,7 +580,8 @@ class X08eScheduleDisplayTest {
                             assertEquals(direction*v.width*(1-fraction),preview.translationX,1f)
                             assertEquals(v.width,preview.width); assertEquals(v.height,preview.height)
                             assertEquals(week,session.weekStart)
-                            assertTrue(views(preview).filterIsInstance<TextView>().any { it.text.contains("真实 $target") })
+                            val visibleDate=if(direction==1) target else target.plusDays(6)
+                            assertTrue(views(preview).filterIsInstance<TextView>().any { it.text.contains("真实 $visibleDate") })
                             views(preview).filterIsInstance<Button>().forEach { it.performClick() }
                             views(preview).filterIsInstance<X08eCourseCard>().firstOrNull()?.performClick()
                             assertTrue(page.hasWindowFocus())
