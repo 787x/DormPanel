@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-28",
+  "transport": "Android ADB TCP -> Windows TCP relay -> fnOS official WebDAV :5005; fnOS Catalog -> official WebDAV",
+  "results": {
+    "v2": {
+      "phone": {
+        "phase": "final",
+        "protocol": "v2",
+        "rawHash": "7fff424e2feab8cba363f81526334cb5eff7240a2164e347c8fff243bc4fc96f"
+      },
+      "x08e": {
+        "phase": "final",
+        "protocol": "v2",
+        "rawHash": "7fff424e2feab8cba363f81526334cb5eff7240a2164e347c8fff243bc4fc96f"
+      },
+      "fnos": {
+        "result": "PASS",
+        "protocol": "v2",
+        "mode": "final",
+        "rawHash": "7fff424e2feab8cba363f81526334cb5eff7240a2164e347c8fff243bc4fc96f"
+      }
+    },
+    "v3": {
+      "phone": {
+        "phase": "final",
+        "protocol": "v3",
+        "rawHash": "7fff424e2feab8cba363f81526334cb5eff7240a2164e347c8fff243bc4fc96f",
+        "binding": {
+          "datasetId": "0e8daec6-2278-4785-a358-2e6fe1940be7",
+          "descriptorPath": "dataset-0e8daec6-2278-4785-a358-2e6fe1940be7/descriptor-9584e70e-05c6-4739-999c-8c2450e6b981.dpv",
+          "descriptorHash": "dd76b15aac533e96a50075df4ff723b187047aa37580182a03c9d7738c42ebcd"
+        }
+      },
+      "x08e": {
+        "phase": "final",
+        "protocol": "v3",
+        "rawHash": "7fff424e2feab8cba363f81526334cb5eff7240a2164e347c8fff243bc4fc96f",
+        "binding": {
+          "datasetId": "0e8daec6-2278-4785-a358-2e6fe1940be7",
+          "descriptorPath": "dataset-0e8daec6-2278-4785-a358-2e6fe1940be7/descriptor-9584e70e-05c6-4739-999c-8c2450e6b981.dpv",
+          "descriptorHash": "dd76b15aac533e96a50075df4ff723b187047aa37580182a03c9d7738c42ebcd"
+        }
+      },
+      "fnos": {
+        "result": "PASS",
+        "protocol": "v3",
+        "mode": "final",
+        "rawHash": "7fff424e2feab8cba363f81526334cb5eff7240a2164e347c8fff243bc4fc96f"
+      }
+    }
+  }
+}

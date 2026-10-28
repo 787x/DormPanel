@@ -79,6 +79,7 @@ class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null, req
             if (version == null) atomic { put("format", "version", JSONObject().put("value", 2)) }
         } catch (e: Exception) { if (::sql.isInitialized) runCatching { sql.close() }; lease.release(); owner.close(); throw e }
     }
+    @Synchronized fun requiresReopen(): Boolean = closed
     private fun checkOpen() { check(!closed) { "v3 storage requires reopen" } }
     @Synchronized fun assertWritable() { checkOpen(); guard?.invoke() }
     @Synchronized fun <T> localOperation(operation: () -> T): T { val previous = budget; budget = V3Budget(maxRequests = 0); try { return operation() } finally { budget = previous } }

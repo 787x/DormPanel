@@ -148,11 +148,16 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     private fun <T> write(callback: (Result<T>) -> Unit, operation: () -> T) = submit(callback) {
         if (ActiveScheduleV3.active(database)) {
             var result: Result<T>? = null
-            v3().engine.edit { before ->
-                if (!v3().localWritesAllowed()) throw ScheduleDatasetWriteProtected()
-                check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "迁移保护禁止编辑" }
-                result = Result.success(operation())
-                readRows().copy(profiles = before.profiles, customProfileKeys = before.customProfileKeys)
+            try {
+                v3().engine.edit { before ->
+                    if (!v3().localWritesAllowed()) throw ScheduleDatasetWriteProtected()
+                    check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "迁移保护禁止编辑" }
+                    result = Result.success(operation())
+                    readRows().copy(profiles = before.profiles, customProfileKeys = before.customProfileKeys)
+                }
+            } catch (error: Exception) {
+                if (v3().journal.meta.requiresReopen()) throw ScheduleCommitUnconfirmed(error)
+                throw error
             }
             onCommitted?.invoke(); return@submit requireNotNull(result).getOrThrow()
         }
@@ -874,6 +879,16 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         if (item != null) check(if (item.sourceId != null) database.dao().source(item.sourceId) != null
             else database.dao().entries().any { it.id == item.seriesId }) { "Course was deleted; reopen the timetable" }
         if (item == null) database.dao().deleteClassOverride(key) else database.dao().put(item)
+    }
+    override fun putClassOverrides(expected: ScheduleState, items: List<ClassOverride>, callback: (Result<Unit>) -> Unit) = write(callback) {
+        val loaded = readState()
+        val current = if (loaded.sync != null) loaded else loaded.copy(profiles = loaded.sources.mapNotNull { source ->
+            source.resolvedTermKey()?.let { key ->
+                (profiles?.preferenceCatalog()?.first?.get(key) ?: BuiltInProfiles.builtIn(key))?.let { key to it }
+            }
+        }.toMap())
+        CourseBatch.validate(current, expected, items)
+        items.forEach { if (it.patch().isEmpty()) database.dao().deleteClassOverride(it.key) else database.dao().put(it) }
     }
     override fun commitImport(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,
         callback: (Result<ImportCommit>) -> Unit) = write(callback) {
