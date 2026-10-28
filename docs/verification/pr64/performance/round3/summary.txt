@@ -1,0 +1,26 @@
+156752c
+CLASSIC move: 107.3/129.2/167.5 ms
+CLASSIC warmMove: 0.9/3.2/58.9 ms
+CLASSIC up: 0.9/1.4/3.5 ms
+CLASSIC targetDraw: 111.3/132.9/175.5 ms
+TIME move: 90.0/99.7/130.5 ms
+TIME warmMove: 46.2/46.9/60.2 ms
+TIME up: 0.7/0.9/1.1 ms
+TIME targetDraw: 92.1/102.7/134.3 ms
+PERIODS move: 100.7/106.0/154.4 ms
+PERIODS warmMove: 0.6/0.9/32.0 ms
+PERIODS up: 0.8/1.2/1.7 ms
+PERIODS targetDraw: 103.2/108.4/158.4 ms
+rejected
+CLASSIC move: 3.7/5.7/12.1 ms
+CLASSIC warmMove: 82.4/90.4/162.0 ms
+CLASSIC up: 9.2/13.4/37.7 ms
+CLASSIC targetDraw: 137.0/163.0/260.5 ms
+TIME move: 4.0/4.5/9.3 ms
+TIME warmMove: 45.7/56.1/62.5 ms
+TIME up: 12.7/17.0/31.6 ms
+TIME targetDraw: 114.8/116.0/145.1 ms
+PERIODS move: 3.1/4.3/5.4 ms
+PERIODS warmMove: 44.1/50.9/61.7 ms
+PERIODS up: 6.9/9.1/10.6 ms
+PERIODS targetDraw: 114.5/128.1/180.1 ms
