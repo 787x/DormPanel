@@ -56,7 +56,7 @@ class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null, req
     private val verifiedSnapshots = linkedSetOf<String>()
     init {
         if(requireExisting)require(directory.isDirectory&&File(directory,"v3-state-v2.sqlite").isFile&&File(directory,"v3-owner.lock").isFile) { "候选私有数据库缺失，停止清理而不重建" }
-        require(directory.absolutePath.replace('\\', '/').split('/').none { it == "dormpanel-sync-v2" || it == "dormpanel-sync-v3" }) { "v3 metadata must remain outside protocol directories" }
+        require(directory.absolutePath.replace('\\', '/').split('/').none { it == "dormpanel-sync-v2" || it == "dormpanel-sync-v3" || it == "dormpanel-sync-v3-shared" }) { "v3 metadata must remain outside protocol directories" }
         val missing = generateSequence(directory) { it.parentFile }.takeWhile { !it.exists() }.toList()
         check(directory.isDirectory || directory.mkdirs()); require(!java.nio.file.Files.isSymbolicLink(directory.toPath()))
         require(listOf("workspace.json", "catalog.json", "graph.json", "identity.json", "schedule.db").none { File(directory, it).exists() }) { "v3 private store refuses existing production/v2 root" }
@@ -94,7 +94,7 @@ class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null, req
     private fun pack(value: Any?): Any? = when (value) {
         is JSONObject -> JSONObject().also { out -> value.namesList().forEach { out.put(it, pack(value.get(it))) } }
         is JSONArray -> JSONArray((0 until value.length()).map { pack(value.get(it)) })
-        is String -> if (!value.startsWith(PRIVATE_SNAPSHOT_PREFIX)) value else {
+        is String -> if (PRIVATE_SNAPSHOT_PREFIXES.none { value.startsWith(it) }) value else {
             val bytes = java.util.Base64.getDecoder().decode(value); val hash = SyncV3Codec.hash(bytes)
             val exists = sql.rows("SELECT 1 AS found FROM v3_records WHERE ns='snapshot' AND k=?", listOf(hash)).isNotEmpty()
             if (!exists) write("snapshot", hash, JSONObject().put("bytes", value).toString())
@@ -142,9 +142,9 @@ class V3Metadata(directory: File, sqlFactory: ((File) -> V3SqlPort)? = null, req
     }
     @Synchronized override fun close() { try { sql.close() } finally { try { if (lease.isValid) lease.release() } finally { owner.close(); closed = true } } }
     companion object {
-        private val PRIVATE_SNAPSHOT_PREFIX by lazy {
+        private val PRIVATE_SNAPSHOT_PREFIXES by lazy {
             val id = "00000000-0000-0000-0000-000000000001"
-            java.util.Base64.getEncoder().encodeToString(SyncV3Codec.encode(V3Object(2, id, id, id, id, 1, "1".repeat(64), state = ScheduleState()))).take(260)
+            listOf(ScheduleState(),ScheduleState(sharedRecords=emptyList())).map { state -> java.util.Base64.getEncoder().encodeToString(SyncV3Codec.encode(V3Object(2, id, id, id, id, 1, "1".repeat(64), state = state))).take(260) }
         }
     }
 }

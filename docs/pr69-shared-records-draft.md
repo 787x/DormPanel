@@ -1,43 +1,53 @@
-# PR69 通用共享记录：候选协议与实现进度
+# PR69：通用共享状态实现与隔离验证
 
-当前为未完成的 Draft。DPXR/1 是通用记录块的候选规范，尚未成为正式共享状态或活动同步协议。不能用本记录块替换 DPV3/3 RAW，也不能声称已完成课程颜色同步。
+基于 PR68 合并提交 `9ef5154ef6819a9e2f2bc4d6f7389cb6237f970d`，实现 DPV3/4、DPXS/1 和 DPXR/1。协议与开发接口见 [通用共享状态规范](sync-v3-shared-state.md)。PR 保持 Draft，供架构与兼容性审查；没有修改正式版本号或迁移日用数据。
 
-## 已实现的记录块
+## 实际完成
 
-所有整数为有符号大端 I32。顺序为 ASCII `DPXR`、版本 1、记录数量、记录。记录依次包含长度前缀 typeId、长度前缀 recordId、schemaVersion、required（0/1）、依赖数量、按字节升序排列的依赖 typeId、长度前缀 payload。文本限定 ASCII，从而 Kotlin 与 Node 排序、长度和身份字节一致。
+- 通用记录、规范排序、版本与预算、类型装配、独立 payload 校验和课程颜色业务接口；Kotlin/Node 同字节固定向量与完整业务哈希。
+- 默认三方合并、删除/并发冲突、关联组件、未知可选透传及只读保护、未知必需/依赖能力写保护。
+- 完整状态接入 v3 对象、捕获、回执、重启、Checkpoint、历史索引和缓存；Room/Workspace 同事务保存，普通 DAO 编辑保留扩展。
+- 正式 Workspace revision/权限检查，通用历史分页/比较，SQLite 备份校验与恢复；不新增可写课程副本或网络 sidecar。
+- 新目录与对象版本、本地帧版本拒绝保护；显式隔离迁移预览/取消/确认/失败恢复，源与目标不自动切换。
+- PR68 Phone 手动与自动颜色只读迁移预览、哈希过期保护及正式 Store 确认接口；取消/失败保留旧偏好。
+- 第二类型 test.note 通过注册进入真实引擎，旧注册表修改无关课程后精确保留字节；无需在 RAW 或网络核心增加该类型分支。
 
-- typeId：`[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+`，最多 96 字节。
-- recordId：`[A-Za-z0-9][A-Za-z0-9._:-]{0,199}`，由适配器分配稳定身份。
-- schemaVersion：1..2147483647。required 是影响安全写入的能力标记，不代表客户端理解了可透传内容。
-- 记录按 `(typeId, recordId)` 的 ASCII 字节序排序；重复身份拒绝。每记录最多 16 个不重复依赖，payload 最多 65536 字节；最多 4096 条记录，整个记录块最多 1048576 字节。
-- payload 不可为 null；空 payload 是否合法由类型校验器决定。删除为记录缺失；空 payload 与删除不同。
-- 解码必须重编码精确相等，拒绝非规范排序、尾随字节、非法版本与超预算输入。
+## 实际执行的验证（2026-10-28）
 
-`businessHash` 当前仅为候选记录块 SHA-256，**不是**已经集成的全状态 BusinessStateHash。活动 DPBS/1 未改动。
+| 验证 | 结果 |
+|---|---|
+| Node 针对性集合：shared-records、shared-state、v3 固定向量、Workspace 事务、恢复、迁移、初始化恢复 | 81 项，76 PASS、0 FAIL、5 因 Windows 平台跳过 |
+| JVM SharedRecordsTest、SyncV3Test、三个扩展引擎测试、初始化恢复 | 18 项 PASS |
+| Phone CourseColorIdentityTest、SharedColorMigrationTest | 4 项 PASS |
+| Phone 与 app assembleDebug；schedule-core assembleDebugAndroidTest | PASS |
+| Phone 实机独立测试包：Room + HTTPS + 失败回滚 + 重启恢复 | PASS（1 项） |
+| X08E 实机独立测试包：同上 | PASS（1 项） |
+| 完整 DPV3/4 固定对象、扩展块字节、颜色与示例类型、业务哈希 | Kotlin/Node 相同；见 test-vectors/sync-v3-shared 与双端单测 |
+| SQLite 快照、备份验证、重开恢复颜色与未知记录 | Node 专项 PASS |
+| 迁移取消与发布响应丢失、Pending 回执期间新编辑、Checkpoint 透传 | 双端/Node 专项 PASS（以对应测试为准） |
 
-## 类型注册示例
+本轮没有运行 1024 增长或四小时 soak。Node 运行在本机 Windows 的 Node 24，复用 fnOS 正式 Workspace/Writer 实现；没有向 NAS 安装新 FPK 或替换日用服务。Linux fd/link、平台专有授权与完整加密 FPK 容器恢复未在本轮重跑，不能将本机 Node 结果报告为 fnOS 部署验收。
 
-Node：`new Registry([courseColor, {typeId:'example.note', schemaVersion:1, maxPayload:32, validate(record, records) { /* 校验 payload 与引用 */ }}])`。
-Kotlin 实现 `SharedTypeAdapter`，注册到 `SharedTypeRegistry`。无需修改通用记录编解码器或合并引擎。尚无业务投影/特殊冲突适配接口；引用检查可使用 validate 的 records 参数，课程关联尚未接入。
+较广检查中 Catalog 的“非空加入不覆盖；备份、旧历史和连接切换有明确边界”存在已有断言失败：测试期待“v3 连接变更”，实际先触发“服务器、用户名或证书信任已变化，请重新输入密码”。已从 origin/main 导出隔离副本，实际复现同一失败；PR69 未修改该鉴权顺序或放宽测试。
 
-Registry 的 replace/remove 限制为已注册且版本完全受支持的类型。未知可选记录可解码、保留；未知必需记录、未知依赖或依赖存在不支持版本时，全状态写入保守拒绝。未知可选类型不获得业务写入权限。没有运行时插件加载。
+## 真实 WebDAV 双向证据
 
-默认三方合并以 `(typeId, recordId)` 为身份，对原始规范记录保守合并。双端一致、单端变化自动采用；双端不同变化（包括删除与修改）返回显式冲突。调用者必须处理 conflicts，不能将部分 records 当作已解决状态提交。合并结果仍需 Registry 校验引用及能力。
+仅访问用户授权 NAS 的新建 `dormpanel/pr69-isolated-<随机 UUID>/`，扩展对象位于其 `dormpanel-sync-v3-shared/`。未访问或改写任何既有同步目录。
 
-`course.color` schema 1 候选 payload：`00` 为自动；`01 RR GG BB` 为手动 RGB。自动 RGB 是 recordId ASCII 字节 SHA-256 前三字节。尚未接入 CourseBatch 逻辑身份与 Phone 缓存迁移，因此不是可交付的产品课程颜色接口。
+1. Kotlin JVM Writer 发布课程 x、手动 RGB 123456 和未知可选 test.note/one（payload `opaque`）。
+2. Node 正式 Workspace 接收，修改 RGB 为 abcdef，Kotlin 重启后接收；完整业务哈希一致：`6e86c39551ba11cf85948a6b54880c38dc55669417c5b85b57a4bc51a5fe2167`。
+3. Android Room Writer 经同一 HTTPS 目录接收；保存前注入失败，确认颜色和帧未部分提交。正常保存并同步、重启后颜色与未知记录仍在。
+4. 最新 Phone 构建发布 RGB 112233，Node 接收并核验，哈希均为 `af69c9d496b2238583c64fbcb08ab57ae7f6f256002e95da7af9425c9e1bc05a`。
+5. 最新 X08E 构建接收后发布 RGB 445566，Node 接收并核验，哈希均为 `e644c2ba3268afaee3058d8b20af594b9f101a09d530ad5ed12ebe2fad6b0140`。
 
-## 固定向量与实际验证
+Android 直连首次失败；随后使用 ADB reverse 和本机 TCP 转发承载**原 HTTPS 流量**，保留连接级证书精确校验。该结果证明跨端协议与实际 Room/Workspace Writer 互操作，不证明设备直连网络环境已经修复。测试仅安装 `com.dormpanel.schedule.core.test`，没有安装/卸载正式 App 或修改其数据。
 
-两端测试使用相同的完整十六进制记录块，包含 course.color/local-1 手动 010203 和 test.note/one 的 opaque 字节。SHA-256 为 `426234c80e57aade8b5af6d5df87cc997c31c09cb7209790fef3906cd97aa055`；local-1 自动 RGB 为 59e27c。
+可复现入口为 `SharedStateWebDavTest`、`SharedStateRoomAndroidTest` 与 `fnos-app/scripts/verify-shared-state.mjs`。凭据由忽略的本地配置传入，不进入源码、向量或公共验证记录。
 
-2026-10-28 实际执行：Node 专项测试 5 项通过；JVM SharedRecordsTest 3 项通过；Phone 与 X08E app assembleDebug 通过。测试没有访问正式课表、绑定、WebDAV 或设备。
+## 后续 UI 与迁移边界
 
-## 尚未完成的交付与兼容边界
+完整 Phone/FPK 管理 UI 留给 PR70/71。现有日用绑定不自动升级，独立目标回读确认不等于已切换绑定、旧 Writer 停写或所有设备收到。旧源后续编辑仍留在源数据集，需要重新审查；本 PR 不宣称跨格式持续桥接。
 
-- 版本化完整共享状态与新对象格式、隔离协议目录及旧 Writer 拒绝保护尚未实现；现有 DPSS/1、DPC2、DPV3/3 未修改。
-- Room/Workspace、正式 Writer、捕获与回执、Pending 恢复、Checkpoint/LATE、缓存、历史、备份尚未接入。记录块测试不能证明这些路径保留扩展。
-- 显式可恢复数据集升级、迁移预览/确认/取消、旧 Writer 迟到写入处理尚未实现。未改变任何现有绑定。
-- 课程稳定逻辑身份、引用/关联冲突、Phone 颜色迁移预览和受保护的持久化业务接口尚未完成。
-- 未执行 Room/Workspace 故障恢复、双端 WebDAV 互操作。第二类型仅证明记录块与注册层可扩展，尚不能证明同步链路可扩展。
+扩展数据集的完整端点生命周期/目录迁移 UI 未做专项验收；不要据本记录在日用环境自动换端点或清理旧历史。Todo、Memo、偏好和附件同步没有启用。PR 不合并、不打 tag、不发布。
 
-不得将该 Draft 视为 PR69 Done Criteria 已满足，不应在此状态接入 PR70/71 或启用正式迁移。未来 Todo、Memo、偏好或附件同步均未启用。
+补充实际兼容检查：从原 main 导出的 PR68 Node Writer 尝试打开本次扩展 Workspace，明确拒绝；比较正式 workspace 控制行校验和，失败前后相同。未将“新版模拟旧版”的断言当作这项实测。

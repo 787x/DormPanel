@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encode, decode, merge, Registry, courseColor } from '../src/shared-records.mjs';
-const color = rgb => ({typeId:'course.color',recordId:'local-1',schemaVersion:1,required:false,dependencies:[],payload:Buffer.from([1,...rgb])});
+const color = rgb => ({typeId:'course.color',recordId:'0'.repeat(64),schemaVersion:1,required:false,dependencies:[],payload:Buffer.from([1,...rgb])});
 const extra = {typeId:'test.note',recordId:'one',schemaVersion:1,required:false,dependencies:[],payload:Buffer.from('opaque')};
 test('canonical framing, duplicate and limits',()=>{
  const bytes=encode([extra,color([1,2,3])]);
@@ -35,9 +35,9 @@ test('a second type registers without editing codec',()=>{
  assert.deepEqual(decode(encode(registry.replace([],extra)))[0],extra);
 });
 import { businessHash, automaticColor } from '../src/shared-records.mjs';
-const vector='4450585200000001000000020000000c636f757273652e636f6c6f72000000076c6f63616c2d31000000010000000000000000000000040101020300000009746573742e6e6f7465000000036f6e65000000010000000000000000000000066f7061717565';
+const vector='4450585200000001000000020000000c636f757273652e636f6c6f720000004030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030000000010000000000000000000000040101020300000009746573742e6e6f7465000000036f6e65000000010000000000000000000000066f7061717565';
 test('cross-language fixed bytes and record-block hash',()=>{
  assert.equal(encode([extra,color([1,2,3])]).toString('hex'),vector);
- assert.equal(businessHash([extra,color([1,2,3])]),'426234c80e57aade8b5af6d5df87cc997c31c09cb7209790fef3906cd97aa055');
+ assert.equal(businessHash([extra,color([1,2,3])]),'d6520d9c73e644af7e5526c5fd189a31df33a8b21faea827e99b284b4ad9bff6');
  assert.equal(automaticColor('local-1').toString('hex'),'59e27c');
 });

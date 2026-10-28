@@ -60,8 +60,8 @@ export class V3Maintenance {
     if(kind==='diff')return differences(await this.snapshot(input.from),await this.snapshot(input.to),Number(input.offset??0));
     if(kind==='preview-diff') { const p=this.previewRecord(input.token,user); return differences(this.db.frame.local,await this.snapshot(p.target),Number(input.offset??0)); }
     const state=await this.snapshot(input.id), table=input.table??'entries', offset=Number(input.offset??0);
-    ensure(schemas.some(([t])=>t===table) && Number.isSafeInteger(offset) && offset>=0,'快照分页无效');
-    return {table,total:state[table].length,rows:state[table].slice(offset,offset+40),next:offset+40<state[table].length?offset+40:null};
+    ensure((table==='sharedRecords'||schemas.some(([t])=>t===table)) && Number.isSafeInteger(offset) && offset>=0,'快照分页无效');
+    const rows=state[table]??[];return {table,total:rows.length,rows:rows.slice(offset,offset+40),next:offset+40<rows.length?offset+40:null};
   }
   blockers() {
     const s=this.journal.value;

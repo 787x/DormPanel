@@ -46,7 +46,7 @@ class V3Journal(val directory: File, sqlFactory: ((File) -> V3SqlPort)? = null,
     val meta = V3Metadata(directory, sqlFactory, requireExisting)
     var prepareReceipt: ((JSONObject) -> Unit)? = null
     var roundId: String? = null
-    private var frame = try { (meta.get("state", "frame") ?: JSONObject().put("version", 2)).also { require(it.getInt("version") == 2) } }
+    private var frame = try { (meta.get("state", "frame") ?: JSONObject().put("version", 2)).also { require(it.getInt("version") in 2..3) } }
         catch (e: Exception) { meta.close(); throw e }
     @Synchronized fun snapshot() = JSONObject(frame.toString())
     /** UI reads small control fields without serializing full local/baseline/capture. */
@@ -62,7 +62,13 @@ class V3Journal(val directory: File, sqlFactory: ((File) -> V3SqlPort)? = null,
     @Synchronized fun transaction(change: (JSONObject) -> Unit) {
         val next = snapshot()
         meta.atomic {
-            change(next); require(!next.has("history") && !next.has("discovery")) { "v3 cumulative metadata must use paged index" }
+            change(next)
+            if (next.has("local") && (next.getInt("version") == 3 || next.getString("local").startsWith("RFBWMw"))) {
+                val format = SyncV3Codec.decode(Base64.getDecoder().decode(next.getString("local"))).format
+                require(next.getInt("version") != 3 || format == 4)
+                if (format == 4) next.put("version",3)
+            }
+            require(!next.has("history") && !next.has("discovery")) { "v3 cumulative metadata must use paged index" }
             if (next.optString("local") != frame.optString("local")) mirrorLocal?.invoke(next)
             meta.put("state", "frame", next)
         }; frame = next

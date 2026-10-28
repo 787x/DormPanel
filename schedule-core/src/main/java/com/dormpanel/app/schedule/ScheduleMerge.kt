@@ -14,6 +14,7 @@ object ScheduleMerge {
     enum class Choice { LOCAL, REMOTE }
 
     private fun records(s: ScheduleState): Map<String, Any> = buildMap {
+        s.sharedRecords?.forEach { put("shared:${it.key}", it.copy(dependencies = it.dependencies.sorted())) }
         s.events.forEach { put("event:${it.id}", it) }
         s.entries.forEach { put("class:${it.id}", it) }
         val imported = s.imported.groupBy { it.sourceId }
@@ -28,13 +29,18 @@ object ScheduleMerge {
     fun same(a: ScheduleState, b: ScheduleState) = records(a) == records(b)
 
     fun merge(base: ScheduleState, local: ScheduleState, remote: ScheduleState, choice: Choice? = null,
-        forceConflicts: Set<String> = emptySet(), maxConflicts: Int = Int.MAX_VALUE): Result {
+        forceConflicts: Set<String> = emptySet(), maxConflicts: Int = Int.MAX_VALUE, sharedRegistry: SharedTypeRegistry = SharedTypes.registry()): Result {
         val b = records(base); val l = records(local); val r = records(remote)
         val keys = (b.keys + l.keys + r.keys).sorted()
         val parents = keys.associateWith { it }.toMutableMap()
         fun root(key: String): String { var v = key; while (parents.getValue(v) != v) v = parents.getValue(v); return v }
         fun join(a: String, c: String) { if (a in parents && c in parents) parents[root(c)] = root(a) }
         val states = listOf(base, local, remote)
+        states.forEach { state -> state.sharedRecords.orEmpty().forEach { record ->
+            sharedRegistry.relatedKeys(record,state).forEach { parent ->
+                if (l[parent] != b[parent] || r[parent] != b[parent]) join(parent,"shared:${record.key}")
+            }
+        } }
         // Deletion of a parent and an edit of a child is one explicit decision, avoiding orphan edits.
         states.flatMap { it.classOverrides }.distinctBy { it.key }.forEach { edit ->
             val parent = edit.sourceId?.let { "source:$it" } ?: "class:${edit.seriesId}"
@@ -118,6 +124,7 @@ object ScheduleMerge {
         return Result(ScheduleState(events = values.filterIsInstance<CalendarEvent>(), entries = values.filterIsInstance<TimetableEntry>(),
             sources = sources.map { it.source }, imported = sources.flatMap { it.occurrences },
             dayAdjustments = values.filterIsInstance<DayAdjustment>(), classOverrides = values.filterIsInstance<ClassOverride>(),
+            sharedRecords = if (states.any { it.sharedRecords != null }) values.filterIsInstance<SharedRecord>() else null,
             profiles = profiles.associate { it.value.termKey to it.value }, customProfileKeys = profiles.filter { it.custom }.map { it.value.termKey }.toSet()), conflicts)
     }
 }

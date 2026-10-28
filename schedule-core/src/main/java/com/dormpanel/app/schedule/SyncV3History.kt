@@ -57,7 +57,7 @@ class V3History(private val journal: V3Journal, internal val cache: V3IndexedCac
         if (loaded.size >= 128) loaded.remove(loaded.keys.first()); loaded[path] = row; return row
     }
     fun node(path: String) = requireNotNull(optionalNode(path)) { "v3 unverified ancestor" }
-    fun objectMetadata(path: String): V3Object = node(path).let { o -> V3Object(o.getInt("type"), dataset, o.getString("objectId"), o.getString("writerId"), o.getString("epochId"), o.getInt("epochNumber"), o.getString("descriptorHash"), o.refs()) }
+    fun objectMetadata(path: String): V3Object = node(path).let { o -> V3Object(o.getInt("type"), dataset, o.getString("objectId"), o.getString("writerId"), o.getString("epochId"), o.getInt("epochNumber"), o.getString("descriptorHash"), o.refs(), format = o.optInt("format", 3)) }
     fun reference(path: String, role: Int) = ref(objectMetadata(path), node(path).getString("hash"), role)
     private fun edges(o: JSONObject) = o.refs().filter { it.role in 1..3 }.map { refPath(dataset, it) }
     fun open(): V3History {
@@ -72,7 +72,7 @@ class V3History(private val journal: V3Journal, internal val cache: V3IndexedCac
         val jumps = mutableListOf<String>(); if (primary != null) jumps += refPath(dataset, causal.first())
         var n = 1
         while (jumps.size >= n) { val a = node(jumps[n - 1]).getJSONArray("jumps"); if (a.length() < n) break; jumps += a.getString(n - 1); n++ }
-        val m = JSONObject().put("type", o.type).put("datasetId", o.datasetId).put("objectId", o.objectId).put("writerId", o.writerId).put("epochId", o.epochId).put("epochNumber", o.epochNumber).put("descriptorHash", o.descriptorHash)
+        val m = JSONObject().put("format", o.format).put("type", o.type).put("datasetId", o.datasetId).put("objectId", o.objectId).put("writerId", o.writerId).put("epochId", o.epochId).put("epochNumber", o.epochNumber).put("descriptorHash", o.descriptorHash)
             .put("refs", JSONArray(o.refs.map { it.json() })).put("hash", SyncV3Codec.hash(bytes)).put("size", bytes.size)
             .put("root", if (o.type == 2) path else primary?.optString("root")).put("depth", if (primary == null) 0 else primary.getLong("depth") + 1).put("jumps", JSONArray(jumps))
         o.state?.let { m.put("businessHash", SyncV3Codec.businessHash(it)) }
@@ -191,7 +191,7 @@ class V3History(private val journal: V3Journal, internal val cache: V3IndexedCac
     }
     private fun verifyReady(path: String, expectedHash: String?, fresh: V3Object? = null) {
         if (optionalNode(path) != null) return; budget.work("validation", 256)
-        val bytes = if (fresh != null) SyncV3Codec.encode(fresh) else requireNotNull(cache.load(path, remote, expectedHash)) { "v3 missing object" }; val o = fresh ?: V3Paths.match(path, bytes); require(o.datasetId == dataset && o.descriptorHash == descriptorHash && o.type != 1) { "v3 descriptor identity" }
+        val bytes = if (fresh != null) SyncV3Codec.encode(fresh) else requireNotNull(cache.load(path, remote, expectedHash)) { "v3 missing object" }; val o = fresh ?: V3Paths.match(path, bytes); require(o.datasetId == dataset && o.descriptorHash == descriptorHash && o.type != 1 && o.format == node(descriptorPath).optInt("format", 3)) { "v3 descriptor identity" }
         o.refs.forEach { r -> val p = refPath(dataset, r); val target = objectMetadata(p); require(node(p).getString("hash") == r.hash && target.type == r.type && target.epochId == r.epochId && target.epochNumber == r.epochNumber && target.objectId == r.objectId && target.descriptorHash == descriptorHash) { "v3 reference identity" } }
         if (o.type == 2 && o.epochNumber > 1) { val source = o.refs.map { refPath(dataset, it) }; require(frontier(source).size == source.size) { "v3 checkpoint redundant frontier" }; require(ScheduleMerge.same(requireNotNull(o.state), merged(source))) { "v3 checkpoint extra edit" } }
         if (o.type == 3) { val parents = o.refs.filter { it.role == 1 }.map { node(refPath(dataset, it)) }; require(parents.all { it.optString("root").isNotEmpty() && it.getString("root") == parents.first().getString("root") }) { "v3 parent common root" }; if (o.refs.any { it.role == 3 }) require(refPath(dataset, o.refs.single { it.role == 4 }) in commonCandidates(o.refs.filter { it.role == 1 || it.role == 3 }.map { refPath(dataset, it) })) { "v3 unproven BASELINE" } }

@@ -1,3 +1,5 @@
+import {sharedTypes} from './shared-types.mjs';
+import {canonicalRecords,wireRecords} from './shared-records.mjs';
 import { schemas, termKey, ensure } from "./protocol.mjs";
 
 export const emptyState = () =>
@@ -65,6 +67,7 @@ export function records(state) {
       value,
       custom: s.customProfileKeys.includes(value.termKey),
     });
+  for(const r of canonicalRecords(state.sharedRecords??[]))rows.set(`shared:${r.typeId}/${r.recordId}`,r);
   return rows;
 }
 const comparable = (key, value) =>
@@ -79,7 +82,7 @@ export function same(a, b) {
     l.size === r.size && [...l].every(([k, v]) => rowEqual(k, v, r.get(k)))
   );
 }
-export function merge(base, local, remote, choice = null, forced = new Set()) {
+export function merge(base, local, remote, choice = null, forced = new Set(), adapters = sharedTypes) {
   const b = records(base),
     l = records(local),
     r = records(remote),
@@ -93,6 +96,11 @@ export function merge(base, local, remote, choice = null, forced = new Set()) {
   const join = (a, c) => {
     if (parents.has(a) && parents.has(c)) parents.set(root(c), root(a));
   };
+  const types=new Map(adapters.map(a=>[a.typeId,a]));
+  const prepared=new Map(states.map(state=>[state,new Map(adapters.filter(a=>(state.sharedRecords??[]).some(r=>r.typeId===a.typeId)).map(a=>[a.typeId,a.prepareRelations?.(state)]))]));
+  for(const state of states)for(const record of state.sharedRecords??[]){const adapter=types.get(record.typeId);if(adapter?.schemaVersion!==record.schemaVersion)continue;
+   for(const parent of adapter.relatedKeys?.(wireRecords([record])[0],state,prepared.get(state).get(record.typeId))??[])if(!rowEqual(parent,l.get(parent),b.get(parent))||!rowEqual(parent,r.get(parent),b.get(parent)))join(parent,`shared:${record.typeId}/${record.recordId}`);
+  }
   for (const edit of states.flatMap((s) => s.classOverrides)) {
     const p =
       edit.sourceId === null
@@ -156,9 +164,11 @@ export function merge(base, local, remote, choice = null, forced = new Set()) {
     for (const k of group) if (selected.has(k)) merged.set(k, selected.get(k));
   }
   const state = emptyState();
+  if(states.some(s=>s.sharedRecords!==undefined))state.sharedRecords=[];
   for (const [key, v] of [...merged].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const type = key.slice(0, key.indexOf(":"));
-    if (type === "source") {
+    if(type === "shared")state.sharedRecords.push(v);
+    else if (type === "source") {
       state.sources.push(v.source);
       state.imported.push(...v.occurrences);
     } else if (type === "term") {

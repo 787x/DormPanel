@@ -6,7 +6,7 @@ import java.util.Base64
 import java.util.UUID
 
 /** Sync core. The production host owns activation, permissions and its single Writer. */
-class V3Engine(private val journal: V3Journal, private val writerId: String) {
+class V3Engine(private val journal: V3Journal, private val writerId: String, private val sharedRegistry: SharedTypeRegistry = SharedTypes.registry()) {
     init { require(!journal.snapshot().has("writerId") || journal.snapshot().getString("writerId") == writerId) { "v3 writer identity changed" } }
     private val network = journal.networkGate
     private fun configure(remote: V3ObjectStore, cache: V3IndexedCache, budget: V3Budget) {
@@ -20,6 +20,8 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
             val h = V3History(journal, cache, remote, b.getString("descriptorPath"), b.getString("descriptorHash"), budget).open(); h.verify(p.getString("path"), p.getString("hash")); h.drainActivation()
         }
     }
+    private fun merge(base: ScheduleState, local: ScheduleState, remote: ScheduleState, choice: ScheduleMerge.Choice? = null,
+        forceConflicts: Set<String> = emptySet()) = ScheduleMerge.merge(base,local,remote,choice,forceConflicts,sharedRegistry=sharedRegistry)
     private fun id() = UUID.randomUUID().toString()
     private fun raw(o: V3Object) = Base64.getEncoder().encodeToString(SyncV3Codec.encode(o))
     private fun obj(raw: String) = SyncV3Codec.decode(Base64.getDecoder().decode(raw))
@@ -30,12 +32,46 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
     fun bind(descriptor: V3Object, hash: String, local: ScheduleState? = null) = bindWithCandidates(descriptor, hash, local, null)
     private fun bindWithCandidates(descriptor: V3Object, hash: String, local: ScheduleState?, initialization: JSONArray?) {
         require(descriptor.type == 1 && SyncV3Codec.hash(SyncV3Codec.encode(descriptor)) == hash)
-        journal.localTransaction { s -> require(!s.has("binding") && (!s.has("writerId") || s.getString("writerId") == writerId)); val existing = if (s.has("local")) state(s, "local") else ScheduleState(); val seed = local ?: existing
+        journal.localTransaction { s -> require(!s.has("binding") && (!s.has("writerId") || s.getString("writerId") == writerId)); val existing = if (s.has("local")) state(s, "local") else ScheduleState(); val seed = local ?: if (descriptor.format == 4) existing.copy(sharedRecords = emptyList()) else existing
             require(ScheduleMerge.same(existing, ScheduleState()) || ScheduleMerge.same(existing, seed)) { "v3 binding must preserve unbound local edits" }
-            s.put("writerId", writerId).put("binding", JSONObject().put("datasetId", descriptor.datasetId).put("descriptorPath", V3Paths.path(descriptor)).put("descriptorHash", hash)); s.put("local", state(seed)).put("unbasedLocal", !ScheduleMerge.same(seed, ScheduleState())).put("revision", s.optLong("revision"))
+            s.put("writerId", writerId).put("binding", JSONObject().put("datasetId", descriptor.datasetId).put("descriptorPath", V3Paths.path(descriptor)).put("descriptorHash", hash).put("format", descriptor.format)); s.put("local", state(seed)).put("unbasedLocal", !ScheduleMerge.same(seed, ScheduleState())).put("revision", s.optLong("revision"))
             if (initialization != null) s.put("initialization", initialization)
         }
     }
+    /** Target must be a separate unbound Store; source capture is never modified. */
+    fun previewSharedUpgrade(sourceCapture: ByteArray): JSONObject {
+        val source = SyncV3Codec.decode(sourceCapture); require(source.format == 3 && source.state != null)
+        require(!journal.snapshot().has("binding")) { "Upgrade requires a separate unbound target" }
+        val descriptor = V3Object(1, id(), id(), writerId, format = 4)
+        val initial = source.state.copy(sharedRecords = emptyList())
+        val genesis = V3Object(2, descriptor.datasetId, id(), writerId, id(), 1, SyncV3Codec.hash(SyncV3Codec.encode(descriptor)), state = initial)
+        val preview = JSONObject().put("id", id()).put("status", "PREVIEW").put("sourceHash", SyncV3Codec.hash(sourceCapture))
+            .put("targetDatasetId", descriptor.datasetId).put("extensions", 0).put("events", initial.events.size).put("courses", initial.entries.size)
+            .put("sources", initial.sources.size).put("imported", initial.imported.size).put("overrides", initial.classOverrides.size)
+            .put("days", initial.dayAdjustments.size).put("profiles", initial.profiles.size).put("customProfiles", initial.customProfileKeys.size)
+            .put("descriptor", raw(descriptor)).put("genesis", raw(genesis)).put("sourceCapture", Base64.getEncoder().encodeToString(sourceCapture))
+            .put("warning", "旧 Writer 仍可能写入源；源数据集、历史、绑定及未发布修改保留，本操作不会证明源已停写或自动切换绑定")
+        journal.meta.localOperation { journal.meta.atomic { journal.meta.put("sharedUpgrade", preview.getString("id"), preview) } }
+        return JSONObject(preview.toString())
+    }
+    fun cancelSharedUpgrade(token: String) = journal.meta.localOperation {
+        val p = requireNotNull(journal.meta.get("sharedUpgrade", token)); require(p.getString("status") == "PREVIEW")
+        p.put("status", "CANCELLED"); journal.meta.atomic { journal.meta.put("sharedUpgrade", token, p) }
+    }
+    fun confirmSharedUpgrade(token: String, currentSourceCapture: ByteArray, remote: V3PublicationStore): JSONObject {
+        val p = journal.meta.localOperation { requireNotNull(journal.meta.get("sharedUpgrade", token)) }
+        require(p.getString("status") in listOf("PREVIEW", "PUBLISHING"))
+        require(p.getString("sourceHash") == SyncV3Codec.hash(currentSourceCapture)) { "Source changed; preview again" }
+        val descriptor = obj(p.getString("descriptor")); val genesis = obj(p.getString("genesis"))
+        if (!journal.snapshot().has("binding")) bindWithCandidates(descriptor, genesis.descriptorHash, genesis.state,
+            JSONArray(listOf(p.getString("descriptor"), p.getString("genesis"))))
+        require(journal.snapshot().getJSONObject("binding").getString("datasetId") == descriptor.datasetId)
+        p.put("status", "PUBLISHING"); journal.meta.localOperation { journal.meta.atomic { journal.meta.put("sharedUpgrade", token, p) } }
+        val result = initialize(remote)
+        p.put("status", "TARGET_READBACK_CONFIRMED"); journal.meta.localOperation { journal.meta.atomic { journal.meta.put("sharedUpgrade", token, p) } }
+        return result
+    }
+    fun setCourseColor(sourceId: String?, seriesId: String, rgb: Int?) = edit { SharedCourseColors.change(it, sourceId, seriesId, rgb) }
     fun edit(local: ScheduleState) = edit { local }
     /** Host DAO edits run inside the journal's own transaction, before encoding/commit.
      * Do not wrap this in an outer transaction: the journal publishes memory after COMMIT. */
@@ -43,7 +79,12 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
         journal.localTransaction { s ->
             require(!s.has("writerId") || s.getString("writerId") == writerId)
             val before = if (s.has("local")) state(s, "local") else ScheduleState()
-            val encoded = state(change(before))
+            before.sharedRecords?.let { sharedRegistry.writable(it) }
+            val after = change(before)
+            require(before.sharedRecords.orEmpty().filterNot(sharedRegistry::supported).toSet() == after.sharedRecords.orEmpty().filterNot(sharedRegistry::supported).toSet()) { "Unknown optional records are read-only" }
+            require((before.sharedRecords != null) == (after.sharedRecords != null)) { "Use explicit isolated upgrade" }
+            after.sharedRecords?.let { sharedRegistry.writable(it) }
+            val encoded = state(after)
             s.put("writerId", writerId).put("local", encoded).put("revision", s.optLong("revision") + 1); s.remove("decision")
         }
     }
@@ -53,7 +94,7 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
             val budget = (remote as? V3WebDavStore)?.budget ?: V3Budget(); configure(remote, V3IndexedCache(journal.directory, budget), budget)
             resumeInitialization(remote); return@synchronized journal.snapshot().getJSONObject("binding")
         }
-        val descriptor = V3Object(1, id(), id(), writerId)
+        val descriptor = V3Object(1, id(), id(), writerId, format = if (initial.sharedRecords != null) 4 else 3)
         val genesis = V3Object(2, descriptor.datasetId, id(), writerId, id(), 1, SyncV3Codec.hash(SyncV3Codec.encode(descriptor)), state = initial)
         // A crash can expose neither a binding without candidates nor candidates without binding.
         bindWithCandidates(descriptor, genesis.descriptorHash, initial, JSONArray(listOf(raw(descriptor), raw(genesis))))
@@ -61,6 +102,8 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
         resumeInitialization(remote); journal.snapshot().getJSONObject("binding")
     }
     private fun publish(remote: V3PublicationStore, o: V3Object, capture: JSONObject) {
+        require(o.format == journal.snapshot().getJSONObject("binding").optInt("format", 3)) { "Dataset format mismatch" }
+        o.state?.sharedRecords?.let { sharedRegistry.writable(it) }
         val path = V3Paths.path(o); remote.prepare(path.substringBeforeLast('/') + "/")
         V3Publisher(journal, remote).stage(path, SyncV3Codec.encode(o), capture); resumePublication(remote)
     }
@@ -71,7 +114,7 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
             val p = s.getJSONObject("pending"); val o = obj(p.getString("bytes"))
             when (c.getString("kind")) {
                 "commit" -> {
-                    val replay = ScheduleMerge.merge(state(c, "local"), state(s, "local"), requireNotNull(o.state))
+                    val replay = merge(state(c, "local"), state(s, "local"), requireNotNull(o.state))
                     if (replay.conflicts.isEmpty()) s.put("local", state(replay.state))
                     else s.put("conflict", conflict(s, state(c, "local"), state(s, "local"), o.state, replay.conflicts, listOf(p.getString("path"))).put("receipt", true))
                     s.put("baseline", state(o.state)).put("baselinePath", p.getString("path")).put("baselineHash", p.getString("hash")).put("convergenceRotations", 0); s.remove("decision")
@@ -97,7 +140,7 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
         val source = history.objectMetadata(tips.first()); val refs = tips.map { history.reference(it, 2) }
         val genesis = V3Object(2, source.datasetId, id(), writerId, id(), source.epochNumber + 1, source.descriptorHash, refs, history.merged(tips))
         val transition = V3Object(4, source.datasetId, id(), writerId, sourceEpoch, source.epochNumber, source.descriptorHash,
-            refs + ref(genesis, SyncV3Codec.hash(SyncV3Codec.encode(genesis)), 5))
+            refs + ref(genesis, SyncV3Codec.hash(SyncV3Codec.encode(genesis)), 5), format = source.format)
         journal.transaction { it.put("rotation", JSONObject().put("genesis", raw(genesis)).put("transition", raw(transition)).put("phase", 0)) }
         resumeRotation(remote)
     }
@@ -125,8 +168,8 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
         journal.localTransaction { s ->
             val c = s.getJSONObject("conflict"); require(c.getString("id") == id && c.getLong("revision") == s.getLong("revision")) { "v3 stale conflict decision" }
             val a = c.getJSONArray("conflicts"); val keys = (0 until a.length()).flatMap { a.getJSONObject(it).getJSONArray("keys").strings() }.toSet()
-            val resolved = ScheduleMerge.merge(state(c, "base"), state(c, "local"), state(c, "remote"), choice, keys)
-            val replay = ScheduleMerge.merge(state(c, "base"), state(c, "capturedLocal"), resolved.state, ScheduleMerge.Choice.REMOTE, keys)
+            val resolved = merge(state(c, "base"), state(c, "local"), state(c, "remote"), choice, keys)
+            val replay = merge(state(c, "base"), state(c, "capturedLocal"), resolved.state, ScheduleMerge.Choice.REMOTE, keys)
             require(replay.conflicts.all { it.keys.all { key -> key in keys } }) { "v3 new local conflict requires separate decision" }
             journal.meta.put("decision", id, JSONObject().put("choice", choice.name).put("input", c))
             s.put("local", state(replay.state)).put("revision", s.getLong("revision") + 1); s.remove("conflict")
@@ -158,7 +201,7 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
                 if (old.getLong("revision") != current.getLong("revision")) journal.transaction { s ->
                     s.optJSONObject("conflict")?.takeIf { it.optBoolean("receipt") }?.let { c ->
                         val a = c.getJSONArray("conflicts"); val keys = (0 until a.length()).flatMap { a.getJSONObject(it).getJSONArray("keys").strings() }.toSet()
-                        val result = ScheduleMerge.merge(state(c, "base"), state(s, "local"), state(c, "remote"), forceConflicts = keys)
+                        val result = merge(state(c, "base"), state(s, "local"), state(c, "remote"), forceConflicts = keys)
                         journal.meta.put("conflictHistory", c.getString("id"), c); s.put("conflict", conflict(s, state(c, "base"), state(s, "local"), state(c, "remote"), result.conflicts, c.getJSONArray("paths").strings()).put("receipt", true))
                     }
                 }; return@synchronized "CONFLICT"
@@ -184,7 +227,7 @@ class V3Engine(private val journal: V3Journal, private val writerId: String) {
             val basePath = history.common(tips + listOfNotNull(current.optString("baselinePath").takeIf { it.isNotEmpty() }))
             require(current.has("baselinePath") || !current.optBoolean("unbasedLocal") && current.getLong("revision") == 0L) { "v3 local state has no proven baseline" }
             val local = if (current.has("baselinePath")) state(current, "local") else remoteState
-            val base = requireNotNull(history.value(basePath).state); val result = if (decision) ScheduleMerge.Result(local, emptyList()) else ScheduleMerge.merge(base, local, remoteState)
+            val base = requireNotNull(history.value(basePath).state); val result = if (decision) ScheduleMerge.Result(local, emptyList()) else merge(base, local, remoteState)
             if (result.conflicts.isNotEmpty()) { saveConflict(base, state(current, "local"), remoteState, result.conflicts, tips, current.getLong("revision")); return@synchronized "CONFLICT" }
             current.optJSONObject("conflict")?.let { old -> journal.transaction { s -> if (s.getLong("revision") == current.getLong("revision") && s.optJSONObject("conflict")?.getString("id") == old.getString("id")) { journal.meta.put("conflictHistory", old.getString("id"), old); s.remove("conflict") } } }
             val count = history.epochCount(carrier); check(count < 256) { "v3 epoch capacity" }

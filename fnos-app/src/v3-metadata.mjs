@@ -10,7 +10,7 @@ import { json } from './store.mjs';
  * SIGKILL releases the OS lock. Never unlink/replace a lock file. */
 export class V3Metadata {
   constructor(directory) {
-    ensure(!resolve(directory).split(/[\\/]/).some(part => ['dormpanel-sync-v2', 'dormpanel-sync-v3'].includes(part)), 'v3 metadata must remain outside protocol directories');
+    ensure(!resolve(directory).split(/[\\/]/).some(part => ['dormpanel-sync-v2', 'dormpanel-sync-v3', 'dormpanel-sync-v3-shared'].includes(part)), 'v3 metadata must remain outside protocol directories');
     const created = mkdirSync(directory, { recursive: true, mode: 0o700 }); ensure(!lstatSync(directory).isSymbolicLink());
     for (const name of ['workspace.json', 'catalog.json', 'graph.json', 'identity.json', 'schedule.db']) ensure(!existsSync(join(directory, name)), 'v3 private store refuses existing production/v2 root');
     ensure(!existsSync(join(directory, 'v3-engine-v1.json')), 'INCOMPATIBLE_V3_DRAFT_STATE: preserve old isolated journal; choose a new private test directory');

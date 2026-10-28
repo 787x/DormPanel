@@ -1,3 +1,7 @@
+import {sharedTypes} from './shared-types.mjs';
+import {change as changeCourseColor,courseColorAdapter} from './shared-course-colors.mjs';
+import {Registry,courseColor,wireRecords} from './shared-records.mjs';
+const sharedRegistry=new Registry(sharedTypes);
 import { randomUUID } from 'node:crypto';
 import { ensure } from './protocol.mjs';
 import { encode, decode, sha, ZERO, ZERO_HASH } from './v3-protocol.mjs';
@@ -11,7 +15,8 @@ import { emptyState, merge, same, mergePlan } from './merge.mjs';
  * Edits and receipts share one durable journal; an engine queue serializes network rounds.
  * Production activation and permissions belong to Catalog; v2 never calls this engine. */
 export class V3Engine {
-  constructor(journal, writerId) { ensure(!journal.value.writerId || journal.value.writerId === writerId, 'v3 writer identity changed'); Object.assign(this, { journal, writerId }); }
+  constructor(journal, writerId, registry = sharedRegistry) { this.sharedRegistry=registry; ensure(!journal.value.writerId || journal.value.writerId === writerId, 'v3 writer identity changed'); Object.assign(this, { journal, writerId }); }
+  merge(base,local,remote,choice=null,forced=new Set()){return merge(base,local,remote,choice,forced,[...this.sharedRegistry.adapters.values()]);}
   serial(fn) { const p = this.journal.networkQueue.then(() => { this.journal.meta.assertWritable(); return fn(); }); this.journal.networkQueue = p.catch(() => {}); return p; }
   configure(remote, cache, budget) {
     ensure(cache.budget === budget && (!remote.budget || remote.budget === budget), 'v3 round must share one budget');
@@ -24,14 +29,21 @@ export class V3Engine {
       await h.verify(p.path, p.hash); h.drainActivation();
     };
   }
-  async edit(state) {
+  async setCourseColor(sourceId,seriesId,rgb){return this.edit(changeCourseColor(this.journal.value.local,sourceId,seriesId,rgb),this.journal.value.revision);}
+  async edit(state, expectedRevision = undefined) {
+    const before=this.journal.value.local;
+    const opaque=s=>(s?.sharedRecords??[]).filter(r=>!this.sharedRegistry.supported(r)).toSorted((a,b)=>(a.typeId+'/'+a.recordId).localeCompare(b.typeId+'/'+b.recordId));
+    ensure(JSON.stringify(opaque(before))===JSON.stringify(opaque(state)),'Unknown optional records are read-only');
+    if(before?.sharedRecords!==undefined)this.sharedRegistry.writable(wireRecords(before.sharedRecords));
+    ensure((before?.sharedRecords!==undefined)===(state.sharedRecords!==undefined),'Use explicit isolated upgrade');
+    if(state.sharedRecords!==undefined)this.sharedRegistry.writable(wireRecords(state.sharedRecords));
     // Domain validation before committing; immutable private envelope never reaches a server.
     encode({ type: 2, datasetId: this.journal.value.binding?.datasetId ?? '00000000-0000-0000-0000-000000000001', objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: this.journal.value.binding?.descriptorHash ?? '1'.repeat(64), refs: [], state });
-    return this.journal.transaction(s => { ensure(!s.writerId || s.writerId === this.writerId); s.writerId = this.writerId; s.local = structuredClone(state); s.revision = (s.revision ?? 0) + 1; s.decision = null; }, true);
+    return this.journal.transaction(s => { ensure(expectedRevision===undefined||s.revision===expectedRevision,'Stale revision'); ensure(!s.writerId || s.writerId === this.writerId); s.writerId = this.writerId; s.local = structuredClone(state); s.revision = (s.revision ?? 0) + 1; s.decision = null; }, true);
   }
   async bind(descriptor, hash, local = undefined, initialization = undefined) {
     ensure(descriptor.type === 1 && sha(encode(descriptor)) === hash);
-    await this.journal.transaction(s => { ensure(!s.binding && (!s.writerId || s.writerId === this.writerId)); const existing = s.local ?? emptyState(), seed = local ?? existing; ensure(same(existing, emptyState()) || same(existing, seed), 'v3 binding must preserve unbound local edits'); s.writerId = this.writerId; s.binding = { datasetId: descriptor.datasetId, descriptorPath: objectPath(descriptor), descriptorHash: hash }; s.local = seed; s.unbasedLocal = !same(seed, emptyState()); s.baseline = null; s.baselinePath = null; s.revision ??= 0;
+    await this.journal.transaction(s => { ensure(!s.binding && (!s.writerId || s.writerId === this.writerId)); const existing = s.local ?? emptyState(), seed = local ?? (descriptor.format===4?{...existing,sharedRecords:[]}:existing); ensure(same(existing, emptyState()) || same(existing, seed), 'v3 binding must preserve unbound local edits'); s.writerId = this.writerId; s.binding = { datasetId: descriptor.datasetId, descriptorPath: objectPath(descriptor), descriptorHash: hash, ...(descriptor.format===4?{format:4}:{}) }; s.local = seed; s.unbasedLocal = !same(seed, emptyState()); s.baseline = null; s.baselinePath = null; s.revision ??= 0;
       if (initialization) s.initialization = initialization;
     }, true);
   }
@@ -42,7 +54,7 @@ export class V3Engine {
         await this.resumeInitialization(remote); return structuredClone(this.journal.value.binding);
       }
       state ??= this.journal.value.local ?? emptyState();
-      const descriptor = { type: 1, datasetId: randomUUID(), objectId: randomUUID(), writerId: this.writerId, epochId: ZERO, epochNumber: 0, descriptorHash: ZERO_HASH, refs: [], state: null };
+      const descriptor = { ...(state.sharedRecords!==undefined?{format:4}:{}), type: 1, datasetId: randomUUID(), objectId: randomUUID(), writerId: this.writerId, epochId: ZERO, epochNumber: 0, descriptorHash: ZERO_HASH, refs: [], state: null };
       const genesis = { type: 2, datasetId: descriptor.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: sha(encode(descriptor)), refs: [], state };
       // Binding and BOTH exact candidates commit together, before any network I/O.
       await this.bind(descriptor, genesis.descriptorHash, state, [encode(descriptor).toString('base64'), encode(genesis).toString('base64')]);
@@ -51,6 +63,8 @@ export class V3Engine {
     });
   }
   async publish(remote, object, capture) {
+    ensure((object.format??(object.state?.sharedRecords!==undefined?4:3))===(this.journal.value.binding.format??3),'Dataset format mismatch');
+    if(object.state?.sharedRecords!==undefined)this.sharedRegistry.writable(wireRecords(object.state.sharedRecords));
     const publisher = new V3Publisher(this.journal, remote), raw = encode(object), path = objectPath(object);
     if (remote.prepare) await remote.prepare(path.slice(0, path.lastIndexOf('/') + 1));
     await publisher.stage(path, raw, capture); return this.resumePublication(remote);
@@ -62,7 +76,7 @@ export class V3Engine {
     await publisher.receipt((s, c) => {
       const o = decode(Buffer.from(s.pending.bytes, 'base64'));
       if (c.kind === 'commit') {
-        const replay = merge(c.local, s.local, o.state);
+        const replay = this.merge(c.local, s.local, o.state);
         if (replay.conflicts.length) s.conflict = { id: sha(Buffer.from(JSON.stringify({ path: s.pending.path, revision: s.revision }))), revision: s.revision, base: c.local, local: s.local, remote: o.state, capturedLocal: s.local, conflicts: replay.conflicts, paths: [s.pending.path], receipt: true };
         else s.local = replay.state;
         s.baseline = o.state; s.baselinePath = s.pending.path; s.baselineHash = s.pending.hash; s.decision = null;
@@ -88,7 +102,7 @@ export class V3Engine {
     ensure(history.activeEpochs().includes(sourceEpoch) && JSON.stringify([...tips].sort()) === JSON.stringify(history.epochTips(sourceEpoch)), 'v3 stale/incomplete rotation frontier');
     const source = history.nodes[tips[0]], state = await history.merged(tips), refs = tips.map(p => reference(history.nodes[p], history.nodes[p].hash, 2));
     const genesis = { type: 2, datasetId: source.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: source.epochNumber + 1, descriptorHash: source.descriptorHash, refs, state };
-    const transition = { type: 4, datasetId: source.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: sourceEpoch, epochNumber: source.epochNumber, descriptorHash: source.descriptorHash, refs: [...refs, reference(genesis, sha(encode(genesis)), 5)], state: null };
+    const transition = { ...(source.format===4?{format:4}:{}), type: 4, datasetId: source.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: sourceEpoch, epochNumber: source.epochNumber, descriptorHash: source.descriptorHash, refs: [...refs, reference(genesis, sha(encode(genesis)), 5)], state: null };
     await this.journal.transaction(s => { s.rotation = { genesis: encode(genesis).toString('base64'), transition: encode(transition).toString('base64'), phase: 0 }; });
     await this.resumeRotation(remote);
   }
@@ -108,8 +122,8 @@ export class V3Engine {
     await this.journal.transaction(s => {
       const c = s.conflict; ensure(c?.id === id && c.revision === s.revision, 'v3 stale conflict decision');
       const keys = new Set(c.conflicts.flatMap(v => v.keys));
-      const resolved = merge(c.base, c.local, c.remote, choice, keys);
-      const replay = merge(c.base, c.capturedLocal, resolved.state, 'remote', keys);
+      const resolved = this.merge(c.base, c.local, c.remote, choice, keys);
+      const replay = this.merge(c.base, c.capturedLocal, resolved.state, 'remote', keys);
       ensure(replay.conflicts.every(v => v.keys.every(k => keys.has(k))), 'v3 new local conflict requires separate decision');
       this.journal.meta.put('decision', id, { choice, input: c });
       s.local = replay.state; s.revision++; s.conflict = null; s.decision = { id, choice, remotePaths: c.paths, input: c };
@@ -142,7 +156,7 @@ export class V3Engine {
         if (current.conflict?.receipt) {
           if (current.conflict.revision !== current.revision) await this.journal.transaction(s => {
             const c = s.conflict; if (!c?.receipt) return; const forced = new Set(c.conflicts.flatMap(v => v.keys));
-            const result = merge(c.base, s.local, c.remote, null, forced); this.journal.meta.put('conflictHistory', c.id, c);
+            const result = this.merge(c.base, s.local, c.remote, null, forced); this.journal.meta.put('conflictHistory', c.id, c);
             s.conflict = { ...c, id: sha(Buffer.from(c.paths.join('\n') + '\n' + s.revision)), revision: s.revision, local: s.local, capturedLocal: s.local, conflicts: result.conflicts };
           });
           return { status: 'CONFLICT', publicationConfirmed: true, oldHistoryAuditComplete: false };
@@ -174,7 +188,7 @@ export class V3Engine {
         const basePath = current.baselinePath ? history.common([...tips, current.baselinePath]) : history.common(tips);
         ensure(current.baselinePath || !current.unbasedLocal && current.revision === 0, 'v3 local state has no proven baseline');
         const local = current.baselinePath ? current.local : remoteState;
-        const base = (await history.value(basePath)).state, result = decisionMatches ? { state: local, conflicts: [] } : merge(base, local, remoteState);
+        const base = (await history.value(basePath)).state, result = decisionMatches ? { state: local, conflicts: [] } : this.merge(base, local, remoteState);
         if (result.conflicts.length) { await this.saveConflict(base, current.local, remoteState, result.conflicts, tips, current.revision); return { status: 'CONFLICT' }; }
         if (current.conflict) await this.journal.transaction(s => { if (s.revision === current.revision && s.conflict?.id === current.conflict.id) { this.journal.meta.put('conflictHistory', s.conflict.id, s.conflict); s.conflict = null; } });
         const count = history.epochCount(carrier);

@@ -153,7 +153,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
                     if (!v3().localWritesAllowed()) throw ScheduleDatasetWriteProtected()
                     check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "迁移保护禁止编辑" }
                     result = Result.success(operation())
-                    readRows().copy(profiles = before.profiles, customProfileKeys = before.customProfileKeys)
+                    readRows().copy(profiles = before.profiles, customProfileKeys = before.customProfileKeys, sharedRecords = before.sharedRecords)
                 }
             } catch (error: Exception) {
                 if (v3().journal.meta.requiresReopen()) { ScheduleCommitSignals.notifyChanged(); throw ScheduleCommitUnconfirmed(error) }
@@ -446,13 +446,15 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
             v3().journal.meta.assertWritable();v3().journal.controlSummary().put("mode",v3().binding().optString("phase","ACTIVE"))
         }.getOrElse { org.json.JSONObject().put("mode","RECOVERY_REQUIRED") }
     }
-    fun prepareV3(folder: String, descriptor: ByteArray? = null) = workerCall {
+    fun prepareV3(folder: String, descriptor: ByteArray? = null, sharedFormat: Boolean = false) = workerCall {
         requireNoDatasetMigration()
         check(v2Commit(21) == null && v2Commit(23) == null && decoded(1) == null && decoded(4) == null) { "已有绑定或待发布；请使用 v2→v3 迁移" }
         val original = fullState()
         if (descriptor != null) check(original.events.isEmpty() && original.entries.isEmpty() && original.sources.isEmpty() && original.imported.isEmpty() &&
             original.classOverrides.isEmpty() && original.dayAdjustments.isEmpty() && original.customProfileKeys.isEmpty()) { "本地非空，禁止覆盖加入；请先保留现有数据" }
-        v3().prepare(if (descriptor == null) original else ScheduleState(), folder, descriptor)
+        val extended = sharedFormat || descriptor?.let { SyncV3Codec.decode(it).format == 4 } == true
+        val seed = if (descriptor == null) original else ScheduleState()
+        v3().prepare(if (extended) seed.copy(sharedRecords = emptyList()) else seed, folder, descriptor)
     }
     fun synchronizeV3(account: WebDavAccount): String {
         val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
@@ -877,6 +879,26 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         v2Put(23, ScheduleCommitCodec.encode(c)); v2Put(24, ScheduleCommitCodec.encode(c))
         listOf(25, 26, 27).forEach { database.dao().deleteSyncRecord(it) }
         (30..93).forEach { database.dao().deleteSyncRecord(it) }
+    }
+    fun setSharedCourseColor(sourceId: String?, seriesId: String, rgb: Int?, expectedHash: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
+        check(ActiveScheduleV3.active(database) && v3().localWritesAllowed())
+        v3().engine.edit { before ->
+            check(SyncV3Codec.businessHash(before) == expectedHash)
+            SharedCourseColors.change(before, sourceId, seriesId, rgb)
+        }
+        onCommitted?.invoke(); Unit
+    }
+    fun putSharedRecords(records: List<SharedRecord>, expectedHash: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
+        check(ActiveScheduleV3.active(database) && v3().localWritesAllowed())
+        v3().engine.edit { before ->
+            check(SyncV3Codec.businessHash(before) == expectedHash)
+            val current = requireNotNull(before.sharedRecords)
+            val registry = SharedTypes.registry(); registry.writable(current); registry.writable(records)
+            check(current.filterNot(registry::supported).toSet() == records.filterNot(registry::supported).toSet())
+            records.filter { it !in current && it.typeId == "course.color" }.forEach { require(it.recordId in before.sharedCourseParents) { "Unknown logical course identity" } }
+            before.copy(sharedRecords = records)
+        }
+        onCommitted?.invoke(); Unit
     }
     override fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit) = write(callback) {
         database.dao().put(EventRow(event.id, event.title, event.start, event.end, event.note))

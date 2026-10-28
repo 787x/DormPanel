@@ -27,7 +27,7 @@ object SharedRecordCodec {
         require(records.sumOf { 24L + it.typeId.length + it.recordId.length + it.dependencies.sumOf { d -> 4 + d.length } + it.payload.size } + 12 <= 1048576)
         return ByteArrayOutputStream().also { b -> DataOutputStream(b).use { out ->
             out.writeInt(0x44505852); out.writeInt(1); out.writeInt(records.size)
-            records.sortedBy { it.key }.forEach { r ->
+            records.sortedWith(compareBy<SharedRecord> { it.typeId }.thenBy { it.recordId }).forEach { r ->
                 out.text(r.typeId); out.text(r.recordId); out.writeInt(r.schemaVersion); out.writeInt(if (r.required) 1 else 0)
                 out.writeInt(r.dependencies.size); r.dependencies.sorted().forEach { out.text(it) }
                 out.writeInt(r.payload.size); out.write(r.payload.toByteArray())
@@ -58,15 +58,19 @@ interface SharedTypeAdapter {
     val typeId: String
     val schemaVersion: Int
     val maxPayload: Int
+    val maxRecords: Int get() = 4096
     fun validate(record: SharedRecord, records: List<SharedRecord>)
+    fun relatedKeys(record: SharedRecord, state: ScheduleState): Set<String> = emptySet()
 }
 
 class SharedTypeRegistry(adapters: List<SharedTypeAdapter>) {
     private val types = adapters.associateBy { it.typeId }
-    init { require(types.size == adapters.size) }
+    init { require(types.size == adapters.size); adapters.forEach { require(it.schemaVersion > 0 && it.maxPayload in 0..65536 && it.maxRecords in 0..4096) } }
+    fun relatedKeys(r: SharedRecord, state: ScheduleState): Set<String> = if (supported(r)) types.getValue(r.typeId).relatedKeys(r,state) else emptySet()
     fun supported(r: SharedRecord) = types[r.typeId]?.schemaVersion == r.schemaVersion
     fun validate(records: List<SharedRecord>) {
         SharedRecordCodec.encode(records)
+        types.values.forEach { type -> require(records.count { it.typeId == type.typeId } <= type.maxRecords) }
         records.filter(::supported).forEach { r -> types.getValue(r.typeId).let {
             require(r.payload.size <= it.maxPayload); it.validate(r, records)
         } }
@@ -115,8 +119,10 @@ object SharedCourseColor : SharedTypeAdapter {
     override val schemaVersion = 1
     override val maxPayload = 4
     override fun validate(record: SharedRecord, records: List<SharedRecord>) {
+        require(record.recordId.matches(Regex("[0-9a-f]{64}")))
         require(record.payload == listOf(0.toByte()) || record.payload.size == 4 && record.payload[0] == 1.toByte())
     }
+    override fun relatedKeys(record: SharedRecord, state: ScheduleState): Set<String> = state.sharedCourseParents[record.recordId].orEmpty()
     fun automaticColor(recordId: String): List<Byte> {
         require(SharedRecordCodec.identity(recordId))
         return MessageDigest.getInstance("SHA-256").digest(recordId.toByteArray(Charsets.US_ASCII)).take(3)

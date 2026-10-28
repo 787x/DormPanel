@@ -1,3 +1,5 @@
+import {change as changeSharedCourseColor} from './shared-course-colors.mjs';
+import {canonicalRecords} from './shared-records.mjs';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from "node:crypto";
@@ -48,7 +50,7 @@ export class Workspace {
       await store.save("workspace.json", frame);
     }
     ensure(
-      frame.version === 1 && Number.isSafeInteger(frame.revision),
+      [1,2].includes(frame.version) && Number.isSafeInteger(frame.revision),
       "不支持本地数据库版本",
     );
     canonical(frame.local);
@@ -101,7 +103,9 @@ export class Workspace {
           const value = change(next);
           ensure(!(value instanceof Promise), "本地事务不得执行异步操作");
           this.mutationGuard?.(this.frame, next);
+          ensure(next.version!==2||next.local.sharedRecords!==undefined,'Shared workspace cannot downgrade');
           next.local = canonical(next.local);
+          if(next.local.sharedRecords!==undefined)next.version=2;
           next.revision++;
           return { next, value };
         } catch (error) {
@@ -131,6 +135,9 @@ export class Workspace {
     });
     this.queue = task.finally(() => { this.writing--; }).catch(() => {});
     return task;
+  }
+  setSharedCourseColor(sourceId,seriesId,rgb,expected) {
+    return this.tx(f=>{ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');f.local=changeSharedCourseColor(f.local,sourceId,seriesId,rgb);},expected);
   }
   edit(operation, expected) {
     return this.tx((f) => {
@@ -171,9 +178,11 @@ export class Workspace {
 
 export function canonical(state) {
   const id = "00000000-0000-0000-0000-000000000000";
-  return decode(
-    encode({ datasetId: id, commitId: id, writerId: id, parents: [], state }),
+  const result = decode(
+    encode({ datasetId: id, commitId: id, writerId: id, parents: [], state: Object.fromEntries(Object.entries(state).filter(([k])=>k!=='sharedRecords')) }),
   ).state;
+  if(state.sharedRecords!==undefined)result.sharedRecords=canonicalRecords(state.sharedRecords);
+  return result;
 }
 const remove = (rows, key, id) => rows.filter((r) => r[key] !== id);
 export function applyEdit(s, op) {

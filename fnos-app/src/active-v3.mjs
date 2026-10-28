@@ -42,6 +42,11 @@ export async function openActiveV3(catalog, id, create = false) {
     bindingIdentity() { const b=workspace.frame.v3?.binding; return b ? structuredClone(b) : null; },
     migrationHeader(id) { return readLocal(()=>journal.meta.get('hostMigrationHeader',id)); },
     history(input = {}) { return readLocal(() => new V3Maintenance(catalog,id).list(input)); },
+    async initializeSharedDataset(expectedRevision) {
+      writable();ensure(expectedRevision===workspace.frame.revision&&!journal.value.binding,'版本过期或已有绑定；请使用独立目标');
+      const budget=new Budget(),remote=remoteV3Connection(catalog,catalog.row(id).connectionId,budget,true);
+      return engine.initialize(remote,{...journal.value.local,sharedRecords:[]});
+    },
     async synchronize(options = {}) {
       const budget = new Budget(), remote = remoteV3(catalog, id, budget);
       ensure(!options.discover, '只读发现必须使用 Catalog.discover，禁止进入编辑事务');
@@ -103,7 +108,7 @@ export function readV3WorkspaceIdentity(directory,writerId) {
     };
     ensure(raw('format','version').value===2,'v3 私有格式不兼容');
     ensure(raw('installation','identity').writerId===writerId,'v3 安装 Writer 身份变化');
-    const frame=raw('workspace','workspace.json'); ensure(frame.version===1 && !frame.datasetId,'v3 工作区身份异常');
+    const frame=raw('workspace','workspace.json'); ensure([1,2].includes(frame.version) && !frame.datasetId,'v3 工作区身份异常');
     const b=frame.v3?.binding; if(!b)return null;
     uuid(b.datasetId); ensure(frame.v3.writerId===writerId && /^[0-9a-f]{64}$/.test(b.descriptorHash) && b.descriptorPath.startsWith(datasetScope(b.datasetId)+'descriptor-'),'v3 绑定身份异常');
     return {datasetId:b.datasetId,descriptorHash:b.descriptorHash};
@@ -112,12 +117,12 @@ export function readV3WorkspaceIdentity(directory,writerId) {
 
 export function remoteV3(catalog, id, budget) {
   const row = catalog.row(id); ensure(row.connectionId, '请先添加连接并创建工作区');
-  return remoteV3Connection(catalog,row.connectionId,budget);
+  return remoteV3Connection(catalog,row.connectionId,budget,catalog.workspaces.get(id)?.frame.v3?.binding?.format===4);
 }
-export function remoteV3Connection(catalog,connectionId,budget) {
+export function remoteV3Connection(catalog,connectionId,budget,sharedFormat=false) {
   const c = catalog.connection(connectionId);
   return catalog.v3RemoteFactory ? catalog.v3RemoteFactory(c, budget)
-    : c.type === 'local' ? new V3LocalStore(c.config, catalog.grants, budget) : new V3WebDavStore(c.config, budget);
+    : c.type === 'local' ? new V3LocalStore({...c.config,...(sharedFormat?{sharedFormat:1}:{})}, catalog.grants, budget) : new V3WebDavStore({...c.config,...(sharedFormat?{sharedFormat:1}:{})}, budget);
 }
 
 /** Bounded read-only identity discovery. No unique-candidate auto binding. */

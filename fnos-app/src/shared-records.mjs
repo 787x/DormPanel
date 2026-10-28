@@ -21,7 +21,7 @@ export function encode(records){
  check(new Set(records.map(key)).size===records.length);
  records.forEach(validate);
  check(12+records.reduce((n,r)=>n+24+r.typeId.length+r.recordId.length+r.dependencies.reduce((m,d)=>m+4+d.length,0)+r.payload.length,0)<=1048576);
- const bytes=Buffer.concat([Buffer.from('DPXR'),i(1),i(records.length),...records.toSorted((a,b)=>order(key(a),key(b))).map(row)]);
+ const bytes=Buffer.concat([Buffer.from('DPXR'),i(1),i(records.length),...records.toSorted((a,b)=>order(a.typeId,b.typeId)||order(a.recordId,b.recordId)).map(row)]);
  check(bytes.length<=1048576,'Shared records byte budget');return bytes;
 }
 export function decode(bytes){
@@ -54,14 +54,18 @@ export function merge(base,local,remote){
  encode(records);return {records,conflicts};
 }
 export class Registry{
- constructor(adapters){this.adapters=new Map();for(const a of adapters){check(name(a.typeId)&&integer(a.schemaVersion)&&!this.adapters.has(a.typeId));this.adapters.set(a.typeId,a);}}
+ constructor(adapters){this.adapters=new Map();for(const a of adapters){check(name(a.typeId)&&integer(a.schemaVersion)&&!this.adapters.has(a.typeId));check(Number.isInteger(a.maxPayload)&&a.maxPayload>=0&&a.maxPayload<=65536);check(Number.isInteger(a.maxRecords??4096)&&(a.maxRecords??4096)>=0&&(a.maxRecords??4096)<=4096);this.adapters.set(a.typeId,a);}}
  supported(r){return this.adapters.get(r.typeId)?.schemaVersion===r.schemaVersion;}
- validate(records){encode(records);for(const r of records){if(this.supported(r)){const a=this.adapters.get(r.typeId);check(r.payload.length<=a.maxPayload);a.validate(r,records);}}}
+ validate(records){encode(records);for(const a of this.adapters.values())check(records.filter(r=>r.typeId===a.typeId).length<=(a.maxRecords??4096));for(const r of records){if(this.supported(r)){const a=this.adapters.get(r.typeId);check(r.payload.length<=a.maxPayload);a.validate(r,records);}}}
  writable(records){this.validate(records);for(const r of records){check(!r.required||this.supported(r),'Unsupported required capability');check(r.dependencies.every(t=>this.adapters.has(t)&&records.filter(v=>v.typeId===t).every(v=>this.supported(v))),'Unknown dependency');}}
  replace(records,record){this.writable(records);check(this.supported(record),'Unregistered business write');const next=[...records.filter(r=>key(r)!==key(record)),record];this.writable(next);return decode(encode(next));}
  remove(records,typeId,recordId){this.writable(records);const r=records.find(r=>r.typeId===typeId&&r.recordId===recordId);check(!r||this.supported(r),'Unregistered business delete');const next=records.filter(v=>v!==r);this.writable(next);return decode(encode(next));}
 }
-export const courseColor={typeId:'course.color',schemaVersion:1,maxPayload:4,validate:r=>check(r.payload.length===1&&r.payload[0]===0||r.payload.length===4&&r.payload[0]===1)};
+export const courseColor={typeId:'course.color',schemaVersion:1,maxPayload:4,validate:r=>check(/^[0-9a-f]{64}$/.test(r.recordId)&&(r.payload.length===1&&r.payload[0]===0||r.payload.length===4&&r.payload[0]===1))};
 // SHA-256 of stable logical identity, independent of local palette allocation history.
 export const automaticColor=recordId=>{check(id(recordId));return createHash('sha256').update(Buffer.from(recordId,'ascii')).digest().subarray(0,3);};
 
+
+export const wireRecords=records=>records.map(r=>({...r,payload:Buffer.from(r.payload,'hex')}));
+export const durableRecords=records=>decode(encode(records)).map(r=>({...r,payload:r.payload.toString('hex')}));
+export function canonicalRecords(records){check(records.every(r=>typeof r.payload==='string'&&/^(?:[0-9a-f]{2})*$/.test(r.payload)));return durableRecords(wireRecords(records));}

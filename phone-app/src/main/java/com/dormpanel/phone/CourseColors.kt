@@ -21,6 +21,11 @@ internal object CourseColors {
     fun ink(dark: Boolean) = if (dark) Color.rgb(245,245,245) else Color.rgb(28,35,42)
     private fun prefs(context: Context) = context.getSharedPreferences("course_colors_v1",Context.MODE_PRIVATE)
     private fun digest(key: String) = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    @Synchronized fun confirmedMigrationValues(context: Context): Map<String, Any?> {
+        val pref = prefs(context); val stored = pref.all.toMutableMap()
+        uncertain[pref]?.forEach { (key,value) -> if (value == null) stored.remove(key) else stored[key] = value }
+        return stored
+    }
     class Snapshot(val identity: CourseColorIdentity, private val automatic: Map<String, Int>, private val manual: Map<String, Int>) {
         fun key(candidate: CourseCandidate) = identity.key(candidate.sourceId,candidate.series.first())
         fun manual(key: String) = manual[key]

@@ -47,8 +47,10 @@ const names = { entries: '本地课程', events: '日历事件', sources: '导�
 export function differences(a, b, offset = 0, limit = 40, restored = new Map()) {
   ensure(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit > 0 && limit <= 80, '分页无效');
   const counts = {}, rows = [], groups = new Map(); let total = 0;
-  for (const [table, , key] of schemas) {
-    const left = new Map(a[table].map(r => [key ? r[key] : r, r])), right = new Map(b[table].map(r => [key ? r[key] : r, r]));
+  const tables=[...schemas,...(a.sharedRecords!==undefined||b.sharedRecords!==undefined?[['sharedRecords',4096,null]]:[])];
+  for (const [table, , key] of tables) {
+    const identity=r=>table==='sharedRecords'?`${r.typeId}/${r.recordId}`:key?r[key]:r;
+    const left = new Map((a[table]??[]).map(r => [identity(r), r])), right = new Map((b[table]??[]).map(r => [identity(r), r]));
     const count = { added: 0, restored: 0, deleted: 0, modified: 0 };
     for (const id of [...new Set([...left.keys(), ...right.keys()])].sort()) {
       const before = left.get(id), after = right.get(id);
@@ -62,12 +64,12 @@ export function differences(a, b, offset = 0, limit = 40, restored = new Map()) 
         groups.set(group, { id: group, title: source?.displayName ?? r.title ?? r.termKey ?? id, termKey: source ? termKey(source) : null, added: 0, restored: 0, deleted: 0, modified: 0 });
       }
       groups.get(group)[action]++;
-      if (total >= offset && rows.length < limit) rows.push({ table, label: names[table], id, action,
+      if (total >= offset && rows.length < limit) rows.push({ table, label: names[table]??'共享扩展', id, action,
         group,
         title: r.title ?? r.displayName ?? r.termKey ?? id, before, after });
       total++;
     }
-    counts[table] = { label: names[table], ...count };
+    counts[table] = { label: names[table]??'共享扩展', ...count };
   }
   return { counts, total, offset, next: offset + rows.length < total ? offset + rows.length : null, rows,
     groups: [...groups.values()].slice(offset, offset + limit), groupTotal: groups.size };

@@ -12,7 +12,7 @@ export class V3Journal {
   constructor(directory) { this.directory = directory; this.queue = Promise.resolve(); this.networkQueue = Promise.resolve(); }
   async open() {
     this.meta = new V3Metadata(this.directory);
-    try { this.value = this.meta.get('state', 'frame') ?? { version: 2, pending: null }; ensure(this.value.version === 2); return this; }
+    try { this.value = this.meta.get('state', 'frame') ?? { version: 2, pending: null }; ensure([2,3].includes(this.value.version)); return this; }
     catch (e) { this.meta.close(); throw e; }
   }
   transaction(fn, local = false) {
@@ -21,6 +21,8 @@ export class V3Journal {
       const savedBudget = this.meta.budget; if (local) this.meta.budget = new Budget({ requests: 0 });
       try { this.meta.atomic(() => { const value = fn(next); ensure(!(value instanceof Promise), 'v3 transaction must be synchronous');
         ensure(!next.history && !next.discovery, 'v3 cumulative metadata must use paged index');
+        ensure(next.version!==3||next.local?.sharedRecords!==undefined,'Shared journal cannot downgrade');
+        if(next.local?.sharedRecords!==undefined)next.version=3;
         this.meta.put('state', 'frame', next); });
       } finally { if (local) this.meta.budget = savedBudget; }
       this.value = next; return structuredClone(next);
