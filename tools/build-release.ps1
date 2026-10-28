@@ -5,7 +5,8 @@ param(
     [string]$KeyPassword = $env:DORMPANEL_RELEASE_KEY_PASSWORD,
     [string]$BuildToolsDirectory,
     [string]$OutputDirectory,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$AndroidOnly
 )
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
@@ -65,29 +66,37 @@ try {
     Assert-ReleaseDirectory $staging $tools
 
     # HA has its own version lifecycle. Never label it with Android's RC version.
-    $haVersion = $haReleaseVersion
-    $haRoot = Join-Path $repositoryRoot 'homeassistant\custom_components\dormpanel'
-    $manifest = Get-Content -LiteralPath (Join-Path $haRoot 'manifest.json') -Raw | ConvertFrom-Json
-    if ($manifest.version -cne $haVersion) { throw "Unexpected HA manifest version (expected $haVersion)." }
-    $haZip = Join-Path $staging "DormPanel-HA-$haVersion.zip"
-    $files = @(Get-ChildItem -LiteralPath $haRoot -Recurse -File | Where-Object {
-        $_.FullName -notmatch '\\(__pycache__|\.storage|transfer[^\\]*)\\' -and
-        $_.Name -notmatch 'credential|secret|token' -and
-        $_.Extension -in '.py', '.json', '.js', '.md', '.txt', '.css', '.html'
-    } | Sort-Object FullName)
-    if ($files.Count -eq 0) { throw 'No HA source files.' }
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [IO.Compression.ZipFile]::Open($haZip, [IO.Compression.ZipArchiveMode]::Create)
-    try {
-        foreach ($file in $files) {
-            $entry = 'custom_components/dormpanel/' + $file.FullName.Substring($haRoot.Length).TrimStart('\', '/').Replace('\', '/')
-            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $entry) | Out-Null
-        }
-    } finally { $zip.Dispose() }
-    $haHash = (Get-FileHash -LiteralPath $haZip -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath "$haZip.sha256" -Encoding ascii -Value "$haHash  $([IO.Path]::GetFileName($haZip))"
-    Assert-HaReleaseArchive $haZip $haRoot
+    $haVersion = $null
+    if (-not $AndroidOnly) {
+        $haVersion = $haReleaseVersion
+        $haRoot = Join-Path $repositoryRoot 'homeassistant\custom_components\dormpanel'
+        $manifest = Get-Content -LiteralPath (Join-Path $haRoot 'manifest.json') -Raw | ConvertFrom-Json
+        if ($manifest.version -cne $haVersion) { throw "Unexpected HA manifest version (expected $haVersion)." }
+        $haZip = Join-Path $staging "DormPanel-HA-$haVersion.zip"
+        $files = @(Get-ChildItem -LiteralPath $haRoot -Recurse -File | Where-Object {
+            $_.FullName -notmatch '\\(__pycache__|\.storage|transfer[^\\]*)\\' -and
+            $_.Name -notmatch 'credential|secret|token' -and
+            $_.Extension -in '.py', '.json', '.js', '.md', '.txt', '.css', '.html'
+        } | Sort-Object FullName)
+        if ($files.Count -eq 0) { throw 'No HA source files.' }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::Open($haZip, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($file in $files) {
+                $entry = 'custom_components/dormpanel/' + $file.FullName.Substring($haRoot.Length).TrimStart('\', '/').Replace('\', '/')
+                [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $entry) | Out-Null
+            }
+        } finally { $zip.Dispose() }
+        $haHash = (Get-FileHash -LiteralPath $haZip -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-Content -LiteralPath "$haZip.sha256" -Encoding ascii -Value "$haHash  $([IO.Path]::GetFileName($haZip))"
+        Assert-HaReleaseArchive $haZip $haRoot
+    }
+    $sumLines = @(Get-ChildItem -LiteralPath $staging -File | Where-Object Extension -in '.apk', '.zip' | Sort-Object Name | ForEach-Object {
+        "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+    })
+    Set-Content -LiteralPath (Join-Path $staging 'SHA256SUMS.txt') -Encoding ascii -Value $sumLines
     $record = [ordered]@{
+        androidOnly = [bool]$AndroidOnly
         candidate = $releaseCandidate
         sourceCommit = (& git rev-parse HEAD)
         trackedChanges = @(& git status --porcelain --untracked-files=no)
@@ -108,8 +117,10 @@ try {
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $outDir))
     [IO.Directory]::Move($staging, $outDir)
     Assert-ReleaseDirectory $outDir $tools
-    Assert-HaReleaseArchive (Join-Path $outDir "DormPanel-HA-$haVersion.zip") $haRoot
-    Write-Host "HA archive (actual integration version $haVersion): $outDir\DormPanel-HA-$haVersion.zip"
+    if (-not $AndroidOnly) {
+        Assert-HaReleaseArchive (Join-Path $outDir "DormPanel-HA-$haVersion.zip") $haRoot
+        Write-Host "HA archive (actual integration version $haVersion): $outDir\DormPanel-HA-$haVersion.zip"
+    }
     Write-Host "Local signed artifacts: $outDir. No tag or Release created; device acceptance is recorded separately."
 } finally {
     foreach ($name in $envNames) { [Environment]::SetEnvironmentVariable($name, $oldEnvironment[$name], 'Process') }
