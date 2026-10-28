@@ -31,6 +31,10 @@ object CourseBatch {
     fun editingOccurrences(state: ScheduleState, candidate: CourseCandidate, zone: ZoneId, today: LocalDate) =
         occurrences(state.copy(dayAdjustments = emptyList(), classOverrides = state.classOverrides.filter { it.anchorDate == null }), candidate, zone, today)
 
+    /** Empty all-weeks patch is the existing reset operation, never an empty stored edit. */
+    fun applyOverrides(state: ScheduleState, items: List<ClassOverride>): ScheduleState = state.copy(
+        classOverrides = state.classOverrides.filterNot { old -> items.any { it.key == old.key } } + items.filterNot { it.patch().isEmpty() })
+
     fun validate(current: ScheduleState, expected: ScheduleState, items: List<ClassOverride>) {
         check(current.entries.toSet() == expected.entries.toSet() && current.sources.toSet() == expected.sources.toSet() &&
             current.imported.toSet() == expected.imported.toSet() && current.classOverrides.toSet() == expected.classOverrides.toSet() &&
@@ -43,7 +47,7 @@ object CourseBatch {
             check(if (item.sourceId == null) current.entries.any { it.id == item.seriesId } else
                 current.sources.any { it.id == item.sourceId } && current.imported.any { it.sourceId == item.sourceId && it.seriesId == item.seriesId }) { "来源或时段已不存在" }
         }
-        val combined = current.classOverrides.filterNot { old -> items.any { it.key == old.key } } + items
+        val combined = applyOverrides(current, items).classOverrides
         require(combined.size <= 5000 && combined.sumOf { it.textCharacters().toLong() } <= 2_000_000L) { "课程覆盖超过存储预算" }
         val future = current.copy(classOverrides = combined.filter { it.anchorDate == null }, dayAdjustments = emptyList())
         val zone = ZoneId.systemDefault()
@@ -78,7 +82,7 @@ object CourseBatch {
     }
     /** Final projected exception values, using the same composition as the timetable. */
     fun exceptionPreview(state: ScheduleState, items: List<ClassOverride>, zone: ZoneId): String {
-        val future = state.copy(classOverrides = state.classOverrides.filterNot { old -> items.any { it.key == old.key } } + items)
+        val future = applyOverrides(state, items)
         return state.classOverrides.filter { week -> week.anchorDate != null && items.any {
             it.sourceId == week.sourceId && it.seriesId == week.seriesId
         } }.joinToString("\n") { week ->

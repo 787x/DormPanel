@@ -39,6 +39,8 @@ data class SnapshotIdentity(val datasetId: String, val revision: String, val pen
 data class ClassBatchSaveReceipt(val refreshed: Boolean) {
     val message get() = if (refreshed) "已保存到本机" else "已保存到本机，但重新读取失败；修改已经提交。恢复读取前暂不可编辑或同步。"
 }
+class ScheduleCommitUnconfirmed(cause: Throwable) : IllegalStateException(
+    "保存结果尚待确认，请完成同步恢复检查；暂时不要重复提交。请从共享课表使用原有“重开活动 Store”恢复入口，重新读取后确认实际数据。", cause)
 class ScheduleLocalReadFailed : IllegalStateException("本机课表读取失败，暂不可编辑；原有数据保留，请重新读取成功后再操作")
 interface ScheduleStore {
     fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) { callback(Result.failure(UnsupportedOperationException())) }

@@ -12,6 +12,7 @@ data class ClassPatch(
     val timingMode: String? = null, val startMinute: Int? = null, val endMinute: Int? = null,
     val location: String? = null, val teacher: String? = null, val note: String? = null
 ) {
+    fun isEmpty() = this == ClassPatch()
     fun valid(weekly: Boolean): Boolean =
         (title == null || title.isNotBlank() && title.length <= 160) &&
         (weekday == null || weekday in 1..7) && (date == null || runCatching { LocalDate.parse(date) }.isSuccess) &&

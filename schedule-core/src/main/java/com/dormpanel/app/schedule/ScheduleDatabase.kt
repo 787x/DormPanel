@@ -148,11 +148,16 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     private fun <T> write(callback: (Result<T>) -> Unit, operation: () -> T) = submit(callback) {
         if (ActiveScheduleV3.active(database)) {
             var result: Result<T>? = null
-            v3().engine.edit { before ->
-                if (!v3().localWritesAllowed()) throw ScheduleDatasetWriteProtected()
-                check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "迁移保护禁止编辑" }
-                result = Result.success(operation())
-                readRows().copy(profiles = before.profiles, customProfileKeys = before.customProfileKeys)
+            try {
+                v3().engine.edit { before ->
+                    if (!v3().localWritesAllowed()) throw ScheduleDatasetWriteProtected()
+                    check(!database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "迁移保护禁止编辑" }
+                    result = Result.success(operation())
+                    readRows().copy(profiles = before.profiles, customProfileKeys = before.customProfileKeys)
+                }
+            } catch (error: Exception) {
+                if (v3().journal.meta.requiresReopen()) throw ScheduleCommitUnconfirmed(error)
+                throw error
             }
             onCommitted?.invoke(); return@submit requireNotNull(result).getOrThrow()
         }
@@ -883,7 +888,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
             }
         }.toMap())
         CourseBatch.validate(current, expected, items)
-        items.forEach { database.dao().put(it) }
+        items.forEach { if (it.patch().isEmpty()) database.dao().deleteClassOverride(it.key) else database.dao().put(it) }
     }
     override fun commitImport(source: ImportSource, occurrences: List<ImportedClassOccurrence>, replace: Boolean,
         callback: (Result<ImportCommit>) -> Unit) = write(callback) {
