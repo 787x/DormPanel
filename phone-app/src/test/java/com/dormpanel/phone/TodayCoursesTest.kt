@@ -37,6 +37,23 @@ class TodayCoursesTest {
         assertTrue(TodayCourses.project(state,now(1),zone).remaining.isEmpty())
         assertEquals(date.minusDays(1),TodayCourses.project(state,now(0),ZoneId.of("America/Los_Angeles")).date)
     }
+    @Test fun tomorrowSwitchIsOptionalAndOnlyAfterTodaysCoursesEnd() {
+        val state=ScheduleState(entries=listOf(a,b.copy(day=4)))
+        assertEquals(date,TodayCourses.display(state,now(9),zone,true).date)
+        assertEquals(date,TodayCourses.display(state,now(12),zone,false).date)
+        val next=TodayCourses.display(state,now(12),zone,true)
+        assertEquals(date.plusDays(1),next.date); assertEquals("b",next.remaining.single().seriesId)
+        assertEquals(date.plusDays(1).atStartOfDay(zone).toInstant(),next.next)
+        val afterMidnight=date.plusDays(1).atStartOfDay(zone).toInstant()
+        assertEquals(date.plusDays(1),TodayCourses.display(state,afterMidnight,zone,true).date)
+        assertEquals(date,TodayCourses.display(ScheduleState(entries=listOf(b.copy(day=4))),now(12),zone,true).date)
+    }
+    @Test fun timetableTitleUsesSourceNameAndDoesNotDependOnListPosition() {
+        val source=ImportSource("s","秋季课程","demo.ics","ics",null,null,"0".repeat(64),0,"Asia/Shanghai",0,0,0)
+        assertEquals("秋季课程",TodayCourses.title(ScheduleState(sources=listOf(source))))
+        assertEquals("合并课表",TodayCourses.title(ScheduleState(sources=listOf(source,source.copy(id="s2",displayName="其他课程")))))
+        assertEquals("我的课表",TodayCourses.title(ScheduleState()))
+    }
     @Test fun stableColorSurvivesRenameAndOverride() {
         val item = TodayCourses.project(ScheduleState(entries=listOf(a)),now(8),zone).all.single()
         assertEquals(TodayCourses.colorIndex(item),TodayCourses.colorIndex(item.copy(entry=a.copy(title="新名称"))))

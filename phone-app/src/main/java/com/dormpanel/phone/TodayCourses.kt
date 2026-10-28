@@ -6,8 +6,14 @@ import java.time.*
 /** Read-only display-day intersection, including courses crossing midnight. */
 internal object TodayCourses {
     data class Day(val date: LocalDate, val all: List<ClassOccurrence>, val remaining: List<ClassOccurrence>, val next: Instant)
-    fun project(state: ScheduleState, now: Instant, zone: ZoneId): Day {
-        val date = now.atZone(zone).toLocalDate()
+    fun project(state: ScheduleState, now: Instant, zone: ZoneId): Day = projectDate(state,now,zone,now.atZone(zone).toLocalDate())
+    fun display(state: ScheduleState, now: Instant, zone: ZoneId, showTomorrow: Boolean): Day {
+        val today=project(state,now,zone)
+        if (!showTomorrow || today.all.isEmpty() || today.remaining.isNotEmpty()) return today
+        val tomorrow=projectDate(state,now,zone,today.date.plusDays(1))
+        return tomorrow.copy(next=minOf(tomorrow.next,today.date.plusDays(1).atStartOfDay(zone).toInstant()))
+    }
+    private fun projectDate(state: ScheduleState, now: Instant, zone: ZoneId, date: LocalDate): Day {
         val start = date.atStartOfDay(zone).toInstant()
         val end = date.plusDays(1).atStartOfDay(zone).toInstant()
         val monday = date.minusDays((date.dayOfWeek.value - 1).toLong())
@@ -17,5 +23,7 @@ internal object TodayCourses {
         val next = (remaining.flatMap { listOf(it.start, it.end) } + end).filter { it > now }.minOrNull()!!
         return Day(date, all, remaining, next)
     }
-    fun colorIndex(item: ClassOccurrence) = Math.floorMod((item.sourceId.orEmpty()+"|"+item.seriesId).hashCode(), 6)
+    fun title(state: ScheduleState?) = state?.sources?.singleOrNull()?.displayName?.takeIf { it.isNotBlank() }
+        ?: if (state != null && state.sources.size > 1) "合并课表" else "我的课表"
+    fun colorIndex(item: ClassOccurrence) = CourseColors.index(item)
 }
