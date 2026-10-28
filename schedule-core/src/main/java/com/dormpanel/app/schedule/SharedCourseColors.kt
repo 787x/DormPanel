@@ -30,12 +30,14 @@ object SharedCourseColors {
         val rows = requireNotNull(state.sharedRecords) { "Explicit shared format upgrade required" }
         return state.copy(sharedRecords = SharedTypes.registry().replace(rows, record))
     }
-    fun rgb(state: ScheduleState, sourceId: String?, seriesId: String): Int {
-        val id = identity(state, sourceId, seriesId)
-        val row = state.sharedRecords?.find { it.typeId == "course.color" && it.recordId == id }
-        val bytes = if (row == null || row.payload == listOf(0.toByte())) SharedCourseColor.automaticColor(id) else {
-            require(row.schemaVersion == 1); SharedCourseColor.validate(row, state.sharedRecords.orEmpty()); row.payload.drop(1)
-        }
-        return bytes.fold(0) { n, v -> (n shl 8) or (v.toInt() and 255) }
+    data class Display(val rgb: Int, val status: String)
+    fun display(state: ScheduleState, sourceId: String?, seriesId: String): Display {
+        val id=identity(state,sourceId,seriesId)
+        val row=state.sharedRecords?.find { it.typeId=="course.color" && it.recordId==id }
+        val status=when { row==null -> "DEFAULT"; row.schemaVersion!=1 -> "UNSUPPORTED"; row.payload==listOf(0.toByte()) -> "AUTO"; else -> "MANUAL" }
+        if(row!=null && row.schemaVersion==1) SharedCourseColor.validate(row,state.sharedRecords.orEmpty())
+        val bytes=if(status=="MANUAL") row!!.payload.drop(1) else SharedCourseColor.automaticColor(id)
+        return Display(bytes.fold(0) { n,v -> (n shl 8) or (v.toInt() and 255) },status)
     }
+    fun rgb(state: ScheduleState, sourceId: String?, seriesId: String) = display(state,sourceId,seriesId).rgb
 }

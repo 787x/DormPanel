@@ -1,5 +1,5 @@
 import {sharedTypes} from './shared-types.mjs';
-import {canonicalRecords,wireRecords} from './shared-records.mjs';
+import {canonicalRecords,wireRecords,Registry} from './shared-records.mjs';
 import { schemas, termKey, ensure } from "./protocol.mjs";
 
 export const emptyState = () =>
@@ -83,6 +83,7 @@ export function same(a, b) {
   );
 }
 export function merge(base, local, remote, choice = null, forced = new Set(), adapters = sharedTypes) {
+  const registry=new Registry(adapters);[base,local,remote].forEach(s=>registry.validate(wireRecords(s.sharedRecords??[])));
   const b = records(base),
     l = records(local),
     r = records(remote),
@@ -184,6 +185,7 @@ export function merge(base, local, remote, choice = null, forced = new Set(), ad
         }[type]
       ].push(v);
   }
+  registry.validate(wireRecords(state.sharedRecords??[]));
   return { state, conflicts };
 }
 

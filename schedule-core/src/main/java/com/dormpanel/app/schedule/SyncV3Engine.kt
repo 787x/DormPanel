@@ -38,14 +38,28 @@ class V3Engine(private val journal: V3Journal, private val writerId: String, pri
             if (initialization != null) s.put("initialization", initialization)
         }
     }
+    private fun upgradeEvidence(capture: ByteArray): String = journal.meta.localOperation {
+        val s=journal.snapshot(); val binding=s.getJSONObject("binding")
+        require(s.optJSONObject("pending")?.optString("phase") in listOf(null,"RECEIPTED") && !s.has("conflict") && !s.has("rotation") && (s.optJSONArray("initialization")?.length() ?: 0)==0) { "Source recovery incomplete" }
+        require(listOf("todo","error","scan").all { journal.meta.count(it)==0L } && journal.meta.get("control","walk")==null) { "Source history validation incomplete" }
+        val settled=s.getJSONObject("settled")
+        require(settled.getLong("revision")==s.getLong("revision") && settled.getJSONArray("tips").strings()==journal.meta.page("frontier",0,65).map { it.key }.sorted())
+        val baseline=Base64.getDecoder().decode(s.getString("baseline"));val o=SyncV3Codec.decode(capture)
+        require(o.format==3 && o.state!=null && SyncV3Codec.businessHash(requireNotNull(SyncV3Codec.decode(baseline).state))==SyncV3Codec.businessHash(o.state) && o.datasetId==binding.getString("datasetId") && o.descriptorHash==binding.getString("descriptorHash"))
+        require(SyncV3Codec.businessHash(state(s,"local"))==SyncV3Codec.businessHash(o.state)) { "Unpublished source edits" }
+        val node=requireNotNull(journal.meta.get("node",s.getString("baselinePath")))
+        require(node.getString("hash")==SyncV3Codec.hash(capture))
+        binding.getString("datasetId")+"/"+s.getString("baselinePath")+"/"+node.getString("hash")+"/"+s.getLong("revision")
+    }
     /** Target must be a separate unbound Store; source capture is never modified. */
-    fun previewSharedUpgrade(sourceCapture: ByteArray): JSONObject {
+    fun previewSharedUpgrade(sourceCapture: ByteArray, sourceEngine: V3Engine): JSONObject {
+        require(sourceEngine !== this); val evidence=sourceEngine.upgradeEvidence(sourceCapture)
         val source = SyncV3Codec.decode(sourceCapture); require(source.format == 3 && source.state != null)
         require(!journal.snapshot().has("binding")) { "Upgrade requires a separate unbound target" }
         val descriptor = V3Object(1, id(), id(), writerId, format = 4)
         val initial = source.state.copy(sharedRecords = emptyList())
         val genesis = V3Object(2, descriptor.datasetId, id(), writerId, id(), 1, SyncV3Codec.hash(SyncV3Codec.encode(descriptor)), state = initial)
-        val preview = JSONObject().put("id", id()).put("status", "PREVIEW").put("sourceHash", SyncV3Codec.hash(sourceCapture))
+        val preview = JSONObject().put("id", id()).put("status", "PREVIEW").put("sourceHash", SyncV3Codec.hash(sourceCapture)).put("sourceEvidence",evidence)
             .put("targetDatasetId", descriptor.datasetId).put("extensions", 0).put("events", initial.events.size).put("courses", initial.entries.size)
             .put("sources", initial.sources.size).put("imported", initial.imported.size).put("overrides", initial.classOverrides.size)
             .put("days", initial.dayAdjustments.size).put("profiles", initial.profiles.size).put("customProfiles", initial.customProfileKeys.size)
@@ -58,16 +72,19 @@ class V3Engine(private val journal: V3Journal, private val writerId: String, pri
         val p = requireNotNull(journal.meta.get("sharedUpgrade", token)); require(p.getString("status") == "PREVIEW")
         p.put("status", "CANCELLED"); journal.meta.atomic { journal.meta.put("sharedUpgrade", token, p) }
     }
-    fun confirmSharedUpgrade(token: String, currentSourceCapture: ByteArray, remote: V3PublicationStore): JSONObject {
+    fun confirmSharedUpgrade(token: String, currentSourceCapture: ByteArray, remote: V3PublicationStore, sourceEngine: V3Engine): JSONObject {
+        require(sourceEngine !== this)
         val p = journal.meta.localOperation { requireNotNull(journal.meta.get("sharedUpgrade", token)) }
         require(p.getString("status") in listOf("PREVIEW", "PUBLISHING"))
         require(p.getString("sourceHash") == SyncV3Codec.hash(currentSourceCapture)) { "Source changed; preview again" }
+        require(p.getString("sourceEvidence")==sourceEngine.upgradeEvidence(currentSourceCapture)) { "Source evidence changed" }
         val descriptor = obj(p.getString("descriptor")); val genesis = obj(p.getString("genesis"))
         if (!journal.snapshot().has("binding")) bindWithCandidates(descriptor, genesis.descriptorHash, genesis.state,
             JSONArray(listOf(p.getString("descriptor"), p.getString("genesis"))))
         require(journal.snapshot().getJSONObject("binding").getString("datasetId") == descriptor.datasetId)
         p.put("status", "PUBLISHING"); journal.meta.localOperation { journal.meta.atomic { journal.meta.put("sharedUpgrade", token, p) } }
         val result = initialize(remote)
+        require(p.getString("sourceEvidence")==sourceEngine.upgradeEvidence(currentSourceCapture))
         p.put("status", "TARGET_READBACK_CONFIRMED"); journal.meta.localOperation { journal.meta.atomic { journal.meta.put("sharedUpgrade", token, p) } }
         return result
     }

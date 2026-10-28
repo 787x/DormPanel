@@ -59,3 +59,13 @@ Android 直连首次失败；随后使用 ADB reverse 和本机 TCP 转发承载
 新增独立 WebDAV 数据集：Kotlin Writer 发布课程颜色 123456 与 opaque 未知记录；在 fnOS 原生 Node 22、应用 UID、独立 Workspace 上接收并改为 abcdef；Kotlin 重启接收，随后 fnOS 重开再确认。双方完整业务哈希均为 `6e86c39551ba11cf85948a6b54880c38dc55669417c5b85b57a4bc51a5fe2167`。该项使用测试机本地直连 HTTPS，不经 ADB 转发。此前 Android Phone/X08E Room 实测与本项合起来覆盖 Android、Kotlin、原生 fnOS 实现。
 
 侧边浏览器已实际打开 fnOS 桌面与已有隔离应用，确认网页可达；未操作已有工作区的编辑或同步按钮，不将旧网页的可达性冒充 PR69 新 UI 验收。正式颜色管理 UI 仍按任务边界留给 PR70/71。
+
+## f1689fe 后四项审查修复
+
+已修复统一 Registry 接纳校验、Phone 迁移逐门显式决策、未来颜色版本展示降级及升级源 Writer 证据保护。详见共享状态规范末节；没有修改既有有效线格式。
+
+本次实际验证：Node 定向 27 项通过（shared-records / shared-review / shared-state / v3-workspace-transaction）；随后新增重启场景的 shared-review/shared-state 13 项再次通过。Kotlin schedule-core 11 项与 Phone 迁移 4 项通过；Phone/app assembleDebug 通过。包含合法 SHA 非法颜色接纳拒绝且 local/baseline/Pending 不变、未来可选版本只读、逐门迁移决策、模式差异、源未发布编辑/过期证据拒绝和目标重开恢复。
+
+本轮未重跑两套 139 项 Linux、实机、真实 WebDAV、长增长或 soak；已有平台单事务证据沿用，不将本轮 Fake/JVM 结果称为新增实机验收。迁移确认继续使用原有 putSharedRecords 的 expectedHash 检查和 Room 单事务，旧偏好无清理操作。本轮新增的是决策与接纳语义；不新增迁移 UI。
+
+本轮修复可提交人工 Review，PR 仍保持 Draft，由维护者决定转 Ready。剩余边界是源证据仅覆盖该 Writer 已验证的观察范围，以及旧的无 sourceEvidence 草稿需重新审查；不能据此报告旧 Writer 停写或日用迁移完成。

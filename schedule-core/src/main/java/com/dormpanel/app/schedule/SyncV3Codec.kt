@@ -28,6 +28,7 @@ object SyncV3Codec {
     fun legacyStateBytes(s: ScheduleState): ByteArray = canonicalSnapshot(s).let { it.copyOfRange(109, it.size - 32) }
     fun stateBytes(s: ScheduleState): ByteArray {
         val records = s.sharedRecords ?: return legacyStateBytes(s)
+        SharedTypes.registry().validate(records)
         val legacy = legacyStateBytes(s); val ext = SharedRecordCodec.encode(records)
         return ByteArrayOutputStream().also { b -> DataOutputStream(b).use {
             it.writeInt(0x44505853); it.writeInt(1); it.writeInt(legacy.size); it.write(legacy); it.writeInt(ext.size); it.write(ext)

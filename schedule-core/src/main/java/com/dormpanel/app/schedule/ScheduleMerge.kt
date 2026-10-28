@@ -30,6 +30,7 @@ object ScheduleMerge {
 
     fun merge(base: ScheduleState, local: ScheduleState, remote: ScheduleState, choice: Choice? = null,
         forceConflicts: Set<String> = emptySet(), maxConflicts: Int = Int.MAX_VALUE, sharedRegistry: SharedTypeRegistry = SharedTypes.registry()): Result {
+        listOf(base,local,remote).forEach { sharedRegistry.validate(it.sharedRecords.orEmpty()) }
         val b = records(base); val l = records(local); val r = records(remote)
         val keys = (b.keys + l.keys + r.keys).sorted()
         val parents = keys.associateWith { it }.toMutableMap()
@@ -125,7 +126,7 @@ object ScheduleMerge {
             sources = sources.map { it.source }, imported = sources.flatMap { it.occurrences },
             dayAdjustments = values.filterIsInstance<DayAdjustment>(), classOverrides = values.filterIsInstance<ClassOverride>(),
             sharedRecords = if (states.any { it.sharedRecords != null }) values.filterIsInstance<SharedRecord>() else null,
-            profiles = profiles.associate { it.value.termKey to it.value }, customProfileKeys = profiles.filter { it.custom }.map { it.value.termKey }.toSet()), conflicts)
+            profiles = profiles.associate { it.value.termKey to it.value }, customProfileKeys = profiles.filter { it.custom }.map { it.value.termKey }.toSet()), conflicts).also { sharedRegistry.validate(it.state.sharedRecords.orEmpty()) }
     }
 }
 

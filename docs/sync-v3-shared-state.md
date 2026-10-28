@@ -72,3 +72,12 @@ Phone SharedColorMigration.preview 只读取 PR68 已确认设置（包含不确
 源数据集、历史、绑定和未发布编辑均留在源 Store。源 Writer 之后的发布不会自动进入新数据集，也不能当作其已停写；需要再次审查/迁移。不得把本接口用于不经确认的日用升级。正式设备绑定没有自动迁移入口。
 
 新建隔离业务 Store 可通过 RoomScheduleStore.prepareV3(..., sharedFormat=true) 或 fnOS activeV3.initializeSharedDataset(expectedRevision) 显式启用。新建目标后需显式选择该目标；现有数据集不会自动升级。Todo、Memo、偏好、附件等类型均未启用同步。
+
+## PR69 审查修复：接纳、颜色迁移与可信源
+
+- DPV3/4 完整状态 codec 统一调用 SharedTypes Registry.validate；受支持类型的 payload/身份/资源校验失败时拒绝对象。历史回读、缓存快照和发布编码均复用此入口，合并另校验输入/输出。validate 与 writable 分离，未知独立可选记录仍可读取和保留。有效线格式及固定向量未改变。
+- SharedColorMigration.Preview 增加 conflicts（共享/本地原记录、业务身份及课程标题）与 automaticVisualChanges。records 默认仅增加不存在的记录；相同记录无修改，差异保留共享。decide 必须收到每个冲突的 KEEP_SHARED / USE_LOCAL / SKIP，缺少决策则整次拒绝。confirm 将批准后的完整集合和 expectedHash 交正式 Store 单事务保存；旧偏好不清理。模式比较依据原记录，自动与手动不会因为显示 RGB 相同而视为相同设置。
+- SharedCourseColors.display / Node display 返回 DEFAULT、AUTO、MANUAL 或 UNSUPPORTED 及展示 RGB。未来 schema 的备用 RGB 仅用于显示，原记录不改写；rgb 兼容入口委托 display。Registry.replace 也拒绝覆盖同身份的未知既存版本。
+- 升级预览/确认现在必须提供当前源 V3Engine；不再接受只有 sourceCapture 的不受保护调用。校验源绑定、已验证 baseline 节点/hash、当前本地与基线业务相等、revision、已观察 settled/frontier 和无未决 Pending/冲突/初始化/换代/历史验证任务，保存 sourceEvidence。确认前及目标回读后重新核对；源出现未发布修改或预览过期时停止。重开目标继续同一候选与 datasetId。
+
+这只证明当前源 Writer 已验证、已观察且无未发布修改的业务状态，不证明 WebDAV 全局历史完备或未知旧 Writer 已停写。宿主须持有正式源 Store 生命周期与权限边界；本 PR 不自动接线日用迁移。旧草稿预览没有 sourceEvidence 时拒绝确认，保留源和目标，需宿主重新审查，不能补造证据。

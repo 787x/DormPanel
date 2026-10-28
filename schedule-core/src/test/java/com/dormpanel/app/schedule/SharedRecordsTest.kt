@@ -41,6 +41,18 @@ class SharedRecordsTest {
         // PR68's object reader requires version 3 and cannot interpret this object.
         assertNotEquals(3,java.nio.ByteBuffer.wrap(raw,4,4).int)
     }
+    @Test fun malformedKnownColorWithValidChecksumRejectedAndFutureOptionalPreserved() {
+        val dir=listOf(java.io.File("../test-vectors/sync-v3-shared"),java.io.File("test-vectors/sync-v3-shared")).first{it.isDirectory}
+        val bytes=java.io.File(dir,"genesis.dpv").readBytes();val body=bytes.copyOfRange(0,bytes.size-32)
+        val marker=byteArrayOf(0,0,0,4,1,1,2,3);val pos=(0..body.size-marker.size).first{body.copyOfRange(it,it+marker.size).contentEquals(marker)}
+        body[pos+4]=2;val raw=body+java.security.MessageDigest.getInstance("SHA-256").digest(body)
+        assertTrue(runCatching{SyncV3Codec.decode(raw)}.isFailure)
+        val state=ScheduleState(entries=listOf(TimetableEntry("x","x",1,480,540)),sharedRecords=emptyList())
+        val future=SharedRecord("course.color",SharedCourseColors.identity(state,null,"x"),2,payload=emptyList())
+        val extended=state.copy(sharedRecords=listOf(future));assertEquals("UNSUPPORTED",SharedCourseColors.display(extended,null,"x").status)
+        assertTrue(runCatching{SharedCourseColors.change(extended,null,"x",null)}.isFailure)
+        SharedTypes.registry().validate(listOf(future));assertTrue(runCatching{SharedTypes.registry().writable(listOf(future.copy(required=true)))}.isFailure)
+    }
     @Test fun conservativeMerge() {
         val changed = color.copy(payload = listOf(0.toByte()))
         assertEquals(2, SharedRecords.merge(listOf(color), listOf(changed), listOf(color, extra)).records.size)

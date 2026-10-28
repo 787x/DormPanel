@@ -55,17 +55,43 @@ class SyncV3EngineTest {
         assertEquals(listOf(record),b.engine.local().sharedRecords)
         a.journal.close();b.journal.close()
     }
+    @Test fun malformedKnownRemotePreservesLocalBaselineAndPending() {
+        val remote=Remote();val a=client(remote);a.engine.initialize(remote,ScheduleState(entries=listOf(entry("x")),sharedRecords=emptyList()));a.settle()
+        a.engine.setCourseColor(null,"x",0x010203);a.settle();val before=a.journal.snapshot()
+        val parentBytes=remote.objects.getValue(before.getString("baselinePath"));val parent=SyncV3Codec.decode(parentBytes)
+        val child=parent.copy(type=3,objectId=id(),refs=listOf(V3Ref(1,parent.type,parent.epochId,parent.epochNumber,parent.objectId,SyncV3Codec.hash(parentBytes))))
+        val bytes=SyncV3Codec.encode(child);val body=bytes.copyOfRange(0,bytes.size-32);val marker=byteArrayOf(0,0,0,4,1,1,2,3)
+        val pos=(0..body.size-marker.size).first { body.copyOfRange(it,it+marker.size).contentEquals(marker) };body[pos+4]=2
+        remote.objects[V3Paths.path(child)]=body+java.security.MessageDigest.getInstance("SHA-256").digest(body)
+        var refused=false;repeat(6){if(!refused)try{a.round()}catch(e:Exception){refused=true}}
+        assertTrue(refused);val after=a.journal.snapshot()
+        listOf("local","baseline","pending").forEach { assertEquals(before.get(it).toString(),after.get(it).toString()) };a.journal.close()
+    }
+    @Test fun sharedUpgradeRejectsIdenticalBytesAfterUnpublishedSourceEdit() {
+        val remote=Remote();val source=client(remote);source.engine.initialize(remote,ScheduleState(entries=listOf(entry("x"))));source.settle()
+        val capture=remote.objects.getValue(source.journal.snapshot().getString("baselinePath"));val target=client(remote)
+        val p=target.engine.previewSharedUpgrade(capture,source.engine)
+        source.engine.edit { it.copy(entries=listOf(entry("x","unpublished"))) }
+        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(p.getString("id"),capture,remote,source.engine)}
+        assertThrows(Exception::class.java){target.engine.previewSharedUpgrade(capture,source.engine)}
+        assertFalse(target.journal.snapshot().has("binding"));source.settle()
+        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(p.getString("id"),capture,remote,source.engine)}
+        target.journal.close();source.journal.close()
+    }
     @Test fun sharedUpgradeCancellationAndReadbackRecoveryPreservesSource() {
         val remote=Remote();val source=client(remote);source.engine.initialize(remote,ScheduleState(entries=listOf(entry("x"))));source.settle()
         val original=source.journal.snapshot().toString();val capture=remote.objects.getValue(source.journal.snapshot().getString("baselinePath"))
-        val target=client(remote);val cancelled=target.engine.previewSharedUpgrade(capture);target.engine.cancelSharedUpgrade(cancelled.getString("id"))
-        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(cancelled.getString("id"),capture,remote)}
+        val target=client(remote);val cancelled=target.engine.previewSharedUpgrade(capture,source.engine);target.engine.cancelSharedUpgrade(cancelled.getString("id"))
+        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(cancelled.getString("id"),capture,remote,source.engine)}
         assertFalse(target.journal.snapshot().has("binding"))
-        val preview=target.engine.previewSharedUpgrade(capture);remote.loseResponse=true
-        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(preview.getString("id"),capture,remote)}
-        remote.loseResponse=false;target.engine.confirmSharedUpgrade(preview.getString("id"),capture,remote);target.settle()
-        assertEquals(emptyList<SharedRecord>(),target.engine.local().sharedRecords);assertEquals(original,source.journal.snapshot().toString())
-        target.journal.close();source.journal.close()
+        val preview=target.engine.previewSharedUpgrade(capture,source.engine);remote.loseResponse=true
+        assertThrows(Exception::class.java){target.engine.confirmSharedUpgrade(preview.getString("id"),capture,remote,source.engine)}
+        target.journal.close();val reopened=V3Journal(target.dir)
+        val resumed=Client(target.dir,reopened,V3Engine(reopened,reopened.snapshot().getString("writerId")),remote)
+        remote.loseResponse=false;resumed.engine.confirmSharedUpgrade(preview.getString("id"),capture,remote,source.engine);resumed.settle()
+        assertEquals(emptyList<SharedRecord>(),resumed.engine.local().sharedRecords);assertEquals(original,source.journal.snapshot().toString())
+        assertEquals(preview.getString("targetDatasetId"),resumed.journal.snapshot().getJSONObject("binding").getString("datasetId"))
+        resumed.journal.close();source.journal.close()
     }
     @Test fun extendedUnknownSurvivesWriterReceiptAndReopen() {
         val remote = Remote(); val a = client(remote)

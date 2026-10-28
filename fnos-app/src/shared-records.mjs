@@ -58,7 +58,7 @@ export class Registry{
  supported(r){return this.adapters.get(r.typeId)?.schemaVersion===r.schemaVersion;}
  validate(records){encode(records);for(const a of this.adapters.values())check(records.filter(r=>r.typeId===a.typeId).length<=(a.maxRecords??4096));for(const r of records){if(this.supported(r)){const a=this.adapters.get(r.typeId);check(r.payload.length<=a.maxPayload);a.validate(r,records);}}}
  writable(records){this.validate(records);for(const r of records){check(!r.required||this.supported(r),'Unsupported required capability');check(r.dependencies.every(t=>this.adapters.has(t)&&records.filter(v=>v.typeId===t).every(v=>this.supported(v))),'Unknown dependency');}}
- replace(records,record){this.writable(records);check(this.supported(record),'Unregistered business write');const next=[...records.filter(r=>key(r)!==key(record)),record];this.writable(next);return decode(encode(next));}
+ replace(records,record){this.writable(records);check(records.filter(r=>key(r)===key(record)).every(r=>this.supported(r)),'Unsupported existing schema');check(this.supported(record),'Unregistered business write');const next=[...records.filter(r=>key(r)!==key(record)),record];this.writable(next);return decode(encode(next));}
  remove(records,typeId,recordId){this.writable(records);const r=records.find(r=>r.typeId===typeId&&r.recordId===recordId);check(!r||this.supported(r),'Unregistered business delete');const next=records.filter(v=>v!==r);this.writable(next);return decode(encode(next));}
 }
 export const courseColor={typeId:'course.color',schemaVersion:1,maxPayload:4,validate:r=>check(/^[0-9a-f]{64}$/.test(r.recordId)&&(r.payload.length===1&&r.payload[0]===0||r.payload.length===4&&r.payload[0]===1))};

@@ -1,3 +1,5 @@
+import {sharedTypes} from './shared-types.mjs';
+import {Registry} from './shared-records.mjs';
 import {encode as encodeRecords, decode as decodeRecords, wireRecords, durableRecords, canonicalRecords} from './shared-records.mjs';
 import { ensure, uuid, hash, encode as v2encode, decode as v2decode, stateBytes as collections, MAX } from './protocol.mjs';
 
@@ -11,6 +13,7 @@ export const canonicalLegacy = state => v2decode(v2encode({ datasetId: ZERO, com
 export const stateBytes = state => {
  const legacy=collections(canonicalLegacy(state));
  if(state.sharedRecords===undefined)return legacy;
+ new Registry(sharedTypes).validate(wireRecords(canonicalRecords(state.sharedRecords)));
  const ext=encodeRecords(wireRecords(canonicalRecords(state.sharedRecords)));
  const raw=Buffer.concat([Buffer.from('DPXS'),i(1),i(legacy.length),legacy,i(ext.length),ext]);ensure(raw.length<=MAX);return raw;
 };

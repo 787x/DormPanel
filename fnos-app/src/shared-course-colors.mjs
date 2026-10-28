@@ -10,17 +10,20 @@ export function legacyKey(state,sourceId,seriesId){
 export const identity=(state,sourceId,seriesId)=>createHash('sha256').update(legacyKey(state,sourceId,seriesId),'utf8').digest('hex');
 export function change(state,sourceId,seriesId,rgb){
  check(state.sharedRecords!==undefined && (rgb===null||Number.isInteger(rgb)&&rgb>=0&&rgb<=0xffffff));
- const recordId=identity(state,sourceId,seriesId),payload=rgb===null?Buffer.from([0]):Buffer.from([1,rgb>>16,rgb>>8,rgb]);
+ const recordId=identity(state,sourceId,seriesId);check(!(state.sharedRecords??[]).some(r=>r.typeId==='course.color'&&r.recordId===recordId&&r.schemaVersion!==1));
+ const payload=rgb===null?Buffer.from([0]):Buffer.from([1,rgb>>16,rgb>>8,rgb]);
  const validated=new Registry([courseColor]).replace([],{typeId:'course.color',recordId,schemaVersion:1,required:false,dependencies:[],payload});
  const rows=[...wireRecords(state.sharedRecords).filter(r=>r.typeId!=='course.color'||r.recordId!==recordId),...validated];
  return {...state,sharedRecords:durableRecords(rows)};
 }
-export function rgb(state,sourceId,seriesId){
+export function display(state,sourceId,seriesId){
  const id=identity(state,sourceId,seriesId),r=wireRecords(state.sharedRecords??[]).find(r=>r.typeId==='course.color'&&r.recordId===id);
- if(r){check(r.schemaVersion===1);courseColor.validate(r);}
- const b=!r||r.payload[0]===0?automaticColor(id):r.payload.subarray(1);
- return b.readUIntBE(0,3);
+ const status=!r?'DEFAULT':r.schemaVersion!==1?'UNSUPPORTED':r.payload[0]===0?'AUTO':'MANUAL';
+ if(r&&r.schemaVersion===1)courseColor.validate(r);
+ const b=status==='MANUAL'?r.payload.subarray(1):automaticColor(id);
+ return {rgb:b.readUIntBE(0,3),status};
 }
+export const rgb=(state,sourceId,seriesId)=>display(state,sourceId,seriesId).rgb;
 
 export function parents(state){
  const result=new Map(),frame=(...parts)=>parts.map(s=>`${s.length}:${s}`).join('');

@@ -83,7 +83,7 @@ class SharedTypeRegistry(adapters: List<SharedTypeAdapter>) {
         }
     }
     fun replace(records: List<SharedRecord>, record: SharedRecord): List<SharedRecord> {
-        writable(records); require(supported(record)) { "Unregistered business write" }
+        writable(records); require(records.filter { it.key==record.key }.all(::supported)) { "Unsupported existing schema" }; require(supported(record)) { "Unregistered business write" }
         return (records.filter { it.key != record.key } + record).also(::writable).let { SharedRecordCodec.decode(SharedRecordCodec.encode(it)) }
     }
     fun remove(records: List<SharedRecord>, typeId: String, recordId: String): List<SharedRecord> {

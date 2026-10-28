@@ -64,12 +64,13 @@ import {rgb} from '../src/shared-course-colors.mjs';
 test('isolated upgrade preview cancel, failed publication recovery and source unchanged',async()=>{
  const remote=new FakeRemote(),source=await client(null,remote);await source.engine.initialize(remote,{...emptyState(),entries:[entry('x')]});await settle(source);
  const capture=Buffer.from(await remote.read(source.journal.value.baselinePath));const sourceBefore=JSON.stringify(source.journal.value);
- const target=await client(null,remote);const p=previewSharedUpgrade(target.engine,capture);cancelSharedUpgrade(target.engine,p.id);
- await assert.rejects(confirmSharedUpgrade(target.engine,p.id,capture,remote));assert.equal(target.journal.value.binding,undefined);
- const p2=previewSharedUpgrade(target.engine,capture);const put=remote.putOnce.bind(remote);let once=true;
+ const target=await client(null,remote);const p=previewSharedUpgrade(target.engine,capture,source.engine);cancelSharedUpgrade(target.engine,p.id);
+ await assert.rejects(confirmSharedUpgrade(target.engine,p.id,capture,remote,source.engine));assert.equal(target.journal.value.binding,undefined);
+ const p2=previewSharedUpgrade(target.engine,capture,source.engine);const put=remote.putOnce.bind(remote);let once=true;
  remote.putOnce=async(p,b)=>{await put(p,b);if(once){once=false;throw Error('lost response');}};
- await assert.rejects(confirmSharedUpgrade(target.engine,p2.id,capture,remote));
- await confirmSharedUpgrade(target.engine,p2.id,capture,remote);await settle(target);
+ await assert.rejects(confirmSharedUpgrade(target.engine,p2.id,capture,remote,source.engine));
+ const writer=target.engine.writerId;await target.journal.close();target.journal=await new V3Journal(target.root).open();target.engine=new V3Engine(target.journal,writer);
+ await confirmSharedUpgrade(target.engine,p2.id,capture,remote,source.engine);await settle(target);
  assert.deepEqual(target.journal.value.local.sharedRecords,[]);assert.equal(JSON.stringify(source.journal.value),sourceBefore);
  await source.journal.close();await target.journal.close();
 });
@@ -145,4 +146,26 @@ test('extended LATE integration preserves independent unknown bytes and current 
  assert.equal(rgb(a.journal.value.local,null,'x'),0x123456);assert.deepEqual(a.journal.value.local.sharedRecords.find(r=>r.recordId==='late'),extra);
  assert([...remote.objects.values()].map(decode).some(o=>o.refs.some(r=>r.role===3)));
  const count=remote.puts;await settle(a,5);assert.equal(remote.puts,count);await a.journal.close();
+});
+
+test('upgrade rejects stale source and unpublished local edits despite identical caller bytes',async()=>{
+ const remote=new FakeRemote(),source=await client(null,remote);await source.engine.initialize(remote,{...emptyState(),entries:[entry('x')]});await settle(source);
+ const capture=await remote.read(source.journal.value.baselinePath),target=await client(null,remote);
+ const p=previewSharedUpgrade(target.engine,capture,source.engine);
+ await source.engine.edit({...source.journal.value.local,entries:[entry('x','unpublished')]});
+ assert.throws(()=>previewSharedUpgrade(target.engine,capture,source.engine));
+ await assert.rejects(confirmSharedUpgrade(target.engine,p.id,capture,remote,source.engine));assert.equal(target.journal.value.binding,undefined);
+ await settle(source);await assert.rejects(confirmSharedUpgrade(target.engine,p.id,capture,remote,source.engine));
+ assert.equal(target.journal.meta.get('sharedUpgrade',p.id).targetDatasetId,p.targetDatasetId);
+ await target.journal.close();await source.journal.close();
+});
+test('malformed remote color does not replace local baseline or Pending evidence',async()=>{
+ const remote=new FakeRemote(),a=await client(null,remote);const binding=await a.engine.initialize(remote,{...emptyState(),entries:[entry('x')],sharedRecords:[]});await settle(a);
+ await a.engine.setCourseColor(null,'x',0x010203);await settle(a);
+ const before=structuredClone(a.journal.value),parentBytes=await remote.read(before.baselinePath),parent=decode(parentBytes);
+ const child={...parent,type:3,objectId:randomUUID(),refs:[reference(parent,sha(parentBytes),1)]};const bytes=encode(child),body=Buffer.from(bytes.subarray(0,-32));
+ const marker=Buffer.from([0,0,0,4,1,1,2,3]),pos=body.indexOf(marker);assert(pos>=0);body[pos+4]=2;
+ const raw=Buffer.concat([body,Buffer.from(sha(body),'hex')]);await remote.putOnce(objectPath(child),raw);
+ let rejected=false;for(let n=0;n<6;n++){try{await a.round();}catch{rejected=true;break;}}
+ assert(rejected);assert.deepEqual(a.journal.value.local,before.local);assert.deepEqual(a.journal.value.baseline,before.baseline);assert.deepEqual(a.journal.value.pending,before.pending);await a.journal.close();
 });
