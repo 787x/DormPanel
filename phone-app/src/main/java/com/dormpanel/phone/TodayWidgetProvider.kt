@@ -100,6 +100,7 @@ internal object TodayWidgetUpdates {
         views.setViewVisibility(R.id.widget_message, if (message.isEmpty()) View.GONE else View.VISIBLE)
         views.removeAllViews(R.id.widget_courses)
         val zone = ZoneId.systemDefault()
+        val colors = state?.let { CourseColors.snapshot(context,it) }
         day?.remaining?.take(capacity)?.forEachIndexed { index, item ->
             val row = RemoteViews(context.packageName, if (wide) R.layout.widget_course_wide else R.layout.widget_course)
             val format = DateTimeFormatter.ofPattern("HH:mm")
@@ -119,7 +120,8 @@ internal object TodayWidgetUpdates {
                 row.setTextViewText(R.id.widget_course_start, item.start.atZone(zone).format(format))
                 row.setTextViewText(R.id.widget_course_end, item.end.atZone(zone).format(format))
             }
-            row.setImageViewResource(R.id.widget_course_color, CourseColors.accentDrawable(item))
+            row.setImageViewResource(R.id.widget_course_color, 0)
+            row.setInt(R.id.widget_course_color, "setBackgroundColor", (colors?.rgb(item) ?: CourseColors.palette[0]) or (0xff shl 24))
             row.setContentDescription(R.id.widget_course_row, "${item.entry.title}，$time，${item.entry.location}，${item.teacher}")
             views.addView(R.id.widget_courses, row)
         }

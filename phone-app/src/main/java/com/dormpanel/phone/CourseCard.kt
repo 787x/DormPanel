@@ -17,7 +17,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /** Bounded content hierarchy. Metadata is optional; the original instance is always accessible. */
-internal class CourseCard(context: Context, items: List<ClassOccurrence>, zone: ZoneId, profileFor: (ClassOccurrence) -> TermScheduleProfile? = { null }, click: () -> Unit) : LinearLayout(context) {
+internal class CourseCard(context: Context, items: List<ClassOccurrence>, zone: ZoneId, profileFor: (ClassOccurrence) -> TermScheduleProfile? = { null }, rgb: Int = CourseColors.palette[0], click: () -> Unit) : LinearLayout(context) {
     private val item = items.first()
     private val title = field(if (items.size > 1) "${items.size} 门重叠" else item.entry.title, 12f, true)
     private val startLabel = item.start.atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm"))
@@ -30,7 +30,7 @@ internal class CourseCard(context: Context, items: List<ClassOccurrence>, zone: 
         orientation = VERTICAL; clipChildren = true; clipToPadding = true
         setPadding(context.dp(3), context.dp(3), context.dp(3), context.dp(2))
         val dark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-        val shape = GradientDrawable().apply { setColor(CourseColors.background(item,dark)); cornerRadius = context.dp(4).toFloat() }
+        val shape = GradientDrawable().apply { setColor(CourseColors.background(rgb,dark)); cornerRadius = context.dp(4).toFloat() }
         background = RippleDrawable(ColorStateList.valueOf(0x40777777), shape, null)
         val ink = if (dark) Color.WHITE else Color.rgb(30,40,48)
         listOf(title,room,time,periods,teacher).forEach { it.setTextColor(ink); addView(it, LayoutParams(-1, -2)) }

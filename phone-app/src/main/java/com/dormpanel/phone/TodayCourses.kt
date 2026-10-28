@@ -25,5 +25,4 @@ internal object TodayCourses {
     }
     fun title(state: ScheduleState?) = state?.sources?.singleOrNull()?.displayName?.takeIf { it.isNotBlank() }
         ?: if (state != null && state.sources.size > 1) "合并课表" else "我的课表"
-    fun colorIndex(item: ClassOccurrence) = CourseColors.index(item)
 }
