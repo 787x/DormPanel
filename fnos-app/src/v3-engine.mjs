@@ -15,7 +15,15 @@ import { emptyState, merge, same, mergePlan } from './merge.mjs';
  * Edits and receipts share one durable journal; an engine queue serializes network rounds.
  * Production activation and permissions belong to Catalog; v2 never calls this engine. */
 export class V3Engine {
-  constructor(journal, writerId, registry = sharedRegistry) { this.sharedRegistry=registry; ensure(!journal.value.writerId || journal.value.writerId === writerId, 'v3 writer identity changed'); Object.assign(this, { journal, writerId }); }
+  constructor(journal, writerId, registry = sharedRegistry) { this.sharedRegistry=registry; ensure(!journal.value.writerId || journal.value.writerId === writerId, 'v3 writer identity changed'); Object.assign(this, { journal, writerId }); this.validatePersisted(journal.value); }
+  encode(o){return encode(o,{registry:this.sharedRegistry});}
+  decode(bytes){return decode(bytes,{registry:this.sharedRegistry});}
+  validatePersisted(value){
+    if(!value||typeof value!=='object')return;
+    if(Array.isArray(value.sharedRecords))this.sharedRegistry.validate(wireRecords(value.sharedRecords));
+    if(typeof value.bytes==='string'){const o=this.decode(Buffer.from(value.bytes,'base64'));if(o.state)this.sharedRegistry.validate(wireRecords(o.state.sharedRecords??[]));}
+    for(const v of Object.values(value))if(v&&typeof v==='object')this.validatePersisted(v);
+  }
   merge(base,local,remote,choice=null,forced=new Set()){return merge(base,local,remote,choice,forced,[...this.sharedRegistry.adapters.values()]);}
   serial(fn) { const p = this.journal.networkQueue.then(() => { this.journal.meta.assertWritable(); return fn(); }); this.journal.networkQueue = p.catch(() => {}); return p; }
   configure(remote, cache, budget) {
@@ -25,7 +33,7 @@ export class V3Engine {
     this.journal.prepareReceipt = async p => {
       const b = this.journal.value.binding, witness = await cache.witness(p.path); ensure(!witness || witness.hash === p.hash, 'v3 pending cache identity changed');
       if (!witness || !await cache.hasBlob(p.path)) await cache.put(p.path, Buffer.from(p.bytes, 'base64'));
-      const h = await new V3History(this.journal, cache, remote, b.descriptorPath, b.descriptorHash, budget).open();
+      const h = await new V3History(this.journal, cache, remote, b.descriptorPath, b.descriptorHash, budget,this.sharedRegistry).open();
       await h.verify(p.path, p.hash); h.drainActivation();
     };
   }
@@ -38,11 +46,11 @@ export class V3Engine {
     ensure((before?.sharedRecords!==undefined)===(state.sharedRecords!==undefined),'Use explicit isolated upgrade');
     if(state.sharedRecords!==undefined)this.sharedRegistry.writable(wireRecords(state.sharedRecords));
     // Domain validation before committing; immutable private envelope never reaches a server.
-    encode({ type: 2, datasetId: this.journal.value.binding?.datasetId ?? '00000000-0000-0000-0000-000000000001', objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: this.journal.value.binding?.descriptorHash ?? '1'.repeat(64), refs: [], state });
+    this.encode({ type: 2, datasetId: this.journal.value.binding?.datasetId ?? '00000000-0000-0000-0000-000000000001', objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: this.journal.value.binding?.descriptorHash ?? '1'.repeat(64), refs: [], state });
     return this.journal.transaction(s => { ensure(expectedRevision===undefined||s.revision===expectedRevision,'Stale revision'); ensure(!s.writerId || s.writerId === this.writerId); s.writerId = this.writerId; s.local = structuredClone(state); s.revision = (s.revision ?? 0) + 1; s.decision = null; }, true);
   }
   async bind(descriptor, hash, local = undefined, initialization = undefined) {
-    ensure(descriptor.type === 1 && sha(encode(descriptor)) === hash);
+    ensure(descriptor.type === 1 && sha(this.encode(descriptor)) === hash);
     await this.journal.transaction(s => { ensure(!s.binding && (!s.writerId || s.writerId === this.writerId)); const existing = s.local ?? emptyState(), seed = local ?? (descriptor.format===4?{...existing,sharedRecords:[]}:existing); ensure(same(existing, emptyState()) || same(existing, seed), 'v3 binding must preserve unbound local edits'); s.writerId = this.writerId; s.binding = { datasetId: descriptor.datasetId, descriptorPath: objectPath(descriptor), descriptorHash: hash, ...(descriptor.format===4?{format:4}:{}) }; s.local = seed; s.unbasedLocal = !same(seed, emptyState()); s.baseline = null; s.baselinePath = null; s.revision ??= 0;
       if (initialization) s.initialization = initialization;
     }, true);
@@ -55,9 +63,9 @@ export class V3Engine {
       }
       state ??= this.journal.value.local ?? emptyState();
       const descriptor = { ...(state.sharedRecords!==undefined?{format:4}:{}), type: 1, datasetId: randomUUID(), objectId: randomUUID(), writerId: this.writerId, epochId: ZERO, epochNumber: 0, descriptorHash: ZERO_HASH, refs: [], state: null };
-      const genesis = { type: 2, datasetId: descriptor.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: sha(encode(descriptor)), refs: [], state };
+      const genesis = { type: 2, datasetId: descriptor.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: 1, descriptorHash: sha(this.encode(descriptor)), refs: [], state };
       // Binding and BOTH exact candidates commit together, before any network I/O.
-      await this.bind(descriptor, genesis.descriptorHash, state, [encode(descriptor).toString('base64'), encode(genesis).toString('base64')]);
+      await this.bind(descriptor, genesis.descriptorHash, state, [this.encode(descriptor).toString('base64'), this.encode(genesis).toString('base64')]);
       const budget = remote.budget ?? new Budget(); this.configure(remote, new IndexedV3Cache(this.journal.directory, budget), budget);
       await this.resumeInitialization(remote); return structuredClone(this.journal.value.binding);
     });
@@ -65,7 +73,7 @@ export class V3Engine {
   async publish(remote, object, capture) {
     ensure((object.format??(object.state?.sharedRecords!==undefined?4:3))===(this.journal.value.binding.format??3),'Dataset format mismatch');
     if(object.state?.sharedRecords!==undefined)this.sharedRegistry.writable(wireRecords(object.state.sharedRecords));
-    const publisher = new V3Publisher(this.journal, remote), raw = encode(object), path = objectPath(object);
+    const publisher = new V3Publisher(this.journal, remote), raw = this.encode(object), path = objectPath(object);
     if (remote.prepare) await remote.prepare(path.slice(0, path.lastIndexOf('/') + 1));
     await publisher.stage(path, raw, capture); return this.resumePublication(remote);
   }
@@ -74,7 +82,7 @@ export class V3Engine {
     ensure(phase === 'READBACK_CONFIRMED' || phase === 'RECEIPTED', 'v3 UNCERTAIN: read-only recovery required');
     if (phase === 'RECEIPTED') return;
     await publisher.receipt((s, c) => {
-      const o = decode(Buffer.from(s.pending.bytes, 'base64'));
+      const o = this.decode(Buffer.from(s.pending.bytes, 'base64')); if(o.state)this.sharedRegistry.validate(wireRecords(o.state.sharedRecords??[]));
       if (c.kind === 'commit') {
         const replay = this.merge(c.local, s.local, o.state);
         if (replay.conflicts.length) s.conflict = { id: sha(Buffer.from(JSON.stringify({ path: s.pending.path, revision: s.revision }))), revision: s.revision, base: c.local, local: s.local, remote: o.state, capturedLocal: s.local, conflicts: replay.conflicts, paths: [s.pending.path], receipt: true };
@@ -90,7 +98,7 @@ export class V3Engine {
   }
   async resumeInitialization(remote) {
     while (this.journal.value.initialization?.length) {
-      const raw = this.journal.value.initialization[0], o = decode(Buffer.from(raw, 'base64'));
+      const raw = this.journal.value.initialization[0], o = this.decode(Buffer.from(raw, 'base64'));
       if (this.journal.value.pending?.phase !== 'RECEIPTED' && this.journal.value.pending) await this.resumePublication(remote);
       if (this.journal.value.receipt?.path !== objectPath(o)) await this.publish(remote, o, { kind: o.type === 1 ? 'descriptor' : 'initial-genesis' });
       await this.journal.transaction(s => { s.initialization.shift(); });
@@ -98,21 +106,22 @@ export class V3Engine {
   }
   rotate(history, remote, sourceEpoch, tips) { return this.serial(() => this.rotateInternal(history, remote, sourceEpoch, tips)); }
   async rotateInternal(history, remote, sourceEpoch, tips) {
+    history=await history.withRegistry(this.sharedRegistry);
     this.configure(remote, history.cache, history.budget);
     ensure(history.activeEpochs().includes(sourceEpoch) && JSON.stringify([...tips].sort()) === JSON.stringify(history.epochTips(sourceEpoch)), 'v3 stale/incomplete rotation frontier');
     const source = history.nodes[tips[0]], state = await history.merged(tips), refs = tips.map(p => reference(history.nodes[p], history.nodes[p].hash, 2));
     const genesis = { type: 2, datasetId: source.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: randomUUID(), epochNumber: source.epochNumber + 1, descriptorHash: source.descriptorHash, refs, state };
-    const transition = { ...(source.format===4?{format:4}:{}), type: 4, datasetId: source.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: sourceEpoch, epochNumber: source.epochNumber, descriptorHash: source.descriptorHash, refs: [...refs, reference(genesis, sha(encode(genesis)), 5)], state: null };
-    await this.journal.transaction(s => { s.rotation = { genesis: encode(genesis).toString('base64'), transition: encode(transition).toString('base64'), phase: 0 }; });
+    const transition = { ...(source.format===4?{format:4}:{}), type: 4, datasetId: source.datasetId, objectId: randomUUID(), writerId: this.writerId, epochId: sourceEpoch, epochNumber: source.epochNumber, descriptorHash: source.descriptorHash, refs: [...refs, reference(genesis, sha(this.encode(genesis)), 5)], state: null };
+    await this.journal.transaction(s => { s.rotation = { genesis: this.encode(genesis).toString('base64'), transition: this.encode(transition).toString('base64'), phase: 0 }; });
     await this.resumeRotation(remote);
   }
   async resumeRotation(remote) {
     const rotation = this.journal.value.rotation; if (!rotation) return;
     for (let step = rotation.phase; step < 2; step++) {
-      const o = decode(Buffer.from(step === 0 ? rotation.genesis : rotation.transition, 'base64'));
+      const o = this.decode(Buffer.from(step === 0 ? rotation.genesis : rotation.transition, 'base64'));
       const pending = this.journal.value.pending;
       if (pending && pending.phase !== 'RECEIPTED') await this.resumePublication(remote);
-      if (this.journal.value.receipt?.path !== objectPath(o)) await this.publish(remote, o, { kind: step === 0 ? 'checkpoint' : 'transition', targetEpoch: decode(Buffer.from(rotation.genesis, 'base64')).epochId });
+      if (this.journal.value.receipt?.path !== objectPath(o)) await this.publish(remote, o, { kind: step === 0 ? 'checkpoint' : 'transition', targetEpoch: this.decode(Buffer.from(rotation.genesis, 'base64')).epochId });
       await this.journal.transaction(s => { s.rotation.phase = step + 1; });
     }
     await this.journal.transaction(s => { s.rotation = null; });
@@ -139,7 +148,7 @@ export class V3Engine {
         if (this.journal.value.rotation) await this.resumeRotation(remote);
         const s = this.journal.value, b = s.binding; ensure(b);
         const discovery = new V3Discovery(this.journal, remote, b.datasetId); await discovery.scan(discoverySteps);
-        const history = await new V3History(this.journal, cache, remote, b.descriptorPath, b.descriptorHash, budget).open();
+        const history = await new V3History(this.journal, cache, remote, b.descriptorPath, b.descriptorHash, budget,this.sharedRegistry).open();
         await history.auditObjects(auditObjects);
         if (this.journal.value.receipt) { const r = this.journal.value.receipt; await history.verify(r.path); ensure(history.node(r.path).hash === r.hash, 'v3 receipt identity changed'); }
         if (this.journal.value.baselinePath) { const s = this.journal.value; await history.verify(s.baselinePath); ensure(!s.baselineHash || history.node(s.baselinePath).hash === s.baselineHash, 'v3 baseline identity changed'); }
@@ -181,7 +190,7 @@ export class V3Engine {
             const localBase = (await history.value(history.common([...tips, ...(current.baselinePath ? [current.baselinePath] : [])]))).state;
             const branches = [];
             for (const path of tips) branches.push({ commitId: history.nodes[path].objectId, path, state: (await history.value(path)).state });
-            const plan = { base, localBase, branches }, result = mergePlan(plan, current.local);
+            const plan = { base, localBase, branches }, result = mergePlan(plan, current.local,null,[...this.sharedRegistry.adapters.values()]);
             await this.saveConflict(localBase, current.local, result.remote, result.conflicts, tips, current.revision, plan); return { status: 'CONFLICT' };
           }
         }

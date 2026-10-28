@@ -169,3 +169,33 @@ test('malformed remote color does not replace local baseline or Pending evidence
  let rejected=false;for(let n=0;n<6;n++){try{await a.round();}catch{rejected=true;break;}}
  assert(rejected);assert.deepEqual(a.journal.value.local,before.local);assert.deepEqual(a.journal.value.baseline,before.baseline);assert.deepEqual(a.journal.value.pending,before.pending);await a.journal.close();
 });
+import {merge as mergeBusiness,mergePlan} from '../src/merge.mjs';
+const linkedNote={typeId:'test.note',schemaVersion:1,maxPayload:32,validate:r=>assert(r.payload.length>0,'empty note'),relatedKeys:()=>['class:x']};
+test('custom Registry rejects remote invalid payload while unregistered peer preserves optional bytes',async()=>{
+ const remote=new FakeRemote(),seed=await client(null,remote);const binding=await seed.engine.initialize(remote,{...emptyState(),entries:[entry('x')],sharedRecords:[]});await settle(seed);
+ const registered=await client(binding,remote);registered.engine=new V3Engine(registered.journal,registered.engine.writerId,new Registry([courseColor,linkedNote]));await settle(registered);
+ const before=structuredClone(registered.journal.value),parent=decode(await remote.read(before.baselinePath));
+ const record={typeId:'test.note',recordId:'one',schemaVersion:1,required:false,dependencies:[],payload:''};
+ const bad={...parent,type:3,objectId:randomUUID(),refs:[reference(parent,sha(encode(parent)),1)],state:{...parent.state,sharedRecords:[record]}};
+ await remote.putOnce(objectPath(bad),encode(bad));let refused=false;for(let n=0;n<5&&!refused;n++)try{await registered.round();}catch{refused=true;}
+ assert(refused);for(const k of ['local','baseline','pending'])assert.deepEqual(registered.journal.value[k],before[k]);
+ const old=await client(binding,remote);await settle(old,5);assert.deepEqual(old.journal.value.local.sharedRecords,[record]);
+ const root=registered.root,writer=registered.engine.writerId;await registered.journal.close();registered.journal=await new V3Journal(root).open();registered.engine=new V3Engine(registered.journal,writer,new Registry([courseColor,linkedNote]));
+ await assert.rejects(registered.round());await registered.journal.close();await seed.journal.close();await old.journal.close();
+});
+test('custom relatedKeys applies to direct merge, multi-branch history and mergePlan',async()=>{
+ const registry=new Registry([courseColor,linkedNote]),remote=new FakeRemote(),a=await client(null,remote);
+ const note={typeId:'test.note',recordId:'one',schemaVersion:1,required:false,dependencies:[],payload:'61'};
+ const base={...emptyState(),entries:[entry('x'),entry('y')],sharedRecords:[note]};const binding=await a.engine.initialize(remote,base);await settle(a);
+ const p=decode(await remote.read(a.journal.value.baselinePath));const make=state=>({...p,type:3,objectId:randomUUID(),refs:[reference(p,sha(encode(p)),1)],state});
+ const left={...base,entries:[entry('y')]},right={...base,sharedRecords:[{...note,payload:'62'}]};
+ assert.equal(mergeBusiness(base,left,right,null,new Set(),[courseColor,linkedNote]).conflicts.length,1);
+ const l=make(left),r=make(right);for(const o of [l,r])await remote.putOnce(objectPath(o),encode(o));
+ const budget=new Budget(),h=await new V3History(a.journal,new IndexedV3Cache(a.root,budget),remote,binding.descriptorPath,binding.descriptorHash,budget,registry).open();
+ for(const o of [l,r])await h.verify(objectPath(o));await assert.rejects(h.merged([objectPath(l),objectPath(r)]),/conflict/);
+ const plan={base,localBase:base,branches:[{commitId:l.objectId,state:left},{commitId:r.objectId,state:right}]};const planned=mergePlan(plan,base,null,[courseColor,linkedNote]);assert(planned.conflicts.some(c=>c.keys.includes('class:x')&&c.keys.includes('shared:test.note/one')));assert(planned.conflicts.every(c=>!c.keys.includes('class:y')));
+ const independent=mergeBusiness(base,{...base,entries:[entry('x'),entry('y','changed')]},right,null,new Set(),[courseColor,linkedNote]);assert.equal(independent.conflicts.length,0);
+ a.engine=new V3Engine(a.journal,a.engine.writerId,registry);assert.equal((await settle(a)).status,'CONFLICT');
+ const writer=a.engine.writerId;await a.journal.close();a.journal=await new V3Journal(a.root).open();a.engine=new V3Engine(a.journal,writer,registry);
+ await a.engine.resolve(a.journal.value.conflict.id,'local');await settle(a);assert.equal(a.journal.value.local.sharedRecords[0].payload,'61');assert(a.journal.value.local.entries.some(e=>e.id==='x'));assert.equal(businessHash(a.journal.value.local),'b4496b6ccdaed04e6bd25b6494ec72bd9a22f21018e844dafecfb21f92eac7de');await a.journal.close();
+});

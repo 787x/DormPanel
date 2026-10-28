@@ -69,3 +69,15 @@ Android 直连首次失败；随后使用 ADB reverse 和本机 TCP 转发承载
 本轮未重跑两套 139 项 Linux、实机、真实 WebDAV、长增长或 soak；已有平台单事务证据沿用，不将本轮 Fake/JVM 结果称为新增实机验收。迁移确认继续使用原有 putSharedRecords 的 expectedHash 检查和 Room 单事务，旧偏好无清理操作。本轮新增的是决策与接纳语义；不新增迁移 UI。
 
 本轮修复可提交人工 Review，PR 仍保持 Draft，由维护者决定转 Ready。剩余边界是源证据仅覆盖该 Writer 已验证的观察范围，以及旧的无 sourceEvidence 草稿需重新审查；不能据此报告旧 Writer 停写或日用迁移完成。
+
+## Registry 全链路一致性补充验收
+
+本轮修复引擎到历史的 Registry 传递、历史 value/接纳/多分支 merged、冲突方案 mergePlan/ScheduleV2Plan、codec 显式上下文、重启复验和回执解码；外部换代历史也绑定引擎上下文。线格式、产品类型装配和课程颜色含义不变。
+
+Kotlin/Node 均新增 test.note/1（非空 payload，并声明关联 class:x）的隔离用例：
+
+- 合法外壳与 SHA 的空 payload 作为实际远端分支：已注册客户端拒绝，本地、基线、Pending 不变；未注册客户端可保留独立可选原字节；注册客户端重开仍拒绝异常分支。
+- 基线同源的课程删除与关联 note 修改：直接合并及 V3History.merged 均报告关联冲突；冲突方案保留完整 keys，不扩大至无关 class:y。
+- 无关课程修改自动合并；真实引擎保存冲突、重开并重新注入 Registry 后选择本地方案，双端最终业务哈希均为 `b4496b6ccdaed04e6bd25b6494ec72bd9a22f21018e844dafecfb21f92eac7de`。
+
+实际执行：Node 67 项中 63 PASS、4 Linux 平台专项跳过；Kotlin schedule-core 40 PASS、Phone 迁移 4 PASS；Phone/app assembleDebug PASS。包括固定向量、未来颜色版本、未知透传、Checkpoint/LATE、Pending/Workspace 事务、备份恢复及 v2 合并回归。本轮未重复已有 Linux 139 项、真实 WebDAV/设备、1024 增长或 soak。当前修复可进入人工 Review，仍保持 Draft；应用重启必须由宿主重新装配 Registry，远端不携带可执行规则。

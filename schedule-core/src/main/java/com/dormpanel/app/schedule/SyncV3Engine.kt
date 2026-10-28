@@ -8,6 +8,14 @@ import java.util.UUID
 /** Sync core. The production host owns activation, permissions and its single Writer. */
 class V3Engine(private val journal: V3Journal, private val writerId: String, private val sharedRegistry: SharedTypeRegistry = SharedTypes.registry()) {
     init { require(!journal.snapshot().has("writerId") || journal.snapshot().getString("writerId") == writerId) { "v3 writer identity changed" } }
+    init {
+        fun validate(value: Any?) { when(value) {
+            is JSONObject -> value.keys().forEach { validate(value.get(it)) }
+            is JSONArray -> (0 until value.length()).forEach { validate(value.get(it)) }
+            is String -> if(value.startsWith("RFBWMw")) obj(value)
+        } }
+        validate(journal.snapshot())
+    }
     private val network = journal.networkGate
     private fun configure(remote: V3ObjectStore, cache: V3IndexedCache, budget: V3Budget) {
         require(cache.budget === budget && (remote !is V3WebDavStore || remote.budget === budget)) { "v3 round must share one budget" }
@@ -17,14 +25,14 @@ class V3Engine(private val journal: V3Journal, private val writerId: String, pri
             val b = journal.snapshot().getJSONObject("binding"); val path = p.getString("path"); val witness = cache.witness(path)
             require(witness == null || witness.getString("hash") == p.getString("hash")) { "v3 pending cache identity changed" }
             if (witness == null || !cache.blob(path).isFile) cache.put(path, Base64.getDecoder().decode(p.getString("bytes")))
-            val h = V3History(journal, cache, remote, b.getString("descriptorPath"), b.getString("descriptorHash"), budget).open(); h.verify(p.getString("path"), p.getString("hash")); h.drainActivation()
+            val h = V3History(journal, cache, remote, b.getString("descriptorPath"), b.getString("descriptorHash"), budget, sharedRegistry).open(); h.verify(p.getString("path"), p.getString("hash")); h.drainActivation()
         }
     }
     private fun merge(base: ScheduleState, local: ScheduleState, remote: ScheduleState, choice: ScheduleMerge.Choice? = null,
         forceConflicts: Set<String> = emptySet()) = ScheduleMerge.merge(base,local,remote,choice,forceConflicts,sharedRegistry=sharedRegistry)
     private fun id() = UUID.randomUUID().toString()
-    private fun raw(o: V3Object) = Base64.getEncoder().encodeToString(SyncV3Codec.encode(o))
-    private fun obj(raw: String) = SyncV3Codec.decode(Base64.getDecoder().decode(raw))
+    private fun raw(o: V3Object) = Base64.getEncoder().encodeToString(SyncV3Codec.encode(o,sharedRegistry))
+    private fun obj(raw: String) = SyncV3Codec.decode(Base64.getDecoder().decode(raw),sharedRegistry).also { it.state?.let { state -> sharedRegistry.validate(state.sharedRecords.orEmpty()) } }
     // Private state envelope, never a published object or an implicit v2 migration.
     private fun state(s: ScheduleState): String = raw(V3Object(2, STATE_ID, STATE_ID, STATE_ID, STATE_ID, 1, STATE_HASH, state = s))
     private fun state(s: JSONObject, key: String) = requireNotNull(obj(s.getString(key)).state)
@@ -122,7 +130,7 @@ class V3Engine(private val journal: V3Journal, private val writerId: String, pri
         require(o.format == journal.snapshot().getJSONObject("binding").optInt("format", 3)) { "Dataset format mismatch" }
         o.state?.sharedRecords?.let { sharedRegistry.writable(it) }
         val path = V3Paths.path(o); remote.prepare(path.substringBeforeLast('/') + "/")
-        V3Publisher(journal, remote).stage(path, SyncV3Codec.encode(o), capture); resumePublication(remote)
+        V3Publisher(journal, remote).stage(path, SyncV3Codec.encode(o,sharedRegistry), capture); resumePublication(remote)
     }
     private fun resumePublication(remote: V3PublicationStore) {
         val publisher = V3Publisher(journal, remote); val phase = publisher.resume()
@@ -151,13 +159,14 @@ class V3Engine(private val journal: V3Journal, private val writerId: String, pri
             journal.transaction { val a = it.getJSONArray("initialization").strings().drop(1); it.put("initialization", JSONArray(a)) }
         }
     }
-    fun rotate(history: V3History, remote: V3PublicationStore, sourceEpoch: String, tips: List<String>) = synchronized(network) {
+    fun rotate(inputHistory: V3History, remote: V3PublicationStore, sourceEpoch: String, tips: List<String>) = synchronized(network) {
+        val history=inputHistory.withRegistry(sharedRegistry)
         require(remote is V3ObjectStore); configure(remote, history.cache, history.budget)
         require(sourceEpoch in history.activeEpochs() && tips.sorted() == history.epochTips(sourceEpoch)) { "v3 stale/incomplete rotation frontier" }
         val source = history.objectMetadata(tips.first()); val refs = tips.map { history.reference(it, 2) }
         val genesis = V3Object(2, source.datasetId, id(), writerId, id(), source.epochNumber + 1, source.descriptorHash, refs, history.merged(tips))
         val transition = V3Object(4, source.datasetId, id(), writerId, sourceEpoch, source.epochNumber, source.descriptorHash,
-            refs + ref(genesis, SyncV3Codec.hash(SyncV3Codec.encode(genesis)), 5), format = source.format)
+            refs + ref(genesis, SyncV3Codec.hash(SyncV3Codec.encode(genesis,sharedRegistry)), 5), format = source.format)
         journal.transaction { it.put("rotation", JSONObject().put("genesis", raw(genesis)).put("transition", raw(transition)).put("phase", 0)) }
         resumeRotation(remote)
     }
@@ -201,7 +210,7 @@ class V3Engine(private val journal: V3Journal, private val writerId: String, pri
             resumeRotation(publication)
             val binding = journal.snapshot().getJSONObject("binding"); val dataset = binding.getString("datasetId")
             val discovery = V3Discovery(journal, remote, dataset); discovery.scan(discoverySteps)
-            val history = V3History(journal, cache, remote, binding.getString("descriptorPath"), binding.getString("descriptorHash"), budget).open()
+            val history = V3History(journal, cache, remote, binding.getString("descriptorPath"), binding.getString("descriptorHash"), budget, sharedRegistry).open()
             journal.snapshot().optJSONObject("receipt")?.let { history.verify(it.getString("path")); require(history.node(it.getString("path")).getString("hash") == it.getString("hash")) { "v3 receipt identity changed" } }
             journal.snapshot().let { s -> s.optString("baselinePath").takeIf { it.isNotEmpty() }?.let { history.verify(it); require(!s.has("baselineHash") || history.node(it).getString("hash") == s.getString("baselineHash")) { "v3 baseline identity changed" } } }
             history.activeEpochs().takeLast(8).forEach { epoch ->
@@ -237,7 +246,7 @@ class V3Engine(private val journal: V3Journal, private val writerId: String, pri
                     budget.work("merge bytes", 64 * 1024 * 1024, (tips.sumOf { history.node(it).getLong("size") } * tips.size).also { require(it <= 64L * 1024 * 1024) { "v3 merge budget" } }.toInt())
                     val baseObject = history.value(history.common(tips)); val localBaseObject = history.value(history.common(tips + listOfNotNull(current.optString("baselinePath").takeIf { it.isNotEmpty() })))
                     fun branch(o: V3Object) = ScheduleCommit(o.datasetId, o.objectId, o.writerId, emptyList(), requireNotNull(o.state))
-                    val branches = tips.map { branch(history.value(it)) }.sortedBy { it.commitId }; val plan = ScheduleV2Plan(branch(baseObject), branch(localBaseObject), branches)
+                    val branches = tips.map { branch(history.value(it)) }.sortedBy { it.commitId }; val plan = ScheduleV2Plan(branch(baseObject), branch(localBaseObject), branches, sharedRegistry)
                     val result = plan.merge(state(current, "local")); saveConflict(requireNotNull(localBaseObject.state), state(current, "local"), plan.remoteState(), result.conflicts, tips, current.getLong("revision"), branches); return@synchronized "CONFLICT"
                 }
             }

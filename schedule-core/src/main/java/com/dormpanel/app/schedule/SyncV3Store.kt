@@ -47,7 +47,7 @@ object V3Paths {
         requireNotNull(match); ScheduleCommitCodec.uuid(match.groupValues[2]); require(match.groupValues[2] != SyncV3Codec.ZERO)
         require(if (match.groupValues[1] == "descriptor") info.kind == "dataset" else info.kind == "epoch")
     }
-    fun match(path: String, raw: ByteArray): V3Object { file(path); return SyncV3Codec.decode(raw).also { require(path(it) == path) } }
+    fun match(path: String, raw: ByteArray, registry: SharedTypeRegistry = SharedTypes.registry()): V3Object { file(path); return SyncV3Codec.decode(raw,registry).also { require(path(it) == path) } }
     fun child(scope: String, name: String, directory: Boolean): String {
         val info = describe(scope)
         val p = scope + name + if (directory) "/" else ""

@@ -190,7 +190,7 @@ export function merge(base, local, remote, choice = null, forced = new Set(), ad
 }
 
 // 与 ScheduleV2Plan 相同：逐对检测同基线冲突，然后 UUID 顺序生成待确认远端方案。
-export function mergePlan(plan, local, choice = null) {
+export function mergePlan(plan, local, choice = null, adapters = sharedTypes) {
   const branches = [...plan.branches].sort((a, b) =>
       a.commitId < b.commitId ? -1 : 1,
     ),
@@ -209,7 +209,7 @@ export function mergePlan(plan, local, choice = null) {
       const conflicts = merge(
         plan.base,
         branches[i].state,
-        branches[j].state,
+        branches[j].state, null, new Set(), adapters
       ).conflicts;
       conflicts.forEach(remember);
       // 完整分支保存在 plan；摘要仅存分支身份和相关 keys，避免 N² 复制大快照。
@@ -222,7 +222,7 @@ export function mergePlan(plan, local, choice = null) {
     }
   let remote = branches[0].state;
   for (const branch of branches.slice(1)) {
-    const next = merge(plan.base, remote, branch.state, "remote");
+    const next = merge(plan.base, remote, branch.state, "remote",new Set(),adapters);
     remote = next.state;
     next.conflicts.forEach(remember);
   }
@@ -231,11 +231,11 @@ export function mergePlan(plan, local, choice = null) {
     local,
     remote,
     choice,
-    new Set([...found.values()].flatMap((c) => c.keys)),
+    new Set([...found.values()].flatMap((c) => c.keys)), adapters,
   );
   const displayed = new Map(result.conflicts.map((c) => [c.key, c]));
   for (const c of found.values())
-    if (!displayed.has(c.key)) displayed.set(c.key, c);
+    displayed.set(c.key, displayed.has(c.key)?{...displayed.get(c.key),keys:[...new Set([...displayed.get(c.key).keys,...c.keys])]}:c);
   ensure(displayed.size <= 256, "冲突单位超限");
   return {
     state: result.state,

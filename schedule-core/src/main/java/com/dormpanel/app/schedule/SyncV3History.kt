@@ -46,9 +46,12 @@ class V3Discovery(private val journal: V3Journal, private val remote: V3ObjectSt
 
 /** Lazy certificates, incremental causal frontier and resumable paged ancestry proofs. */
 class V3History(private val journal: V3Journal, internal val cache: V3IndexedCache, private val remote: V3ObjectStore,
-    private val descriptorPath: String, private val descriptorHash: String, internal val budget: V3Budget) {
+    private val descriptorPath: String, private val descriptorHash: String, internal val budget: V3Budget, private val sharedRegistry: SharedTypeRegistry = SharedTypes.registry()) {
+    internal fun withRegistry(registry: SharedTypeRegistry): V3History = if (registry === sharedRegistry) this else V3History(journal,cache,remote,descriptorPath,descriptorHash,budget,registry).open()
     var dataset = ""; private set
     private val meta = journal.meta
+    private val domainValidated = linkedSetOf<String>()
+    private fun rememberDomain(path: String) { if(domainValidated.size>=256)domainValidated.remove(domainValidated.first());domainValidated.add(path) }
     private val loaded = linkedMapOf<String, JSONObject>()
     init { meta.budget = budget }
     fun optionalNode(path: String): JSONObject? {
@@ -67,6 +70,7 @@ class V3History(private val journal: V3Journal, internal val cache: V3IndexedCac
         else { val bytes = requireNotNull(cache.load(descriptorPath, remote, descriptorHash)); require(SyncV3Codec.hash(bytes) == descriptorHash); val o = V3Paths.match(descriptorPath, bytes); require(o.type == 1); record(descriptorPath, bytes, o) }; return this
     }
     private fun record(path: String, bytes: ByteArray, o: V3Object) {
+        o.state?.let { sharedRegistry.validate(it.sharedRecords.orEmpty()) }; rememberDomain(path)
         cache.pin(path, "referenced-history")
         val causal = o.refs.filter { it.role in 1..3 }; val primary = causal.firstOrNull()?.let { node(refPath(dataset, it)) }
         val jumps = mutableListOf<String>(); if (primary != null) jumps += refPath(dataset, causal.first())
@@ -75,7 +79,7 @@ class V3History(private val journal: V3Journal, internal val cache: V3IndexedCac
         val m = JSONObject().put("format", o.format).put("type", o.type).put("datasetId", o.datasetId).put("objectId", o.objectId).put("writerId", o.writerId).put("epochId", o.epochId).put("epochNumber", o.epochNumber).put("descriptorHash", o.descriptorHash)
             .put("refs", JSONArray(o.refs.map { it.json() })).put("hash", SyncV3Codec.hash(bytes)).put("size", bytes.size)
             .put("root", if (o.type == 2) path else primary?.optString("root")).put("depth", if (primary == null) 0 else primary.getLong("depth") + 1).put("jumps", JSONArray(jumps))
-        o.state?.let { m.put("businessHash", SyncV3Codec.businessHash(it)) }
+        o.state?.let { m.put("businessHash", SyncV3Codec.businessHash(it,sharedRegistry)) }
         meta.atomic {
             val identity = meta.get("identity", o.objectId); val old = meta.get("node", path)
             require(identity == null || identity.getString("path") == path) { "v3 duplicate objectId" }; require(old == null || old.getString("hash") == m.getString("hash")) { "v3 identity changed" }
@@ -131,7 +135,7 @@ class V3History(private val journal: V3Journal, internal val cache: V3IndexedCac
             catch (e: Exception) { if (!e.message.orEmpty().contains("budget", true)) meta.atomic { meta.put("error", row.key, JSONObject().put("reason", e.message).put("expectedHash", row.value.getString("hash"))); meta.put("control", "objectAudit", progress) }; throw e }
         }
     }
-    fun value(path: String, expectedHash: String? = null): V3Object { val bytes = requireNotNull(cache.load(path, remote, expectedHash ?: optionalNode(path)?.getString("hash"))) { "v3 missing ancestor" }; val o = V3Paths.match(path, bytes); require(optionalNode(path)?.getString("hash")?.let { it == SyncV3Codec.hash(bytes) } != false) { "v3 identity changed" }; return o }
+    fun value(path: String, expectedHash: String? = null): V3Object { val bytes = requireNotNull(cache.load(path, remote, expectedHash ?: optionalNode(path)?.getString("hash"))) { "v3 missing ancestor" }; val o = V3Paths.match(path, bytes,sharedRegistry); require(optionalNode(path)?.getString("hash")?.let { it == SyncV3Codec.hash(bytes) } != false) { "v3 identity changed" }; o.state?.let { sharedRegistry.validate(it.sharedRecords.orEmpty()) }; rememberDomain(path); return o }
     private fun tick() = budget.work("ancestry", 32768)
     private fun primaryAncestor(a: String, b: String): Boolean {
         val left = node(a); val right = node(b); if (left.getLong("depth") > right.getLong("depth")) return false
@@ -166,11 +170,11 @@ class V3History(private val journal: V3Journal, internal val cache: V3IndexedCac
         val tips = frontier(paths).sortedBy { node(it).getString("objectId") }; require(tips.isNotEmpty()); if (tips.size == 1) return requireNotNull(value(tips.single()).state)
         val base = requireNotNull(value(common(tips)).state); val bytes = tips.sumOf { node(it).getLong("size") } * tips.size; require(bytes <= 64L * 1024 * 1024) { "v3 merge budget" }; budget.work("merge bytes", 64 * 1024 * 1024, bytes.toInt())
         val states = tips.map { requireNotNull(value(it).state) }
-        states.indices.forEach { i -> (i + 1 until states.size).forEach { j -> require(ScheduleMerge.merge(base, states[i], states[j]).conflicts.isEmpty()) { "v3 unresolved branch conflict" } } }
-        return states.drop(1).fold(states.first()) { a, b -> val result = ScheduleMerge.merge(base, a, b); require(result.conflicts.isEmpty()) { "v3 unresolved branch conflict" }; result.state }
+        states.indices.forEach { i -> (i + 1 until states.size).forEach { j -> require(ScheduleMerge.merge(base, states[i], states[j], sharedRegistry=sharedRegistry).conflicts.isEmpty()) { "v3 unresolved branch conflict" } } }
+        return states.drop(1).fold(states.first()) { a, b -> val result = ScheduleMerge.merge(base, a, b, sharedRegistry=sharedRegistry); require(result.conflicts.isEmpty()) { "v3 unresolved branch conflict" }; result.state }
     }
     fun verify(path: String, expectedHash: String? = null) {
-        if (optionalNode(path) != null) { require(expectedHash == null || node(path).getString("hash") == expectedHash) { "v3 reference identity changed" }; meta.atomic { meta.remove("todo", path) }; return }
+        if (optionalNode(path) != null) { if(path !in domainValidated)value(path,expectedHash); require(expectedHash == null || node(path).getString("hash") == expectedHash) { "v3 reference identity changed" }; meta.atomic { meta.remove("todo", path) }; return }
         var control = meta.get("control", "walk")
         if (control == null) meta.atomic { control = JSONObject().put("root", path).put("depth", 1).put("id", java.util.UUID.randomUUID().toString()); meta.put("control", "walk", control!!); meta.put("stack:" + control!!.getString("id"), "0", JSONObject().put("path", path).put("expectedHash", expectedHash)) }
         val walk = control!!; require(walk.has("id")) { "v3 unsupported private validation cursor" }; val suffix = walk.getString("id"); val stack = "stack:$suffix"; val visiting = "visiting:$suffix"
@@ -190,8 +194,8 @@ class V3History(private val journal: V3Journal, internal val cache: V3IndexedCac
         require(expectedHash == null || node(path).getString("hash") == expectedHash) { "v3 reference identity changed" }
     }
     private fun verifyReady(path: String, expectedHash: String?, fresh: V3Object? = null) {
-        if (optionalNode(path) != null) return; budget.work("validation", 256)
-        val bytes = if (fresh != null) SyncV3Codec.encode(fresh) else requireNotNull(cache.load(path, remote, expectedHash)) { "v3 missing object" }; val o = fresh ?: V3Paths.match(path, bytes); require(o.datasetId == dataset && o.descriptorHash == descriptorHash && o.type != 1 && o.format == node(descriptorPath).optInt("format", 3)) { "v3 descriptor identity" }
+        if (optionalNode(path) != null) { if(path !in domainValidated)value(path,expectedHash); return }; budget.work("validation", 256)
+        val bytes = if (fresh != null) SyncV3Codec.encode(fresh,sharedRegistry) else requireNotNull(cache.load(path, remote, expectedHash)) { "v3 missing object" }; val o = fresh ?: V3Paths.match(path, bytes,sharedRegistry); o.state?.let { sharedRegistry.validate(it.sharedRecords.orEmpty()) }; require(o.datasetId == dataset && o.descriptorHash == descriptorHash && o.type != 1 && o.format == node(descriptorPath).optInt("format", 3)) { "v3 descriptor identity" }
         o.refs.forEach { r -> val p = refPath(dataset, r); val target = objectMetadata(p); require(node(p).getString("hash") == r.hash && target.type == r.type && target.epochId == r.epochId && target.epochNumber == r.epochNumber && target.objectId == r.objectId && target.descriptorHash == descriptorHash) { "v3 reference identity" } }
         if (o.type == 2 && o.epochNumber > 1) { val source = o.refs.map { refPath(dataset, it) }; require(frontier(source).size == source.size) { "v3 checkpoint redundant frontier" }; require(ScheduleMerge.same(requireNotNull(o.state), merged(source))) { "v3 checkpoint extra edit" } }
         if (o.type == 3) { val parents = o.refs.filter { it.role == 1 }.map { node(refPath(dataset, it)) }; require(parents.all { it.optString("root").isNotEmpty() && it.getString("root") == parents.first().getString("root") }) { "v3 parent common root" }; if (o.refs.any { it.role == 3 }) require(refPath(dataset, o.refs.single { it.role == 4 }) in commonCandidates(o.refs.filter { it.role == 1 || it.role == 3 }.map { refPath(dataset, it) })) { "v3 unproven BASELINE" } }

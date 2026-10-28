@@ -10,14 +10,14 @@ export const hashValue = s => ensure(typeof s === 'string' && /^[0-9a-f]{64}$/.t
 const i = n => { ensure(Number.isInteger(n) && n >= -2147483648 && n <= 2147483647); const b = Buffer.alloc(4); b.writeInt32BE(n); return b; };
 const h = s => { hashValue(s); return Buffer.from(s, 'hex'); };
 export const canonicalLegacy = state => v2decode(v2encode({ datasetId: ZERO, commitId: ZERO, writerId: ZERO, parents: [], state: Object.fromEntries(Object.entries(state).filter(([k])=>k!=='sharedRecords')) })).state;
-export const stateBytes = state => {
+export const stateBytes = (state, registry = new Registry(sharedTypes)) => {
  const legacy=collections(canonicalLegacy(state));
  if(state.sharedRecords===undefined)return legacy;
- new Registry(sharedTypes).validate(wireRecords(canonicalRecords(state.sharedRecords)));
+ registry.validate(wireRecords(canonicalRecords(state.sharedRecords)));
  const ext=encodeRecords(wireRecords(canonicalRecords(state.sharedRecords)));
  const raw=Buffer.concat([Buffer.from('DPXS'),i(1),i(legacy.length),legacy,i(ext.length),ext]);ensure(raw.length<=MAX);return raw;
 };
-export const businessHash = state => sha(Buffer.concat([Buffer.from('DPBS'), i(1), stateBytes({ ...state, sources: state.sources.map(s => ({ ...s, importedAt: 0n })) })]));
+export const businessHash = (state, {registry = new Registry(sharedTypes)} = {}) => sha(Buffer.concat([Buffer.from('DPBS'), i(1), stateBytes({ ...state, sources: state.sources.map(s => ({ ...s, importedAt: 0n })) },registry)]));
 const refBytes = r => Buffer.concat([i(r.role), i(r.type), Buffer.from(r.epochId), i(r.epochNumber), Buffer.from(r.objectId), h(r.hash)]);
 function validate(o) {
   [o.datasetId, o.objectId, o.writerId, o.epochId].forEach(uuid);
@@ -45,15 +45,15 @@ function validate(o) {
     ensure(o.epochNumber < 2147483647 && target[0].type === 2 && target[0].epochNumber === o.epochNumber + 1 && target[0].epochId !== o.epochId);
   }
 }
-export function encode(o) {
+export function encode(o, {registry = new Registry(sharedTypes)} = {}) {
   ensure([3,4].includes(o.format ?? (o.state?.sharedRecords!==undefined?4:3)));
   ensure(o.state===null || ((o.format ?? (o.state?.sharedRecords!==undefined?4:3))===4)===(o.state.sharedRecords!==undefined));
-  validate(o); const state = o.state === null ? Buffer.alloc(0) : stateBytes(o.state);
+  validate(o); const state = o.state === null ? Buffer.alloc(0) : stateBytes(o.state,registry);
   const refs = o.refs.map(refBytes).sort(Buffer.compare);
   const body = Buffer.concat([Buffer.from('DPV3'), i(o.format ?? (o.state?.sharedRecords!==undefined?4:3)), i(o.type), ...[o.datasetId, o.objectId, o.writerId, o.epochId].map(s => Buffer.from(s)), i(o.epochNumber), h(o.descriptorHash), i(refs.length), ...refs, i(state.length), state]);
   ensure(body.length + 32 <= MAX_OBJECT); return Buffer.concat([body, hash(body)]);
 }
-export function decode(bytes) {
+export function decode(bytes, {registry = new Registry(sharedTypes)} = {}) {
   ensure(Buffer.isBuffer(bytes) && bytes.length >= 232 && bytes.length <= MAX_OBJECT);
   const body = bytes.subarray(0, -32); ensure(hash(body).equals(bytes.subarray(-32)), 'v3 checksum');
   let p = 0;
@@ -81,7 +81,7 @@ export function decode(bytes) {
   }
   if(sharedRecords!==undefined)state.sharedRecords=sharedRecords;
   const o = { ...(format===4?{format}:{}), type, datasetId, objectId, writerId, epochId, epochNumber, descriptorHash, refs, state };
-  ensure(encode(o).equals(bytes), '非规范 v3 对象'); return o;
+  ensure(encode(o,{registry}).equals(bytes), '非规范 v3 对象'); return o;
 }
 export function check(bytes, dataset, objectId, expectedHash) {
   hashValue(expectedHash); ensure(sha(bytes) === expectedHash, 'v3 content hash'); const o = decode(bytes);

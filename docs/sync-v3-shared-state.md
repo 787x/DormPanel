@@ -81,3 +81,13 @@ Phone SharedColorMigration.preview 只读取 PR68 已确认设置（包含不确
 - 升级预览/确认现在必须提供当前源 V3Engine；不再接受只有 sourceCapture 的不受保护调用。校验源绑定、已验证 baseline 节点/hash、当前本地与基线业务相等、revision、已观察 settled/frontier 和无未决 Pending/冲突/初始化/换代/历史验证任务，保存 sourceEvidence。确认前及目标回读后重新核对；源出现未发布修改或预览过期时停止。重开目标继续同一候选与 datasetId。
 
 这只证明当前源 Writer 已验证、已观察且无未发布修改的业务状态，不证明 WebDAV 全局历史完备或未知旧 Writer 已停写。宿主须持有正式源 Store 生命周期与权限边界；本 PR 不自动接线日用迁移。旧草稿预览没有 sourceEvidence 时拒绝确认，保留源和目标，需宿主重新审查，不能补造证据。
+
+## Registry 生命周期与历史链路一致性
+
+V3Engine 的注入 Registry 是本次运行的业务语义上下文；引擎创建 V3History 时传递同一实例。History.value、对象接纳及 merged 的所有输入/输出验证和多分支合并都使用该实例；外部传入的历史视图用于换代时先绑定引擎 Registry。历史索引的 hash/祖先证明仍可复用，但取出完整业务状态时必须重新按当前 Registry 校验，不以旧的索引证书代替领域校验。
+
+Kotlin ScheduleV2Plan（v3 复用的冲突方案）与 Node mergePlan 增加带默认值的 Registry/adapters 参数，成对分支检测、远端方案、强制冲突与决策重放都传递该上下文。合并同 key 的冲突摘要时并集保留关联 keys，避免较短摘要丢掉历史层已发现的关联范围。
+
+codec 的 encode/decode/stateBytes 接口可显式传 Registry（Node encode/decode 为 `{registry}` 选项）；缺省仍使用产品装配，旧调用保持兼容。业务哈希同样可带上下文，字节规则不变。重建引擎时必须重注入同样的产品/测试 Registry，并复验持久本地、基线、冲突与待确认状态；回执解码、发布和恢复使用引擎上下文。注册表不写入线格式，不由远端提供，也不把测试类型加到产品默认装配。
+
+此前合法透传的未知记录在升级为已知类型后若校验失败，拒绝业务接纳并保留原材料；不能为继续同步而忽略失败。新增类型仍只需实现适配器与产品装配，不需更改 RAW、历史或传输核心。
