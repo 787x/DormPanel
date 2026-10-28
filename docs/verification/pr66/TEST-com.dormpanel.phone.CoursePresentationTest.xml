@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.phone.CoursePresentationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-28T06:27:40.059Z" hostname="LAPTOP-6ORBUU2C" time="0.059">
+  <properties/>
+  <testcase name="datePhaseAndAcademicDateAreAuthoritative" classname="com.dormpanel.phone.CoursePresentationTest" time="0.054"/>
+  <testcase name="requiresLinkedExactTimesAndEffectiveProfile" classname="com.dormpanel.phone.CoursePresentationTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

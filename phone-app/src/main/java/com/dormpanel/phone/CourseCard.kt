@@ -31,7 +31,7 @@ internal class CourseCard(context: Context, items: List<ClassOccurrence>, zone: 
         setPadding(context.dp(3), context.dp(3), context.dp(3), context.dp(2))
         val dark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val palette = if (dark) intArrayOf(0x294d68,0x48583b,0x654351,0x574b70,0x635334,0x365c58) else intArrayOf(0xdceaf4,0xe4ecd9,0xf1dfe7,0xe9e1f2,0xf0e7d4,0xdaece7)
-        val index = Math.floorMod((item.sourceId.orEmpty()+"|"+item.seriesId).hashCode(), palette.size)
+        val index = TodayCourses.colorIndex(item)
         val shape = GradientDrawable().apply { setColor(palette[index] or (0xff shl 24)); cornerRadius = context.dp(4).toFloat() }
         background = RippleDrawable(ColorStateList.valueOf(0x40777777), shape, null)
         val ink = if (dark) Color.WHITE else Color.rgb(30,40,48)

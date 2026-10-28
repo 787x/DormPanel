@@ -1,0 +1,5 @@
+<resources>
+    <color name="widget_surface">#202329</color><color name="widget_ink">#F4F5F7</color><color name="widget_secondary">#C6CBD3</color>
+    <string name="widget_compact_name">今日课程 · 紧凑</string><string name="widget_wide_name">今日课程 · 宽版</string>
+    <string name="widget_description">显示本机保存的今日课程，点击打开今天的课表</string>
+</resources>

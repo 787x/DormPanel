@@ -1,0 +1,8 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_course_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
+    <LinearLayout android:id="@+id/widget_course_color" android:layout_width="3dp" android:layout_height="match_parent" android:orientation="vertical"/>
+    <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:orientation="vertical">
+        <TextView android:includeFontPadding="false" android:id="@+id/widget_course_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/widget_ink" android:textSize="14sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
+        <TextView android:includeFontPadding="false" android:id="@+id/widget_course_info" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/widget_secondary" android:textSize="11sp" android:maxLines="1" android:ellipsize="end"/>
+        <TextView android:includeFontPadding="false" android:id="@+id/widget_course_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/widget_secondary" android:textSize="10sp" android:maxLines="1" android:ellipsize="end"/>
+    </LinearLayout>
+</LinearLayout>

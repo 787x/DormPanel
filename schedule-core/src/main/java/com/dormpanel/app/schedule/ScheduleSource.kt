@@ -47,6 +47,8 @@ interface ScheduleStore {
     fun applySnapshot(bytes: ByteArray, callback: (Result<Unit>) -> Unit) { callback(Result.failure(UnsupportedOperationException())) }
 
     fun load(callback: (Result<ScheduleState>) -> Unit)
+    /** Background presentation read; implementations may include their persisted profile catalog. */
+    fun loadPresentation(callback: (Result<ScheduleState>) -> Unit) = load(callback)
     fun put(event: CalendarEvent, callback: (Result<Unit>) -> Unit)
     fun put(entry: TimetableEntry, callback: (Result<Unit>) -> Unit)
     fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit)

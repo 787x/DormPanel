@@ -114,7 +114,7 @@ object ScheduleStores {
     @Synchronized fun create(context: Context, profiles: TermScheduleProfileStore = TermScheduleProfileStore(context)): ScheduleStore {
         overrideFactory?.let { return it(context).also { store -> (store as? RoomScheduleStore)?.attachProfileStore(profiles) } }
         val store = production ?: RoomScheduleStore(
-            database(context), profiles = profiles, onCommitted = { ScheduleSyncJobs.schedule(context.applicationContext) }, keepOpen = true,
+            database(context), profiles = profiles, onCommitted = { ScheduleSyncJobs.schedule(context.applicationContext); ScheduleCommitSignals.notifyChanged() }, keepOpen = true,
             reopenDatabase={database(context)}).also { production = it }
         store.attachProfileStore(profiles); return store
     }
@@ -156,7 +156,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
                     readRows().copy(profiles = before.profiles, customProfileKeys = before.customProfileKeys)
                 }
             } catch (error: Exception) {
-                if (v3().journal.meta.requiresReopen()) throw ScheduleCommitUnconfirmed(error)
+                if (v3().journal.meta.requiresReopen()) { ScheduleCommitSignals.notifyChanged(); throw ScheduleCommitUnconfirmed(error) }
                 throw error
             }
             onCommitted?.invoke(); return@submit requireNotNull(result).getOrThrow()
@@ -192,6 +192,14 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         }
     }
     override fun load(callback: (Result<ScheduleState>) -> Unit) = submit(callback) { readState() }
+    override fun loadPresentation(callback: (Result<ScheduleState>) -> Unit) = submit(callback) {
+        val state = readState()
+        if (ActiveScheduleV3.active(database)) check(!v3().journal.meta.requiresReopen()) { "本机保存结果尚待恢复确认" }
+        check(state.entries.all { it.valid() } && state.dayAdjustments.all { it.valid() } && state.classOverrides.all { it.valid() }) {
+            "本地课表记录异常，请打开应用检查"
+        }
+        if (state.sync != null) state else state.copy(profiles = requireNotNull(profiles).preferenceCatalog().first)
+    }
     override fun exportSnapshot(datasetId: String, parent: String?, generation: Long, callback: (Result<ByteArray>) -> Unit) = submit(callback) {
         database.runInTransaction<ByteArray> {
             val state = readState()
@@ -231,6 +239,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
             dao.checkpoint(ScheduleSyncCheckpoint(2, catalogBytes(snapshot, snapshot.state)))
         }
         check(!conflicted) { "存在冲突；本地修改与远端快照已保存" }
+        ScheduleCommitSignals.notifyChanged()
     }
     // IDs in the existing v4 checkpoint table: 1 confirmed baseline, 2 local catalog,
     // 3 unresolved remote, 4 uncertain publication, 5 exact local capture for that publication,
@@ -247,11 +256,17 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
             state.copy(profiles = catalog.first, customProfileKeys = catalog.second)
         }
     }
+    private var replacedBusinessState = false // confined to the Store executor
     private fun <T> blocking(operation: () -> T): T {
         check(!closed) { "Schedule store closed" }
         try { return executor.submit<T> {
             if (ActiveScheduleV3.active(database) && activeV3 == null) v3()
-            database.runInTransaction<T> { operation() }
+            replacedBusinessState = false
+            try {
+                database.runInTransaction<T> { operation() }.also {
+                    if (replacedBusinessState) ScheduleCommitSignals.notifyChanged()
+                }
+            } finally { replacedBusinessState = false }
         }.get() }
         catch (error: java.util.concurrent.ExecutionException) { throw (error.cause ?: error) }
     }
@@ -472,11 +487,11 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     internal fun synchronizeV3(remote: V3ObjectStore, publication: V3PublicationStore, budget: V3Budget, source: CommitStore? = null): String {
         val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
         val proof = if(runtime.binding().has("migrationId")) ScheduleV3MigrationPreview.restore(runtime.migrationEvidence()) else null
-        return runtime.synchronize(remote, publication, budget, if (source == null || proof == null) null else ({
+        return try { runtime.synchronize(remote, publication, budget, if (source == null || proof == null) null else ({
             ScheduleV3Migration.unchanged(proof, ScheduleV3Migration.inspect(proof.frame, proof.hashes, source, proof.sourceFolder, proof.transactionId))
-        }))
+        })) } finally { ScheduleCommitSignals.notifyChanged() }
     }
-    fun resolveV3(token: String, choice: ScheduleMerge.Choice) = workerCall { check(ActiveScheduleV3.active(database)); v3().engine.resolve(token, choice) }
+    fun resolveV3(token: String, choice: ScheduleMerge.Choice) = workerCall { check(ActiveScheduleV3.active(database)); v3().engine.resolve(token, choice).also { ScheduleCommitSignals.notifyChanged() } }
     override fun syncFrame(): ScheduleSyncFrame = blocking {
         ScheduleSyncFrame(decoded(1), fullState(), decoded(4), decoded(3), decoded(5)?.state)
     }
@@ -540,6 +555,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         database.dao().checkpoint(ScheduleSyncCheckpoint(5, ScheduleSnapshotCodec.encode(candidate.copy(state = captured.copy(sync = null)))))
     }
     private fun replaceState(state: ScheduleState, baseline: ScheduleSnapshot) {
+        replacedBusinessState = true
         val dao = database.dao()
         // Encode/validate before touching rows, including all cross-record references and limits.
         ScheduleSnapshotCodec.validate(baseline.copy(state = state.copy(sync = null)))

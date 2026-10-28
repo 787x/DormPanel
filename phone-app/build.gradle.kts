@@ -33,7 +33,7 @@ android {
     buildTypes {
         create("x08eTest") {
             initWith(getByName("debug"))
-            applicationIdSuffix = ".testbed"
+            applicationIdSuffix = providers.gradleProperty("dormpanel.testSuffix").getOrElse(".testbed")
             matchingFallbacks += listOf("debug")
         }
         release {
