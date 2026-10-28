@@ -26,7 +26,9 @@ upgrade, with live HA CSV/WebDAV, phone entry, Xiaomi coexistence/boot, and a
 observation limits, and [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes
 since 0.1.0. PR29 recorded acceptance evidence only; it did not publish a release.
 
-Sync v3 已发布：[Android v0.1.9（Stable / Latest）](https://github.com/787x/DormPanel/releases/tag/v0.1.9) 包含 **X08E 0.1.9 / code 12、Phone 0.1.8 / code 10、HA Integration 0.1.2**；[fnOS Schedule Manager 0.8.1](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.1) 延续 Pre-release 标记。
+最新 Android：[v0.1.10](https://github.com/787x/DormPanel/releases/tag/v0.1.10)，包含 **X08E 0.1.10 / code 13、Phone 0.1.9 / code 11**。新增可选课表布局、配色和横划导航，Phone 增加课程管理与两个今日课程桌面小部件。详见[本轮发布说明](docs/RELEASE-0.1.10.md)。本轮仅发布 Android APK；HA 0.1.2、FPK 0.8.1 保持独立版本。应用原位升级不会自动执行 v2→v3 迁移，同步协议格式未变化。
+
+Sync v3 已发布：[Android v0.1.9（历史 Stable）](https://github.com/787x/DormPanel/releases/tag/v0.1.9) 包含 **X08E 0.1.9 / code 12、Phone 0.1.8 / code 10、HA Integration 0.1.2**；[fnOS Schedule Manager 0.8.1](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.1) 延续 Pre-release 标记。
 复用 PR58 最终已验收产物；[RC ACCEPTED 历史验收](docs/pr58-sync-v3-rc.md)与[正式发布说明](docs/RELEASE-sync-v3.md)分别记录。v2→v3 必须显式迁移，不会自动迁移已有日用库；保留旧 v2 RAW、工作区和各端安装 Writer，普通 WebDAV 不自动清理远端历史。
 支持现有本地数据原位升级及 Sync v2/v3 共享；v3 采用课程三方合并、Epoch、离线恢复和安全端点切换，仍受每轮/分代预算约束；v2 累计 256 提交限制未解除。已有 v1 共享绑定不提供兼容性保证。
 [RC2/PR36 验收记录](docs/PR36-rc2-physical-acceptance.md)、RC1/PR34 历史结论和 0.1.1 产物保留。
@@ -37,7 +39,7 @@ Sync v3 的 fnOS 可选安装包见 [0.8.1 FPK](https://github.com/787x/DormPane
 
 ### APK installation
 
-1. 下载 [X08E 0.1.9 APK](https://github.com/787x/DormPanel/releases/download/v0.1.9/DormPanel-X08E-0.1.9.apk) 或 [Phone 0.1.8 APK](https://github.com/787x/DormPanel/releases/download/v0.1.9/DormPanel-Phone-0.1.8.apk)，按同页 [SHA-256 清单](https://github.com/787x/DormPanel/releases/download/v0.1.9/SHA256SUMS.txt)核对后传到设备。
+1. 下载 [X08E 0.1.10 APK](https://github.com/787x/DormPanel/releases/download/v0.1.10/DormPanel-X08E-0.1.10.apk) 或 [Phone 0.1.9 APK](https://github.com/787x/DormPanel/releases/download/v0.1.10/DormPanel-Phone-0.1.9.apk)，按同页 [SHA-256 清单](https://github.com/787x/DormPanel/releases/download/v0.1.10/SHA256SUMS.txt)核对后传到设备。
 2. Open the APK on the device and confirm installation.
 3. If Android asks, grant **Install unknown apps** for the app you are installing from.
 
@@ -46,8 +48,8 @@ Sync v3 的 fnOS 可选安装包见 [0.8.1 FPK](https://github.com/787x/DormPane
 Always update in place:
 
 ```bash
-adb install -r DormPanel-X08E-0.1.9.apk
-# 手机请使用 DormPanel-Phone-0.1.8.apk
+adb install -r DormPanel-X08E-0.1.10.apk
+# 手机请使用 DormPanel-Phone-0.1.9.apk
 ```
 
 or install the new APK over the existing one from the system installer.

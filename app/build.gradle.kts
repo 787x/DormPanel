@@ -13,8 +13,8 @@ android {
         applicationId = "com.dormpanel.app"
         minSdk = 28
         targetSdk = 37
-        versionCode = 12
-        versionName = "0.1.9"
+        versionCode = 13
+        versionName = "0.1.10"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
