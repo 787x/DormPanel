@@ -44,15 +44,21 @@ internal object CourseColors {
         assigned.forEach { (key,value) -> desired["a"+digest(key)] = value; desired["t"+digest(key)] = day }
         manual.forEach { (key,value) -> desired["m"+digest(key)] = value }
         if (stored == desired) return Snapshot(identity,assigned,manual)
-        val edit = pref.edit().clear()
-        desired.forEach { (key,value) -> when(value) { is Int -> edit.putInt(key,value); is Long -> edit.putLong(key,value) } }
-        check(edit.commit()) { "课程颜色配置保存失败" }
+        // Automatic assignments are a display cache. A disk failure must not hide readable
+        // courses; this snapshot still uses the retained slots and deterministic allocation.
+        runCatching {
+            val edit = pref.edit().clear()
+            desired.forEach { (key,value) -> when(value) { is Int -> edit.putInt(key,value); is Long -> edit.putLong(key,value) } }
+            check(edit.commit()) { "课程颜色配置保存失败" }
+        }.onFailure { android.util.Log.w("CourseColors", "自动颜色缓存未持久化，继续使用当前显示分配", it) }
         return Snapshot(identity,assigned,manual)
     }
     @Synchronized fun save(context: Context, key: String, rgb: Int?) {
-        val edit = prefs(context).edit()
-        if (rgb == null) edit.remove("m"+digest(key)) else edit.putInt("m"+digest(key),rgb and 0xffffff)
-        check(edit.commit()) { "颜色保存失败，草稿保留" }
+        runCatching {
+            val edit = prefs(context).edit()
+            if (rgb == null) edit.remove("m"+digest(key)) else edit.putInt("m"+digest(key),rgb and 0xffffff)
+            check(edit.commit()) { "颜色保存失败，草稿保留" }
+        }.getOrElse { throw IllegalStateException("颜色保存失败，草稿保留",it) }
         TodayWidgetUpdates.request(context)
     }
 }

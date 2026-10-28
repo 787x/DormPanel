@@ -15,11 +15,24 @@ internal object CourseColorPicker {
         val column = context.scheduleColumn()
         val preview = context.scheduleLabel("当前课程预览",18f)
         val hex = EditText(context).apply { hint = "自定义颜色 #RRGGBB"; setSingleLine() }
+        val automaticMode = RadioButton(context).apply { id = View.generateViewId(); text = "自动配色"; minHeight = context.dp(48) }
+        val fixedMode = RadioButton(context).apply { id = View.generateViewId(); text = "手动固定颜色"; minHeight = context.dp(48) }
+        val modes = RadioGroup(context).apply { addView(automaticMode); addView(fixedMode) }
+        column.addView(modes)
+        var confirm: Button? = null
+        var changingMode = false
+        fun syncMode() {
+            changingMode = true
+            modes.check(if (draft == null) automaticMode.id else fixedMode.id)
+            changingMode = false
+            confirm?.text = if (draft == null) "保持自动配色" else "使用此颜色"
+        }
         var updating = false
         var squareView: View? = null
         var hueBar: SeekBar? = null
         fun update(rgb: Int?) {
             draft = rgb
+            syncMode()
             val value = rgb ?: automatic
             Color.colorToHSV(value or (0xff shl 24),hsv)
             squareView?.invalidate(); hueBar?.progress = hsv[0].toInt()
@@ -28,6 +41,9 @@ internal object CourseColorPicker {
             preview.setBackgroundColor(CourseColors.background(value,dark)); preview.setTextColor(CourseColors.ink(dark))
             preview.text = if (rgb == null) "自动颜色 · $title" else "手动颜色 · $title"
             updating = true; hex.setText("#%06X".format(value and 0xffffff)); updating = false
+        }
+        modes.setOnCheckedChangeListener { _, id ->
+            if (!changingMode) update(if (id == automaticMode.id) null else draft ?: automatic)
         }
         column.addView(preview)
         CourseColors.palette.toList().chunked(4).forEach { colors ->
@@ -77,7 +93,7 @@ internal object CourseColorPicker {
                 if (!updating) {
                     val text = s.toString().removePrefix("#")
                     if (text.matches(Regex("[0-9a-fA-F]{6}"))) {
-                        draft = text.toInt(16); Color.colorToHSV(draft!! or (0xff shl 24),hsv); hueBar?.progress = hsv[0].toInt()
+                        draft = text.toInt(16); syncMode(); Color.colorToHSV(draft!! or (0xff shl 24),hsv); hueBar?.progress = hsv[0].toInt()
                         val dark = context.resources.configuration.uiMode and 48 == 32
                         preview.setBackgroundColor(CourseColors.background(draft!!,dark)); preview.text = "手动颜色 · $title"; square.invalidate(); hex.error = null
                     } else hex.error = "请输入六位十六进制颜色"
@@ -90,9 +106,13 @@ internal object CourseColorPicker {
             .setView(ScrollView(context).apply { addView(column) })
             .setNeutralButton("使用自动颜色") { _, _ -> accept(null) }
             .setNegativeButton("取消",null).setPositiveButton("使用此颜色",null).create()
-        dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            if (hex.error == null) { accept(draft); dialog.dismiss() }
-        } }
+        dialog.setOnShowListener {
+            confirm = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            syncMode()
+            confirm!!.setOnClickListener {
+                if (hex.error == null) { accept(draft); dialog.dismiss() }
+            }
+        }
         return dialog
     }
 }

@@ -34,7 +34,7 @@ class CourseColorAcceptanceTest {
     private fun chooseCustom() {
         onView(withText(startsWith("课程颜色 ·"))).perform(scrollTo(),click())
         onView(withHint("自定义颜色 #RRGGBB")).perform(scrollTo(),replaceText("bad"),closeSoftKeyboard())
-        onView(withText("使用此颜色")).perform(click())
+        onView(withId(android.R.id.button1)).perform(click())
         onView(withHint("自定义颜色 #RRGGBB")).check(matches(isDisplayed()))
         // A preset must clear a prior validation error, then custom input must override it.
         onView(withContentDescription("预设颜色 #4789FF")).perform(scrollTo(),click())

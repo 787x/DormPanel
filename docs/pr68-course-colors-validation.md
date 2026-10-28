@@ -40,3 +40,27 @@ MIUI 测试中曾出现窗口焦点和底层日视图同名按钮误匹配；验
 ## 验证范围
 
 本次未重复 PR65 全部批量网络故障矩阵、PR66 全部超时恢复矩阵、Sync v3 RC 或长时 soak；相关协议和协调器未修改，Phone JVM 中原有协调器测试仍通过。X08E 本次只做构建和相关纯逻辑回归，未部署实机。没有合并、tag 或 Release。
+
+## 合并前定向修复（2026-10-28）
+
+本次仅调整颜色缓存容错、空变更和选色模式，不改课程身份、避撞分配、旧色位保留、Widget 协调器或业务事务边界。
+
+- 自动色缓存的编辑、写入返回失败或抛异常均不再阻断 `snapshot()` 返回。继续使用已有有效色位和本轮确定性分配，记录诊断日志；未落盘缓存不被描述为持久化成功。
+- 手动保存仍要求写入成功，失败统一报告“颜色保存失败，草稿保留”；编辑页显示持续错误提示，保留草稿，成功后才请求 Widget 更新。
+- 业务与颜色都无变化时直接给出“没有修改”并关闭编辑器，不进入 `CourseBatch.validate()` 或课程事务；保持自动配色后保存也不制造手动覆盖。
+- 选色器增加“自动配色 / 手动固定颜色”显式模式。自动模式确认为“保持自动配色”；固定模式保存确切 RGB，即使它恰好等于当前自动色；预设、色相/亮度或十六进制输入会显式切到手动模式。取消不回写草稿。
+
+实际验证（MIX 2S，仍为 `.pr68testbed` 隔离包）：
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `CourseColorReliabilityTest.automaticWriteFailureStillRendersCardsManagementAndWidget` | PASS：真实偏好读取配合故障 Editor，分别模拟 commit 返回 false 和抛异常；核对分配确定性，实际测量/布局周视图、构建日课程卡片、显示管理卡片及 apply Widget RemoteViews，均不因自动缓存写入失败中断。 |
+| `CourseColorReliabilityTest.manualWriteFailureKeepsDraftAndEmptySaveSkipsTransactions` | PASS：无修改直接保存，以及保持自动后保存，均关闭编辑器且业务事务和偏好写入次数不增加；手动固定颜色保存返回 false/抛异常时显示错误，保持手动草稿，课程事务为 0；同一草稿在恢复写入后可保存颜色。 |
+| `CourseColorReliabilityTest.pickerDistinguishesAutomaticFixedSameColorAndCancel` | PASS：保持自动返回 null；显式固定与自动色相同的 RGB 仍返回该色值；从手动恢复自动返回 null；选预设后取消不回调。 |
+| 原有混合业务失败恢复流程 | PASS：`CourseColorAcceptanceTest.businessFailureRetainsColorDraftThenRetriesAtomically` 与以上三项同轮运行，失败仍保留草稿，恢复后按原业务先提交规则保存。 |
+| Phone JVM / 构建 | PASS：31 个 JVM 测试；`assembleX08eTest`、`assembleX08eTestAndroidTest` 通过。 |
+| 差异检查 | `git diff --check` 通过。 |
+
+最终日志：`artifacts/pr68/pref-final-ui.log`（`OK (4 tests)`，24.974 秒）、`artifacts/pr68/pref-final-build.log`。新增 UI 测试使用独立 Room 和独立偏好命名空间；没有写入日用数据。首轮 RemoteViews 测试误用了 Activity 的 AppCompat inflater，选色断言也曾遇到 MIUI 根窗口焦点选择问题；测试已改用 application context 作为 RemoteViews 宿主，并明确匹配 Dialog，修正后的上述四项一轮通过。
+
+本次不重复 PR65/66 完整矩阵、Sync v3 RC、长时 soak 或 X08E 实机部署；没有合并或发布。
