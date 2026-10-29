@@ -339,6 +339,7 @@ async function reconcileWrite(op) {
       if(!m.workspaces.some(w=>w.id===m.activeId))throw Error('活动课程表身份未获验证');
       op.observedWorkspaceId=m.activeId;op.evidence='已读取服务端活动课程表：'+m.workspaces.find(w=>w.id===m.activeId).name;op.evidenceReady=true;return;
     }
+    if(op.path==='/api/courses/save'&&op.courseKey){const result=await authority('/api/courses?'+new URLSearchParams({workspaceId:op.workspaceId,key:op.courseKey,limit:100}));op.evidence='已只读核对完整业务哈希 '+result.businessHash+' · 版本 '+result.version+(result.businessHash===op.expectedHash?' · 与本次候选一致':' · 与候选不同，需核对最终记录');op.evidenceReady=true;return;}
     // Restores and migrations may change the active catalog identity. Discover it read-only.
     const globalChange=op.path==='/api/backups/restore' || op.path==='/api/migration';
     const query=new URLSearchParams({date:$('date').value,zone:$('zone').value,origin:location.origin,...(!globalChange?{workspaceId:op.workspaceId}:{})});
@@ -370,7 +371,7 @@ async function post(path, data = {}) {
   if(!readOnly && (activeWrite || unresolvedWrite))throw Error('已有写操作正在执行或等待结果核对，请查看页面上方操作状态，不能重复提交');
   // Revoking a view's restore capability must not cancel an already dispatched restore.
   if(path==='/api/backups/cancel' && [activeWrite,unresolvedWrite,lastWrite].some(op=>op?.path==='/api/backups/restore' && op.restoreToken===data.token))return {};
-  const op=readOnly?null:{path,workspaceId:scope,workspaceName:management?.workspaces.find(w=>w.id===scope)?.name??scope,label:writeLabel(path,data),action:data.action,targetId:data.targetId,restoreToken:path==='/api/backups/restore'?data.token:null,phase:'running',message:'请求已发出，正在执行；切换页面不会取消。请等待结果，期间不提交其他写操作。'};
+  const op=readOnly?null:{path,courseKey:data.courseKey,expectedHash:data.previewHash,workspaceId:scope,workspaceName:management?.workspaces.find(w=>w.id===scope)?.name??scope,label:writeLabel(path,data),action:data.action,targetId:data.targetId,restoreToken:path==='/api/backups/restore'?data.token:null,phase:'running',message:'请求已发出，正在执行；切换页面不会取消。请等待结果，期间不提交其他写操作。'};
   if(op){activeWrite=op;lastWrite=op;renderWriteStatus();}
   let response,value,failure;
   try {
@@ -378,7 +379,7 @@ async function post(path, data = {}) {
     value=await response.json();
     if(!response.ok)failure=Error(value.error??'服务器返回失败');
   } catch(error) {failure=error;}
-  const draftWrite=!!op && ['/api/edit','/api/import/confirm'].includes(path) && formTicket!==null && localEditorContext;
+  const draftWrite=!!op && (path==='/api/courses/save'||['/api/edit','/api/import/confirm'].includes(path) && formTicket!==null && localEditorContext);
   const detached=scope!==workspaceId || pageTicket!==viewEpoch || modelTicket!==loadEpoch || formTicket!==null && formTicket!==editorEpoch;
   if(op) {
     const rejected=failure && value?.writeApplied===false;

@@ -201,9 +201,9 @@ export class Workspace {
     ensure(this.frame.v3?.binding?.format===4,'Explicit shared dataset upgrade required');
     const state=this.courseEditCandidate(this.frame.local,edit);return {state,businessHash:businessHash(state),expectedRevision:expected};
   }
-  saveCourseEdit(edit,expected) {
+  saveCourseEdit(edit,expected,validateContext=()=>{}) {
     ensure(Number.isSafeInteger(expected),'必须提供 revision');
-    return this.tx(f=>{ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');f.local=this.courseEditCandidate(f.local,edit);return {state:structuredClone(f.local),businessHash:businessHash(f.local)};},expected);
+    return this.tx(f=>{validateContext();ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');f.local=this.courseEditCandidate(f.local,edit);return {state:structuredClone(f.local),businessHash:businessHash(f.local)};},expected);
   }
   courseScheduleCandidate(state,slots,color,target) {
     ensure(target && (target.sourceId===null||typeof target.sourceId==='string') && typeof target.ownerSeries==='string' && Array.isArray(target.deleteIds),'必须明确课程范围和删除 ID');

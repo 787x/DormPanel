@@ -151,6 +151,31 @@ class SharedCourseManagementTest {
             } finally {store.close()}
         }
     }
+    @Test fun pr71ReceivedNetworkStateDisplaysCourse() {
+        require(c.packageName.endsWith(".testbed"))
+        val state=SyncV3Codec.decode(java.io.File(c.getExternalFilesDir(null),"pr71-network-state.dpv").readBytes()).state!!
+        val config=org.json.JSONObject(java.io.File(c.getExternalFilesDir(null),"pr71-probe.private.json").readText())
+        assertEquals(config.getString("expectedHash"),SyncV3Codec.businessHash(state))
+        ScheduleStores.overrideFactory={object:ScheduleStore {
+            override fun load(callback:(Result<ScheduleState>)->Unit)=callback(Result.success(state))
+            override fun put(event:CalendarEvent,callback:(Result<Unit>)->Unit)=error("read-only network rendering")
+            override fun put(entry:TimetableEntry,callback:(Result<Unit>)->Unit)=error("read-only network rendering")
+            override fun deleteEvent(id:String,callback:(Result<Unit>)->Unit)=error("read-only network rendering")
+            override fun deleteEntry(id:String,callback:(Result<Unit>)->Unit)=error("read-only network rendering")
+            override fun close() {}
+        }}
+        try {launchPhoneTestActivity().use { scenario ->
+            Thread.sleep(1000)
+            scenario.onActivity { activity ->
+                assertEquals(SyncV3Codec.businessHash(state),SyncV3Codec.businessHash(activity.source.state))
+                val row=ScheduleProjection.week(activity.source.state,java.time.LocalDate.of(2026,9,7),activity.source.clock.zone()).first{it.entry.id=="slot-a"}
+                assertEquals(0x336699,row.sharedRgb);assertEquals("fnOS 新教室",row.entry.location)
+                val editor=TimetableActivity::class.java.getDeclaredField("editors").apply{isAccessible=true}.get(activity) as PhoneEditors
+                editor.courseManagement(row)
+            }
+            shot("pr71-network-phone")
+        }}finally{ScheduleStores.overrideFactory=null}
+    }
     @Test fun atomicColorScheduleAndManagementPreview() {
         require(c.packageName.endsWith(".testbed"))
         com.dormpanel.app.schedule.testing.V3UiFixture(c).use { fixture ->

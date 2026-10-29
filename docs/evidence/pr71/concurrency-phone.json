@@ -1,0 +1,47 @@
+[
+  {
+    "name": "different-courses",
+    "phoneRoom": true,
+    "realWebDav": true,
+    "conflict": false,
+    "recovered": true,
+    "hash": "910f6e1bf52e034631bf0f29634c7e61fa093841dde0ac6af08ba549b639e59f",
+    "datasetId": "91699099-7271-45d4-b3cf-34db1edf57c2"
+  },
+  {
+    "name": "teacher-color",
+    "phoneRoom": true,
+    "realWebDav": true,
+    "conflict": false,
+    "recovered": true,
+    "hash": "44ab8b1dcfdd1b8a772765660ca1b6c6e456ca5d6303de670d02d76c178f9215",
+    "datasetId": "296ed259-3311-40c0-bd60-5a50ff122ec8"
+  },
+  {
+    "name": "color-conflict",
+    "phoneRoom": true,
+    "realWebDav": true,
+    "conflict": true,
+    "recovered": true,
+    "hash": "554f3ef38af3d290b54f6ec2d04605e7c72fbae543d866f882ea6eb20b4ae6de",
+    "datasetId": "54096c3e-a450-4094-816c-f7f299a7eb81"
+  },
+  {
+    "name": "slot-delete-edit",
+    "phoneRoom": true,
+    "realWebDav": true,
+    "conflict": true,
+    "recovered": true,
+    "hash": "13e269c739abf9f8378519122f978bc19c7c3b1f0e4002730ea77d0908432b19",
+    "datasetId": "666175b4-f7dd-4758-8dfe-e068bd328e73"
+  },
+  {
+    "name": "source-reference",
+    "phoneRoom": true,
+    "realWebDav": true,
+    "conflict": true,
+    "recovered": true,
+    "hash": "a47c7ac8debd7765d4febece9d8a8ba3b218db45da63dc4569bf9699786d2298",
+    "datasetId": "81026071-61f5-4bef-96f6-8d2cd554c518"
+  }
+]

@@ -1,0 +1,27 @@
+{
+  "datasetId": "2ff519f2-601e-4fbe-8795-b9544f03a019",
+  "binding": {
+    "datasetId": "2ff519f2-601e-4fbe-8795-b9544f03a019",
+    "descriptorPath": "dataset-2ff519f2-601e-4fbe-8795-b9544f03a019/descriptor-5c39d8d8-fd1d-4e07-ad4b-78692826636e.dpv",
+    "descriptorHash": "153a4df1ff8bdecb00f8b0fc0dc0a7754e2b47c8bf78cf62a4204bde819ef115",
+    "format": 4
+  },
+  "phoneSeedHash": "ab9ae7eabdcc3293aca23f14017a381e5721f13d43d1df294d936563f00df17c",
+  "fnosFirstHash": "c02d8ae12dae66d1285a5f898b5f3d456def0b2e011a89f01ad0d5addc9d5734",
+  "phoneExceptionHash": "1b45b3b9d1be364b6a82e5143bd46568b725983398081766de15ee667feaa812",
+  "finalHash": "6dd67433f92a36d2d0ac17636ab4dbb306c9b0a5c085877ae9cc1c910b11d5bb",
+  "phoneReceivedHash": "6dd67433f92a36d2d0ac17636ab4dbb306c9b0a5c085877ae9cc1c910b11d5bb",
+  "x08eReceivedHash": "6dd67433f92a36d2d0ac17636ab4dbb306c9b0a5c085877ae9cc1c910b11d5bb",
+  "exceptionCount": 1,
+  "slotCount": 2,
+  "remoteReadback": {
+    "path": "dataset-2ff519f2-601e-4fbe-8795-b9544f03a019/epochs/f3/c5/53/0d/bc/6e/4a/1f/a3/76/35/26/ef/3b/af/ff/commit-269949a5-e6ce-4cda-8029-7ec502af1c5f.dpv",
+    "hash": "2ffe19b703c2259e158bc2cf17d0e5dd09f50ddd7133c2ade1da3c336ca3d11e",
+    "confirmation": {
+      "round": "866379d1-4fc3-45de-a89b-fb2ace3fd8ae",
+      "endpoint": "https://192.168.3.153:5006/test/pr71-isolated-88576e36-f8db-4ac6-aad1-c20504faa936/dormpanel-sync-v3-shared/"
+    }
+  },
+  "transport": "Android ADB reverse + byte-only TLS relay to real NAS HTTPS; fnOS native Node22 direct HTTPS",
+  "otherDevicesReceived": "unknown"
+}

@@ -25,7 +25,7 @@ class X08eScheduleDisplayTest {
     @get:Rule val isolation = IsolatedDashboardRule()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
-    private val week = LocalDate.of(2026, 10, 26)
+    private var week = LocalDate.of(2026, 10, 26)
     private val zone = ZoneId.of("Asia/Shanghai")
     private var now = week.atTime(9, 10).atZone(zone).toInstant()
     private val clock = object : ScheduleClock {
@@ -44,8 +44,10 @@ class X08eScheduleDisplayTest {
             PeriodTime(i + 1, LocalTime.of(h,m), LocalTime.of(h,m).plusMinutes(45))
         })))
     private fun instant(day: Int, hour: Int, minute: Int) = week.plusDays(day.toLong()).atTime(hour,minute).atZone(zone).toInstant().toEpochMilli()
+    private var networkState: ScheduleState? = null
     private var sharedDemo = false
     private fun fixture(): ScheduleState {
+        networkState?.let { return it }
         val titles = listOf("高等数学与应用", "大学英语", "线性代数", "计算机程序设计", "大学物理实验", "思想道德与法治", "自主学习")
         val imported = (0..6).flatMap { day -> (0..2).map { slot ->
             val a = listOf(8 to 0, 10 to 0, 14 to 0)[slot]; val b = listOf(9 to 40, 11 to 40, 15 to 40)[slot]
@@ -105,6 +107,26 @@ class X08eScheduleDisplayTest {
         assertEquals(1280, bitmap.width); assertEquals(800, bitmap.height)
         java.io.File(context.getExternalFilesDir(null), "pr63-$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) }
         bitmap.recycle()
+    }
+    @Test fun pr71NetworkThreeLayoutsAndMonochrome() {
+        require(context.packageName.endsWith(".testbed"))
+        val file=java.io.File(context.getExternalFilesDir(null),"pr71-network-state.dpv")
+        require(file.isFile)
+        networkState=SyncV3Codec.decode(file.readBytes()).state!!
+        val config=org.json.JSONObject(java.io.File(context.getExternalFilesDir(null),"pr71-probe.private.json").readText())
+        assertEquals(config.getString("expectedHash"),SyncV3Codec.businessHash(networkState!!))
+        week=LocalDate.of(2026,9,7);now=week.atTime(9,10).atZone(zone).toInstant()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for(layout in X08eScheduleLayout.entries) for(color in listOf(true,false)) {
+                scenario.onActivity { activity ->
+                    install(activity,X08eScheduleStyle(layout,color,true))
+                    val added=ScheduleProjection.week(source.state,week,zone).single{it.entry.id=="slot-a"}
+                    assertEquals(0x336699,added.sharedRgb);assertEquals("fnOS 新教室",added.entry.location)
+                    assertEquals(2,ScheduleProjection.week(source.state,week,zone).size)
+                }
+                screenshot("pr71-network-${layout.name.lowercase()}-$color")
+            }
+        }
     }
     @Test fun sharedSchedulesAndColorsThreeLayouts() {
         sharedDemo=true
