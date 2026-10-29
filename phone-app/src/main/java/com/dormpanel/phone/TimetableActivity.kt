@@ -133,23 +133,35 @@ class TimetableActivity : AppCompatActivity() {
         layout.addView(TextView(this).apply { text="开始日期（含）" }); layout.addView(from)
         layout.addView(TextView(this).apply { text="结束日期（含）" }); layout.addView(until)
         layout.addView(TextView(this).apply { text="IANA 时区" }); layout.addView(zone); layout.addView(events)
-        listOf("本周" to 6L,"未来四周" to 27L).forEach { (label,days) -> layout.addView(Button(this).apply { text=label; setOnClickListener { val today=source.clock.today();val first=if(days==6L) today.minusDays((today.dayOfWeek.value-1).toLong()) else today;from.setText(first.toString());until.setText(first.plusDays(days).toString()) } }) }
+        val exportOptions = mutableListOf<android.view.View>(from,until,zone,events)
+        listOf("本周" to 6L,"未来四周" to 27L).forEach { (label,days) -> layout.addView(Button(this).apply { exportOptions.add(this); text=label; setOnClickListener { val today=source.clock.today();val first=if(days==6L) today.minusDays((today.dayOfWeek.value-1).toLong()) else today;from.setText(first.toString());until.setText(first.plusDays(days).toString()) } }) }
         val dialog=AlertDialog.Builder(this).setTitle("导出 ICS（最多 366 天）").setView(ScrollView(this).apply { addView(layout) }).setNegativeButton("取消",null).setPositiveButton("预览",null).create()
         var previewEpoch = 0
+        var previewRunning = false
+        fun processing(running: Boolean) {
+            previewRunning = running
+            exportOptions.forEach { it.isEnabled = !running }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).apply {
+                isEnabled = !running
+                text = if (running) "正在生成预览…" else "预览"
+            }
+        }
         dialog.setOnDismissListener { ++previewEpoch }
         fun validPreview(ticket: Int) = ticket == previewEpoch && dialog.isShowing && !isDestroyed && !isFinishing
         dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            if (previewRunning) return@setOnClickListener
             if(!source.ready || source.error || source.applyingSnapshot) { message("课表尚未成功读取"); return@setOnClickListener }
+            processing(true)
             val start=from.text.toString();val end=until.text.toString();val z=zone.text.toString();val include=events.isChecked
             val ticket = ++previewEpoch
             source.readExportSnapshot { captured -> runOnUiThread {
                 if (!validPreview(ticket)) return@runOnUiThread
-                captured.onFailure { message(it.message ?: "课表读取失败") }.onSuccess { snapshot ->
+                captured.onFailure { processing(false); message(it.message ?: "课表读取失败") }.onSuccess { snapshot ->
                     val generatedAt = source.clock.instant()
                     worker.execute {
                         val generated = runCatching { IcsScheduleExporter.export(snapshot,LocalDate.parse(start),LocalDate.parse(end),ZoneId.of(z),include,generatedAt) }
                         runOnUiThread {
-                            if (validPreview(ticket)) generated.onFailure { message(it.message ?: "导出失败") }.onSuccess { result ->
+                            if (validPreview(ticket)) generated.onFailure { processing(false); message(it.message ?: "导出失败") }.onSuccess { result ->
                 dialog.dismiss()
                 AlertDialog.Builder(this).setTitle("导出预览").setMessage("$start 至 $end\n时区 $z\n课程 ${result.courseCount} · 日历事件 ${result.eventCount}\n${result.bytes.size} 字节\n基于本机已保存课表的此预览快照，不代表其他设备已接收。\n用于外部日历交换，不保留课程分组、颜色、来源及同步历史，不是完整备份。超过 256 事件或 1 MiB 时可能无法重新导入当前 DormPanel。")
                     .setNegativeButton("取消",null).setPositiveButton("保存文件") { _,_ -> pendingIcs=result.bytes;icsRequest.choosing=true;saveIcs.launch("DormPanel-$start-$end.ics") }.show()

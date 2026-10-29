@@ -122,4 +122,74 @@ class IcsExportTest {
  }
  @Test fun writingRecreationSuccess(){recreateWriting(false)}
  @Test fun writingRecreationFailure(){recreateWriting(true)}
+ private fun assertExportOptions(enabled:Boolean) {
+  for(hint in listOf("开始日期 YYYY-MM-DD","结束日期 YYYY-MM-DD","IANA 时区"))
+   onView(withHint(hint)).check(matches(if(enabled) isEnabled() else org.hamcrest.Matchers.not(isEnabled())))
+  for(text in listOf("包含日历事件","本周","未来四周"))
+   onView(withText(text)).check(matches(if(enabled) isEnabled() else org.hamcrest.Matchers.not(isEnabled())))
+  onView(withText("取消")).check(matches(isEnabled()))
+ }
+ @Test fun repeatedPreviewSubmitsOneReadAndGeneration() {
+  var reads=0;var complete:((Result<ScheduleState>)->Unit)?=null
+  ScheduleStores.overrideFactory={c->
+   val store=RoomScheduleStore(Room.databaseBuilder(c,ScheduleDatabase::class.java,name).build(),profiles=TermScheduleProfileStore(c))
+   object:ScheduleStore by store { override fun loadPresentation(callback:(Result<ScheduleState>)->Unit) { reads++;complete=callback } }
+  }
+  launchPhoneTestActivity().use { scenario ->
+   Thread.sleep(1000)
+   val gate=java.util.concurrent.CountDownLatch(1);val submissions=java.util.concurrent.atomic.AtomicInteger()
+   scenario.onActivity { a ->
+    val field=TimetableActivity::class.java.getDeclaredField("worker");field.isAccessible=true
+    val actual=field.get(a) as java.util.concurrent.ExecutorService
+    actual.execute { gate.await(10,java.util.concurrent.TimeUnit.SECONDS) }
+    field.set(a,object:java.util.concurrent.ExecutorService by actual { override fun execute(task:Runnable) { submissions.incrementAndGet();actual.execute(task) } })
+   }
+   try {
+    onView(withText("管理")).perform(click());onView(withText("导出 ICS")).perform(click())
+    // Direct performClick also exercises the admission guard independently of disabled touch handling.
+    val repeatClick=object:androidx.test.espresso.ViewAction {
+     override fun getConstraints()=isAssignableFrom(android.widget.Button::class.java)
+     override fun getDescription()="rapid preview submission"
+     override fun perform(c:androidx.test.espresso.UiController,v:android.view.View) { repeat(20){v.performClick()} }
+    }
+    onView(withText("预览")).perform(repeatClick)
+    assertEquals(1,reads);assertEquals(0,submissions.get());assertExportOptions(false)
+    onView(withText("正在生成预览…")).check(matches(org.hamcrest.Matchers.not(isEnabled())))
+    scenario.onActivity { complete!!(Result.success(ScheduleState())) }
+    onView(withText("正在生成预览…")).perform(repeatClick)
+    assertEquals(1,reads);assertEquals(1,submissions.get());assertExportOptions(false)
+    gate.countDown();awaitText("保存文件");assertEquals(1,submissions.get())
+   } finally { gate.countDown() }
+  }
+ }
+ private fun previewFailureRetry(readFailure:Boolean) {
+  var reads=0
+  val event=CalendarEvent("export-event","已选择日历事件",java.time.Instant.parse("2026-10-12T08:00:00Z").toEpochMilli(),java.time.Instant.parse("2026-10-12T09:00:00Z").toEpochMilli())
+  ScheduleStores.overrideFactory={c->
+   val store=RoomScheduleStore(Room.databaseBuilder(c,ScheduleDatabase::class.java,name).build(),profiles=TermScheduleProfileStore(c))
+   object:ScheduleStore by store { override fun loadPresentation(callback:(Result<ScheduleState>)->Unit) { reads++;callback(if(readFailure && reads==1) Result.failure(IllegalStateException("可重试读取失败")) else Result.success(ScheduleState(events=listOf(event)))) } }
+  }
+  val uri=Uri.parse("content://${i.context.packageName}.fixtures/export.ics")
+  Intents.intending(hasAction(Intent.ACTION_CREATE_DOCUMENT)).respondWith(ActivityResult(Activity.RESULT_OK,Intent().setData(uri)))
+  launchPhoneTestActivity().use {
+   Thread.sleep(1000);onView(withText("管理")).perform(click());onView(withText("导出 ICS")).perform(click())
+   onView(withHint("开始日期 YYYY-MM-DD")).perform(androidx.test.espresso.action.ViewActions.replaceText("2026-10-12"))
+   onView(withHint("结束日期 YYYY-MM-DD")).perform(androidx.test.espresso.action.ViewActions.replaceText("2026-10-18"))
+   onView(withHint("IANA 时区")).perform(androidx.test.espresso.action.ViewActions.replaceText(if(readFailure) "UTC" else "bad-zone"))
+   onView(withText("包含日历事件")).perform(click());onView(withText("预览")).perform(click())
+   if(readFailure) awaitText("可重试读取失败") else {
+    val deadline=System.currentTimeMillis()+10000
+    while(true) { try { onView(withText(org.hamcrest.Matchers.containsString("bad-zone"))).check(matches(isDisplayed()));break } catch(e:androidx.test.espresso.NoMatchingViewException){if(System.currentTimeMillis()>deadline)throw e;Thread.sleep(50)} }
+   }
+   onView(withText("确定")).perform(click());assertExportOptions(true);onView(withText("预览")).check(matches(isEnabled()))
+   onView(withHint("IANA 时区")).perform(androidx.test.espresso.action.ViewActions.replaceText("UTC"))
+   onView(withText("预览")).perform(click());awaitText("保存文件");assertEquals(2,reads)
+   onView(withText(org.hamcrest.Matchers.containsString("2026-10-12 至 2026-10-18\n时区 UTC\n课程 0 · 日历事件 1"))).check(matches(isDisplayed()))
+   onView(withText("保存文件")).perform(click());awaitText("ICS 文件已保存。")
+   val text=i.context.contentResolver.openInputStream(uri)!!.bufferedReader().use{it.readText()}
+   assertTrue(text.contains("SUMMARY:已选择日历事件"));assertTrue(text.contains("DTSTART:20261012T080000Z"))
+  }
+ }
+ @Test fun readFailureRestoresInputsAndRetries(){previewFailureRetry(true)}
+ @Test fun generationFailureRestoresInputsAndRetries(){previewFailureRetry(false)}
 }
