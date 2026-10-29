@@ -17,10 +17,13 @@ class WeekCoursesWidgetProvider : TodayWidgetProvider()
 /** Bounded process-local rendering cache. Only the shared coordinator reads the business Store.
  * Failure replaces success. Factories never wait for asynchronous callbacks or write business data. */
 internal object CollectionWidgets {
+    @Volatile internal var clock: ScheduleClock = DeviceScheduleClock
     private val processIdentity=java.util.UUID.randomUUID().toString()
     data class Cell(val text: String, val date: LocalDate, val rgb: Int = 0,val key: String = "")
     data class Row(val key: String, val cells: List<Cell>)
-    data class Snapshot(val rows: List<Row>, val error: String?, val grid: WeekWidgetGrid? = null,val basis: CollectionBasis? = null,val weekLabel: String = "")
+    data class Snapshot(val rows: List<Row>, val error: String?, val grid: WeekWidgetGrid? = null,val basis: CollectionBasis? = null,val weekLabel: String = "",val capturedAt: Instant? = null,val validUntil: Instant? = null) {
+        fun current(now: Instant,zone: ZoneId)=basis?.current(now,zone)==true && capturedAt?.let { now>=it }==true && validUntil?.let { now<it }==true
+    }
     private val loading=Snapshot(emptyList(),"课程仍在加载")
     @Volatile private var publication=Pair(loading,emptyMap<WeekWidgetMode,Snapshot>())
     fun snapshot(isWeek: Boolean) = if(isWeek) publication.second[WeekWidgetMode()] ?: loading else publication.first
@@ -32,15 +35,16 @@ internal object CollectionWidgets {
         }.toSet()
         return CollectionDemand(recent,weeks)
     }
-    fun instanceSnapshot(context: Context,id: Int,isWeek: Boolean,now: Instant = Instant.now(),zone: ZoneId = ZoneId.systemDefault()): Snapshot {
-        if(isWeek) return publication.second[WeekWidgetMode(WidgetTitleSettings.periods(context,id),if(WidgetTitleSettings.weekdays(context,id)) 5 else 7)] ?: loading
-        val data=publication.first
-        return if(data.basis?.current(now,zone)==true) data else Snapshot(emptyList(),data.error?.takeIf { data.rows.isEmpty() } ?: "课表正在刷新",basis=CollectionBasis.at(now,zone))
+    fun instanceSnapshot(context: Context,id: Int,isWeek: Boolean,now: Instant = clock.instant(),zone: ZoneId = clock.zone(),weekMode: WeekWidgetMode? = null): Snapshot {
+        val data=if(isWeek) publication.second[weekMode ?: WeekWidgetMode(WidgetTitleSettings.periods(context,id),if(WidgetTitleSettings.weekdays(context,id)) 5 else 7)] ?: loading else publication.first
+        return if(data.current(now,zone)) data else Snapshot(emptyList(),data.error?.takeIf { data.rows.isEmpty() } ?: "课表正在刷新",
+            basis=CollectionBasis.at(now,zone),capturedAt=now,validUntil=now.atZone(zone).toLocalDate().plusDays(1).atStartOfDay(zone).toInstant())
     }
     fun available(context: Context,id: Int): Boolean {
         val week=isWeek(context,id)
-        val data=instanceSnapshot(context,id,week)
-        return data.error==null && if(week) data.grid!=null else data.basis?.current(Instant.now(),ZoneId.systemDefault())==true
+        val now=clock.instant(); val zone=clock.zone()
+        val data=instanceSnapshot(context,id,week,now,zone)
+        return data.error==null && data.current(now,zone) && (!week || data.grid!=null)
     }
     fun isCollection(context: Context,id: Int) = AppWidgetManager.getInstance(context).getAppWidgetInfo(id)?.provider?.className in
         listOf(RecentCoursesWidgetProvider::class.java.name,WeekCoursesWidgetProvider::class.java.name)
@@ -69,28 +73,28 @@ internal object CollectionWidgets {
                     item?.let { "${it.sourceId}:${it.seriesId}:${it.anchorDate}:${it.entry.id}" } ?: "empty"
                 },listOf(cell(a.remaining.getOrNull(i),a.date,if(i!=0) "" else if(a.all.isEmpty()) "今天没有课程" else "今天的课程已结束"),
                     cell(b.all.getOrNull(i),b.date,if(i==0) "明天没有课程" else ""))) },null,
-                basis=CollectionBasis(date,zone),weekLabel=CollectionProjection.recentWeekLabel(state,date,zone,a to b))
+                basis=CollectionBasis(date,zone),weekLabel=CollectionProjection.recentWeekLabel(state,date,zone,a to b),capturedAt=now,validUntil=minOf(a.next,b.next))
         },week={ state,mode ->
             val grid=WeekWidgetGrid.create(state,monday,zone,colors::rgb,date,mode.periods,mode.days,weekItems)
             Snapshot((0 until grid.count).map { tile -> Row("$monday:${mode.periods}:${mode.days}:$tile",(0..6).map { day ->
                 Cell("",monday.plusDays(day.toLong()))
-            }) },null,grid)
+            }) },null,grid,basis=CollectionBasis(date,zone),capturedAt=now,validUntil=date.plusDays(1).atStartOfDay(zone).toInstant())
         })
         fun resolve(value: Result<Snapshot>): Snapshot = value.getOrElse { error ->
             Snapshot(emptyList(),if(result.isFailure) "本地课表读取失败，请打开应用检查" else
-                if(error is IllegalArgumentException) "课程过多或显示配置无效，请打开应用检查" else "课程投影失败，请打开应用检查",basis=CollectionBasis(date,zone))
+                if(error is IllegalArgumentException) "课程过多或显示配置无效，请打开应用检查" else "课程投影失败，请打开应用检查",basis=CollectionBasis(date,zone),capturedAt=now,validUntil=date.plusDays(1).atStartOfDay(zone).toInstant())
         }
         publication=Pair(built.recent?.let(::resolve) ?: loading,built.weeks.mapValues { resolve(it.value) })
     }
 
-    fun render(context: Context,id: Int,state: ScheduleState?,now: Instant = Instant.now(),zone: ZoneId = ZoneId.systemDefault()): RemoteViews {
+    fun render(context: Context,id: Int,state: ScheduleState?,now: Instant = clock.instant(),zone: ZoneId = clock.zone()): RemoteViews {
         val isWeek=isWeek(context,id)
         val data=instanceSnapshot(context,id,isWeek,now,zone)
-        val date=if(isWeek) now.atZone(zone).toLocalDate() else requireNotNull(data.basis).date; val monday=date.minusDays((date.dayOfWeek.value-1).toLong())
+        val date=requireNotNull(data.basis).date; val monday=date.minusDays((date.dayOfWeek.value-1).toLong())
         val views=RemoteViews(context.packageName,if(isWeek) R.layout.widget_week_collection else R.layout.widget_recent_collection)
         views.setTextViewText(R.id.collection_title,WidgetTitleSettings.get(context,id) ?: TodayCourses.title(state))
         val profile=state?.sources?.mapNotNull { it.resolvedTermKey() }?.distinct()?.mapNotNull { state.profiles[it] }
-            ?.filter { it.validate()==null && it.phaseOn(date)!=null && it.timezone==ZoneId.systemDefault().id }?.singleOrNull()
+            ?.filter { it.validate()==null && it.phaseOn(date)!=null && it.timezone==zone.id }?.singleOrNull()
         val teaching=profile?.let { ChronoUnit.WEEKS.between(it.week1Monday,monday)+1 }?.takeIf { it>0 }
         val mode=if(!isWeek) "" else if(!WidgetTitleSettings.periods(context,id)) " · 实际时间" else if(data.grid?.axis?.periodLabels?.isNotEmpty()==true) " · 按节次" else " · 实际时间（无统一节次表）"
         if(isWeek) {
@@ -111,12 +115,12 @@ internal object CollectionWidgets {
         val message=data.error ?: if(isWeek && data.grid?.segments?.isEmpty()==true) "本周没有课程" else ""
         views.setTextViewText(R.id.collection_message,message)
         views.setViewVisibility(R.id.collection_message,if(message.isEmpty()) View.GONE else View.VISIBLE)
-        val basisToken=if(isWeek) "week" else "${data.basis?.date}/${data.basis?.zone?.id}"
+        val basisToken="${data.basis?.date}/${data.basis?.zone?.id}"
         val lists=if(isWeek) intArrayOf(R.id.collection_list) else intArrayOf(R.id.collection_list,R.id.recent_tomorrow_list)
         lists.forEachIndexed { column,list ->
             views.setViewVisibility(list,if(data.error==null) View.VISIBLE else View.GONE)
             views.setRemoteAdapter(list,Intent(context,CourseCollectionService::class.java)
-                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,id).putExtra("recentColumn",column).putExtra("basisDate",data.basis?.date?.toString()).putExtra("basisZone",data.basis?.zone?.id)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,id).putExtra("recentColumn",column).putExtra("weekPeriods",WidgetTitleSettings.periods(context,id)).putExtra("weekDays",if(WidgetTitleSettings.weekdays(context,id)) 5 else 7).putExtra("basisDate",data.basis?.date?.toString()).putExtra("basisZone",data.basis?.zone?.id)
                 .setData(Uri.parse("dormpanel://collection/$id/$isWeek/$processIdentity/${WidgetTitleSettings.periods(context,id)}/${WidgetTitleSettings.weekdays(context,id)}/$column/$basisToken")))
         }
         val intent=Intent(context,TimetableActivity::class.java).setAction("com.dormpanel.phone.OPEN_COLLECTION")
@@ -146,25 +150,28 @@ internal object CollectionWidgets {
 }
 
 class CourseCollectionService : RemoteViewsService() {
-    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory = Factory(applicationContext,intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,-1),intent.getIntExtra("recentColumn",0).coerceIn(0,1),runCatching { CollectionBasis(LocalDate.parse(intent.getStringExtra("basisDate")),ZoneId.of(intent.getStringExtra("basisZone"))) }.getOrNull())
-    internal class Factory(val context: Context,val id: Int,val column: Int,val expectedBasis: CollectionBasis?) : RemoteViewsFactory {
+    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory = Factory(applicationContext,intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,-1),intent.getIntExtra("recentColumn",0).coerceIn(0,1),runCatching { CollectionBasis(LocalDate.parse(intent.getStringExtra("basisDate")),ZoneId.of(intent.getStringExtra("basisZone"))) }.getOrNull(),WeekWidgetMode(intent.getBooleanExtra("weekPeriods",true),intent.getIntExtra("weekDays",7)))
+    internal class Factory(val context: Context,val id: Int,val column: Int,val expectedBasis: CollectionBasis?,expectedMode: WeekWidgetMode? = null) : RemoteViewsFactory {
         val week=CollectionWidgets.isWeek(context,id)
+        private val mode=expectedMode ?: WeekWidgetMode(WidgetTitleSettings.periods(context,id),if(WidgetTitleSettings.weekdays(context,id)) 5 else 7)
         var data=CollectionWidgets.Snapshot(emptyList(),null)
         var width=320
         private var requested=false
         private fun valid(): Boolean {
             if(!CollectionWidgets.isCollection(context,id)) return false
-            if(week) return true
-            val valid=data.basis==expectedBasis && data.basis?.current(Instant.now(),ZoneId.systemDefault())==true
+            val matchingMode=!week || mode==WeekWidgetMode(WidgetTitleSettings.periods(context,id),if(WidgetTitleSettings.weekdays(context,id)) 5 else 7)
+            val valid=matchingMode && data.basis==expectedBasis && data.current(CollectionWidgets.clock.instant(),CollectionWidgets.clock.zone()) && (!week || data.grid?.dayCount==mode.days)
             if(!valid && !requested) { requested=true; TodayWidgetUpdates.ensure(context,id) }
             return valid
         }
         override fun onCreate() { if(CollectionWidgets.isCollection(context,id)) TodayWidgetUpdates.ensure(context,id) }
         override fun onDataSetChanged() {
             if(!CollectionWidgets.isCollection(context,id)) { data=CollectionWidgets.Snapshot(emptyList(),null); return }
-            val snapshot=CollectionWidgets.instanceSnapshot(context,id,week)
+            if(week && mode!=WeekWidgetMode(WidgetTitleSettings.periods(context,id),if(WidgetTitleSettings.weekdays(context,id)) 5 else 7)) { data=CollectionWidgets.Snapshot(emptyList(),"课表正在刷新"); return }
+            val snapshot=CollectionWidgets.instanceSnapshot(context,id,week,weekMode=mode)
             data=if(week) snapshot else snapshot.copy(rows=RecentColumnRows.select(snapshot.rows,column,
                 cells={ it.cells },text={ it.text },key={ it.key },row={ key,cell -> CollectionWidgets.Row(key,listOf(cell)) }))
+            if(data.error==null && data.basis==expectedBasis && data.current(CollectionWidgets.clock.instant(),CollectionWidgets.clock.zone())) requested=false
             width=AppWidgetManager.getInstance(context).getAppWidgetOptions(id).getInt(if(context.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE) AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH else AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,340)-20
         }
         override fun onDestroy() { data=CollectionWidgets.Snapshot(emptyList(),null) }

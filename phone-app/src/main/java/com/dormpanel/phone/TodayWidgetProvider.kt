@@ -40,8 +40,8 @@ internal object TodayWidgetUpdates {
                     }
                 },
                 publish = { result ->
-                    val now = Instant.now()
-                    val zone=ZoneId.systemDefault()
+                    val now = CollectionWidgets.clock.instant()
+                    val zone=CollectionWidgets.clock.zone()
                     CollectionWidgets.publish(app,result,now,zone)
                     val cache=mutableMapOf<Boolean,Result<Pair<ScheduleState,TodayCourses.Day>>>()
                     var next=now.plusSeconds(1800)
@@ -77,7 +77,7 @@ internal object TodayWidgetUpdates {
     }
     private fun renderFailure(context: Context,id: Int): RemoteViews {
         if (!CollectionWidgets.isCollection(context,id)) return render(context,id,null,"本地课表读取超时，请打开应用检查")
-        CollectionWidgets.publish(context,Result.failure(IllegalStateException("timeout")),Instant.now(),ZoneId.systemDefault())
+        CollectionWidgets.publish(context,Result.failure(IllegalStateException("timeout")),CollectionWidgets.clock.instant(),CollectionWidgets.clock.zone())
         return CollectionWidgets.render(context,id,null)
     }
     private fun ids(context: Context) = components.flatMap {

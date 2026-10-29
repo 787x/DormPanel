@@ -6,6 +6,79 @@ import org.junit.Test
 import java.time.*
 import java.util.concurrent.*
 class CollectionWidgetTest {
+    @Test fun timedExpiryFactoriesCountReadsAndRejectOldAdapters() {
+        val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
+        check(c.packageName.endsWith(".pr72testbed"))
+        val manager=android.appwidget.AppWidgetManager.getInstance(c)
+        val recentId=manager.getAppWidgetIds(android.content.ComponentName(c,RecentCoursesWidgetProvider::class.java)).first()
+        val weekId=manager.getAppWidgetIds(android.content.ComponentName(c,WeekCoursesWidgetProvider::class.java)).first()
+        val oldClock=CollectionWidgets.clock
+        val zone=java.time.ZoneId.of("Asia/Shanghai")
+        // Future instants keep the isolated app's real RTC alarms out of the past; system time is untouched.
+        val sunday=LocalDate.now(zone).plusWeeks(2).with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.SUNDAY))
+        var time=sunday.atTime(9,0).atZone(zone).toInstant(); var currentZone=zone
+        val clock=object: ScheduleClock { override fun instant()=time; override fun zone()=currentZone; override fun locale()=java.util.Locale.CHINA }
+        val state=ScheduleState(entries=listOf(TimetableEntry("a","A",7,480,590),TimetableEntry("b","B",7,610,720),TimetableEntry("t","Tomorrow",1,480,540)))
+        val store=ScheduleStores.create(c); val reads=java.util.concurrent.CopyOnWriteArrayList<(Result<ScheduleState>)->Unit>()
+        val oldPeriods=WidgetTitleSettings.periods(c,weekId); val oldDays=WidgetTitleSettings.weekdays(c,weekId)
+        fun drain() { i.runOnMainSync {} }
+        fun basis()=CollectionBasis.at(time,currentZone)
+        fun recent()=(0..1).map { CourseCollectionService.Factory(c,recentId,it,basis()) }
+        fun load(f: List<CourseCollectionService.Factory>) { i.runOnMainSync { f.forEach { it.onCreate(); it.onDataSetChanged() } };drain() }
+        try {
+            i.runOnMainSync { CollectionWidgets.clock=clock; WidgetTitleSettings.save(c,weekId,WidgetTitleSettings.get(c,weekId) ?: "我的课表",periods=true,weekdays=false); CollectionWidgets.publish(c,Result.success(state),time,zone) }
+            ScheduleStores.overrideFactory={ object: ScheduleStore by store { override fun loadPresentation(callback: (Result<ScheduleState>)->Unit) { reads+=callback } } }
+            val old=recent();load(old);assertEquals(0,reads.size)
+            val tomorrowBefore=old[1].data.rows
+            time=sunday.atTime(9,40).atZone(zone).toInstant();load(recent());assertEquals(0,reads.size)
+            time=sunday.atTime(9,50).atZone(zone).toInstant()
+            assertFalse(CollectionWidgets.available(c,recentId))
+            i.runOnMainSync { old.forEach { assertEquals(0,it.getCount()); assertNull(it.getViewAt(0)) } };drain();assertEquals(1,reads.size)
+            reads[0](Result.success(state));drain()
+            assertEquals(listOf("B"),CollectionWidgets.snapshot(false).rows.map { it.cells[0].text.substringBefore("\n") })
+            i.runOnMainSync { old.forEach { it.onDataSetChanged();assertTrue(it.getCount()>0) } }
+            assertEquals(tomorrowBefore,old[1].data.rows)
+            assertEquals("B",old[0].data.rows.single().cells.single().text.substringBefore("\n"))
+            time=sunday.atTime(10,10).atZone(zone).toInstant()
+            i.runOnMainSync { old.forEach { assertEquals(0,it.getCount()) } };drain();assertEquals(2,reads.size)
+            ScheduleCommitSignals.notifyChanged();drain();reads[1](Result.success(state));drain();assertEquals(3,reads.size)
+            val edited=state.copy(entries=state.entries.map { if(it.id=="b") it.copy(title="B-new") else it })
+            reads[2](Result.success(edited));drain();assertTrue(CollectionWidgets.snapshot(false).rows.first().cells[0].text.contains("B-new"))
+            val week=CourseCollectionService.Factory(c,weekId,0,basis(),WeekWidgetMode())
+            load(listOf(week));assertEquals(3,reads.size)
+            time=sunday.plusDays(1).atTime(0,1).atZone(zone).toInstant()
+            assertFalse(CollectionWidgets.available(c,weekId))
+            i.runOnMainSync { assertEquals(0,week.getCount());assertNull(week.getViewAt(0)) };drain();assertEquals(4,reads.size)
+            reads[3](Result.success(edited));drain()
+            assertEquals(sunday.plusDays(1),CollectionWidgets.snapshot(true).grid!!.today)
+            assertEquals(sunday.plusDays(1),CollectionWidgets.snapshot(true).grid!!.monday)
+            i.runOnMainSync { week.onDataSetChanged();assertEquals(0,week.getCount()) };drain();assertEquals(4,reads.size)
+            val monday=CourseCollectionService.Factory(c,weekId,0,basis(),WeekWidgetMode())
+            val mondayTwin=CourseCollectionService.Factory(c,weekId,0,basis(),WeekWidgetMode())
+            load(listOf(monday,mondayTwin));assertEquals(4,reads.size)
+            time=sunday.plusDays(2).atTime(0,1).atZone(zone).toInstant()
+            i.runOnMainSync { assertEquals(0,monday.getCount()); assertEquals(0,mondayTwin.getCount()); assertEquals(0,week.getCount()) };drain();assertEquals(5,reads.size)
+            reads[4](Result.success(edited));drain();assertEquals(sunday.plusDays(2),CollectionWidgets.snapshot(true).grid!!.today)
+            currentZone=java.time.ZoneId.of("UTC")
+            assertFalse(CollectionWidgets.available(c,weekId));assertFalse(CollectionWidgets.available(c,recentId))
+            val stale=recent();load(stale);assertEquals(6,reads.size);reads[5](Result.failure(IllegalStateException("read")));drain()
+            val retry=recent();load(retry);assertEquals(7,reads.size);reads[6](Result.success(edited));drain()
+            i.runOnMainSync {
+                assertTrue(WidgetTitleSettings.save(c,weekId,WidgetTitleSettings.get(c,weekId) ?: "我的课表",periods=false,weekdays=true))
+                CollectionWidgets.publish(c,Result.success(edited),time,currentZone)
+                val five=CollectionWidgets.instanceSnapshot(c,weekId,true)
+                assertEquals(5,five.grid!!.dayCount);assertTrue(five.grid.axis.periodLabels.isEmpty())
+                monday.onDataSetChanged();assertEquals(0,monday.getCount())
+                val fiveFactory=CourseCollectionService.Factory(c,weekId,0,basis(),WeekWidgetMode(false,5))
+                fiveFactory.onCreate();fiveFactory.onDataSetChanged();assertTrue(fiveFactory.getCount()>0)
+            }
+            drain();assertEquals(7,reads.size)
+        } finally {
+            ScheduleStores.overrideFactory=null;CollectionWidgets.clock=oldClock
+            WidgetTitleSettings.save(c,weekId,WidgetTitleSettings.get(c,weekId) ?: "我的课表",periods=oldPeriods,weekdays=oldDays)
+            val done=CountDownLatch(1);TodayWidgetUpdates.request(c) { done.countDown() };assertTrue(done.await(10,TimeUnit.SECONDS))
+        }
+    }
     @Test fun dualFactoriesCountPhysicalReadsAndDoNotSwallowCommit() {
         val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
         check(c.packageName.endsWith(".pr72testbed"))
