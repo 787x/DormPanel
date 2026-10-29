@@ -42,3 +42,12 @@ test('复杂安排跨语言字节 oracle：非连续周、替换、复制、停�
 export {mixed};
 
 test('DST 缺口保留实际 Instant',()=>{const s=mixed();s.sharedRecords=[];s.dayAdjustments=[];s.entries=[{id:'dst',title:'DST',day:7,startMinute:150,endMinute:240,location:''}];const r=exportIcs(s,{start:'2026-03-08',end:'2026-03-08',zone:'America/New_York'},0).bytes.toString();assert.ok(r.includes('DTSTART:20260308T073000Z'));assert.ok(r.includes('DTEND:20260308T080000Z'));});
+
+test('事件超量与亚秒时间整体拒绝，空课表合法',()=>{
+ const s=mixed();s.entries=[];s.sharedRecords=[];s.dayAdjustments=[];
+ const options={start:'2026-10-12',end:'2026-10-12',zone:'UTC',includeEvents:true};
+ assert.equal(exportIcs(s,options,0).courseCount,0);
+ const e={id:'event',title:'Event',start:Date.parse('2026-10-12T08:00:00Z'),end:Date.parse('2026-10-12T09:00:00Z'),note:''};
+ s.events=Array.from({length:20001},(_,i)=>({...e,id:String(i)}));assert.throws(()=>exportIcs(s,options,0),/20000/);
+ s.events=[{...e,start:e.start+1}];assert.throws(()=>exportIcs(s,options,0),/亚秒/);
+});

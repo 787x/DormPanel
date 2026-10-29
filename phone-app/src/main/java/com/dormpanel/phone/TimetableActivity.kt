@@ -91,8 +91,7 @@ class TimetableActivity : AppCompatActivity() {
         pendingIcs = null
         if (uri != null) {
             if (bytes == null) {
-                worker.execute { runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver,uri) } }
-                message("导出请求已失效，请重新预览后保存。")
+                message("导出请求已失效，未写入文件。请重新预览后保存，并检查选择器是否创建了空文件。")
             } else background({
                 try {
                     (contentResolver.openOutputStream(uri,"wt") ?: error("无法打开目标文件")).use { it.write(bytes); it.flush() }
@@ -110,7 +109,9 @@ class TimetableActivity : AppCompatActivity() {
         val until=EditText(this).apply { hint="结束日期 YYYY-MM-DD"; setText(source.clock.today().plusDays(27).toString()) }
         val zone=EditText(this).apply { hint="IANA 时区"; setText(source.clock.zone().id) }
         val events=CheckBox(this).apply { text="包含日历事件" }
-        layout.addView(from); layout.addView(until); layout.addView(zone); layout.addView(events)
+        layout.addView(TextView(this).apply { text="开始日期（含）" }); layout.addView(from)
+        layout.addView(TextView(this).apply { text="结束日期（含）" }); layout.addView(until)
+        layout.addView(TextView(this).apply { text="IANA 时区" }); layout.addView(zone); layout.addView(events)
         listOf("本周" to 6L,"未来四周" to 27L).forEach { (label,days) -> layout.addView(Button(this).apply { text=label; setOnClickListener { val today=source.clock.today();val first=if(days==6L) today.minusDays((today.dayOfWeek.value-1).toLong()) else today;from.setText(first.toString());until.setText(first.plusDays(days).toString()) } }) }
         val dialog=AlertDialog.Builder(this).setTitle("导出 ICS（最多 366 天）").setView(ScrollView(this).apply { addView(layout) }).setNegativeButton("取消",null).setPositiveButton("预览",null).create()
         dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -119,7 +120,7 @@ class TimetableActivity : AppCompatActivity() {
             source.readExportSnapshot { captured -> runOnUiThread { if (!isDestroyed) { captured.onFailure { message(it.message ?: "课表读取失败") }.onSuccess { snapshot ->
             background({ IcsScheduleExporter.export(snapshot,LocalDate.parse(start),LocalDate.parse(end),ZoneId.of(z),include,source.clock.instant()) }) { result ->
                 dialog.dismiss()
-                AlertDialog.Builder(this).setTitle("导出预览").setMessage("$start 至 $end\n时区 $z\n课程 ${result.courseCount} · 日历事件 ${result.eventCount}\n${result.bytes.size} 字节\n基于本机已保存课表的此预览快照，不代表其他设备已接收。\n用于外部日历交换，不保留课程分组、颜色、来源及同步历史，不是完整备份。超过 256 事件或导入文件预算时可能无法重新导入 DormPanel。")
+                AlertDialog.Builder(this).setTitle("导出预览").setMessage("$start 至 $end\n时区 $z\n课程 ${result.courseCount} · 日历事件 ${result.eventCount}\n${result.bytes.size} 字节\n基于本机已保存课表的此预览快照，不代表其他设备已接收。\n用于外部日历交换，不保留课程分组、颜色、来源及同步历史，不是完整备份。超过 256 事件或 1 MiB 时可能无法重新导入当前 DormPanel。")
                     .setNegativeButton("取消",null).setPositiveButton("保存文件") { _,_ -> pendingIcs=result.bytes;icsRequest.choosing=true;saveIcs.launch("DormPanel-$start-$end.ics") }.show()
             }
             } } } }
@@ -140,6 +141,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        icsRequest.choosing = icsRequest.choosing || savedInstanceState?.getBoolean("icsChoosing",false)==true
         selected = savedInstanceState?.getString("date")?.let(LocalDate::parse) ?: getPreferences(MODE_PRIVATE).getString("date", null)?.let(LocalDate::parse) ?: LocalDate.now()
         if (intent?.action == "com.dormpanel.phone.OPEN_TODAY") selected = LocalDate.now()
         weekView = savedInstanceState?.getBoolean("weekView") ?: getPreferences(MODE_PRIVATE).getBoolean("weekView", true)
@@ -206,6 +208,7 @@ class TimetableActivity : AppCompatActivity() {
     override fun onRetainCustomNonConfigurationInstance(): Any? = if(::editors.isInitialized) editors.captureDraft() else null
     override fun onSaveInstanceState(outState: Bundle) {
         captureScroll()
+        outState.putBoolean("icsChoosing",icsRequest.choosing)
         outState.putFloat("weekAnchor",weekAnchor)
         outState.putString("date", selected.toString()); outState.putString("replacement", replacement)
         outState.putBoolean("weekView", weekView); outState.putInt("scroll", scrollOffset)

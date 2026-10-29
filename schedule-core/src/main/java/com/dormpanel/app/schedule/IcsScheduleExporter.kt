@@ -28,10 +28,11 @@ object IcsScheduleExporter {
             rows[key]=Row(key,Instant.ofEpochMilli(e.start),Instant.ofEpochMilli(e.end),e.title,"",e.note)
         }
         require(rows.size<=20000) { "导出超过 20000 个事件，请缩小范围" }
-        fun text(s:String)=s.replace("\\","\\\\").replace("\r\n","\n").replace("\r","\n").replace("\n","\\n").replace(";","\\;").replace(",","\\,")
+        fun text(s:String):String { require(s.none { it.code in 0..8 || it.code in 11..12 || it.code in 14..31 || it.code==127 }) { "课程文本包含 ICS 不支持的控制字符" }; return s.replace("\\","\\\\").replace("\r\n","\n").replace("\r","\n").replace("\n","\\n").replace(";","\\;").replace(",","\\,") }
         val format=DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC)
         val lines=mutableListOf("BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//DormPanel//Schedule Export 1//ZH","CALSCALE:GREGORIAN")
         rows.values.sortedBy { it.identity }.forEach { r ->
+            require(r.end>r.start) { "最终课程或事件起止时间无效，无法完整导出" }
             require(r.start.nano==0 && r.end.nano==0) { "课程或事件包含亚秒时间，标准 ICS 无法无损表达" }
             lines.addAll(listOf("BEGIN:VEVENT","UID:${digest(r.identity.toByteArray(Charsets.UTF_8))}@ics.dormpanel","DTSTAMP:${format.format(now)}","DTSTART:${format.format(r.start)}","DTEND:${format.format(r.end)}","SUMMARY:${text(r.title)}"))
             if(r.location.isNotEmpty()) lines.add("LOCATION:${text(r.location)}")

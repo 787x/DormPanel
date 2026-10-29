@@ -17,4 +17,5 @@ test('ICS 下载管理员、工作区、版本、同源和只读边界',async t=
  assert.equal((await call(path,'false')).status,403);assert.notEqual((await call(path,'true','cross-site')).status,200);
  for(const changes of [{workspaceId:'missing'},{version:-1},{end:'2028-10-12'},{origin:'file:///private'}]){const invalid=new URLSearchParams({...Object.fromEntries(q),...changes});assert.notEqual((await call('/api/export/ics?'+invalid)).status,200);}
  assert.equal(JSON.stringify(db.frame,(_,v)=>typeof v==='bigint'?String(v):v),before);
+ const load=app.catalog.load;app.catalog.load=async()=>{throw Error('测试读取失败')};assert.equal((await call(path)).status,400);app.catalog.load=load;
 });

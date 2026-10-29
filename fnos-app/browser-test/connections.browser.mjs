@@ -1125,7 +1125,7 @@ test('二轮61 原位只读刷新废止导入资格，迟到预览不能复活�
 
 // PR75 uses the production authenticated socket route and a real browser download.
 test('ICS：预览与浏览器下载同一快照、版本拒绝和只读', async t => {
- const f=await fixture(t);
+ const f=await fixture(t);const db=await f.app.catalog.load(f.app.catalog.manifest.activeId);db.frame.local.entries.push({id:"ics-course",title:"预览课程",day:1,startMinute:480,endMinute:540,location:"A"});const before=JSON.stringify(db.frame,(_,v)=>typeof v==="bigint"?String(v):v);
  await f.open();
  await f.page.locator('#schedulePage').click();
  await f.page.locator('#manage').click();
@@ -1133,7 +1133,12 @@ test('ICS：预览与浏览器下载同一快照、版本拒绝和只读', async
  const d=f.page.locator('dialog').filter({has:f.page.getByRole('heading',{name:'导出 ICS',exact:true})});
  await d.getByRole('button',{name:'预览',exact:true}).click();
  await expect(d.getByRole('button',{name:'保存文件',exact:true})).toBeEnabled();
+ assert.equal(JSON.stringify(db.frame,(_,v)=>typeof v==="bigint"?String(v):v),before);db.frame.local.entries=[];db.frame.revision++;
  const downloadPromise=f.page.waitForEvent('download');await d.getByRole('button',{name:'保存文件',exact:true}).click();
- const download=await downloadPromise;const bytes=await readFile(await download.path());assert.ok(bytes.toString().startsWith('BEGIN:VCALENDAR\r\n'));
+ const download=await downloadPromise;const bytes=await readFile(await download.path());assert.ok(bytes.toString().startsWith('BEGIN:VCALENDAR\r\n'));assert.ok(bytes.toString().includes('SUMMARY:预览课程'));
+ let release;const gate=new Promise(r=>{release=r});
+ await f.page.route('**/api/export/ics?*',async route=>{await gate;await route.fulfill({body:bytes,headers:{'Content-Type':'text/calendar','X-Course-Count':'4','X-Event-Count':'0'}});});
+ await d.getByRole('button',{name:'预览',exact:true}).click();await d.locator('input[type=date]').first().fill('2026-10-01');release();
+ await expect(d).toContainText('导出选项已变化，请重新预览');await expect(d.getByRole('button',{name:'保存文件',exact:true})).toBeDisabled();
  assert.deepEqual(f.errors,[]);
 });

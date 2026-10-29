@@ -1854,10 +1854,10 @@ $('exportIcs').onclick=()=>{
  for(const [name,days] of [['本周',6],['未来四周',27]]){const button=el('button',name);button.onclick=()=>{start.value=now();if(days===6){const d=new Date(start.value+'T12:00Z').getUTCDay();start.value=add(start.value,-((d+6)%7));}end.value=add(start.value,days);};form.append(button);}
  const info=el('p',`时区 ${z}。基于当前本机已保存课表，不代表其他设备已接收。用于外部日历交换，不是完整备份。`),preview=el('button','预览'),save=el('button','保存文件'),cancel=el('button','取消');save.disabled=true;let blob;
  form.append(info,preview,save,cancel);for(const input of [start,end,events])input.onchange=()=>{blob=null;save.disabled=true;};
- preview.onclick=async()=>{save.disabled=true;preview.disabled=true;try{
+ preview.onclick=async()=>{save.disabled=true;preview.disabled=true;const requestedStart=start.value,requestedEnd=end.value,requestedEvents=events.checked;try{
   if(scope!==workspaceId)throw Error('工作区已切换，请重新打开导出');
   const q=new URLSearchParams({origin:location.origin,workspaceId:scope,version:rev,start:start.value,end:end.value,zone:z,includeEvents:events.checked});
-  const r=await fetch(base+'/api/export/ics?'+q);if(!r.ok)throw Error((await r.json()).error??'导出失败');blob=await r.blob();
+  const r=await fetch(base+'/api/export/ics?'+q);if(!r.ok)throw Error((await r.json()).error??'导出失败');const generated=await r.blob();if(start.value!==requestedStart||end.value!==requestedEnd||events.checked!==requestedEvents)throw Error('导出选项已变化，请重新预览');blob=generated;
   info.textContent=`${start.value} 至 ${end.value} · 工作区 ${scope} · ${z} · 课程 ${r.headers.get('X-Course-Count')} · 日历事件 ${r.headers.get('X-Event-Count')} · ${blob.size} 字节。保存此预览快照；不代表其他设备已接收。ICS 不保留课程分组、颜色、来源或同步历史。超过 256 事件或导入文件预算时可能无法直接重新导入 DormPanel。`;save.disabled=false;
  }catch(e){blob=null;info.textContent=e.message;}finally{preview.disabled=false;}};
  save.onclick=()=>{if(!blob)return;const url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download='DormPanel.ics';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);};

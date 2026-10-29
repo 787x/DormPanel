@@ -29,4 +29,11 @@ class IcsScheduleExporterTest {
   val out=IcsScheduleExporter.export(s,LocalDate.parse("2026-03-08"),LocalDate.parse("2026-03-08"),ZoneId.of("America/New_York"),false,Instant.EPOCH).bytes.toString(Charsets.UTF_8)
   assertTrue(out.contains("DTSTART:20260308T073000Z"));assertTrue(out.contains("DTEND:20260308T080000Z"))
  }
+ @Test fun eventBudgetAndSubsecondReject() {
+  val d=LocalDate.parse("2026-10-12"); val start=Instant.parse("2026-10-12T08:00:00Z").toEpochMilli()
+  val events=(0..20000).map { CalendarEvent(it.toString(),"Event",start,start+3600000) }
+  assertThrows(IllegalArgumentException::class.java) { IcsScheduleExporter.export(ScheduleState(events=events),d,d,ZoneOffset.UTC,true,Instant.EPOCH) }
+  assertThrows(IllegalArgumentException::class.java) { IcsScheduleExporter.export(ScheduleState(events=listOf(events[0].copy(start=start+1))),d,d,ZoneOffset.UTC,true,Instant.EPOCH) }
+  assertThrows(IllegalArgumentException::class.java) { IcsScheduleExporter.export(ScheduleState(invalidRecords=1),d,d,ZoneOffset.UTC,false,Instant.EPOCH) }
+ }
 }

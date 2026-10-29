@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {Temporal} from '@js-temporal/polyfill';
 import {projectWeek,monday,addDays} from './projection.mjs';
-const text=v=>String(v??'').replace(/\\/g,'\\\\').replace(/\r\n|\r|\n/g,'\\n').replace(/;/g,'\\;').replace(/,/g,'\\,');
+const text=v=>{const s=String(v??'');if(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(s))throw Error('课程文本包含 ICS 不支持的控制字符');return s.replace(/\\/g,'\\\\').replace(/\r\n|\r|\n/g,'\\n').replace(/;/g,'\\;').replace(/,/g,'\\,');};
 const stamp=ms=>new Date(Number(ms)).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z');
 function fold(line){let out='',n=0;for(const c of line){const size=Buffer.byteLength(c);if(n+size>75){out+='\r\n ';n=1;}out+=c;n+=size;}return out;}
 export function exportIcs(state,{start,end,zone='Asia/Shanghai',includeEvents=false},now=Date.now()){
@@ -22,6 +22,7 @@ export function exportIcs(state,{start,end,zone='Asia/Shanghai',includeEvents=fa
  if(rows.size>20000)throw Error('导出超过 20000 个事件，请缩小范围');
  const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//DormPanel//Schedule Export 1//ZH','CALSCALE:GREGORIAN'];
  for(const r of [...rows.values()].sort((a,b)=>a.identity<b.identity?-1:a.identity>b.identity?1:0)){
+  if(Number(r.end)<=Number(r.start))throw Error('最终课程或事件起止时间无效，无法完整导出');
   if(Number(r.start)%1000!==0||Number(r.end)%1000!==0)throw Error('课程或事件包含亚秒时间，标准 ICS 无法无损表达');
   lines.push('BEGIN:VEVENT',`UID:${createHash('sha256').update(r.identity).digest('hex')}@ics.dormpanel`, `DTSTAMP:${stamp(now)}`,`DTSTART:${stamp(r.start)}`,`DTEND:${stamp(r.end)}`,`SUMMARY:${text(r.title)}`);
   if(r.location)lines.push(`LOCATION:${text(r.location)}`);

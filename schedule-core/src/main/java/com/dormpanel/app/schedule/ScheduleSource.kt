@@ -123,9 +123,9 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     /** Local persisted read only: no refresh listeners, network synchronization or Writer. */
     fun readExportSnapshot(callback: (Result<ScheduleState>) -> Unit) {
         if (closed || !ready || error || applyingSnapshot) { callback(Result.failure(ScheduleLocalReadFailed())); return }
-        store.loadPresentation { result -> callback(result.map { loaded ->
+        store.loadPresentation { result -> callback(result.mapCatching { loaded ->
             require(loaded.invalidRecords == 0) { "课表存在无法读取的记录，不能确认完整导出" }
-            if (loaded.sync == null) loaded.copy(profiles = effectiveProfiles(loaded.sources)) else loaded
+            loaded
         }) }
     }
     var state = ScheduleState(); private set
