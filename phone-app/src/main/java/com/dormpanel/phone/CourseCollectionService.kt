@@ -37,6 +37,11 @@ internal object CollectionWidgets {
         val data=publication.first
         return if(data.basis?.current(now,zone)==true) data else Snapshot(emptyList(),data.error?.takeIf { data.rows.isEmpty() } ?: "课表正在刷新",basis=CollectionBasis.at(now,zone))
     }
+    fun available(context: Context,id: Int): Boolean {
+        val week=isWeek(context,id)
+        val data=instanceSnapshot(context,id,week)
+        return data.error==null && if(week) data.grid!=null else data.basis?.current(Instant.now(),ZoneId.systemDefault())==true
+    }
     fun isCollection(context: Context,id: Int) = AppWidgetManager.getInstance(context).getAppWidgetInfo(id)?.provider?.className in
         listOf(RecentCoursesWidgetProvider::class.java.name,WeekCoursesWidgetProvider::class.java.name)
     fun isWeek(context: Context,id: Int) = AppWidgetManager.getInstance(context).getAppWidgetInfo(id)?.provider?.className == WeekCoursesWidgetProvider::class.java.name
@@ -142,7 +147,7 @@ internal object CollectionWidgets {
 
 class CourseCollectionService : RemoteViewsService() {
     override fun onGetViewFactory(intent: Intent): RemoteViewsFactory = Factory(applicationContext,intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,-1),intent.getIntExtra("recentColumn",0).coerceIn(0,1),runCatching { CollectionBasis(LocalDate.parse(intent.getStringExtra("basisDate")),ZoneId.of(intent.getStringExtra("basisZone"))) }.getOrNull())
-    private class Factory(val context: Context,val id: Int,val column: Int,val expectedBasis: CollectionBasis?) : RemoteViewsFactory {
+    internal class Factory(val context: Context,val id: Int,val column: Int,val expectedBasis: CollectionBasis?) : RemoteViewsFactory {
         val week=CollectionWidgets.isWeek(context,id)
         var data=CollectionWidgets.Snapshot(emptyList(),null)
         var width=320
@@ -151,10 +156,10 @@ class CourseCollectionService : RemoteViewsService() {
             if(!CollectionWidgets.isCollection(context,id)) return false
             if(week) return true
             val valid=data.basis==expectedBasis && data.basis?.current(Instant.now(),ZoneId.systemDefault())==true
-            if(!valid && !requested) { requested=true; TodayWidgetUpdates.request(context) }
+            if(!valid && !requested) { requested=true; TodayWidgetUpdates.ensure(context,id) }
             return valid
         }
-        override fun onCreate() { if(CollectionWidgets.isCollection(context,id)) TodayWidgetUpdates.request(context) }
+        override fun onCreate() { if(CollectionWidgets.isCollection(context,id)) TodayWidgetUpdates.ensure(context,id) }
         override fun onDataSetChanged() {
             if(!CollectionWidgets.isCollection(context,id)) { data=CollectionWidgets.Snapshot(emptyList(),null); return }
             val snapshot=CollectionWidgets.instanceSnapshot(context,id,week)

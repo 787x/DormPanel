@@ -28,6 +28,33 @@ class WidgetRefreshCoordinatorTest {
         }
         fun answer(index: Int, value: String) = reads[index](Result.success(value))
     }
+    @Test fun coldFactoriesShareOnePhysicalReadInEitherOrderAndWarmFactoriesReadNothing() {
+        for(order in listOf(listOf("today","tomorrow"),listOf("tomorrow","today"))) {
+            val h=Harness()
+            order.forEach { h.machine.ensure(false) }
+            assertEquals(1,h.reads.size)
+            h.answer(0,"both columns")
+            assertEquals(listOf("both columns"),h.frames)
+            order.forEach { h.machine.ensure(true) }; assertEquals(1,h.reads.size)
+        }
+    }
+    @Test fun actualCommitDuringFactoryReadStillSupersedesAndIncludesLatestData() {
+        val h=Harness(); h.machine.ensure(false); h.machine.ensure(false)
+        h.machine.request(); h.machine.ensure(false)
+        assertEquals(1,h.reads.size)
+        h.answer(0,"before commit"); assertTrue(h.frames.isEmpty()); assertEquals(2,h.reads.size)
+        h.machine.ensure(false); h.answer(1,"after commit")
+        assertEquals(listOf("after commit"),h.frames); assertEquals(2,h.reads.size)
+    }
+    @Test fun factoryFailureTimeoutRemovalAndReconstructionCanRecoverWithoutDuplicateReads() {
+        val h=Harness(); h.machine.ensure(false); h.machine.ensure(false)
+        h.reads[0](Result.failure(IllegalStateException()))
+        h.machine.ensure(false); h.machine.ensure(false); assertEquals(2,h.reads.size)
+        h.advance(7000); h.machine.ensure(false); h.machine.ensure(false); assertEquals(3,h.reads.size)
+        h.answer(2,"recovered"); h.answer(1,"late"); assertEquals("recovered",h.frames.last())
+        h.widgets=false; h.machine.ensure(false); assertEquals(3,h.reads.size)
+        val rebuilt=Harness(); rebuilt.machine.ensure(false); rebuilt.machine.ensure(false); assertEquals(1,rebuilt.reads.size)
+    }
     @Test fun timeoutWithNewCommitProbesAndNeverPublishesLateSnapshot() {
         val h=Harness(); var old=0; var fresh=0
         h.machine.request { old++ }; h.advance(2000)

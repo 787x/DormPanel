@@ -9,10 +9,21 @@ internal object CollectionProjection {
         days: Pair<TodayCourses.Day,TodayCourses.Day>? = null): String {
         if(state==null) return ""
         val projected=days ?: recent(state,today.atStartOfDay(zone).toInstant(),zone)
-        val participants=projected.first.remaining+projected.second.all
-        if(participants.isEmpty()) return ""
-        val keys=participants.map { item ->
-            val id=item.sourceId ?: return "" // Local courses have no verifiable term association.
+        // Calendar evidence survives today's lessons ending; displayed sources remain first priority.
+        val shown=projected.first.remaining+projected.second.all
+        val participants=if(shown.isNotEmpty()) shown else projected.first.all+projected.second.all
+        val sourceIds: List<String> = if(participants.isNotEmpty()) participants.map { it.sourceId ?: return "" }.distinct() else {
+            // Profiles have no term-end date. A preset or a source alone cannot prove an active term.
+            // Require concrete source-bound records whose observed date span overlaps this two-day window.
+            if(state.entries.isNotEmpty() || state.courseSlots.any { it.enabled && it.sourceId==null }) return ""
+            val from=today.atStartOfDay(zone).toInstant().toEpochMilli()
+            val until=today.plusDays(2).atStartOfDay(zone).toInstant().toEpochMilli()
+            state.imported.groupBy { it.sourceId }.filterValues { records ->
+                records.minOf { it.start } < until && records.maxOf { it.end } > from
+            }.keys.toList()
+        }
+        if(sourceIds.isEmpty()) return ""
+        val keys=sourceIds.map { id ->
             val source=state.sources.singleOrNull { it.id==id } ?: return ""
             source.resolvedTermKey() ?: return ""
         }.distinct()

@@ -26,7 +26,9 @@ internal object TodayWidgetUpdates {
     private val main = Handler(Looper.getMainLooper())
     private val components = listOf(TodayWidgetProvider::class.java, WideTodayWidgetProvider::class.java, RecentCoursesWidgetProvider::class.java, WeekCoursesWidgetProvider::class.java)
     private var coordinator: WidgetRefreshCoordinator<ScheduleState>? = null
-    fun request(context: Context, done: () -> Unit = {}) {
+    fun request(context: Context, done: () -> Unit = {}) = enqueue(context,null,done)
+    fun ensure(context: Context,id: Int) = enqueue(context,id,{})
+    private fun enqueue(context: Context,ensureId: Int?,done: ()->Unit) {
         val app = context.applicationContext
         main.post {
             val machine = coordinator ?: WidgetRefreshCoordinator<ScheduleState>(
@@ -69,7 +71,8 @@ internal object TodayWidgetUpdates {
                 recover = { schedule(app, Instant.now().plusSeconds(300)) },
                 cancel = { app.getSystemService(AlarmManager::class.java).cancel(alarm(app)) }
             ).also { coordinator = it }
-            machine.request(done)
+            if(ensureId==null) machine.request(done)
+            else if(CollectionWidgets.isCollection(app,ensureId)) machine.ensure(CollectionWidgets.available(app,ensureId))
         }
     }
     private fun renderFailure(context: Context,id: Int): RemoteViews {

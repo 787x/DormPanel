@@ -24,6 +24,13 @@ internal class WidgetRefreshCoordinator<T>(
     private val outstanding = mutableSetOf<Long>()
     private val waiters = mutableListOf<Waiter>()
 
+    /** Cache availability demand joins an active/queued read without invalidating its generation.
+     * Only actual update signals use request(), which must still supersede an in-flight result. */
+    fun ensure(available: Boolean) {
+        if (!present()) { removed(); return }
+        if (available || active != null || dirty) return
+        request()
+    }
     fun request(done: () -> Unit = {}) {
         val waiter = Waiter(++generation, done)
         waiters.add(waiter)

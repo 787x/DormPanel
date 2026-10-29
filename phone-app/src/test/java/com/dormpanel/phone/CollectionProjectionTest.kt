@@ -89,4 +89,36 @@ class CollectionProjectionTest {
         assertEquals("第9周",CollectionProjection.recentWeekLabel(historical,today,zone))
         assertEquals("",CollectionProjection.recentWeekLabel(base.copy(entries=listOf(entry("local",4,480,540))),today,zone))
     }
+    @Test fun endedAndEmptyDaysKeepOnlyEvidenceBackedCurrentTeachingWeek() {
+        val today=LocalDate.of(2026,10,29)
+        val source=ImportSource("a","A","a.csv","csv",null,null,"0".repeat(64),0,zone.id,0,0,0,BuiltInProfiles.TERM_2026_2027_1)
+        fun occurrence(id: String,owner: String,date: LocalDate): ImportedClassOccurrence {
+            val start=date.atTime(8,0).atZone(zone).toInstant().toEpochMilli()
+            return ImportedClassOccurrence(id,owner,id,null,start,"课程",start,start+3600000,zone.id,"A","",null)
+        }
+        val base=ScheduleState(sources=listOf(source),profiles=mapOf(source.termKey!! to BuiltInProfiles.term2026))
+        val ended=base.copy(imported=listOf(occurrence("ended","a",today)))
+        val days=CollectionProjection.recent(ended,today.atTime(20,0).atZone(zone).toInstant(),zone)
+        assertTrue(days.first.remaining.isEmpty()); assertTrue(days.second.all.isEmpty())
+        assertEquals("第9周",CollectionProjection.recentWeekLabel(ended,today,zone,days))
+        val empty=base.copy(imported=listOf(occurrence("before","a",today.minusDays(3)),occurrence("after","a",today.plusDays(4))))
+        val emptyDays=CollectionProjection.recent(empty,today.atTime(12,0).atZone(zone).toInstant(),zone)
+        assertTrue(emptyDays.first.all.isEmpty()); assertTrue(emptyDays.second.all.isEmpty())
+        assertEquals("第9周",CollectionProjection.recentWeekLabel(empty,today,zone,emptyDays))
+        val sunday=LocalDate.of(2026,11,1)
+        assertEquals("第9-10周",CollectionProjection.recentWeekLabel(empty,sunday,zone))
+        assertEquals("",CollectionProjection.recentWeekLabel(base,today,zone)) // No records: preset is not evidence.
+        val b=source.copy(id="b")
+        val same=empty.copy(sources=listOf(source,b),imported=empty.imported+listOf(occurrence("b1","b",today.minusDays(2)),occurrence("b2","b",today.plusDays(5))))
+        assertEquals("第9周",CollectionProjection.recentWeekLabel(same,today,zone))
+        assertEquals("",CollectionProjection.recentWeekLabel(same.copy(sources=listOf(source,b.copy(termKey=null))),today,zone))
+        val other=BuiltInProfiles.term2026.copy(termKey="other")
+        assertEquals("",CollectionProjection.recentWeekLabel(same.copy(sources=listOf(source,b.copy(termKey="other")),profiles=base.profiles+("other" to other)),today,zone))
+        val history=empty.copy(sources=listOf(source,b.copy(termKey=null)),imported=empty.imported+occurrence("old","b",today.minusMonths(2)))
+        assertEquals("第9周",CollectionProjection.recentWeekLabel(history,today,zone))
+        assertEquals("",CollectionProjection.recentWeekLabel(base.copy(imported=listOf(occurrence("old","a",today.minusMonths(2)))),today,zone))
+        assertEquals("",CollectionProjection.recentWeekLabel(empty,today,ZoneId.of("UTC")))
+        assertEquals("",CollectionProjection.recentWeekLabel(empty.copy(profiles=mapOf(source.termKey!! to BuiltInProfiles.term2026.copy(week1Monday=LocalDate.of(2026,11,2)))),today,zone))
+        assertEquals("",CollectionProjection.recentWeekLabel(empty.copy(profiles=mapOf(source.termKey!! to BuiltInProfiles.term2026.copy(week1Monday=today))),today,zone))
+    }
 }

@@ -6,6 +6,49 @@ import org.junit.Test
 import java.time.*
 import java.util.concurrent.*
 class CollectionWidgetTest {
+    @Test fun dualFactoriesCountPhysicalReadsAndDoNotSwallowCommit() {
+        val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
+        check(c.packageName.endsWith(".pr72testbed"))
+        val id=android.appwidget.AppWidgetManager.getInstance(c).getAppWidgetIds(android.content.ComponentName(c,RecentCoursesWidgetProvider::class.java)).first()
+        val done=CountDownLatch(1); TodayWidgetUpdates.request(c) { done.countDown() }; assertTrue(done.await(10,TimeUnit.SECONDS))
+        val store=ScheduleStores.create(c)
+        val reads=java.util.concurrent.CopyOnWriteArrayList<(Result<ScheduleState>)->Unit>()
+        ScheduleStores.overrideFactory={ object: ScheduleStore by store { override fun loadPresentation(callback: (Result<ScheduleState>)->Unit) { reads+=callback } } }
+        fun drain() { i.runOnMainSync {} }
+        fun state(title: String): ScheduleState {
+            val day=LocalDate.now().dayOfWeek.value
+            return ScheduleState(entries=listOf(TimetableEntry("today",title,day,0,1439),TimetableEntry("tomorrow",title,day%7+1,0,1439)))
+        }
+        val basis=CollectionBasis.at(java.time.Instant.now(),java.time.ZoneId.systemDefault())
+        fun factories(reverse: Boolean)=listOf(0,1).let { if(reverse) it.reversed() else it }.map { CourseCollectionService.Factory(c,id,it,basis) }
+        try {
+            val warm=factories(false)
+            i.runOnMainSync { warm.forEach { it.onCreate();it.onDataSetChanged();it.getCount() } };drain()
+            assertEquals("warm factories do not read",0,reads.size)
+            for(reverse in listOf(false,true)) {
+                val offset=reads.size
+                i.runOnMainSync { CollectionWidgets.publish(c,Result.failure(IllegalStateException("unavailable")),java.time.Instant.now(),basis.zone) }
+                val cold=factories(reverse)
+                i.runOnMainSync { cold.forEach { it.onCreate();it.onDataSetChanged();it.getCount() } };drain()
+                assertEquals(offset+1,reads.size)
+                if(!reverse) { reads[offset](Result.success(state("first")));drain();assertEquals(offset+1,reads.size) }
+                else {
+                    ScheduleCommitSignals.notifyChanged();drain()
+                    reads[offset](Result.success(state("obsolete")));drain();assertEquals(offset+2,reads.size)
+                    reads[offset+1](Result.success(state("new commit")));drain()
+                    assertTrue(CollectionWidgets.snapshot(false).rows.first().cells.all { it.text.contains("new commit") })
+                }
+                i.runOnMainSync { cold.forEach { it.onDataSetChanged();assertTrue(it.getCount()>0) } };drain()
+                assertEquals(offset+if(reverse) 2 else 1,reads.size)
+            }
+            i.runOnMainSync { CollectionWidgets.publish(c,Result.failure(IllegalStateException("unavailable")),java.time.Instant.now(),basis.zone) }
+            val failed=factories(false);i.runOnMainSync { failed.forEach { it.onCreate() } };drain()
+            val failureIndex=reads.lastIndex;reads[failureIndex](Result.failure(IllegalStateException("read failed")));drain()
+            val retry=factories(true);i.runOnMainSync { retry.forEach { it.onCreate() } };drain()
+            assertEquals(failureIndex+2,reads.size);reads.last()(Result.success(state("recovered")));drain()
+            assertNull(CollectionWidgets.snapshot(false).error)
+        } finally { ScheduleStores.overrideFactory=null;val restored=CountDownLatch(1);TodayWidgetUpdates.request(c) { restored.countDown() };assertTrue(restored.await(10,TimeUnit.SECONDS)) }
+    }
     @Test fun recentMidnightSnapshotNeverGetsNewDateWithOldCourses() {
         val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
         check(c.packageName.endsWith(".pr72testbed"))
@@ -36,6 +79,22 @@ class CollectionWidgetTest {
             assertEquals(date.plusDays(1),fresh.rows.first().cells[0].date)
             assertEquals(date.plusDays(2),fresh.rows.first().cells[1].date)
             assertTrue(fresh.rows.first().cells[0].text.contains("跨午夜"))
+            i.runOnMainSync {
+                val sunday=LocalDate.of(2026,11,1)
+                val a=sunday.atTime(23,59,59).atZone(zone).toInstant(); val b=a.plusSeconds(2)
+                val source=ImportSource("calendar","日历依据","demo.csv","csv",null,null,"0".repeat(64),0,zone.id,2,0,0,BuiltInProfiles.TERM_2026_2027_1)
+                val records=listOf(sunday.minusDays(4),sunday.plusDays(4)).mapIndexed { n,d ->
+                    val time=d.atTime(8,0).atZone(zone).toInstant().toEpochMilli()
+                    ImportedClassOccurrence("calendar$n",source.id,"calendar$n",null,time,"日历课程",time,time+3600000,zone.id,"A","",null)
+                }
+                val calendar=ScheduleState(sources=listOf(source),imported=records,profiles=mapOf(source.termKey!! to BuiltInProfiles.term2026))
+                CollectionWidgets.publish(c,Result.success(calendar),a,zone)
+                assertEquals("第9-10周",CollectionWidgets.instanceSnapshot(c,id,false,a,zone).weekLabel)
+                assertEquals("",CollectionWidgets.instanceSnapshot(c,id,false,b,zone).weekLabel)
+                CollectionWidgets.publish(c,Result.success(calendar),b,zone)
+                assertEquals("第10周",CollectionWidgets.instanceSnapshot(c,id,false,b,zone).weekLabel)
+                assertEquals("",CollectionWidgets.instanceSnapshot(c,id,false,b,java.time.ZoneId.of("UTC")).weekLabel)
+            }
             CollectionWidgets.publish(c,Result.failure(IllegalStateException("read")),after,zone)
             assertTrue(CollectionWidgets.instanceSnapshot(c,id,false,after,zone).rows.isEmpty())
             assertNotNull(CollectionWidgets.instanceSnapshot(c,id,false,after,zone).error)

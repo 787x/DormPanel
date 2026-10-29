@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.phone.CollectionProjectionTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-29T11:57:41.574Z" hostname="LAPTOP-6ORBUU2C" time="0.066">
+  <properties/>
+  <testcase name="recentHeadingShowsSingleOrCrossTeachingWeekWithoutGuessing" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.044"/>
+  <testcase name="endedAndEmptyDaysKeepOnlyEvidenceBackedCurrentTeachingWeek" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.006"/>
+  <testcase name="remainingTodayAndAllTomorrowWithoutCapacityTruncation" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.001"/>
+  <testcase name="sundayMidnightCourseAppearsInBothWeeks" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.004"/>
+  <testcase name="weekIncludesSevenDaysOverlapsAndShortCustomCourses" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.002"/>
+  <testcase name="periodDefaultAndExplicitTimeUseSameRealOccurrences" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.003"/>
+  <testcase name="relevantSourcesMustAllResolveToTheSameValidTerm" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.003"/>
+  <testcase name="fiveDayRangeExcludesLateWeekendWithoutLosingSevenDayData" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
