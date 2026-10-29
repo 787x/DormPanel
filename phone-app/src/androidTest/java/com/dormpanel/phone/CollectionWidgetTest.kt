@@ -6,6 +6,41 @@ import org.junit.Test
 import java.time.*
 import java.util.concurrent.*
 class CollectionWidgetTest {
+    @Test fun recentMidnightSnapshotNeverGetsNewDateWithOldCourses() {
+        val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
+        check(c.packageName.endsWith(".pr72testbed"))
+        val manager=android.appwidget.AppWidgetManager.getInstance(c)
+        val id=manager.getAppWidgetIds(android.content.ComponentName(c,RecentCoursesWidgetProvider::class.java)).first()
+        val zone=java.time.ZoneId.of("Asia/Shanghai"); val date=LocalDate.of(2026,10,29)
+        val before=date.atTime(23,59,59).atZone(zone).toInstant(); val after=before.plusSeconds(2)
+        val start=date.atTime(23,30).atZone(zone).toInstant().toEpochMilli()
+        val state=ScheduleState(imported=listOf(ImportedClassOccurrence("midnight","s","midnight",null,start,"跨午夜",start,start+3600000,zone.id,"A","",null)))
+        try {
+            CollectionWidgets.publish(c,Result.success(state),before,zone)
+            val old=CollectionWidgets.instanceSnapshot(c,id,false,before,zone)
+            assertEquals(date,old.basis!!.date); assertTrue(old.rows.first().cells.all { it.text.contains("跨午夜") })
+            val stale=CollectionWidgets.instanceSnapshot(c,id,false,after,zone)
+            assertTrue(stale.rows.isEmpty()); assertNotNull(stale.error)
+            assertEquals(date.plusDays(1),stale.basis!!.date)
+            i.runOnMainSync {
+                val oldView=CollectionWidgets.render(c,id,state,before,zone).apply(c,android.widget.FrameLayout(c))
+                assertTrue(oldView.findViewById<android.widget.TextView>(R.id.header_0).text.toString().contains("10.29"))
+                val staleView=CollectionWidgets.render(c,id,state,after,zone).apply(c,android.widget.FrameLayout(c))
+                assertTrue(staleView.findViewById<android.widget.TextView>(R.id.header_0).text.toString().contains("10.30"))
+                assertEquals(android.view.View.GONE,staleView.findViewById<android.view.View>(R.id.collection_list).visibility)
+                assertEquals(android.view.View.GONE,staleView.findViewById<android.view.View>(R.id.recent_tomorrow_list).visibility)
+            }
+            CollectionWidgets.publish(c,Result.success(state),after,zone)
+            val fresh=CollectionWidgets.instanceSnapshot(c,id,false,after,zone)
+            assertEquals(date.plusDays(1),fresh.basis!!.date)
+            assertEquals(date.plusDays(1),fresh.rows.first().cells[0].date)
+            assertEquals(date.plusDays(2),fresh.rows.first().cells[1].date)
+            assertTrue(fresh.rows.first().cells[0].text.contains("跨午夜"))
+            CollectionWidgets.publish(c,Result.failure(IllegalStateException("read")),after,zone)
+            assertTrue(CollectionWidgets.instanceSnapshot(c,id,false,after,zone).rows.isEmpty())
+            assertNotNull(CollectionWidgets.instanceSnapshot(c,id,false,after,zone).error)
+        } finally { val done=CountDownLatch(1); TodayWidgetUpdates.request(c) { done.countDown() }; assertTrue(done.await(10,TimeUnit.SECONDS)) }
+    }
     @Test fun recentDateHeadingsAndTomorrowHeaderClick() {
         val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
         check(c.packageName.endsWith(".pr72testbed"))
@@ -22,7 +57,7 @@ class CollectionWidgetTest {
         fun title(label: String,date: LocalDate)="$label ${date.format(java.time.format.DateTimeFormatter.ofPattern("MM.dd"))} 周${"一二三四五六日"[date.dayOfWeek.value-1]}"
         assertEquals(title("今天",today),find("header_0").text.toString())
         val node=find("header_1"); assertEquals(title("明天",tomorrow),node.text.toString())
-        assertTrue(find("collection_date").text?.toString().orEmpty().matches(Regex("(?:第[0-9]+(?:-[0-9]+)?周)?")))
+        assertTrue(nodes(i.uiAutomation.rootInActiveWindow).firstOrNull { it.viewIdResourceName?.endsWith("collection_date")==true }?.text?.toString().orEmpty().matches(Regex("(?:第[0-9]+(?:-[0-9]+)?周)?")))
         val bounds=android.graphics.Rect(); node.getBoundsInScreen(bounds); val down=android.os.SystemClock.uptimeMillis()
         for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)) {
             val e=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,bounds.exactCenterX(),bounds.exactCenterY(),0)

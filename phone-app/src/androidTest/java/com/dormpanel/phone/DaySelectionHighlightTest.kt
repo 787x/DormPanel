@@ -29,6 +29,19 @@ class DaySelectionHighlightTest {
                 assertTrue(todayButton.text.toString().startsWith("●"))
                 assertFalse(selectedButton.text.toString().contains("·"))
                 assertTrue(selectedButton.isSelected); assertFalse(todayButton.isSelected)
+                mode.setBoolean(a,true)
+                TimetableActivity::class.java.getDeclaredMethod("render").apply { isAccessible=true }.invoke(a)
+                var weekButtons=children(a.findViewById(android.R.id.content)).filterIsInstance<android.widget.Button>()
+                assertEquals(blue,weekButtons.first { it.contentDescription?.toString()=="$day 今天" }.backgroundTintList!!.defaultColor)
+                assertTrue(weekButtons.first { it.contentDescription?.toString()=="$selected 已选择" }.text.toString().contains("·"))
+                TimetableActivity::class.java.getDeclaredField("selected").apply { isAccessible=true }.set(a,day)
+                TimetableActivity::class.java.getDeclaredMethod("render").apply { isAccessible=true }.invoke(a)
+                weekButtons=children(a.findViewById(android.R.id.content)).filterIsInstance<android.widget.Button>()
+                val chosenToday=weekButtons.first { it.contentDescription?.toString()=="$day 今天 已选择" }
+                assertTrue(chosenToday.text.toString().startsWith("●")); assertFalse(chosenToday.text.toString().contains("·"))
+                mode.setBoolean(a,false)
+                TimetableActivity::class.java.getDeclaredMethod("render").apply { isAccessible=true }.invoke(a)
+                assertFalse(children(a.findViewById(android.R.id.content)).filterIsInstance<android.widget.Button>().any { it.text.toString().contains("·") })
             }
         }
     }
