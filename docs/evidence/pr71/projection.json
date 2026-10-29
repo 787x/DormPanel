@@ -1,0 +1,97 @@
+[
+  {
+    "week": "2026-09-07",
+    "rows": [
+      {
+        "id": "slot-a",
+        "seriesId": "x",
+        "sourceId": null,
+        "date": "2026-09-07",
+        "academicDate": "2026-09-07",
+        "anchorDate": "2026-09-07",
+        "start": 1788739200000,
+        "end": 1788742800000,
+        "title": "PR71 网络课程",
+        "location": "fnOS 新教室",
+        "teacher": "NAS 教师复验",
+        "note": "备注",
+        "periodLabel": null,
+        "sharedRgb": 3368601
+      },
+      {
+        "id": "slot-b",
+        "seriesId": "slot-b",
+        "sourceId": null,
+        "date": "2026-09-09",
+        "academicDate": "2026-09-09",
+        "anchorDate": "2026-09-09",
+        "start": 1788912000000,
+        "end": 1788915600000,
+        "title": "PR71 网络课程",
+        "location": "B",
+        "teacher": "NAS 教师复验",
+        "note": "备注",
+        "periodLabel": null,
+        "sharedRgb": 3368601
+      }
+    ]
+  },
+  {
+    "week": "2026-09-21",
+    "rows": [
+      {
+        "id": "slot-b",
+        "seriesId": "slot-b",
+        "sourceId": null,
+        "date": "2026-09-23",
+        "academicDate": "2026-09-23",
+        "anchorDate": "2026-09-23",
+        "start": 1790121600000,
+        "end": 1790125200000,
+        "title": "PR71 网络课程",
+        "location": "B",
+        "teacher": "NAS 教师复验",
+        "note": "备注",
+        "periodLabel": null,
+        "sharedRgb": 3368601
+      }
+    ]
+  },
+  {
+    "week": "2026-10-05",
+    "rows": [
+      {
+        "id": "slot-a",
+        "seriesId": "x",
+        "sourceId": null,
+        "date": "2026-10-05",
+        "academicDate": "2026-10-05",
+        "anchorDate": "2026-10-05",
+        "start": 1791158400000,
+        "end": 1791162000000,
+        "title": "PR71 网络课程",
+        "location": "fnOS 新教室",
+        "teacher": "NAS 教师复验",
+        "note": "保留指定周例外",
+        "periodLabel": null,
+        "sharedRgb": 3368601
+      },
+      {
+        "id": "slot-b",
+        "seriesId": "slot-b",
+        "sourceId": null,
+        "date": "2026-10-07",
+        "academicDate": "2026-10-07",
+        "anchorDate": "2026-10-07",
+        "start": 1791331200000,
+        "end": 1791334800000,
+        "title": "PR71 网络课程",
+        "location": "B",
+        "teacher": "NAS 教师复验",
+        "note": "备注",
+        "periodLabel": null,
+        "sharedRgb": 3368601
+      }
+    ]
+  }
+]

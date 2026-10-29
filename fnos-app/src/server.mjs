@@ -1,3 +1,5 @@
+import {courses,previewCourse} from './course-management.mjs';
+import {courseEditSchema} from './operations.mjs';
 import { V3Maintenance } from './v3-maintenance.mjs';
 import { V3EndpointMove } from './v3-endpoint.mjs';
 import http from "node:http";
@@ -134,7 +136,7 @@ export async function createApp({
   const refresh = options => catalog.network(catalog.manifest.activeId, engine => engine.synchronize(options));
   let agents;
   const handle = async (req, res, internal = false) => {
-    requests++; let writing = false, requestPath;
+    requests++; let writing = false, requestPath, coursePersistenceStarted=false;
     const send = (status, value, type = "application/json; charset=utf-8") => {
       res.writeHead(status, {
         "Content-Type": type,
@@ -168,7 +170,7 @@ export async function createApp({
           '/api/migration', '/api/migration/verify',
           '/api/history/archive-restore', '/api/history/cleanup-preview', '/api/history/cleanup', '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
           "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore", "/api/backups/cancel",
-          "/api/edit",
+          "/api/edit", "/api/courses/preview", "/api/courses/save",
           "/api/refresh",
           "/api/sync",
           "/api/resolve",
@@ -328,6 +330,14 @@ export async function createApp({
             send(200, publicValue({ ...result, version: db.frame.revision })); return;
           } finally { historyLock = false; }
         }
+        else if (path.startsWith('/api/courses/')) {
+          const validateCourseContext=()=>{ensure(input.datasetId===db.frame.datasetId&&input.catalogVersion===catalog.manifest.revision&&workspaceId===catalog.manifest.activeId,'课程管理身份或版本过期');db.assertWritable?.();ensure(!catalog.restoreGuards[workspaceId]&&!db.frame.conflict,'恢复保护或冲突期间禁止课程管理写入');};validateCourseContext();
+          const edit=courseEditSchema.parse(input.edit),preview=previewCourse(db,edit,input.version);
+          if(path.endsWith('/preview')){send(200,preview);return;}
+          ensure(input.previewHash===preview.businessHash,'课程预览过期');
+          coursePersistenceStarted=true;const result=await db.saveCourseEdit(edit,input.version,validateCourseContext);
+          send(200,{businessHash:result.businessHash,version:db.frame.revision,localSaved:true,dirty:db.dirty(),pending:!!db.frame.pending,receipt:db.frame.receipt,otherDevicesReceived:'unknown'});return;
+        }
         else if (path === "/api/edit") await db.edit(input.operation, input.version);
         else if (path === "/api/refresh" || path === "/api/sync") {
           const result = await network(engine => engine.synchronize({
@@ -414,7 +424,7 @@ export async function createApp({
       if (path === '/api/sync/discover') {
         send(200, await catalog.discover(u.searchParams.get('workspaceId'), u.searchParams.get('targetConnectionId'))); return;
       }
-      if (path.startsWith('/api/') && !['/api/maintenance', '/api/agent', '/api/import/rows', '/api/schedule/range', '/api/migration', '/api/history', '/api/history/space', '/api/history/eligibility', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
+      if (path.startsWith('/api/') && !['/api/courses', '/api/maintenance', '/api/agent', '/api/import/rows', '/api/schedule/range', '/api/migration', '/api/history', '/api/history/space', '/api/history/eligibility', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
         send(404, { error: '不存在' }); return;
       }
       ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
@@ -475,6 +485,7 @@ export async function createApp({
       if (path === "/api/directories") {
         send(200, { directories: await catalog.grants.browse(u.searchParams.get('rootId'), u.searchParams.get('relative') ?? '') }); return;
       }
+      if(path==='/api/courses'){const result=courses(db,Object.fromEntries(u.searchParams));if(catalog.restoreGuards[workspaceId]){if(result.course)result.course.editable=false;for(const row of result.rows??[])row.editable=false;}send(200,{...result,workspaceId,catalogVersion:catalog.manifest.revision});return;}
       if (path === "/api/state") {
         send(200, {
           workspaceId,
@@ -577,6 +588,7 @@ export async function createApp({
       const files = {
         "": ["index.html", "text/html; charset=utf-8"],
         "/": ["index.html", "text/html; charset=utf-8"],
+        "/course-management.js": ["course-management.js", "text/javascript; charset=utf-8"],
         "/app.js": ["app.js", "text/javascript; charset=utf-8"],
         "/feedback.js": ["feedback.js", "text/javascript; charset=utf-8"],
         "/sync-status.js": ["sync-status.js", "text/javascript; charset=utf-8"],
@@ -592,7 +604,7 @@ export async function createApp({
       const message=String(e.message ?? '操作失败');
       const sensitive=/\b(?:ENOENT|EACCES|EPERM|EIO|ERR_SQLITE|SQLITE_[A-Z_]+)\b|\/(?:data|var|vol\d+|home|proc|tmp)\/|[A-Za-z]:\\|password=|token=/i.test(message+' '+(e.code ?? ''));
       send(/过期|变化|失效/.test(message) ? 409 : 400, { error:sensitive ? '存储或访问验证失败；数据与恢复证据已保留，敏感位置已隐藏' : message.slice(0,500),
-        ...(['/api/edit','/api/import/confirm'].includes(requestPath) && rejectedBeforePersistence(e) ? {writeApplied:false} : {}) });
+        ...(['/api/edit','/api/courses/save','/api/import/confirm'].includes(requestPath) && (rejectedBeforePersistence(e)||requestPath==='/api/courses/save'&&!coursePersistenceStarted) ? {writeApplied:false} : {}) });
     } finally {
       if (writing) writes--; requests--;
       if (requests === 0) catalog.prune();

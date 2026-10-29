@@ -1,0 +1,37 @@
+[
+  {
+    "name": "different-courses",
+    "conflict": false,
+    "recovered": true,
+    "hash": "66041b9ae1491f5e329b737a9bbca571a9f80cc70909802393c05b2da8060a78",
+    "datasetId": "d3a7b4d5-b6b7-435f-9f45-2dde20524626"
+  },
+  {
+    "name": "teacher-color",
+    "conflict": false,
+    "recovered": true,
+    "hash": "17d5b9c50f20cba72c74fc2d0165c29fdc9cfbd9600019b754100f1ca820e69a",
+    "datasetId": "23638161-dca8-426c-b12b-adf2eaaa99a4"
+  },
+  {
+    "name": "color-conflict",
+    "conflict": true,
+    "recovered": true,
+    "hash": "554f3ef38af3d290b54f6ec2d04605e7c72fbae543d866f882ea6eb20b4ae6de",
+    "datasetId": "1a75009d-d3ce-4303-a878-6a7e0f68d7a3"
+  },
+  {
+    "name": "slot-delete-edit",
+    "conflict": true,
+    "recovered": true,
+    "hash": "37e0d365ba7c5813be7c05a3db39b13b74e3d170e873113c99aa50b147185ab3",
+    "datasetId": "f2f7a987-a535-4a81-b100-3352a43f1a88"
+  },
+  {
+    "name": "source-reference",
+    "conflict": true,
+    "recovered": true,
+    "hash": "ec329da8c25f2b30a5980db9d5506e766aac5caa33eede206c593f2809d4782e",
+    "datasetId": "c8fa349e-1daa-4e53-8db5-0dbb8f651d80"
+  }
+]

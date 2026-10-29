@@ -68,6 +68,8 @@ PR38 原位升级先逐字段完整复制 `workspace.json` 到 `var/workspaces/<
 
 0.4.3 增加 CSV 预览进度、真实错误和重试反馈，预览成功后才允许保存；已用 NAS 导入用户指定 CSV 并让 X08E 接收，详见 [候选及实机同步记录](../docs/fpk-0.4.3-candidate-notes.md)。
 
+课程分组、共享颜色、多时段、离散教学周与一次预览保存使用“课程管理”入口；旧格式保留原单条编辑。CLI/MCP 同用 Workspace 事务，详见 [操作与示例](../docs/pr71-course-management.md) 和 [PR71 验证记录](../docs/pr71-validation.md)。
+
 ## 构建
 
 需要 Node 22+、npm、官方 fnpack：
