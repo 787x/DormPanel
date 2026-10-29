@@ -83,13 +83,21 @@ internal object CollectionWidgets {
         val profile=state?.sources?.mapNotNull { it.resolvedTermKey() }?.distinct()?.mapNotNull { state.profiles[it] }
             ?.filter { it.validate()==null && it.phaseOn(date)!=null && it.timezone==ZoneId.systemDefault().id }?.singleOrNull()
         val teaching=profile?.let { ChronoUnit.WEEKS.between(it.week1Monday,monday)+1 }?.takeIf { it>0 }
-        views.setTextViewText(R.id.collection_date,"${date.format(DateTimeFormatter.ofPattern("MM.dd"))} 周${"一二三四五六日"[date.dayOfWeek.value-1]}"+(teaching?.let { " 第${it}周" } ?: ""))
         val mode=if(!isWeek) "" else if(!WidgetTitleSettings.periods(context,id)) " · 实际时间" else if(data.grid?.axis?.periodLabels?.isNotEmpty()==true) " · 按节次" else " · 实际时间（无统一节次表）"
-        views.setTextViewText(R.id.collection_date,"${date.format(DateTimeFormatter.ofPattern("MM.dd"))} 周${"一二三四五六日"[date.dayOfWeek.value-1]}"+(teaching?.let { " 第${it}周" } ?: "")+mode)
         if(isWeek) {
             views.setTextViewText(R.id.collection_date,date.format(DateTimeFormatter.ofPattern("yyyy/MM/dd"))+mode)
             views.setTextViewText(R.id.collection_title,(WidgetTitleSettings.get(context,id) ?: TodayCourses.title(state))+
                 (teaching?.let { " | 第${it}周" } ?: "")+"  周${"一二三四五六日"[date.dayOfWeek.value-1]}")
+        }
+        else {
+            views.setTextViewText(R.id.collection_date,CollectionProjection.recentWeekLabel(state,date,ZoneId.systemDefault()))
+            listOf("今天" to date,"明天" to date.plusDays(1)).forEachIndexed { column,(label,day) ->
+                val title=android.text.SpannableString("$label ${day.format(DateTimeFormatter.ofPattern("MM.dd"))} 周${"一二三四五六日"[day.dayOfWeek.value-1]}")
+                val start=label.length+1
+                title.setSpan(android.text.style.ForegroundColorSpan(context.getColor(R.color.collection_secondary)),start,title.length,android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                title.setSpan(android.text.style.RelativeSizeSpan(.85f),start,title.length,android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                views.setTextViewText(headerIds[column],title)
+            }
         }
         val message=data.error ?: if(isWeek && data.grid?.segments?.isEmpty()==true) "本周没有课程" else ""
         views.setTextViewText(R.id.collection_message,message)
@@ -107,6 +115,11 @@ internal object CollectionWidgets {
         val immutable=PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         views.setOnClickPendingIntent(R.id.collection_title,PendingIntent.getActivity(context,id,intent,immutable))
         views.setOnClickPendingIntent(R.id.collection_date,PendingIntent.getActivity(context,id,intent,immutable))
+        if(!isWeek) (0..1).forEach { column ->
+            val openDate=Intent(intent).setData(Uri.parse("dormpanel://widget/$id/recent-date/$column"))
+                .putExtra("widgetDate",date.plusDays(column.toLong()).toString())
+            views.setOnClickPendingIntent(headerIds[column],PendingIntent.getActivity(context,id,openDate,immutable))
+        }
         lists.forEach { list -> views.setPendingIntentTemplate(list,PendingIntent.getActivity(context,id+100000,intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)) }
         if(isWeek) (0..6).forEach { day ->

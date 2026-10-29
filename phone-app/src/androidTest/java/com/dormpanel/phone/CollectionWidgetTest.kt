@@ -6,6 +6,37 @@ import org.junit.Test
 import java.time.*
 import java.util.concurrent.*
 class CollectionWidgetTest {
+    @Test fun recentDateHeadingsAndTomorrowHeaderClick() {
+        val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
+        check(c.packageName.endsWith(".pr72testbed"))
+        val info=i.uiAutomation.serviceInfo; info.flags=info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS; i.uiAutomation.serviceInfo=info
+        fun nodes(n: android.view.accessibility.AccessibilityNodeInfo?): List<android.view.accessibility.AccessibilityNodeInfo> = if(n==null) emptyList() else listOf(n)+(0 until n.childCount).flatMap { nodes(n.getChild(it)) }
+        fun find(id: String): android.view.accessibility.AccessibilityNodeInfo {
+            val end=System.currentTimeMillis()+5000
+            while(System.currentTimeMillis()<end) {
+                nodes(i.uiAutomation.rootInActiveWindow).firstOrNull { it.isVisibleToUser && it.viewIdResourceName?.endsWith(id)==true }?.let { return it }
+                Thread.sleep(50)
+            }; error("Missing $id")
+        }
+        val today=LocalDate.now(); val tomorrow=today.plusDays(1)
+        fun title(label: String,date: LocalDate)="$label ${date.format(java.time.format.DateTimeFormatter.ofPattern("MM.dd"))} 周${"一二三四五六日"[date.dayOfWeek.value-1]}"
+        assertEquals(title("今天",today),find("header_0").text.toString())
+        val node=find("header_1"); assertEquals(title("明天",tomorrow),node.text.toString())
+        assertTrue(find("collection_date").text?.toString().orEmpty().matches(Regex("(?:第[0-9]+(?:-[0-9]+)?周)?")))
+        val bounds=android.graphics.Rect(); node.getBoundsInScreen(bounds); val down=android.os.SystemClock.uptimeMillis()
+        for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)) {
+            val e=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,bounds.exactCenterX(),bounds.exactCenterY(),0)
+            e.source=android.view.InputDevice.SOURCE_TOUCHSCREEN; assertTrue(i.uiAutomation.injectInputEvent(e,true)); e.recycle()
+        }
+        var selected: LocalDate?=null; val end=System.currentTimeMillis()+5000
+        while(selected!=tomorrow && System.currentTimeMillis()<end) {
+            i.runOnMainSync {
+                val a=androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).filterIsInstance<TimetableActivity>().firstOrNull()
+                if(a!=null) selected=TimetableActivity::class.java.getDeclaredField("selected").apply { isAccessible=true }.get(a) as LocalDate
+            }; if(selected!=tomorrow) Thread.sleep(50)
+        }
+        assertEquals(tomorrow,selected)
+    }
     @Test fun recentColumnsScrollIndependently() {
         val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
         check(c.packageName.endsWith(".pr72testbed"))

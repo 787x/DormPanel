@@ -52,4 +52,13 @@ class CollectionProjectionTest {
         assertEquals(5,five.dayCount); assertEquals(7,seven.dayCount)
         assertTrue(five.axis.height<seven.axis.height)
     }
+    @Test fun recentHeadingShowsSingleOrCrossTeachingWeekWithoutGuessing() {
+        val source=ImportSource("s","课程","demo.csv","csv",null,null,"0".repeat(64),0,"Asia/Shanghai",0,0,0,BuiltInProfiles.TERM_2026_2027_1)
+        val state=ScheduleState(sources=listOf(source),profiles=mapOf(source.termKey!! to BuiltInProfiles.term2026))
+        assertEquals("第9周",CollectionProjection.recentWeekLabel(state,LocalDate.of(2026,10,29),zone))
+        assertEquals("第9-10周",CollectionProjection.recentWeekLabel(state,LocalDate.of(2026,11,1),zone))
+        assertEquals("第10周",CollectionProjection.recentWeekLabel(state,LocalDate.of(2026,11,2),zone))
+        assertEquals("",CollectionProjection.recentWeekLabel(state,LocalDate.of(2026,11,1),ZoneId.of("UTC")))
+        assertEquals("",CollectionProjection.recentWeekLabel(ScheduleState(),date,zone))
+    }
 }
