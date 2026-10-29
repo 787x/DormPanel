@@ -4,5 +4,3 @@ com.dormpanel.phone.CollectionWidgetTest:.
 Time: 2.792
 
 OK (1 test)
-
-
