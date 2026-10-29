@@ -69,4 +69,57 @@ class IcsExportTest {
    scenario.onActivity { assertTrue(it.source.state.entries.isEmpty()) }
   }
  }
+ private fun awaitText(text: String) {
+  val deadline=System.currentTimeMillis()+10000
+  while(true) { try { onView(withText(text)).check(matches(isDisplayed()));return } catch(e: androidx.test.espresso.NoMatchingViewException) { if(System.currentTimeMillis()>deadline)throw e;Thread.sleep(50) } }
+ }
+ private fun cancelDelayedPreview(read: Boolean, fail: Boolean) {
+  var complete: ((Result<ScheduleState>)->Unit)?=null
+  if(read) ScheduleStores.overrideFactory={c->
+   val store=RoomScheduleStore(Room.databaseBuilder(c,ScheduleDatabase::class.java,name).build(),profiles=TermScheduleProfileStore(c))
+   object:ScheduleStore by store { override fun loadPresentation(callback:(Result<ScheduleState>)->Unit) { complete=callback } }
+  }
+  launchPhoneTestActivity().use { scenario ->
+   Thread.sleep(1000)
+   val gate=java.util.concurrent.CountDownLatch(1)
+   if(!read) scenario.onActivity { a ->
+    val field=TimetableActivity::class.java.getDeclaredField("worker");field.isAccessible=true
+    (field.get(a) as java.util.concurrent.ExecutorService).execute { gate.await(10,java.util.concurrent.TimeUnit.SECONDS) }
+   }
+   onView(withText("管理")).perform(click());onView(withText("导出 ICS")).perform(click())
+   if(!read && fail) onView(withHint("开始日期 YYYY-MM-DD")).perform(androidx.test.espresso.action.ViewActions.replaceText("invalid"))
+   onView(withText("预览")).perform(click());onView(withText("取消")).perform(click())
+   if(read) scenario.onActivity { complete!!(if(fail) Result.failure(IllegalStateException("迟到错误")) else Result.success(ScheduleState())) }
+   gate.countDown();Thread.sleep(800)
+   onView(withText("导出预览")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+   onView(withText("迟到错误")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+   onView(withText("保存文件")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+   // Any late error dialog would hide the normal management button.
+   onView(withText("管理")).perform(click());onView(withText("导出 ICS")).check(matches(isDisplayed()))
+  }
+ }
+ @Test fun cancelledReadSuccess(){cancelDelayedPreview(true,false)}
+ @Test fun cancelledReadFailure(){cancelDelayedPreview(true,true)}
+ @Test fun cancelledGenerationSuccess(){cancelDelayedPreview(false,false)}
+ @Test fun cancelledGenerationFailure(){cancelDelayedPreview(false,true)}
+ private fun recreateWriting(fail:Boolean) {
+  val root=Uri.parse("content://${i.context.packageName}.fixtures")
+  fun control(method:String)=i.context.contentResolver.call(root,method,null,null)!!
+  control("reset-export")
+  val target=Uri.withAppendedPath(root,if(fail) "export-slow-fail.ics" else "export-slow.ics")
+  Intents.intending(hasAction(Intent.ACTION_CREATE_DOCUMENT)).respondWith(ActivityResult(Activity.RESULT_OK,Intent().setData(target)))
+  launchPhoneTestActivity().use { scenario ->
+   Thread.sleep(1000);onView(withText("管理")).perform(click());onView(withText("导出 ICS")).perform(click());onView(withText("预览")).perform(click());awaitText("保存文件");onView(withText("保存文件")).perform(click())
+   val deadline=System.currentTimeMillis()+10000
+   while(control("status-export").getInt("opens")==0 && System.currentTimeMillis()<deadline)Thread.sleep(50)
+   assertEquals(1,control("status-export").getInt("opens"));scenario.recreate();control("release-export")
+   if(fail) { Thread.sleep(700);onView(withText(org.hamcrest.Matchers.startsWith("文件保存失败"))).check(matches(isDisplayed())) }
+   else { awaitText("ICS 文件已保存。");val text=i.context.contentResolver.openInputStream(target)!!.bufferedReader().use{it.readText()};assertTrue(text.startsWith("BEGIN:VCALENDAR")) }
+   assertEquals(1,control("status-export").getInt("opens"))
+   onView(withText("确定")).perform(click());scenario.recreate();Thread.sleep(300)
+   onView(withText("ICS 文件已保存。")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+  }
+ }
+ @Test fun writingRecreationSuccess(){recreateWriting(false)}
+ @Test fun writingRecreationFailure(){recreateWriting(true)}
 }

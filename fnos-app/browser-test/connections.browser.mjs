@@ -1135,10 +1135,21 @@ test('ICS：预览与浏览器下载同一快照、版本拒绝和只读', async
  await expect(d.getByRole('button',{name:'保存文件',exact:true})).toBeEnabled();
  assert.equal(JSON.stringify(db.frame,(_,v)=>typeof v==="bigint"?String(v):v),before);db.frame.local.entries=[];db.frame.revision++;
  const downloadPromise=f.page.waitForEvent('download');await d.getByRole('button',{name:'保存文件',exact:true}).click();
- const download=await downloadPromise;const bytes=await readFile(await download.path());assert.ok(bytes.toString().startsWith('BEGIN:VCALENDAR\r\n'));assert.ok(bytes.toString().includes('SUMMARY:预览课程'));
+ const download=await downloadPromise;assert.match(download.suggestedFilename(),/^DormPanel-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.ics$/);const bytes=await readFile(await download.path());assert.ok(bytes.toString().startsWith('BEGIN:VCALENDAR\r\n'));assert.ok(bytes.toString().includes('SUMMARY:预览课程'));
+ for(const preset of ['本周','未来四周']) {
+  await d.getByRole('button',{name:preset,exact:true}).click();await expect(d.getByRole('button',{name:'保存文件',exact:true})).toBeDisabled();await expect(d).toContainText('请重新预览');
+  await f.page.route('**/api/export/ics?*',route=>route.fulfill({body:bytes,headers:{'Content-Type':'text/calendar','X-Course-Count':'4','X-Event-Count':'0'}}));
+  await d.getByRole('button',{name:'预览',exact:true}).click();await expect(d.getByRole('button',{name:'保存文件',exact:true})).toBeEnabled();
+  const [a,b]=await d.locator('input[type=date]').evaluateAll(es=>es.map(e=>e.value));const next=f.page.waitForEvent('download');await d.getByRole('button',{name:'保存文件',exact:true}).click();assert.equal((await next).suggestedFilename(),`DormPanel-${a}-${b}.ics`);
+ }
  let release;const gate=new Promise(r=>{release=r});
  await f.page.route('**/api/export/ics?*',async route=>{await gate;await route.fulfill({body:bytes,headers:{'Content-Type':'text/calendar','X-Course-Count':'4','X-Event-Count':'0'}});});
- await d.getByRole('button',{name:'预览',exact:true}).click();await d.locator('input[type=date]').first().fill('2026-10-01');release();
+ const originalStart=await d.locator('input[type=date]').first().inputValue();await d.getByRole('button',{name:'预览',exact:true}).click();await d.locator('input[type=date]').first().fill('2026-10-01');await d.locator('input[type=date]').first().fill(originalStart);await d.locator('input[type=checkbox]').check();await d.locator('input[type=checkbox]').uncheck();release();
  await expect(d).toContainText('导出选项已变化，请重新预览');await expect(d.getByRole('button',{name:'保存文件',exact:true})).toBeDisabled();
+ let releaseWorkspace;const workspaceGate=new Promise(r=>{releaseWorkspace=r});
+ await f.page.route('**/api/export/ics?*',async route=>{await workspaceGate;await route.fulfill({body:bytes,headers:{'Content-Type':'text/calendar'}});});
+ await f.page.route('**/api/schedule?*',async route=>{const response=await route.fetch();const state=await response.json();await route.fulfill({json:{...state,workspaceId:'other-test-workspace'}});});
+ await d.getByRole('button',{name:'预览',exact:true}).click();await f.page.evaluate(()=>document.querySelector('#today').onclick());releaseWorkspace();
+ await expect(d).toContainText('工作区已切换');await expect(d.getByRole('button',{name:'保存文件',exact:true})).toBeDisabled();
  assert.deepEqual(f.errors,[]);
 });

@@ -79,7 +79,34 @@ class TimetableActivity : AppCompatActivity() {
             if (source.ready && !source.error) resumeCheckPending = false
         } else checkOnResume()
     }
-    class IcsRequest : androidx.lifecycle.ViewModel() { var bytes: ByteArray? = null; var choosing = false }
+    class IcsRequest : androidx.lifecycle.ViewModel() {
+        var bytes: ByteArray? = null
+        var choosing = false
+        @Volatile var writing = false; private set
+        val outcome = androidx.lifecycle.MutableLiveData<String?>()
+        private val executor = Executors.newSingleThreadExecutor()
+        fun write(resolver: android.content.ContentResolver, uri: android.net.Uri, captured: ByteArray) {
+            if (writing) return
+            writing = true
+            executor.execute {
+                val result = runCatching {
+                    try {
+                        (resolver.openOutputStream(uri,"wt") ?: error("无法打开目标文件")).use { it.write(captured); it.flush() }
+                    } catch (e: Exception) {
+                        runCatching { android.provider.DocumentsContract.deleteDocument(resolver,uri) }
+                        throw IllegalStateException("文件保存失败；已尝试删除不完整文件，请核对目标位置。${e.message}",e)
+                    }
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    writing = false
+                    outcome.value = result.fold({ "ICS 文件已保存。" }, { it.message ?: "文件保存失败" })
+                }
+            }
+        }
+        override fun onCleared() { executor.shutdown() }
+    }
+    private var shownIcsOutcome: String? = null
+    private var icsOutcomeDialog: AlertDialog? = null
     private val icsRequest by lazy { androidx.lifecycle.ViewModelProvider(this)[IcsRequest::class.java] }
     private var pendingIcs: ByteArray?
         get() = icsRequest.bytes
@@ -92,17 +119,11 @@ class TimetableActivity : AppCompatActivity() {
         if (uri != null) {
             if (bytes == null) {
                 message("导出请求已失效，未写入文件。请重新预览后保存，并检查选择器是否创建了空文件。")
-            } else background({
-                try {
-                    (contentResolver.openOutputStream(uri,"wt") ?: error("无法打开目标文件")).use { it.write(bytes); it.flush() }
-                } catch (e: Exception) {
-                    runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver,uri) }
-                    throw IllegalStateException("文件保存失败；已尝试删除不完整文件，请核对目标位置。${e.message}", e)
-                }
-            }) { message("ICS 文件已保存。") }
+            } else icsRequest.write(applicationContext.contentResolver,uri,bytes)
         }
     }
     private fun exportCalendar() {
+        if (icsRequest.writing || icsRequest.choosing || icsRequest.outcome.value != null) { message("请先完成当前文件保存。"); return }
         if (!source.ready || source.error || source.applyingSnapshot) { message("课表尚未成功读取，请稍后重试。"); return }
         val layout=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(20),dp(8),dp(20),dp(8)) }
         val from=EditText(this).apply { hint="开始日期 YYYY-MM-DD"; setText(source.clock.today().toString()) }
@@ -114,16 +135,30 @@ class TimetableActivity : AppCompatActivity() {
         layout.addView(TextView(this).apply { text="IANA 时区" }); layout.addView(zone); layout.addView(events)
         listOf("本周" to 6L,"未来四周" to 27L).forEach { (label,days) -> layout.addView(Button(this).apply { text=label; setOnClickListener { val today=source.clock.today();val first=if(days==6L) today.minusDays((today.dayOfWeek.value-1).toLong()) else today;from.setText(first.toString());until.setText(first.plusDays(days).toString()) } }) }
         val dialog=AlertDialog.Builder(this).setTitle("导出 ICS（最多 366 天）").setView(ScrollView(this).apply { addView(layout) }).setNegativeButton("取消",null).setPositiveButton("预览",null).create()
+        var previewEpoch = 0
+        dialog.setOnDismissListener { ++previewEpoch }
+        fun validPreview(ticket: Int) = ticket == previewEpoch && dialog.isShowing && !isDestroyed && !isFinishing
         dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             if(!source.ready || source.error || source.applyingSnapshot) { message("课表尚未成功读取"); return@setOnClickListener }
             val start=from.text.toString();val end=until.text.toString();val z=zone.text.toString();val include=events.isChecked
-            source.readExportSnapshot { captured -> runOnUiThread { if (!isDestroyed) { captured.onFailure { message(it.message ?: "课表读取失败") }.onSuccess { snapshot ->
-            background({ IcsScheduleExporter.export(snapshot,LocalDate.parse(start),LocalDate.parse(end),ZoneId.of(z),include,source.clock.instant()) }) { result ->
+            val ticket = ++previewEpoch
+            source.readExportSnapshot { captured -> runOnUiThread {
+                if (!validPreview(ticket)) return@runOnUiThread
+                captured.onFailure { message(it.message ?: "课表读取失败") }.onSuccess { snapshot ->
+                    val generatedAt = source.clock.instant()
+                    worker.execute {
+                        val generated = runCatching { IcsScheduleExporter.export(snapshot,LocalDate.parse(start),LocalDate.parse(end),ZoneId.of(z),include,generatedAt) }
+                        runOnUiThread {
+                            if (validPreview(ticket)) generated.onFailure { message(it.message ?: "导出失败") }.onSuccess { result ->
                 dialog.dismiss()
                 AlertDialog.Builder(this).setTitle("导出预览").setMessage("$start 至 $end\n时区 $z\n课程 ${result.courseCount} · 日历事件 ${result.eventCount}\n${result.bytes.size} 字节\n基于本机已保存课表的此预览快照，不代表其他设备已接收。\n用于外部日历交换，不保留课程分组、颜色、来源及同步历史，不是完整备份。超过 256 事件或 1 MiB 时可能无法重新导入当前 DormPanel。")
                     .setNegativeButton("取消",null).setPositiveButton("保存文件") { _,_ -> pendingIcs=result.bytes;icsRequest.choosing=true;saveIcs.launch("DormPanel-$start-$end.ics") }.show()
-            }
-            } } } }
+                            }
+                        }
+                    }
+                }
+            } }
+
         } }; dialog.show()
     }
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -170,6 +205,14 @@ class TimetableActivity : AppCompatActivity() {
         }
         source.subscribe(listener)
         render()
+        icsRequest.outcome.observe(this) { result ->
+            if (result != null && shownIcsOutcome != result) {
+                shownIcsOutcome = result
+                icsOutcomeDialog = AlertDialog.Builder(this).setMessage(result).setCancelable(false).setPositiveButton("确定") { _,_ ->
+                    icsRequest.outcome.value = null; shownIcsOutcome = null
+                }.show()
+            }
+        }
     }
     private fun applyWidgetNavigation(intent: android.content.Intent?) {
         if (intent?.action != "com.dormpanel.phone.OPEN_COLLECTION") return
@@ -201,7 +244,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
     private fun checkOnResume() {
-        if (resumeCheckPending && !icsRequest.choosing && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
+        if (resumeCheckPending && !icsRequest.choosing && !icsRequest.writing && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
             resumeCheckPending = false; sharedSync.sync()
         }
     }
@@ -215,6 +258,7 @@ class TimetableActivity : AppCompatActivity() {
         outState.putString("term", activeTerm); super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
+        icsOutcomeDialog?.dismiss(); icsOutcomeDialog = null
         sharedDialog?.dismiss(); sharedSync.close()
         source.unsubscribe(listener); editors.close(); source.close(); worker.shutdown()
         super.onDestroy()
