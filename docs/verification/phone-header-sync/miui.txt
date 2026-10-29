@@ -1,0 +1,6 @@
+
+com.dormpanel.phone.HeaderSyncButtonTest:.
+
+Time: 58.352
+
+OK (1 test)
