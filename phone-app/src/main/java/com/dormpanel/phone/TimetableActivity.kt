@@ -69,6 +69,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     private var activeTerm: String? = null
     private var sharedStatusView: TextView? = null
+    private var sharedRefreshButton: Button? = null
     private var replacement: String? = null
     internal var busy = false; private set
     private val worker = Executors.newSingleThreadExecutor()
@@ -186,6 +187,7 @@ class TimetableActivity : AppCompatActivity() {
         renderedWeek = weekView; renderedDay = selected.dayOfWeek.value-1
         root.removeAllViews()
         sharedStatusView = null
+        sharedRefreshButton = null
         if (source.state.sync != null && activeTerm !in source.state.profiles) activeTerm = source.state.sources.firstNotNullOfOrNull { it.resolvedTermKey() } ?: source.state.profiles.keys.firstOrNull()
         // A failed load must render cached data without querying the unreadable catalog again.
         val profile = if (source.error) activeTerm?.let(source.state.profiles::get) else activeTerm?.let(profiles::get)
@@ -210,6 +212,13 @@ class TimetableActivity : AppCompatActivity() {
             if (landscape) { textSize = 12f; ellipsize = android.text.TextUtils.TruncateAt.END }
             contentDescription = "${profile?.termKey.orEmpty()} · ${monday()} — ${monday().plusDays(6)}"
         }, if (landscape) LinearLayout.LayoutParams(dp(180),-2) else LinearLayout.LayoutParams(0,-2,1f))
+        heading.addView(scheduleButton("刷新") { sharedSync.sync() }.apply {
+            tag = "refresh-sync"; contentDescription = "立即同步共享课表"
+            minimumWidth = dp(48); minWidth = dp(48); textSize = 12f
+            minHeight = dp(48); minimumHeight = dp(48); setPadding(dp(4),0,dp(4),0)
+            sharedRefreshButton = this
+        })
+        updateSharedStatus()
         heading.addView(scheduleButton("管理") { management() }.apply { minimumWidth = dp(48); minWidth = dp(48); textSize = 12f; minHeight = dp(48); minimumHeight = dp(48); setPadding(dp(4),0,dp(4),0) })
         (if (landscape) heading else row()).also { bar ->
             val modeStart = bar.childCount
@@ -273,13 +282,15 @@ class TimetableActivity : AppCompatActivity() {
             days.addView(scheduleButton("${labels[i]}\n${date.dayOfMonth}") { if (body.active) { selected = date; weekView = false; render() } }.apply {
                 textSize = 12f; minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0; includeFontPadding = false; setPadding(0, 0, 0, 0)
                 isSelected = date == body.date
-                if (date == source.clock.today()) {
+                if (if (weekView) date == source.clock.today() else date == body.date) {
                     backgroundTintList = android.content.res.ColorStateList.valueOf(if (dark) 0xff263e53.toInt() else 0xffdceafa.toInt())
                     setTextColor(if (dark) android.graphics.Color.WHITE else android.graphics.Color.rgb(30,55,80))
+                }
+                if (date == source.clock.today()) {
                     setTypeface(typeface,android.graphics.Typeface.BOLD)
                 } else if (date == body.date) {
                     setTypeface(typeface,android.graphics.Typeface.BOLD)
-                    text = "${labels[i]} ·\n${date.dayOfMonth}"
+                    if (weekView) text = "${labels[i]} ·\n${date.dayOfMonth}"
                 }
                 if (date == source.clock.today()) text = "●${labels[i]}\n${date.dayOfMonth}"
                 if (source.state.daysByDate.containsKey(date.toString())) text = "$text *"
@@ -332,6 +343,10 @@ class TimetableActivity : AppCompatActivity() {
     }
     private fun updateSharedStatus() {
         val p = sharedSync.presentation
+        sharedRefreshButton?.apply {
+            isEnabled = SharedAction.SYNC in p.actions && !sharedSync.busy && source.ready && !source.applyingSnapshot && !source.error && !busy
+            text = if(sharedSync.busy) "同步中" else "刷新"
+        }
         sharedStatusView?.apply {
             text = p.summary()
             visibility = if (p.conflict || p.recovery || p.transition || p.confirmationRejected ||

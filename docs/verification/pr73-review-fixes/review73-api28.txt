@@ -1,0 +1,7 @@
+
+com.dormpanel.phone.DaySelectionHighlightTest:.
+com.dormpanel.phone.CollectionWidgetTest:.
+
+Time: 2.586
+
+OK (2 tests)
