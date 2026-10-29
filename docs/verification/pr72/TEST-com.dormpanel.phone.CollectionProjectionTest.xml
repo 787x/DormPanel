@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.phone.CollectionProjectionTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-29T08:09:58.317Z" hostname="LAPTOP-6ORBUU2C" time="0.165">
+  <properties/>
+  <testcase name="remainingTodayAndAllTomorrowWithoutCapacityTruncation" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.108"/>
+  <testcase name="sundayMidnightCourseAppearsInBothWeeks" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.012"/>
+  <testcase name="weekIncludesSevenDaysOverlapsAndShortCustomCourses" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.002"/>
+  <testcase name="periodDefaultAndExplicitTimeUseSameRealOccurrences" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.031"/>
+  <testcase name="fiveDayRangeExcludesLateWeekendWithoutLosingSevenDayData" classname="com.dormpanel.phone.CollectionProjectionTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

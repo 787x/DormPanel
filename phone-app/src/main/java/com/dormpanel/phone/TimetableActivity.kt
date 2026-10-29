@@ -97,6 +97,7 @@ class TimetableActivity : AppCompatActivity() {
         if (intent?.action == "com.dormpanel.phone.OPEN_TODAY") selected = LocalDate.now()
         weekView = savedInstanceState?.getBoolean("weekView") ?: getPreferences(MODE_PRIVATE).getBoolean("weekView", true)
         scrollOffset = savedInstanceState?.getInt("scroll") ?: getPreferences(MODE_PRIVATE).getInt("scroll", 0)
+        if (savedInstanceState==null) applyWidgetNavigation(intent)
         weekAnchor = savedInstanceState?.getFloat("weekAnchor") ?: getPreferences(MODE_PRIVATE).getFloat("weekAnchor",480f)
         periodMode = getPreferences(MODE_PRIVATE).getBoolean("periodMode",false)
         weekdaysOnly = getPreferences(MODE_PRIVATE).getBoolean("weekdaysOnly",false)
@@ -121,10 +122,16 @@ class TimetableActivity : AppCompatActivity() {
         source.subscribe(listener)
         render()
     }
+    private fun applyWidgetNavigation(intent: android.content.Intent?) {
+        if (intent?.action != "com.dormpanel.phone.OPEN_COLLECTION") return
+        selected = runCatching { LocalDate.parse(intent.getStringExtra("widgetDate")) }.getOrNull() ?: LocalDate.now()
+        weekView = intent.getBooleanExtra("widgetWeek",false)
+    }
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.action == "com.dormpanel.phone.OPEN_TODAY") { selected = LocalDate.now(); render() }
+        if (intent.action == "com.dormpanel.phone.OPEN_COLLECTION") { applyWidgetNavigation(intent); render() }
     }
     private val clockChanges = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context, intent: android.content.Intent) { render() }

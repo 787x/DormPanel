@@ -1,0 +1,9 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="10dp" android:background="@drawable/widget_recent_background">
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+<TextView android:id="@+id/collection_title" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="我的课表" android:textSize="13sp" android:textColor="@color/collection_ink" android:maxLines="1" android:ellipsize="end"/>
+<TextView android:id="@+id/collection_date" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="10sp" android:textColor="@color/collection_ink"/>
+</LinearLayout>
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal"><TextView android:id="@+id/header_0" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:gravity="center" android:text="今天" android:textSize="12sp" android:textColor="@color/collection_ink" android:paddingVertical="8dp"/><TextView android:id="@+id/header_1" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:gravity="center" android:text="明天" android:textSize="12sp" android:textColor="@color/collection_ink" android:paddingVertical="8dp"/></LinearLayout>
+<TextView android:id="@+id/collection_message" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="课程仍在加载" android:textColor="@color/collection_ink"/>
+<ListView android:id="@+id/collection_list" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:divider="@android:color/transparent" android:dividerHeight="1dp"/>
+</LinearLayout>

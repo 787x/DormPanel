@@ -13,7 +13,7 @@ internal object TodayCourses {
         val tomorrow=projectDate(state,now,zone,today.date.plusDays(1))
         return tomorrow.copy(next=minOf(tomorrow.next,today.date.plusDays(1).atStartOfDay(zone).toInstant()))
     }
-    private fun projectDate(state: ScheduleState, now: Instant, zone: ZoneId, date: LocalDate): Day {
+    fun projectDate(state: ScheduleState, now: Instant, zone: ZoneId, date: LocalDate): Day {
         val start = date.atStartOfDay(zone).toInstant()
         val end = date.plusDays(1).atStartOfDay(zone).toInstant()
         val monday = date.minusDays((date.dayOfWeek.value - 1).toLong())

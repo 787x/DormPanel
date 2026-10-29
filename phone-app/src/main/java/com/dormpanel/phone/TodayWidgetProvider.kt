@@ -24,7 +24,7 @@ class WideTodayWidgetProvider : TodayWidgetProvider()
 /** Main-thread adapter for bounded Store reads and Launcher-owned RemoteViews. */
 internal object TodayWidgetUpdates {
     private val main = Handler(Looper.getMainLooper())
-    private val components = listOf(TodayWidgetProvider::class.java, WideTodayWidgetProvider::class.java)
+    private val components = listOf(TodayWidgetProvider::class.java, WideTodayWidgetProvider::class.java, RecentCoursesWidgetProvider::class.java, WeekCoursesWidgetProvider::class.java)
     private var coordinator: WidgetRefreshCoordinator<ScheduleState>? = null
     fun request(context: Context, done: () -> Unit = {}) {
         val app = context.applicationContext
@@ -40,9 +40,21 @@ internal object TodayWidgetUpdates {
                 publish = { result ->
                     val now = Instant.now()
                     val zone=ZoneId.systemDefault()
+                    runCatching { if(ids(app).any { CollectionWidgets.isCollection(app,it) }) CollectionWidgets.publish(app,result,now,zone) }.onFailure {
+                        CollectionWidgets.publish(app,Result.failure(it),now,zone)
+                    }
                     val cache=mutableMapOf<Boolean,Result<Pair<ScheduleState,TodayCourses.Day>>>()
                     var next=now.plusSeconds(1800)
+                    result.getOrNull()?.let { state ->
+                        val (today,tomorrow)=CollectionProjection.recent(state,now,zone)
+                        next=minOf(next,today.next,tomorrow.next)
+                    }
                     ids(app).forEach { id ->
+                        if (CollectionWidgets.isCollection(app,id)) {
+                            AppWidgetManager.getInstance(app).updateAppWidget(id,CollectionWidgets.render(app,id,result.getOrNull()))
+                            AppWidgetManager.getInstance(app).notifyAppWidgetViewDataChanged(id,R.id.collection_list)
+                            return@forEach
+                        }
                         val tomorrow=WidgetTitleSettings.tomorrow(app,id)
                         val data=cache.getOrPut(tomorrow) { result.mapCatching { it to TodayCourses.display(it,now,zone,tomorrow) } }
                         AppWidgetManager.getInstance(app).updateAppWidget(id,data.fold(
@@ -52,12 +64,17 @@ internal object TodayWidgetUpdates {
                     schedule(app,next)
                 },
                 timedOut = { ids(app).forEach { id -> AppWidgetManager.getInstance(app).updateAppWidget(id,
-                    render(app, id, null, "本地课表读取超时，请打开应用检查")) } },
+                    renderFailure(app,id)) } },
                 recover = { schedule(app, Instant.now().plusSeconds(300)) },
                 cancel = { app.getSystemService(AlarmManager::class.java).cancel(alarm(app)) }
             ).also { coordinator = it }
             machine.request(done)
         }
+    }
+    private fun renderFailure(context: Context,id: Int): RemoteViews {
+        if (!CollectionWidgets.isCollection(context,id)) return render(context,id,null,"本地课表读取超时，请打开应用检查")
+        CollectionWidgets.publish(context,Result.failure(IllegalStateException("timeout")),Instant.now(),ZoneId.systemDefault())
+        return CollectionWidgets.render(context,id,null)
     }
     private fun ids(context: Context) = components.flatMap {
         AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, it)).toList()

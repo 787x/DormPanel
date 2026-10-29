@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.phone.SharedColorMigrationTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-29T08:09:58.537Z" hostname="LAPTOP-6ORBUU2C" time="0.045">
+  <properties/>
+  <testcase name="conflictNeedsDecisionAndFutureDisplayIsSafe" classname="com.dormpanel.phone.SharedColorMigrationTest" time="0.031"/>
+  <testcase name="incompatiblePreviewFailurePreservesPreferencesAndState" classname="com.dormpanel.phone.SharedColorMigrationTest" time="0.001"/>
+  <testcase name="manualAndAutomaticPreviewLeavesOriginalSettingsIntact" classname="com.dormpanel.phone.SharedColorMigrationTest" time="0.003"/>
+  <testcase name="automaticModeAndPerCourseChoicesAreNotRgbEquality" classname="com.dormpanel.phone.SharedColorMigrationTest" time="0.009"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
