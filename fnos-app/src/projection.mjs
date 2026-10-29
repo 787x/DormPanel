@@ -102,20 +102,26 @@ export function projectWeek(state, first, zone = 'Asia/Shanghai') {
 
 /** Validate all-weeks linked overrides against the pre-day-composition effective instances. */
 export function validateLinkedCourseOverrides(state,sourceId,series) {
- const selected=new Set(series),edits=state.classOverrides.filter(e=>e.sourceId===sourceId&&selected.has(e.seriesId)&&e.anchorDate===null&&e.timingMode==='linked');
+ const selected=new Set(series),edits=state.classOverrides.filter(e=>e.sourceId===sourceId&&selected.has(e.seriesId)&&e.anchorDate===null&&e.timingMode!=='custom');
  if(!edits.length)return;
  const owner=state.sources.find(s=>s.id===sourceId),profile=owner&&state.profiles.find(p=>p.termKey===termKey(owner));
- if(!profile)throw Error('无法证明重复课程的有限生效范围或来源作息；请先提供有限安排');
+ const zone=profile?.timezone??state.imported.find(r=>r.sourceId===sourceId)?.timezone??'Asia/Shanghai';
  const weeks=new Set(state.imported.filter(r=>r.sourceId===sourceId&&selected.has(r.seriesId)).map(r=>monday(local(r.start,r.timezone).toPlainDate().toString())));
  for(const slot of scheduleSlots(state).filter(s=>s.sourceId===sourceId&&selected.has(s.ownerSeries)&&s.replacesSeries!==null&&s.enabled))for(const week of slot.weeks)weeks.add(addDays(slot.week1,(week-1)*7));
  const baseline={...state,classOverrides:[],dayAdjustments:[]};
- const rows=[...weeks].flatMap(week=>projectWeek(baseline,week,profile.timezone));
+ const rows=[...weeks].flatMap(week=>projectWeek(baseline,week,zone));
  for(const edit of edits){
   const affected=rows.filter(r=>r.sourceId===sourceId&&r.seriesId===edit.seriesId);
-  if(!affected.length)throw Error('无法确定此系列的实际有效日期，请明确有限范围');
+  if(!affected.length){if(sourceId!==null||edit.timingMode==='linked')throw Error('无法确定此系列的实际有效日期或有限生效范围，请明确有限范围');continue;}
   if(edit.weekday!=null&&new Set(affected.map(r=>date(r.academicDate).dayOfWeek)).size>1)throw Error('多星期系列不能统一移动星期');
-  for(const row of affected){const target=edit.weekday==null?row.academicDate:addDays(monday(row.academicDate),edit.weekday-1);
-   if(!linkedPeriodTimes(profile,target,edit.periodStart,edit.periodEnd))throw Error(`有效日期 ${target} 的作息不能解析所选节次`);
+  for(const row of affected){
+   // Exactly the same mode and period inheritance as patch(); never trust its read fallback for a new write.
+   const linked=edit.timingMode==='linked'||edit.timingMode==null&&row.linked;
+   if(!linked)continue;
+   if(!profile)throw Error('无法证明重复课程的有限生效范围或来源作息；请先提供有限安排');
+   const original=periods(row.periodLabel),first=edit.periodStart??original?.[0],last=edit.periodEnd??original?.[1];
+   const target=edit.weekday==null?row.academicDate:addDays(monday(row.academicDate),edit.weekday-1);
+   if(first==null||last==null||!linkedPeriodTimes(profile,target,first,last))throw Error(`有效日期 ${target} 的作息不能解析所选节次`);
   }
  }
 }

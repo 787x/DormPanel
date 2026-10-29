@@ -74,3 +74,52 @@ test('only first phase and timezone boundary use original academic date',async()
  const rows=projectWeek(next,'2026-09-07','Asia/Shanghai').filter(v=>v.sourceId===r.sourceId);assert.equal(rows.length,1);assert.equal(rows[0].academicDate,'2026-09-13');
  assert.equal(Temporal.Instant.fromEpochMilliseconds(rows[0].start).toZonedDateTimeISO('America/New_York').hour,8);
 });
+
+export async function inheritedMoveFixture(validTarget=false){
+ const s=await phaseFixture(),r=s.imported[0],owner=s.sources[0],p=s.profiles.find(p=>p.termKey===termKey(owner));
+ s.imported=[{...r,end:r.start+6000000n,periodLabel:'9-10'}];Object.assign(owner,{occurrenceCount:1,firstStart:r.start,lastEnd:s.imported[0].end});
+ p.phases=[p.phases[0],{effectiveFrom:'2026-09-09',periods:validTarget?[{periodNumber:9,start:'11:00',end:'11:45'},{periodNumber:10,start:'11:55',end:'12:40'}]:p.phases[1].periods}];
+ applyEdit(s,{kind:'override',action:'upsert',sourceId:r.sourceId,seriesId:r.seriesId,anchorDate:null,patch:{teacher:'Kept teacher',location:'Kept room'}});return s;
+}
+test('weekday-only inherited linked rejects missing target periods instead of saving fallback',async()=>{
+ const s=await inheritedMoveFixture(),w=workspace(s),before=businessHash(s);
+ assert.throws(()=>w.previewCourseEdit(edit(s,{weekday:4}),1),/有效日期.*节次/);
+ assert.equal(businessHash(w.frame.local),before);
+ const valid=await inheritedMoveFixture(true),next=workspace(valid).previewCourseEdit(edit(valid,{weekday:4}),1).state;
+ const row=projectWeek(next,'2026-09-07','Asia/Shanghai').find(r=>r.sourceId===valid.sources[0].id);
+ assert.equal(row.academicDate,'2026-09-10');assert.equal(Temporal.Instant.fromEpochMilliseconds(row.start).toZonedDateTimeISO('America/New_York').hour,11);
+ assert.equal(row.teacher,'Kept teacher');assert.equal(row.location,'Kept room');
+ const custom=await inheritedMoveFixture();applyEdit(custom,{kind:'override',action:'upsert',sourceId:custom.imported[0].sourceId,seriesId:custom.imported[0].seriesId,anchorDate:null,patch:{timingMode:'custom',startMinute:600,endMinute:660}});
+ workspace(custom).previewCourseEdit(edit(custom,{weekday:4}),1);
+ const rawCustom=await inheritedMoveFixture();rawCustom.imported[0].periodLabel=null;workspace(rawCustom).previewCourseEdit(edit(rawCustom,{weekday:4}),1);
+ const explicit=await inheritedMoveFixture();applyEdit(explicit,{kind:'override',action:'upsert',sourceId:explicit.imported[0].sourceId,seriesId:explicit.imported[0].seriesId,anchorDate:null,patch:{timingMode:'linked',periodStart:9,periodEnd:10}});assert.throws(()=>workspace(explicit).previewCourseEdit(edit(explicit,{weekday:4}),1),/有效日期/);
+});
+
+test('inherited finite replacement validates only active weeks and all participating dates',async()=>{
+ const s=await inheritedMoveFixture(true),r=s.imported[0],p=s.profiles.find(p=>p.timezone==='America/New_York');
+ p.phases.push({effectiveFrom:'2026-09-23',periods:[{periodNumber:1,start:'08:00',end:'08:45'}]});
+ const second={...r,id:'second-week',start:r.start+1209600000n,end:r.end+1209600000n,originalStart:r.originalStart+1209600000n};s.imported.push(second);Object.assign(s.sources[0],{occurrenceCount:2,lastEnd:second.end});
+ assert.throws(()=>workspace(s).previewCourseEdit(edit(s,{weekday:4}),1),/2026-09-24/);
+ const {scheduleRecord}=await import('../src/shared-course-schedule.mjs'),{durableRecords}=await import('../src/shared-records.mjs');
+ const slot={id:'replacement-move',sourceId:r.sourceId,ownerSeries:r.seriesId,replacesSeries:r.seriesId,week1:'2026-09-07',weeks:[1],weekday:1,startMinute:480,endMinute:580,periodStart:9,periodEnd:10,enabled:true,title:'Finite',location:'L',teacher:'T',note:'N'};
+ s.sharedRecords=durableRecords([scheduleRecord(slot)]);
+ const moved=workspace(s).previewCourseEdit(edit(s,{weekday:4}),1).state;assert.equal(projectWeek(moved,'2026-09-07').filter(v=>v.sourceId===r.sourceId).length,1);
+ s.sharedRecords=durableRecords([scheduleRecord({...slot,weeks:[1,3]})]);assert.throws(()=>workspace(s).previewCourseEdit(edit(s,{weekday:4}),1),/2026-09-24/);
+});
+if(process.env.PR70_MOVE_VECTOR){
+ const {writeFile}=await import('node:fs/promises'),{join}=await import('node:path'),{encode}=await import('../src/v3-protocol.mjs');
+ const invalid=await inheritedMoveFixture(),base=await inheritedMoveFixture(true),valid=workspace(base).previewCourseEdit(edit(base,{weekday:4}),1).state;
+ for(const [name,state]of [['base',base],['valid',valid],['invalid',invalid]])await writeFile(join(process.env.PR70_MOVE_VECTOR,name+'.dpv'),encode({format:4,type:2,datasetId:'11111111-1111-1111-1111-111111111111',objectId:'22222222-2222-2222-2222-222222222222',writerId:'33333333-3333-3333-3333-333333333333',epochId:'44444444-4444-4444-4444-444444444444',epochNumber:1,descriptorHash:'1'.repeat(64),refs:[],state}));
+ await writeFile(join(process.env.PR70_MOVE_VECTOR,'hash.txt'),businessHash(valid));
+ await writeFile(join(process.env.PR70_MOVE_VECTOR,'projection.json'),JSON.stringify(projectWeek(valid,'2026-09-07','Asia/Shanghai').map(r=>[r.seriesId,r.start,r.end,r.location,r.teacher,r.note,r.sharedRgb])));
+}
+
+test('same-named cross-source series use their own timezone and phase',async()=>{
+ const s=await inheritedMoveFixture(),r=s.imported[0],owner=s.sources[0],profile=s.profiles.find(p=>p.timezone==='America/New_York');
+ const secondProfile={...structuredClone(profile),termKey:'move-tokyo',timezone:'Asia/Tokyo',phases:[{effectiveFrom:'2026-09-07',periods:[{periodNumber:9,start:'10:00',end:'10:45'},{periodNumber:10,start:'10:55',end:'11:40'}]}]};
+ const start=BigInt(Temporal.ZonedDateTime.from('2026-09-07T10:00+09:00[Asia/Tokyo]').epochMilliseconds),other={...r,id:'tokyo-instance',sourceId:'tokyo-source',timezone:'Asia/Tokyo',start,end:start+6000000n,originalStart:start};
+ s.sources.push({...owner,id:other.sourceId,termKey:secondProfile.termKey,timezone:other.timezone,firstStart:other.start,lastEnd:other.end});s.imported.push(other);s.profiles.push(secondProfile);
+ assert.throws(()=>workspace(s).previewCourseEdit(edit(s,{weekday:4}),1),/有效日期/);
+ const result=workspace(s).previewCourseEdit({target:{sourceId:other.sourceId,series:[other.seriesId]},overrides:[{seriesId:other.seriesId,action:'upsert',patch:{weekday:4}}]},1).state;
+ const rows=projectWeek(result,'2026-09-07','Asia/Shanghai');assert.equal(rows.find(v=>v.sourceId===owner.id).academicDate,'2026-09-07');assert.equal(rows.find(v=>v.sourceId===other.sourceId).academicDate,'2026-09-10');
+});

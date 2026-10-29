@@ -289,3 +289,22 @@ test('partial override edit preserves persisted fields, rejects incomplete time 
  assert.equal(saved.state.sharedRecords.length,0);await assert.rejects(a.workspace.saveCourseEdit(edit,revision));
  await a.journal.close();const reopened=await openV3Workspace(root,()=>{},identity);assert.equal(businessHash(reopened.workspace.frame.local),saved.businessHash);await reopened.journal.close();
 });
+
+test('weekday-only inherited linked preview and formal transaction reject fallback without partial edits',async()=>{
+ const seed=decode(await readFile(new URL('../../test-vectors/pr70-inherited-move/invalid.dpv',import.meta.url))).state;
+ const row=seed.imported[0],b={...row,id:'move-other-instance',seriesId:'move-B'};seed.imported.push(b);seed.sources[0].occurrenceCount=2;
+ seed.sharedRecords=[{typeId:'test.note',recordId:'move-opaque',schemaVersion:1,required:false,dependencies:[],payload:'6f7061717565'}];
+ const root=await dir(),identity={writerId:randomUUID(),installationId:randomUUID()},remote=new FakeRemote(),a=await openV3Workspace(root,()=>{},identity),engine=new V3Engine(a.journal,identity.writerId);
+ await engine.initialize(remote,seed);for(let n=0;n<3;n++){const budget=new Budget();try{await engine.round(remote,new IndexedV3Cache(root,budget),budget,{discoverySteps:32});}catch(e){if(!/incomplete/.test(e.message))throw e;}}
+ const before=a.workspace.snapshot(),revision=before.revision;
+ const request={target:{sourceId:row.sourceId,series:[row.seriesId,b.seriesId]},overrides:[{seriesId:b.seriesId,action:'upsert',patch:{teacher:'Other teacher'}},{seriesId:row.seriesId,action:'upsert',patch:{weekday:4}}],common:{note:'atomic-note'},colors:[{seriesId:row.seriesId,rgb:0x334455}],slots:[{id:'move-candidate-slot',sourceId:row.sourceId,ownerSeries:row.seriesId,replacesSeries:null,week1:'2026-09-07',weeks:[1],weekday:1,startMinute:480,endMinute:540,periodStart:0,periodEnd:0,enabled:true,title:row.title,location:'L',teacher:'T',note:'N'}]};
+ assert.throws(()=>a.workspace.previewCourseEdit(request,revision),/有效日期.*节次/);
+ await assert.rejects(a.workspace.saveCourseEdit(request,revision),/有效日期.*节次/);assert.deepEqual(a.workspace.snapshot(),before);
+ const {projectWeek}=await import('../src/projection.mjs');assert.equal(projectWeek(a.workspace.frame.local,'2026-09-07').find(r=>r.seriesId===row.seriesId).academicDate,'2026-09-07');
+ const valid=decode(await readFile(new URL('../../test-vectors/pr70-inherited-move/base.dpv',import.meta.url))).state;
+ await a.workspace.tx(f=>{f.local.profiles=valid.profiles;},revision);
+ const preview=a.workspace.previewCourseEdit(request,a.workspace.frame.revision),saved=await a.workspace.saveCourseEdit(request,a.workspace.frame.revision);assert.equal(saved.businessHash,preview.businessHash);
+ const moved=projectWeek(saved.state,'2026-09-07').find(r=>r.seriesId===row.seriesId);assert.equal(moved.academicDate,'2026-09-10');assert.equal(moved.teacher,'Kept teacher');assert.equal(moved.location,'Kept room');
+ assert.deepEqual(saved.state.imported,before.local.imported);assert.deepEqual(saved.state.entries,before.local.entries);assert.deepEqual(saved.state.sharedRecords.find(r=>r.typeId==='test.note'),before.local.sharedRecords[0]);
+ await a.journal.close();const reopened=await openV3Workspace(root,()=>{},identity);assert.equal(businessHash(reopened.workspace.frame.local),saved.businessHash);await reopened.journal.close();
+});

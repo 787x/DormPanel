@@ -74,7 +74,8 @@ class ClassEditSession(private val state: ScheduleState, val item: ClassOccurren
                 val target=if(multiWeekday) original else original.minusDays(original.dayOfWeek.value-1L).plusDays(selectedWeekday.value-1L)
                 ScheduleProjection.linkedPeriodTimes(profile!!,target,first!!,last!!)==null
             }) -> "Cannot resolve selected periods on every actual course date; provide a reliable finite range."
-            end <= start && !(baseline.end.atZone(zone).toLocalDate() > baseline.date &&
+            // Linked ranges were validated as actual instants; display minutes may cross midnight.
+            !linked && end <= start && !(baseline.end.atZone(zone).toLocalDate() > baseline.date &&
                 !linked && start == baseline.entry.startMinute && end == baseline.entry.endMinute) ->
                 "End must be after start."
             !patch.valid(allWeeks) -> "Check the class fields and text lengths."
