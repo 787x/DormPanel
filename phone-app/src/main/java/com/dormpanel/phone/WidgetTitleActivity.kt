@@ -13,18 +13,24 @@ internal object WidgetTitleSettings {
     private fun prefs(context: Context) = context.getSharedPreferences("today-widget-titles",Context.MODE_PRIVATE)
     fun get(context: Context,id: Int) = prefs(context).getString("title-$id",null)?.takeIf { it.isNotBlank() }
     fun tomorrow(context: Context,id: Int) = prefs(context).getBoolean("tomorrow-$id",true)
-    fun save(context: Context,id: Int,value: String, tomorrow: Boolean? = null): Boolean {
+    fun periods(context: Context,id: Int) = prefs(context).getBoolean("periods-$id",true)
+    fun weekdays(context: Context,id: Int) = prefs(context).getBoolean("weekdays-$id",false)
+    fun save(context: Context,id: Int,value: String, tomorrow: Boolean? = null, periods: Boolean? = null, weekdays: Boolean? = null): Boolean {
         val edit=prefs(context).edit().putString("title-$id",value.trim().take(80))
         if (tomorrow!=null) edit.putBoolean("tomorrow-$id",tomorrow)
+        if (periods!=null) edit.putBoolean("periods-$id",periods)
+        if (weekdays!=null) edit.putBoolean("weekdays-$id",weekdays)
         return edit.commit()
     }
-    fun remove(context: Context,ids: IntArray) { prefs(context).edit().apply { ids.forEach { remove("title-$it"); remove("tomorrow-$it") } }.apply() }
+    fun remove(context: Context,ids: IntArray) { prefs(context).edit().apply { ids.forEach { remove("title-$it"); remove("tomorrow-$it"); remove("periods-$it"); remove("weekdays-$it") } }.apply() }
 }
 
 /** Launcher configuration only stores display preferences; never writes course or sync data. */
 class WidgetTitleActivity : AppCompatActivity() {
     private lateinit var name: EditText
     private lateinit var tomorrow: CheckBox
+    private var displayMode: Spinner? = null
+    private var daysMode: Spinner? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setResult(Activity.RESULT_CANCELED)
@@ -38,10 +44,27 @@ class WidgetTitleActivity : AppCompatActivity() {
         name=EditText(this).apply { this.id=android.R.id.edit; filters=arrayOf(android.text.InputFilter.LengthFilter(80)); setSingleLine(true); hint="输入桌面显示的课表名称"; setText(savedInstanceState?.getString("name") ?: initial) }
         body.addView(name)
         tomorrow=CheckBox(this).apply { this.id=android.R.id.checkbox; text="今日课程结束后显示明日课程"; isChecked=savedInstanceState?.getBoolean("tomorrow") ?: WidgetTitleSettings.tomorrow(this@WidgetTitleActivity,id) }
-        body.addView(tomorrow)
+        if (!CollectionWidgets.isCollection(this,id)) body.addView(tomorrow)
+        if (CollectionWidgets.isWeek(this,id)) {
+            body.addView(TextView(this).apply { text="周视图显示方式"; textSize=16f })
+            displayMode=Spinner(this).apply {
+                this.id=R.id.widget_display_mode
+                adapter=ArrayAdapter(this@WidgetTitleActivity,android.R.layout.simple_spinner_dropdown_item,listOf("按节次（默认）","按实际时间"))
+                setSelection(savedInstanceState?.getInt("displayMode") ?: if(WidgetTitleSettings.periods(this@WidgetTitleActivity,id)) 0 else 1)
+            }
+            body.addView(displayMode)
+            body.addView(TextView(this).apply { text="显示天数"; textSize=16f })
+            daysMode=Spinner(this).apply {
+                this.id=R.id.widget_days_mode
+                adapter=ArrayAdapter(this@WidgetTitleActivity,android.R.layout.simple_spinner_dropdown_item,listOf("7 天（周一至周日）","5 天（周一至周五）"))
+                setSelection(savedInstanceState?.getInt("daysMode") ?: if(WidgetTitleSettings.weekdays(this@WidgetTitleActivity,id)) 1 else 0)
+            }
+            body.addView(daysMode)
+            body.addView(TextView(this).apply { text="按节次使用有效统一节次表并压缩课间；节次表缺失或不统一时，自动改用实际时间。" })
+        }
         body.addView(Button(this).apply { text="保存"; setOnClickListener {
             if (name.text.isBlank()) { name.error="请输入课表名称"; return@setOnClickListener }
-            if (!WidgetTitleSettings.save(this@WidgetTitleActivity,id,name.text.toString(),tomorrow.isChecked)) { name.error="名称保存失败，请重试"; return@setOnClickListener }
+            if (!WidgetTitleSettings.save(this@WidgetTitleActivity,id,name.text.toString(),if(CollectionWidgets.isCollection(this@WidgetTitleActivity,id)) null else tomorrow.isChecked,displayMode?.let { it.selectedItemPosition==0 },daysMode?.let { it.selectedItemPosition==1 })) { name.error="名称保存失败，请重试"; return@setOnClickListener }
             TodayWidgetUpdates.request(applicationContext)
             setResult(Activity.RESULT_OK,Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,id)); finish()
         } })
@@ -60,5 +83,5 @@ class WidgetTitleActivity : AppCompatActivity() {
             }
         }
     }
-    override fun onSaveInstanceState(outState: Bundle) { if (::name.isInitialized) outState.putString("name",name.text.toString()); if (::tomorrow.isInitialized) outState.putBoolean("tomorrow",tomorrow.isChecked); super.onSaveInstanceState(outState) }
+    override fun onSaveInstanceState(outState: Bundle) { if (::name.isInitialized) outState.putString("name",name.text.toString()); if (::tomorrow.isInitialized) outState.putBoolean("tomorrow",tomorrow.isChecked); displayMode?.let { outState.putInt("displayMode",it.selectedItemPosition) }; daysMode?.let { outState.putInt("daysMode",it.selectedItemPosition) }; super.onSaveInstanceState(outState) }
 }

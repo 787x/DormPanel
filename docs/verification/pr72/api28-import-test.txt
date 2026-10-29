@@ -1,0 +1,8 @@
+
+com.dormpanel.phone.CollectionWidgetTest:.
+
+Time: 4.452
+
+OK (1 test)
+
+
