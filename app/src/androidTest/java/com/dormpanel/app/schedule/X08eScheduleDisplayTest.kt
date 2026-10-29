@@ -44,6 +44,7 @@ class X08eScheduleDisplayTest {
             PeriodTime(i + 1, LocalTime.of(h,m), LocalTime.of(h,m).plusMinutes(45))
         })))
     private fun instant(day: Int, hour: Int, minute: Int) = week.plusDays(day.toLong()).atTime(hour,minute).atZone(zone).toInstant().toEpochMilli()
+    private var sharedDemo = false
     private fun fixture(): ScheduleState {
         val titles = listOf("高等数学与应用", "大学英语", "线性代数", "计算机程序设计", "大学物理实验", "思想道德与法治", "自主学习")
         val imported = (0..6).flatMap { day -> (0..2).map { slot ->
@@ -58,7 +59,10 @@ class X08eScheduleDisplayTest {
             ImportedClassOccurrence("short", "source", "short", null, instant(2,12,5), "短课程（1分钟）", instant(2,12,5), instant(2,12,6), zone.id, "会议室", "", null),
             ImportedClassOccurrence("overlap", "source", "overlap", null, instant(3,10,30), "重叠课程", instant(3,10,30), instant(3,11,0), zone.id, "实验楼", "", null),
             ImportedClassOccurrence("overnight", "source", "overnight", null, instant(4,23,30), "跨午夜研讨", instant(4,23,30), instant(5,0,30), zone.id, "线上", "", null))
-        return ScheduleState(sources = listOf(owner), imported = imported + extras, profiles = mapOf(profile.termKey to profile))
+        val base=ScheduleState(sources = listOf(owner), imported = imported + extras, profiles = mapOf(profile.termKey to profile))
+        if(!sharedDemo) return base
+        val slot=CourseSlot("pr70-slot","source","course-0",null,week.toString(),listOf(1,3,5),2,480,580,1,2,true,"共享新增课程","共享教室 A301","教师","非连续周安排")
+        return SharedCourseColors.change(base.copy(sharedRecords=listOf(SharedCourseSchedule.record(slot))),"source","course-0",0xd04f80)
     }
     @Before fun setup() {
         saved = X08eSchedulePreferences(context).read()
@@ -101,6 +105,21 @@ class X08eScheduleDisplayTest {
         assertEquals(1280, bitmap.width); assertEquals(800, bitmap.height)
         java.io.File(context.getExternalFilesDir(null), "pr63-$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) }
         bitmap.recycle()
+    }
+    @Test fun sharedSchedulesAndColorsThreeLayouts() {
+        sharedDemo=true
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for(layout in X08eScheduleLayout.entries) {
+                scenario.onActivity { activity ->
+                    install(activity,X08eScheduleStyle(layout,true,true))
+                    val added=ScheduleProjection.week(source.state,week,zone).single { it.entry.id=="pr70-slot" }
+                    assertEquals(0xd04f80,added.sharedRgb)
+                    assertEquals("共享教室 A301",added.entry.location)
+                    assertEquals(week.plusDays(1),added.academicDate)
+                }
+                screenshot("pr70-${layout.name.lowercase()}")
+            }
+        }
     }
     @Test fun allCombinationsThemesAndComparableScreenshots() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->

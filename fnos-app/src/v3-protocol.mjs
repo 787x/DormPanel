@@ -13,7 +13,7 @@ export const canonicalLegacy = state => v2decode(v2encode({ datasetId: ZERO, com
 export const stateBytes = (state, registry = new Registry(sharedTypes)) => {
  const legacy=collections(canonicalLegacy(state));
  if(state.sharedRecords===undefined)return legacy;
- registry.validate(wireRecords(canonicalRecords(state.sharedRecords)));
+ registry.validateState(state);
  const ext=encodeRecords(wireRecords(canonicalRecords(state.sharedRecords)));
  const raw=Buffer.concat([Buffer.from('DPXS'),i(1),i(legacy.length),legacy,i(ext.length),ext]);ensure(raw.length<=MAX);return raw;
 };

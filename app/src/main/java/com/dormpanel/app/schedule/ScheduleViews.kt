@@ -181,6 +181,7 @@ internal class ScheduleEditors(private val context: Context, private val source:
     }
 
     fun classDetail(item: ClassOccurrence) {
+        val managedSlot = source.state.courseSlots.any { it.id==item.entry.id }
         if (!enabled() || !source.ready) return
         val owner = source.state.sources.firstOrNull { it.id == item.sourceId }
         val info = buildString {
@@ -214,7 +215,7 @@ internal class ScheduleEditors(private val context: Context, private val source:
             if (blocked()) return@scheduleButton
             source.saveClassOverride(item.sourceId, item.seriesId, null, null); dialog.dismiss()
         })
-        if (item.imported == null && !source.readOnly) content.addView(context.scheduleButton(context.scheduleText("删除重复课程", "Delete recurring class")) {
+        if (item.imported == null && !managedSlot && !source.readOnly) content.addView(context.scheduleButton(context.scheduleText("删除重复课程", "Delete recurring class")) {
             if (blocked()) return@scheduleButton
             source.deleteEntry(item.seriesId); dialog.dismiss()
         })
@@ -225,6 +226,10 @@ internal class ScheduleEditors(private val context: Context, private val source:
     }
 
     private fun editClass(item: ClassOccurrence) {
+        if(source.state.courseSlots.any { it.id==item.entry.id }) {
+            AlertDialog.Builder(context).setMessage("共享安排请在 Phone 课程管理中编辑；此处保留只读显示。")
+                .setPositiveButton("知道了",null).show();return
+        }
         val scope = arrayOf(context.scheduleText("仅本周", "This week"), context.scheduleText("此课程的全部周次", "All weeks for this timetable item"))
         track(AlertDialog.Builder(context).setTitle(context.scheduleText("编辑范围", "Edit scope"))
             .setItems(scope) { _, which -> classEditor(item, which == 1) }

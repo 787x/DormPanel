@@ -31,6 +31,7 @@ data class ScheduleState(val events: List<CalendarEvent> = emptyList(), val entr
     val dayAdjustments: List<DayAdjustment> = emptyList(), val classOverrides: List<ClassOverride> = emptyList(),
     val profiles: Map<String, TermScheduleProfile> = emptyMap(), val sync: SnapshotIdentity? = null,
     val customProfileKeys: Set<String> = emptySet(), val sharedRecords: List<SharedRecord>? = null) {
+    val courseSlots by lazy { sharedRecords.orEmpty().filter { it.typeId=="course.schedule" && it.schemaVersion==1 }.map(SharedCourseSchedule::decode) }
     val sharedCourseParents by lazy { SharedCourseColors.parents(this) }
     val importedIndex by lazy { ImportedOccurrenceIndex(imported) }
     val daysByDate by lazy { dayAdjustments.associateBy { it.date } }
@@ -185,11 +186,18 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         if (closed || !ready || readOnly || applyingSnapshot || state.events.none { it.id == id }) return
         state = state.copy(events = state.events.filterNot { it.id == id }); store.deleteEvent(id, completion); refresh()
     }
-    fun deleteEntry(id: String) {
-        if (closed || !ready || readOnly || applyingSnapshot || state.entries.none { it.id == id }) return
-        state = state.copy(entries = state.entries.filterNot { it.id == id },
-            classOverrides = state.classOverrides.filterNot { it.sourceId == null && it.seriesId == id })
-        store.deleteEntry(id, completion); refresh()
+    fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit = {}) {
+        if (!editable || state.entries.none {it.id==id}) {callback(Result.failure(IllegalStateException("课程不可删除，请重新读取")));return}
+        // Never optimistically remove a parent: a dependent may arrive before Writer execution.
+        applyingSnapshot=true;refresh()
+        store.deleteEntry(id) { result ->
+            applyingSnapshot=false
+            if(result.exceptionOrNull() is ScheduleCommitUnconfirmed) {refresh();callback(result)}
+            else reload { loaded ->
+                if(result.isSuccess) localCommitted?.invoke()
+                callback(if(result.isFailure) result else if(loaded.isFailure) Result.failure(IllegalStateException("已删除到本机，但重新读取失败；请恢复读取，勿重复删除",loaded.exceptionOrNull())) else Result.success(Unit))
+            }
+        }
     }
     fun saveDayAdjustment(date: LocalDate, mode: String, weekday: Int? = null, label: String = ""): Boolean {
         val item = if (mode == "normal") null else DayAdjustment(date.toString(), mode, weekday, label.trim())
@@ -212,6 +220,25 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         state = state.copy(classOverrides = state.classOverrides.filterNot { it.key == key } + listOfNotNull(item))
         store.putClassOverride(item, key, completion); refresh(); return true
     }
+    fun saveSharedRecords(records: List<SharedRecord>, expectedHash: String, callback: (Result<ClassBatchSaveReceipt>) -> Unit) {
+        if (!editable || syncStore==null) { callback(Result.failure(IllegalStateException(editBlockReason ?: "课表不可写"))); return }
+        syncStore!!.putSharedRecords(records,expectedHash) { result ->
+            if(result.isSuccess) reload { loaded -> localCommitted?.invoke();callback(Result.success(ClassBatchSaveReceipt(loaded.isSuccess))) }
+            else callback(Result.failure(requireNotNull(result.exceptionOrNull())))
+        }
+    }
+    fun saveCourseWithColor(expected: ScheduleState, items: List<ClassOverride>, candidate: CourseCandidate,
+        rgb: Int?, records: List<SharedRecord>?, callback: (Result<ClassBatchSaveReceipt>) -> Unit) = saveCourseEdit(expected,items,candidate,CourseColorEdit.Set(rgb),records,callback)
+    fun saveCourseEdit(expected: ScheduleState, items: List<ClassOverride>, candidate: CourseCandidate,
+        color: CourseColorEdit, records: List<SharedRecord>?, callback: (Result<ClassBatchSaveReceipt>) -> Unit) {
+        if (!editable || syncStore == null) { callback(Result.failure(IllegalStateException(editBlockReason ?: "课表不可写"))); return }
+        syncStore!!.saveCourseEdit(expected, items, candidate, color, records) { result ->
+            if (result.isSuccess) reload { loaded ->
+                localCommitted?.invoke()
+                callback(Result.success(ClassBatchSaveReceipt(loaded.isSuccess)))
+            } else callback(Result.failure(requireNotNull(result.exceptionOrNull())))
+        }
+    }
     fun saveClassOverrides(expected: ScheduleState, items: List<ClassOverride>, callback: (Result<ClassBatchSaveReceipt>) -> Unit) {
         if (!editable) { callback(Result.failure(IllegalStateException(editBlockReason ?: "课表忙碌，请稍后重试"))); return }
         store.putClassOverrides(expected, items) { result ->
@@ -225,7 +252,13 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         if (error) { callback(Result.failure(ScheduleLocalReadFailed())); return }
         if (readOnly) { callback(Result.failure(ScheduleDatasetWriteProtected())); return }
         if (closed || !ready || readOnly || applyingSnapshot) return
-        IcsScheduleImporter().commit(preview, store, name, targetId, clock.instant().toEpochMilli()) { result ->
+        val guarded=if(state.sharedRecords!=null && syncStore!=null) {
+            val expectedHash=SyncV3Codec.businessHash(state)
+            object:ScheduleStore by store {
+                override fun commitImport(source:ImportSource, occurrences:List<ImportedClassOccurrence>, replace:Boolean, callback:(Result<ImportCommit>)->Unit) = syncStore!!.commitImportExpected(source,occurrences,replace,expectedHash,callback)
+            }
+        } else store
+        IcsScheduleImporter().commit(preview, guarded, name, targetId, clock.instant().toEpochMilli()) { result ->
             if (!closed) {
                 result.onSuccess { committed -> if (!committed.unchanged) {
                     val sources = state.sources.filterNot { it.id == committed.source.id } + committed.source
@@ -243,7 +276,11 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         if (error) { callback(Result.failure(ScheduleLocalReadFailed())); return }
         if (readOnly) { callback(Result.failure(ScheduleDatasetWriteProtected())); return }
         if (closed || !ready || readOnly || applyingSnapshot) return
-        store.deleteImport(id) { result -> if (!closed) {
+        val guarded=if(state.sharedRecords!=null && syncStore!=null) {
+            val expectedHash=SyncV3Codec.businessHash(state)
+            object:ScheduleStore by store {override fun deleteImport(id:String,callback:(Result<Unit>)->Unit)=syncStore!!.deleteImportExpected(id,expectedHash,callback)}
+        } else store
+        guarded.deleteImport(id) { result -> if (!closed) {
             result.onSuccess {
                 val sources = state.sources.filterNot { it.id == id }
                 state = state.copy(sources = sources, imported = state.imported.filterNot { it.sourceId == id },
@@ -279,7 +316,7 @@ data class ClassOccurrence(val entry: TimetableEntry, val date: LocalDate, val s
     val seriesId: String = imported?.seriesId ?: entry.id, val sourceId: String? = imported?.sourceId,
     val periodLabel: String? = imported?.periodLabel, val teacher: String = "", val note: String = "",
     val allWeeksEdited: Boolean = false, val thisWeekEdited: Boolean = false,
-    val copiedFrom: LocalDate? = null, val linked: Boolean = false, val academicDate: LocalDate = date)
+    val copiedFrom: LocalDate? = null, val linked: Boolean = false, val academicDate: LocalDate = date, val colorSeriesId: String = seriesId, val sharedRgb: Int? = null)
 enum class ClassStatus { CURRENT, NEXT_TODAY, NO_MORE_TODAY }
 data class TimetableCardContent(val status: ClassStatus, val occurrences: List<ClassOccurrence>)
 object ScheduleProjection {
@@ -366,7 +403,7 @@ object ScheduleProjection {
         } + state.importedIndex.range(monday.minusDays(2).atStartOfDay(zone).toInstant().toEpochMilli(),
             monday.plusDays(9).atStartOfDay(zone).toInstant().toEpochMilli()).map { importedClass(state, it, zone) }
             .filter { it.academicDate >= monday && it.academicDate < monday.plusDays(7) }
-        val templates = base.mapNotNull { raw ->
+        val templates = SharedCourseSchedule.project(state, monday, zone, base).mapNotNull { raw ->
             val value = raw.copy(linked = profile(state, raw) != null && periods(raw.periodLabel) != null)
             val edit = state.editsByKey[ClassOverride.key(value.sourceId, value.seriesId, null)]
             val withEdit = if (edit == null) value else patch(state, value, edit, zone) ?: value
@@ -398,7 +435,9 @@ object ScheduleProjection {
         return composed.mapNotNull { value ->
             val edit = state.editsByKey[ClassOverride.key(value.sourceId, value.seriesId, value.anchorDate.toString())]
             val edited = if (edit == null) value else patch(state, value, edit, zone) ?: value
-            edited.takeUnless { state.daysByDate[it.date.toString()]?.mode == "none" }
+            edited.takeUnless { state.daysByDate[it.date.toString()]?.mode == "none" }?.let { final ->
+                if (state.sharedRecords == null) final else final.copy(sharedRgb = SharedCourseColors.rgb(state,final.sourceId,final.colorSeriesId))
+            }
         }.sortedWith(compareBy<ClassOccurrence> { it.start }.thenBy { it.entry.title }.thenBy { it.entry.id })
     }
     fun week(state: ScheduleState, first: LocalDate, zone: ZoneId): List<ClassOccurrence> {
@@ -429,7 +468,14 @@ object ScheduleProjection {
         val futureWeeks = state.importedIndex.upcoming(clock.instant().toEpochMilli(), 16).map {
             monday(importedClass(state, it, clock.zone()).academicDate)
         }
-        val weeks = ((-1L..2L).map { monday(today).plusWeeks(it) } + futureWeeks).distinct()
+        val scheduleWeeks=java.util.TreeSet<LocalDate>()
+        SharedCourseSchedule.slots(state).filter { it.enabled }.forEach { slot ->
+            val anchor=LocalDate.parse(slot.week1)
+            slot.weeks.asSequence().map { anchor.plusWeeks(it-1L) }.filter { it >= monday(today) }.take(16).forEach { date ->
+                scheduleWeeks.add(date);if(scheduleWeeks.size>16) scheduleWeeks.pollLast()
+            }
+        }
+        val weeks = ((-1L..2L).map { monday(today).plusWeeks(it) } + futureWeeks + scheduleWeeks).distinct()
         return weeks.flatMap { academicWeek(state, it, clock.zone()) }
             .filter { it.end > clock.instant() && it.end > it.start }
             .sortedWith(compareBy<ClassOccurrence> { it.start }.thenBy { it.entry.title }.thenBy { it.entry.id })

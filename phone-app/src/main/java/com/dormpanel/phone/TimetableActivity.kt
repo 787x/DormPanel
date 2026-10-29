@@ -108,6 +108,7 @@ class TimetableActivity : AppCompatActivity() {
         profiles.editable = { source.editable && !isDestroyed }
         sharedSync = SharedScheduleController(this, source).also { it.changed = { updateSharedStatus() } }
         editors = PhoneEditors(this, source) { !busy }
+        editors.restoreDraft(lastCustomNonConfigurationInstance as? PhoneEditors.CourseDraft)
         root = scheduleColumn().apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
         setContentView(root)
         val dark = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
@@ -148,6 +149,7 @@ class TimetableActivity : AppCompatActivity() {
             resumeCheckPending = false; sharedSync.sync()
         }
     }
+    override fun onRetainCustomNonConfigurationInstance(): Any? = if(::editors.isInitialized) editors.captureDraft() else null
     override fun onSaveInstanceState(outState: Bundle) {
         captureScroll()
         outState.putFloat("weekAnchor",weekAnchor)

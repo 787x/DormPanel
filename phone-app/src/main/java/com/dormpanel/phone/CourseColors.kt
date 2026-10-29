@@ -26,15 +26,23 @@ internal object CourseColors {
         uncertain[pref]?.forEach { (key,value) -> if (value == null) stored.remove(key) else stored[key] = value }
         return stored
     }
-    class Snapshot(val identity: CourseColorIdentity, private val automatic: Map<String, Int>, private val manual: Map<String, Int>) {
+    class Snapshot(val identity: CourseColorIdentity, private val automatic: Map<String, Int>, private val manual: Map<String, Int>, private val shared: Map<String, Int> = emptyMap()) {
         fun key(candidate: CourseCandidate) = identity.key(candidate.sourceId,candidate.series.first())
         fun manual(key: String) = manual[key]
-        fun rgb(key: String, override: Int? = manual[key]) = override ?: palette[automatic[key] ?: 0]
-        fun rgb(item: ClassOccurrence) = identity.key(item.sourceId,item.seriesId)?.let { rgb(it) } ?: palette[0]
+        fun rgb(key: String, override: Int? = manual[key]) = override ?: shared[key] ?: palette[automatic[key] ?: 0]
+        fun rgb(item: ClassOccurrence) = identity.key(item.sourceId,item.colorSeriesId)?.let { rgb(it) } ?: palette[0]
     }
     @Synchronized fun snapshot(context: Context, state: ScheduleState): Snapshot {
         val identity = CourseColorIdentity(state)
         require(identity.active.size <= MAX_IDENTITIES) { "课程颜色超出本地预算" }
+        if (state.sharedRecords != null) {
+            val values = CourseBatch.candidates(state).associate { candidate ->
+                identity.key(candidate.sourceId, candidate.series.first())!! to
+                    SharedCourseColors.display(state, candidate.sourceId, candidate.series.first())
+            }
+            return Snapshot(identity, emptyMap(), values.filterValues { it.status == "MANUAL" }.mapValues { it.value.rgb },
+                values.mapValues { (key, _) -> SharedCourseColor.automaticColor(digest(key)).fold(0) { n,v -> (n shl 8) or (v.toInt() and 255) } })
+        }
         val pref = prefs(context)
         val stored = pref.all.toMutableMap()
         uncertain[pref]?.forEach { (key,value) -> if (value == null) stored.remove(key) else stored[key] = value }
