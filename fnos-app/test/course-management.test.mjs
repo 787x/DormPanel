@@ -209,3 +209,169 @@ test("同来源原始身份归组，跨来源、歧义系列与手动身份独�
     list.rows.find((g) => g.series.includes("D")).key,
   );
 });
+
+import { importedCourse } from "../test-fixtures/course-review.mjs";
+import { projectWeek } from "../src/projection.mjs";
+function detailFor(db) {
+  const g = courses(db).rows[0];
+  return courses(db, { key: g.key });
+}
+function replacement(detail) {
+  const b = detail.baselines[0];
+  return {
+    id: "replacement",
+    sourceId: detail.course.sourceId,
+    ownerSeries: b.seriesId,
+    replacesSeries: b.seriesId,
+    week1: b.week1,
+    weeks: b.weeks,
+    weekday: b.day,
+    startMinute: b.startMinute,
+    endMinute: b.endMinute,
+    periodStart: 0,
+    periodEnd: 0,
+    enabled: true,
+    title: b.title,
+    location: "替换教室",
+    teacher: "",
+    note: "",
+  };
+}
+test("可靠学期第 4/6/10 周：乱序和原始时区不改变教学锚点与正式替换日期", async () => {
+  for (const sunday of [false, true]) {
+    const state = await importedCourse({ sunday }),
+      db = new Workspace(
+        {},
+        { revision: 1, local: state, v3: { binding: { format: 4 } } },
+      );
+    const before = structuredClone(state);
+    const d = detailFor(db);
+    assert.equal(d.baselines[0].week1, "2026-09-07");
+    assert.deepEqual(d.baselines[0].weeks, [4, 6, 10]);
+    state.imported.reverse();
+    assert.deepEqual(detailFor(db).baselines, d.baselines);
+    const slot = replacement(d),
+      edit = {
+        target: { sourceId: d.course.sourceId, series: d.course.series },
+        slots: [slot],
+      };
+    const next = db.previewCourseEdit(edit, 1).state;
+    for (const week of sunday
+      ? ["2026-10-05", "2026-10-19", "2026-11-16"]
+      : ["2026-09-28", "2026-10-12", "2026-11-09"]) {
+      const a = projectWeek(before, week, "Asia/Shanghai"),
+        b = projectWeek(next, week, "Asia/Shanghai");
+      assert.equal(a.length, 1);
+      assert.equal(b.length, 1);
+      assert.equal(b[0].start, a[0].start);
+      assert.equal(b[0].end, a[0].end);
+      assert.equal(b[0].location, "替换教室");
+    }
+    assert.equal(projectWeek(next, "2026-09-07").length, 0);
+    assert.equal(
+      projectWeek(next, sunday ? "2026-09-28" : "2026-10-05").length,
+      0,
+    );
+    assert.deepEqual(state.sources, before.sources);
+    assert.deepEqual(state.profiles, before.profiles);
+  }
+});
+test("无可靠学期关联不冒充教学周，亦不选择其他学期；本地无限重复保持空锚点", async () => {
+  const state = await importedCourse({ configured: false }),
+    db = new Workspace(
+      {},
+      { revision: 1, local: state, v3: { binding: { format: 4 } } },
+    );
+  const b = detailFor(db).baselines[0];
+  assert.equal(b.week1, undefined);
+  assert.deepEqual(b.weeks, []);
+  assert.equal(b.weekBasis, "unconfigured");
+  state.imported.reverse();
+  assert.deepEqual(detailFor(db).baselines[0], b);
+  assert.equal(detailFor(fixture()).baselines[0].weekBasis, "unbounded");
+});
+test("删除并重建替换以最终候选判断恢复；停用继续抑制；真正移除才恢复", () => {
+  const db = fixture(),
+    slot = {
+      id: "r1",
+      sourceId: null,
+      ownerSeries: "a",
+      replacesSeries: "a",
+      week1: "2026-09-07",
+      weeks: [1, 3],
+      weekday: 2,
+      startMinute: 480,
+      endMinute: 540,
+      periodStart: 0,
+      periodEnd: 0,
+      enabled: true,
+      title: "替换",
+      location: "R1",
+      teacher: "",
+      note: "",
+    };
+  db.frame.local.sharedRecords = durableRecords([scheduleRecord(slot)]);
+  const target = { sourceId: null, series: ["a"] };
+  for (const enabled of [true, false]) {
+    const edit = {
+      target,
+      deleteIds: ["r1"],
+      slots: [{ ...slot, id: "r2", enabled, location: "R2" }],
+    };
+    assert.deepEqual(previewCourse(db, edit, 1).restored, []);
+    const next = db.previewCourseEdit(edit, 1).state;
+    assert.equal(
+      projectWeek(next, "2026-09-07").some((r) => r.id === "a"),
+      false,
+    );
+    assert.equal(
+      projectWeek(next, "2026-09-07").some((r) => r.id === "r2"),
+      enabled,
+    );
+  }
+  const edit = { target, deleteIds: ["r1"] };
+  assert.deepEqual(
+    previewCourse(db, edit, 1).restored.map((r) => r.seriesId),
+    ["a"],
+  );
+  assert(
+    projectWeek(db.previewCourseEdit(edit, 1).state, "2026-09-07").some(
+      (r) => r.id === "a",
+    ),
+  );
+  assert.deepEqual(
+    previewCourse(db, { target, slots: [{ ...slot, enabled: false }] }, 1)
+      .restored,
+    [],
+  );
+});
+
+test("复用 termKey 的既有 CSV 关联；完全缺少学期时不预填教学周", async () => {
+  const state = await importedCourse(),
+    old = state.sources[0].termKey;
+  state.profiles = state.profiles.map((p) =>
+    p.termKey === old ? { ...p, termKey: "2026-2027-1" } : p,
+  );
+  state.customProfileKeys = state.customProfileKeys.map((k) =>
+    k === old ? "2026-2027-1" : k,
+  );
+  Object.assign(state.sources[0], {
+    termKey: null,
+    filename: "review.csv",
+    calendarName: "湖北大学 2026-2027-1",
+  });
+  const db = new Workspace(
+    {},
+    { revision: 1, local: state, v3: { binding: { format: 4 } } },
+  );
+  assert.equal(detailFor(db).baselines[0].week1, "2026-09-07");
+  assert.deepEqual(detailFor(db).baselines[0].weeks, [4, 6, 10]);
+  Object.assign(state.sources[0], {
+    filename: "review.ics",
+    calendarName: null,
+  });
+  state.profiles = [];
+  state.customProfileKeys = [];
+  assert.equal(detailFor(db).baselines[0].week1, undefined);
+  assert.deepEqual(detailFor(db).baselines[0].weeks, []);
+});

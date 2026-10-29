@@ -509,3 +509,260 @@ test("无限原课程有限替换须确认；停用仍抑制，移除规则恢�
   assert.equal(projectWeek(f.app.db.frame.local, "2026-09-07").length, 1);
   assert.equal(f.app.db.frame.revision, rev + 3);
 });
+
+for (const kind of ["search", "page"])
+  test("查询世代：" + kind + " 旧响应不得覆盖新搜索", async (t) => {
+    const f = await fixture(t);
+    f.app.db.frame.local = {
+      ...emptyState(),
+      entries: [
+        ...Array.from({ length: 41 }, (_, i) => ({
+          id: "a" + i,
+          title: "A" + String(i).padStart(2, "0"),
+          day: 1,
+          startMinute: 480,
+          endMinute: 540,
+          location: "",
+        })),
+        {
+          id: "b",
+          title: "B最新结果",
+          day: 1,
+          startMinute: 480,
+          endMinute: 540,
+          location: "",
+        },
+      ],
+      sharedRecords: [],
+    };
+    f.app.db.frame.v3 = { binding: { format: 4 } };
+    let release, entered, delivered;
+    const finished = new Promise((r) => (delivered = r));
+    const gate = new Promise((r) => (release = r)),
+      started = new Promise((r) => (entered = r));
+    t.after(() => release());
+    await f.page.route("**/api/courses?*", async (route) => {
+      const u = new URL(route.request().url());
+      if (
+        kind === "search"
+          ? u.searchParams.get("filter") === "A"
+          : u.searchParams.get("offset") === "40"
+      ) {
+        const response = await route.fetch();
+        entered();
+        await gate;
+        await route.fulfill({ response });
+        delivered();
+      } else await route.continue();
+    });
+    await f.open();
+    await f.page.locator("#coursesPage").click();
+    await expect(f.page.locator(".course-manager .card-grid")).toContainText(
+      "A00",
+    );
+    const input = f.page
+      .locator(".course-manager label")
+      .filter({ hasText: "搜索课程或来源" })
+      .locator("input");
+    if (kind === "search") {
+      await input.fill("A");
+      await f.page.getByRole("button", { name: "搜索", exact: true }).click();
+    } else
+      await f.page.getByRole("button", { name: "下一页", exact: true }).click();
+    await started;
+    await input.fill("B");
+    await f.page.getByRole("button", { name: "搜索", exact: true }).click();
+    await expect(f.page.locator(".course-manager .card-grid")).toContainText(
+      "B最新结果",
+    );
+    release();
+    await finished;
+    await f.page.evaluate(
+      () =>
+        new Promise((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(r)),
+        ),
+    );
+    await expect
+      .poll(async () =>
+        f.page.locator(".course-manager .card-grid h3").allTextContents(),
+      )
+      .toEqual(["B最新结果"]);
+    await expect(input).toHaveValue("B");
+    assert.deepEqual(f.errors, []);
+  });
+test("原生颜色、色板与恢复自动即时预览相同草稿，取消不写", async (t) => {
+  const f = await editorFixture(t),
+    rev = f.app.db.frame.revision;
+  const picker = f.page.locator(".course-manager input[type=color]"),
+    section = picker.locator("..").locator("..");
+  await picker.fill("#123abc");
+  await expect(section).toHaveCSS("border-left-color", "rgb(18, 58, 188)");
+  await f.page.getByRole("button", { name: "#8844cc", exact: true }).click();
+  await expect(picker).toHaveValue("#8844cc");
+  await expect(section).toHaveCSS("border-left-color", "rgb(136, 68, 204)");
+  await f.page
+    .getByRole("button", { name: "恢复自动颜色", exact: true })
+    .click();
+  const automatic = await picker.inputValue();
+  await expect(section).toHaveCSS(
+    "border-left-color",
+    "rgb(" +
+      [1, 3, 5].map((i) => parseInt(automatic.slice(i, i + 2), 16)).join(", ") +
+      ")",
+  );
+  await f.page.getByRole("button", { name: "预览并保存", exact: true }).click();
+  await expect(f.page.locator(".course-manager")).toContainText(
+    "颜色：恢复自动",
+  );
+  await f.page.getByRole("button", { name: "取消草稿", exact: true }).click();
+  await f.page.locator("#feedbackAccept").click();
+  assert.equal(f.app.db.frame.revision, rev);
+  assert.equal(f.app.db.frame.local.sharedRecords.length, 0);
+});
+import { importedCourse } from "../test-fixtures/course-review.mjs";
+for (const configured of [true, false])
+  test(
+    "导入有限替换使用" + (configured ? "真实教学周" : "明确用户锚点"),
+    async (t) => {
+      const f = await fixture(t),
+        state = await importedCourse({ configured });
+      state.imported.reverse();
+      f.app.db.frame.local = state;
+      f.app.db.frame.v3 = { binding: { format: 4 } };
+      const before = structuredClone(state);
+      await f.open();
+      await f.page.locator("#coursesPage").click();
+      await f.page
+        .getByRole("button", { name: "编辑整门课程", exact: true })
+        .click();
+      await expect(f.page.locator(".course-manager")).toContainText(
+        configured
+          ? "原系列教学周：4、6、10（首周 2026-09-07）"
+          : "未关联可靠学期",
+      );
+      await f.page
+        .getByRole("button", { name: "有限周替换原始系列", exact: true })
+        .click();
+      await f.page.locator("#feedbackAccept").click();
+      const card = f.page.locator("[data-slot-id]");
+      await expect(card).toHaveCount(1);
+      await expect(card.locator("input[type=date]")).toHaveValue(
+        configured ? "2026-09-07" : "",
+      );
+      assert.deepEqual(
+        await card
+          .locator(".week-picker input:checked")
+          .evaluateAll((es) =>
+            es.map((e) => Number(e.parentElement.textContent)),
+          ),
+        configured ? [4, 6, 10] : [],
+      );
+      if (!configured) {
+        await card.locator("input[type=date]").fill("2026-09-07");
+        for (const n of [3, 5, 9])
+          await card.locator(".week-picker input").nth(n).check();
+      }
+      await f.page
+        .getByRole("button", { name: "预览并保存", exact: true })
+        .click();
+      await expect(
+        f.page.getByRole("button", { name: "确认一次原子保存", exact: true }),
+      ).toBeVisible();
+      await f.page
+        .getByRole("button", { name: "确认一次原子保存", exact: true })
+        .click();
+      await expect(
+        f.page.getByRole("button", { name: "编辑整门课程", exact: true }),
+      ).toBeVisible();
+      const { projectWeek } = await import("../src/projection.mjs"),
+        { scheduleSlots } = await import("../src/shared-course-schedule.mjs");
+      const saved = f.app.db.frame.local;
+      assert.equal(scheduleSlots(saved)[0].week1, "2026-09-07");
+      assert.deepEqual(scheduleSlots(saved)[0].weeks, [4, 6, 10]);
+      for (const w of ["2026-09-28", "2026-10-12", "2026-11-09"])
+        assert.deepEqual(
+          projectWeek(saved, w).map((r) => [r.start, r.end]),
+          projectWeek(before, w).map((r) => [r.start, r.end]),
+        );
+      assert.equal(projectWeek(saved, "2026-09-07").length, 0);
+      assert.deepEqual(
+        [...saved.imported].sort((a, b) => a.id.localeCompare(b.id)),
+        [...before.imported].sort((a, b) => a.id.localeCompare(b.id)),
+      );
+      assert.deepEqual(saved.profiles, before.profiles);
+    },
+  );
+
+test("关闭并切换工作区后旧课程查询不能污染重新打开的列表", async (t) => {
+  const f = await fixture(t),
+    a = f.app.catalog.manifest.activeId;
+  await f.app.db.edit({
+    kind: "entry",
+    action: "upsert",
+    value: {
+      id: "a",
+      title: "A旧工作区",
+      day: 1,
+      startMinute: 480,
+      endMinute: 540,
+      location: "",
+    },
+  });
+  const id = randomUUID(),
+    db = await Workspace.open(f.app.catalog.workspaceStore(id));
+  await db.edit({
+    kind: "entry",
+    action: "upsert",
+    value: {
+      id: "b",
+      title: "B当前工作区",
+      day: 1,
+      startMinute: 480,
+      endMinute: 540,
+      location: "",
+    },
+  });
+  const manifest = structuredClone(f.app.catalog.manifest);
+  manifest.workspaces.push({ id, name: "B工作区" });
+  manifest.revision++;
+  await f.app.catalog.commit(manifest);
+  f.app.catalog.attach(id, db);
+  let release, entered, delivered;
+  const gate = new Promise((r) => (release = r)),
+    started = new Promise((r) => (entered = r)),
+    finished = new Promise((r) => (delivered = r));
+  t.after(() => release());
+  await f.page.route("**/api/courses?*", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("workspaceId") === a) {
+      const response = await route.fetch();
+      entered();
+      await gate;
+      await route.fulfill({ response });
+      delivered();
+    } else await route.continue();
+  });
+  await f.open();
+  await f.page.locator("#coursesPage").click();
+  await started;
+  await f.page
+    .locator(".course-manager")
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await f.page.locator("#workspaceSelect").selectOption(id);
+  await expect(f.page.locator("#currentContext")).toContainText("B工作区");
+  await f.page.locator("#coursesPage").click();
+  await expect(f.page.locator(".course-manager .card-grid")).toContainText(
+    "B当前工作区",
+  );
+  release();
+  await finished;
+  await f.page.evaluate(
+    () =>
+      new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+  );
+  await expect(f.page.locator(".course-manager .card-grid h3")).toHaveText([
+    "B当前工作区",
+  ]);
+  assert.deepEqual(f.errors, []);
+});

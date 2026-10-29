@@ -123,16 +123,24 @@ export function installCourseManagement(api) {
       button("搜索", () => listQuery(0)),
       rows,
     );
+    let queryEpoch = 0;
     async function listQuery(offset) {
-      const result = await api.get(
-        "/api/courses?" +
-          new URLSearchParams({
-            workspaceId: scope.workspaceId,
-            offset,
-            filter: filter.value,
-          }),
-      );
-      if (t !== ticket || !valid()) return;
+      const queryTicket = ++queryEpoch;
+      let result;
+      try {
+        result = await api.get(
+          "/api/courses?" +
+            new URLSearchParams({
+              workspaceId: scope.workspaceId,
+              offset,
+              filter: filter.value,
+            }),
+        );
+      } catch (error) {
+        if (t !== ticket || queryTicket !== queryEpoch || !valid()) return;
+        throw error;
+      }
+      if (t !== ticket || queryTicket !== queryEpoch || !valid()) return;
       rows.replaceChildren();
       if (!result.supported)
         rows.append(
@@ -275,14 +283,20 @@ export function installCourseManagement(api) {
     color.append(
       el("h3", "共享颜色 · " + colorLabel(detail.course.color.status)),
     );
+    const updateColor = (rgb) => {
+      draft.colors = [{ seriesId: draft.target.series[0], rgb }];
+      const hex =
+        "#" + (rgb ?? detail.course.automaticRgb).toString(16).padStart(6, "0");
+      picker.value = hex;
+      color.style.borderLeftColor = hex;
+      changed();
+    };
     const picker = field(
       color,
       "手动颜色",
       "#" + shownRgb.toString(16).padStart(6, "0"),
       (v) => {
-        draft.colors = [
-          { seriesId: draft.target.series[0], rgb: parseInt(v.slice(1), 16) },
-        ];
+        if (/^#[0-9a-f]{6}$/i.test(v)) updateColor(parseInt(v.slice(1), 16));
       },
       "color",
     );
@@ -290,21 +304,14 @@ export function installCourseManagement(api) {
       0x336699, 0x8844cc, 0x008577, 0xc23b55, 0xb36b00, 0x536dfe,
     ]) {
       const b = button("#" + rgb.toString(16).padStart(6, "0"), () => {
-        draft.colors = [{ seriesId: draft.target.series[0], rgb }];
-        picker.value = "#" + rgb.toString(16).padStart(6, "0");
-        color.style.borderLeftColor = picker.value;
-        changed();
+        updateColor(rgb);
       });
       b.style.borderColor = "#" + rgb.toString(16).padStart(6, "0");
       color.append(b);
     }
     color.append(
       button("恢复自动颜色", () => {
-        draft.colors = [{ seriesId: draft.target.series[0], rgb: null }];
-        picker.value =
-          "#" + detail.course.automaticRgb.toString(16).padStart(6, "0");
-        color.style.borderLeftColor = picker.value;
-        changed();
+        updateColor(null);
         error.textContent = "本次将恢复自动颜色，保存前仍可取消";
       }),
     );
@@ -317,9 +324,11 @@ export function installCourseManagement(api) {
         el("h4", b.title),
         el(
           "p",
-          b.week1
+          b.weekBasis === "teaching"
             ? "原系列教学周：" + b.weeks.join("、") + "（首周 " + b.week1 + "）"
-            : "本地原课程无限重复；有限替换必须明确选择周次",
+            : b.weekBasis === "unbounded"
+              ? "本地原课程无限重复；有限替换必须明确选择周次"
+              : "未关联可靠学期，不能确定教学周；有限替换请明确选择第 1 周周一及有效周次",
         ),
       );
       const existing = detail.overrides.find((o) => o.seriesId === b.seriesId);
@@ -667,8 +676,8 @@ export function installCourseManagement(api) {
       sourceId: draft.target.sourceId,
       ownerSeries: b.seriesId,
       replacesSeries: replacement ? b.seriesId : null,
-      week1: replacement ? (b.week1 ?? "") : "",
-      weeks: replacement ? (b.weeks ?? []) : [],
+      week1: replacement && b.weekBasis === "teaching" ? b.week1 : "",
+      weeks: replacement && b.weekBasis === "teaching" ? b.weeks : [],
       weekday: b.day ?? 1,
       startMinute: b.startMinute ?? 480,
       endMinute: b.endMinute ?? 540,
@@ -843,7 +852,9 @@ export function installCourseManagement(api) {
           el(
             "p",
             s?.replacesSeries
-              ? "移除替换规则，恢复原始基线：" + s.title
+              ? (preview.restored.some((r) => r.seriesId === s.ownerSeries)
+                  ? "移除替换规则，恢复原始基线："
+                  : "移除旧替换规则，原系列仍受新规则抑制：") + s.title
               : "删除独立新增：" + s?.title,
           ),
         );

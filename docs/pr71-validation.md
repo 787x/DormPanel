@@ -64,3 +64,27 @@ PR70 已在未修改 main 复现的 1024 增长缓存断言失败继续保留 [�
 ![X08E 时间彩色](screenshots/pr71/pr63-pr71-network-time-true.png)
 ![X08E 节次布局回退实际时间](screenshots/pr71/pr63-pr71-network-periods-true.png)
 ![X08E 单色](screenshots/pr71/pr63-pr71-network-classic-false.png)
+
+## 本轮审查修复（基线 840fb669，2026-10-29）
+
+本节是本次重新执行的结果；以上真实 NAS、三端网络、Android 布局和官方 fnpack 结果仍为上一轮历史证据，本次未重复执行。
+
+- 教学周：课程详情复用 ImportSource → `termKey()` → profile.week1Monday。周次按原始实例时区的学术日期计算；代表实例按时间/稳定 ID 排序，乱序不改变锚点、离散周或有限替换草稿。没有可靠学期关联时返回 unconfigured，不返回伪造的教学周锚点/周次，网页提示用户明确选择第 1 周周一及有效周；本地无限重复仍为 unbounded。已有导入、配置及合法共享安排不被重写。
+- 恢复预览：使用正式 previewCourseEdit 的最终候选，按来源/原始系列检查剩余替换；停用规则仍抑制原课。删除 R1 同时新增 R2（含停用 R2）不会提示基线恢复，真正移除最后替换才提示恢复；网页删除明细同样使用该结论。
+- 搜索竞态：窗口内每次搜索/列表分页独立递增请求世代；同时保留原窗口 ticket、工作区/loadEpoch/viewEpoch 保护。旧响应不覆盖新列表，不重置编辑草稿，无轮询。
+- 颜色：原生 RGB 输入、预设色板、恢复自动共用内存草稿和即时色条更新函数；恢复自动仍提交 rgb:null，取消不写入。
+
+本次实测：
+
+| 检查 | 结果 |
+|---|---|
+| Node course-management / course-management-agent / course-edit-review / shared-course-schedule | 21 PASS，0 FAIL/SKIP |
+| Playwright courses.browser | 14 PASS，0 FAIL/SKIP |
+| 审查 HEAD 旧网页的搜索与分页竞态反证 | 2 个新增用例均 FAIL，修复后均 PASS |
+| JavaScript 静态语法与 fnOS 工程构建 | PASS |
+
+Node 新用例先复现错误锚点、无学期伪周次及删除重建错误恢复提示。日期 oracle 使用正式 projectWeek：学期首周 2026-09-07、课程第 4/6/10 周；还覆盖纽约周日 23:30 在上海已跨到下一周、CSV 既有 termKey 推导、实例乱序、缺失/无关联配置、本地无限重复与停用抑制。浏览器实际执行导入有限替换预览/保存，核对最终日期及原导入记录值；正式事务规范排序不视为改写实例。
+
+浏览器竞态通过延迟 A/旧分页响应，让 B 先返回，等待旧响应完成后确认仍为 B；另覆盖关闭窗口、切换工作区后重新打开列表的迟到响应。颜色专项核对原生输入、色板、自动恢复的实际 CSS 色条，确认取消后 revision 和共享记录不变。原有多时段、跨页原子保存、指定周语义、颜色及 Agent 权限/回执定向测试继续通过。
+
+未修改共享投影、协议或事务核心，本次不执行完整 Android、真实 NAS/并发矩阵、1024 增长、soak 或重新安装/发布。本轮定向测试未发现剩余失败；未穷尽浏览器/时区组合，历史验收边界和基线失败记录保持不变。

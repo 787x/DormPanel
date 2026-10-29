@@ -6,7 +6,7 @@ import { scheduleSlots } from "./shared-course-schedule.mjs";
 import { businessHash } from "./v3-protocol.mjs";
 import { projectWeek, addDays } from "./projection.mjs";
 import { Temporal } from "@js-temporal/polyfill";
-import { ensure } from "./protocol.mjs";
+import { ensure, termKey } from "./protocol.mjs";
 export function courses(db, input = {}) {
   const state = db.frame.local,
     groups = new Map(),
@@ -116,9 +116,15 @@ export function courses(db, input = {}) {
           const r =
             g.sourceId === null
               ? state.entries.find((e) => e.id === seriesId)
-              : state.imported.find(
-                  (e) => e.sourceId === g.sourceId && e.seriesId === seriesId,
-                );
+              : state.imported
+                  .filter(
+                    (e) => e.sourceId === g.sourceId && e.seriesId === seriesId,
+                  )
+                  .sort(
+                    (a, b) =>
+                      Number(a.start) - Number(b.start) ||
+                      a.id.localeCompare(b.id),
+                  )[0];
           const override = state.classOverrides.find(
             (o) =>
               o.sourceId === g.sourceId &&
@@ -131,15 +137,25 @@ export function courses(db, input = {}) {
               : state.imported.filter(
                   (e) => e.sourceId === g.sourceId && e.seriesId === seriesId,
                 );
+          actual.sort(
+            (a, b) =>
+              Number(a.start) - Number(b.start) || a.id.localeCompare(b.id),
+          );
           const dates = actual.map((e) =>
             Temporal.Instant.fromEpochMilliseconds(
               Number(e.start),
             ).toZonedDateTimeISO(e.timezone),
           );
-          const first = dates[0]?.toPlainDate();
-          const week1 = first
-            ?.subtract({ days: first.dayOfWeek - 1 })
-            .toString();
+          const owner = state.sources.find((s) => s.id === g.sourceId);
+          const profile =
+            owner && state.profiles.find((p) => p.termKey === termKey(owner));
+          const week1 = profile?.week1Monday;
+          const weekBasis =
+            g.sourceId === null
+              ? "unbounded"
+              : profile
+                ? "teaching"
+                : "unconfigured";
           const weeks = week1
             ? [
                 ...new Set(
@@ -177,6 +193,7 @@ export function courses(db, input = {}) {
                   })()
                 : undefined),
             week1,
+            weekBasis,
             weeks,
             suppressed: all.some((s) => s.replacesSeries === seriesId),
           };
@@ -194,6 +211,7 @@ export function courses(db, input = {}) {
             teacher,
             note,
             week1,
+            weekBasis,
             weeks,
             suppressed,
           }) => ({
@@ -206,6 +224,7 @@ export function courses(db, input = {}) {
             teacher,
             note,
             week1,
+            weekBasis,
             weeks,
             suppressed,
           }),
@@ -311,9 +330,16 @@ export function previewCourse(db, edit, version) {
       o.sourceId === edit.target.sourceId &&
       edit.target.series.includes(o.seriesId),
   );
+  const suppressedAfter = new Set(
+    scheduleSlots(after)
+      .filter((s) => s.replacesSeries !== null)
+      .map((s) => JSON.stringify([s.sourceId, s.replacesSeries])),
+  );
   const restored = scheduleSlots(before)
     .filter(
-      (s) => (edit.deleteIds ?? []).includes(s.id) && s.replacesSeries !== null,
+      (s) =>
+        s.replacesSeries !== null &&
+        !suppressedAfter.has(JSON.stringify([s.sourceId, s.replacesSeries])),
     )
     .map((s) => ({ title: s.title, seriesId: s.ownerSeries }));
   return {
