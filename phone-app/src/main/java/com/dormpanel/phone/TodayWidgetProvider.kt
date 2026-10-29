@@ -53,6 +53,7 @@ internal object TodayWidgetUpdates {
                         if (CollectionWidgets.isCollection(app,id)) {
                             AppWidgetManager.getInstance(app).updateAppWidget(id,CollectionWidgets.render(app,id,result.getOrNull()))
                             AppWidgetManager.getInstance(app).notifyAppWidgetViewDataChanged(id,R.id.collection_list)
+                            if(!CollectionWidgets.isWeek(app,id)) AppWidgetManager.getInstance(app).notifyAppWidgetViewDataChanged(id,R.id.recent_tomorrow_list)
                             return@forEach
                         }
                         val tomorrow=WidgetTitleSettings.tomorrow(app,id)

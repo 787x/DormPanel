@@ -5,5 +5,9 @@
 </LinearLayout>
 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal"><TextView android:id="@+id/header_0" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:gravity="center" android:text="今天" android:textSize="12sp" android:textColor="@color/collection_ink" android:paddingVertical="8dp"/><TextView android:id="@+id/header_1" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:gravity="center" android:text="明天" android:textSize="12sp" android:textColor="@color/collection_ink" android:paddingVertical="8dp"/></LinearLayout>
 <TextView android:id="@+id/collection_message" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="课程仍在加载" android:textColor="@color/collection_ink"/>
-<ListView android:id="@+id/collection_list" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:divider="@android:color/transparent" android:dividerHeight="1dp"/>
+<LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:baselineAligned="false">
+    <ListView android:id="@+id/collection_list" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:divider="@android:color/transparent" android:dividerHeight="1dp"/>
+    <TextView android:layout_width="1dp" android:layout_height="match_parent" android:background="@color/collection_divider"/>
+    <ListView android:id="@+id/recent_tomorrow_list" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:divider="@android:color/transparent" android:dividerHeight="1dp"/>
+</LinearLayout>
 </LinearLayout>

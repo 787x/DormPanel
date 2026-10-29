@@ -18,7 +18,7 @@ class WeekCoursesWidgetProvider : TodayWidgetProvider()
  * Failure replaces success. Factories never wait for asynchronous callbacks or write business data. */
 internal object CollectionWidgets {
     private val processIdentity=java.util.UUID.randomUUID().toString()
-    data class Cell(val text: String, val date: LocalDate, val rgb: Int = 0)
+    data class Cell(val text: String, val date: LocalDate, val rgb: Int = 0,val key: String = "")
     data class Row(val key: String, val cells: List<Cell>)
     data class Snapshot(val rows: List<Row>, val error: String?, val grid: WeekWidgetGrid? = null)
     private val loading=Snapshot(emptyList(),"课程仍在加载")
@@ -51,7 +51,8 @@ internal object CollectionWidgets {
                 (if(item.teacher.isBlank()) "" else "\n${item.teacher.take(100)}")
         }
         fun cell(item: ClassOccurrence?,date: LocalDate,empty: String) = Cell(item?.let(::text) ?: empty,date,
-            item?.let { colors.rgb(it) or (0xff shl 24) } ?: 0)
+            item?.let { colors.rgb(it) or (0xff shl 24) } ?: 0,
+            item?.let { "${it.sourceId}:${it.seriesId}:${it.anchorDate}:${it.entry.id}" } ?: "empty:$date")
         val built=CollectionProjectionPlanner.build(result,needed,recent={ state ->
             val(a,b)=CollectionProjection.recent(state,now,zone)
             require(a.all.size+b.all.size<=512) { "课程过多，请打开应用查看" }
@@ -93,17 +94,21 @@ internal object CollectionWidgets {
         val message=data.error ?: if(isWeek && data.grid?.segments?.isEmpty()==true) "本周没有课程" else ""
         views.setTextViewText(R.id.collection_message,message)
         views.setViewVisibility(R.id.collection_message,if(message.isEmpty()) View.GONE else View.VISIBLE)
-        views.setViewVisibility(R.id.collection_list,if(data.error==null) View.VISIBLE else View.GONE)
-        views.setRemoteAdapter(R.id.collection_list,Intent(context,CourseCollectionService::class.java)
-            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,id).setData(Uri.parse("dormpanel://collection/$id/$isWeek/$processIdentity/${WidgetTitleSettings.periods(context,id)}/${WidgetTitleSettings.weekdays(context,id)}")))
+        val lists=if(isWeek) intArrayOf(R.id.collection_list) else intArrayOf(R.id.collection_list,R.id.recent_tomorrow_list)
+        lists.forEachIndexed { column,list ->
+            views.setViewVisibility(list,if(data.error==null) View.VISIBLE else View.GONE)
+            views.setRemoteAdapter(list,Intent(context,CourseCollectionService::class.java)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,id).putExtra("recentColumn",column)
+                .setData(Uri.parse("dormpanel://collection/$id/$isWeek/$processIdentity/${WidgetTitleSettings.periods(context,id)}/${WidgetTitleSettings.weekdays(context,id)}/$column")))
+        }
         val intent=Intent(context,TimetableActivity::class.java).setAction("com.dormpanel.phone.OPEN_COLLECTION")
             .setData(Uri.parse("dormpanel://widget/$id/collection")).putExtra("widgetWeek",isWeek)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val immutable=PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         views.setOnClickPendingIntent(R.id.collection_title,PendingIntent.getActivity(context,id,intent,immutable))
         views.setOnClickPendingIntent(R.id.collection_date,PendingIntent.getActivity(context,id,intent,immutable))
-        views.setPendingIntentTemplate(R.id.collection_list,PendingIntent.getActivity(context,id+100000,intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE))
+        lists.forEach { list -> views.setPendingIntentTemplate(list,PendingIntent.getActivity(context,id+100000,intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)) }
         if(isWeek) (0..6).forEach { day ->
             views.setViewVisibility(headerIds[day],if(WidgetTitleSettings.weekdays(context,id) && day>=5) View.GONE else View.VISIBLE)
             views.setTextViewText(headerIds[day],"${"一二三四五六日"[day]}\n${monday.plusDays(day.toLong()).monthValue}/${monday.plusDays(day.toLong()).dayOfMonth}")
@@ -117,15 +122,17 @@ internal object CollectionWidgets {
 }
 
 class CourseCollectionService : RemoteViewsService() {
-    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory = Factory(applicationContext,intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,-1))
-    private class Factory(val context: Context,val id: Int) : RemoteViewsFactory {
+    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory = Factory(applicationContext,intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,-1),intent.getIntExtra("recentColumn",0).coerceIn(0,1))
+    private class Factory(val context: Context,val id: Int,val column: Int) : RemoteViewsFactory {
         val week=CollectionWidgets.isWeek(context,id)
         var data=CollectionWidgets.Snapshot(emptyList(),null)
         var width=320
         override fun onCreate() { if(CollectionWidgets.isCollection(context,id)) TodayWidgetUpdates.request(context) }
         override fun onDataSetChanged() {
             if(!CollectionWidgets.isCollection(context,id)) { data=CollectionWidgets.Snapshot(emptyList(),null); return }
-            data=CollectionWidgets.instanceSnapshot(context,id,week)
+            val snapshot=CollectionWidgets.instanceSnapshot(context,id,week)
+            data=if(week) snapshot else snapshot.copy(rows=RecentColumnRows.select(snapshot.rows,column,
+                cells={ it.cells },text={ it.text },key={ it.key },row={ key,cell -> CollectionWidgets.Row(key,listOf(cell)) }))
             width=AppWidgetManager.getInstance(context).getAppWidgetOptions(id).getInt(if(context.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE) AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH else AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,340)-20
         }
         override fun onDestroy() { data=CollectionWidgets.Snapshot(emptyList(),null) }
@@ -144,9 +151,9 @@ class CourseCollectionService : RemoteViewsService() {
                     
                     if(!week) {
                         val parts=cell.text.split("\n")
-                        setTextViewText(if(index==0) R.id.recent_title_0 else R.id.recent_title_1,parts.firstOrNull().orEmpty())
-                        setTextViewText(if(index==0) R.id.recent_info_0 else R.id.recent_info_1,parts.getOrNull(1).orEmpty())
-                        setTextViewText(if(index==0) R.id.recent_time_0 else R.id.recent_time_1,parts.drop(2).joinToString("\n"))
+                        setTextViewText(R.id.recent_title_0,parts.firstOrNull().orEmpty())
+                        setTextViewText(R.id.recent_info_0,parts.getOrNull(1).orEmpty())
+                        setTextViewText(R.id.recent_time_0,parts.drop(2).joinToString("\n"))
                     }
                     setContentDescription(view,if(week) {
                         val grid=data.grid!!
@@ -155,7 +162,7 @@ class CourseCollectionService : RemoteViewsService() {
                             .joinToString("；") { "${it.item.entry.title}，${it.item.entry.location}，${it.item.teacher}，${it.item.start}–${it.item.end}" }
                     } else cell.text)
                     if(!week) setInt(view,"setBackgroundColor",0)
-                    if(!week) setInt(if(index==0) R.id.stripe_0 else R.id.stripe_1,"setBackgroundColor",cell.rgb)
+                    if(!week) setInt(R.id.stripe_0,"setBackgroundColor",cell.rgb)
                     setOnClickFillInIntent(view,Intent().putExtra("widgetDate",cell.date.toString()))
                 }
             }

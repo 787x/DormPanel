@@ -1,0 +1,154 @@
+Reusing configuration cache.
+> Task :schedule-core:generateDebugAssets UP-TO-DATE
+> Task :phone-app:generateX08eTestAssets UP-TO-DATE
+> Task :phone-app:preBuild UP-TO-DATE
+> Task :schedule-core:preBuild UP-TO-DATE
+> Task :schedule-core:preDebugAndroidTestBuild UP-TO-DATE
+> Task :schedule-core:preDebugBuild UP-TO-DATE
+> Task :schedule-core:extractProguardFiles UP-TO-DATE
+> Task :schedule-core:generateDebugResources UP-TO-DATE
+> Task :schedule-core:processDebugNavigationResources UP-TO-DATE
+> Task :schedule-core:prepareLintJarForPublish UP-TO-DATE
+> Task :schedule-core:writeDebugAarMetadata UP-TO-DATE
+> Task :phone-app:preX08eTestBuild UP-TO-DATE
+> Task :phone-app:preDebugUnitTestBuild UP-TO-DATE
+> Task :phone-app:preDebugBuild UP-TO-DATE
+> Task :schedule-core:mergeDebugAssets UP-TO-DATE
+> Task :schedule-core:mergeDebugJniLibFolders UP-TO-DATE
+> Task :schedule-core:writeDebugLintModelMetadata UP-TO-DATE
+> Task :schedule-core:mapDebugSourceSetPaths UP-TO-DATE
+> Task :phone-app:mergeX08eTestNativeDebugMetadata NO-SOURCE
+> Task :schedule-core:extractDeepLinksForAarDebug UP-TO-DATE
+> Task :phone-app:generateX08eTestResources UP-TO-DATE
+> Task :phone-app:desugarX08eTestFileDependencies UP-TO-DATE
+> Task :phone-app:preDebugAndroidTestBuild SKIPPED
+> Task :schedule-core:preDebugUnitTestBuild UP-TO-DATE
+> Task :schedule-core:extractDeepLinksDebug UP-TO-DATE
+> Task :schedule-core:javaPreCompileDebug UP-TO-DATE
+> Task :phone-app:mapX08eTestSourceSetPaths UP-TO-DATE
+> Task :schedule-core:processDebugManifest UP-TO-DATE
+> Task :schedule-core:prepareDebugArtProfile UP-TO-DATE
+> Task :phone-app:writeX08eTestAppMetadata UP-TO-DATE
+> Task :phone-app:javaPreCompileDebug UP-TO-DATE
+> Task :schedule-core:packageDebugResources UP-TO-DATE
+> Task :phone-app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :phone-app:javaPreCompileX08eTest UP-TO-DATE
+> Task :phone-app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :phone-app:generateDebugResources UP-TO-DATE
+> Task :phone-app:extractDeepLinksX08eTest UP-TO-DATE
+> Task :phone-app:mergeX08eTestJniLibFolders UP-TO-DATE
+> Task :phone-app:createX08eTestCompatibleScreenManifests UP-TO-DATE
+> Task :phone-app:extractProguardFiles UP-TO-DATE
+> Task :phone-app:writeX08eTestSigningConfigVersions UP-TO-DATE
+> Task :phone-app:validateSigningX08eTest UP-TO-DATE
+> Task :phone-app:generateX08eTestGlobalSynthetics UP-TO-DATE
+> Task :phone-app:extractDeepLinksDebug UP-TO-DATE
+> Task :schedule-core:mergeDebugNativeLibs NO-SOURCE
+> Task :phone-app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :phone-app:packageDebugResources UP-TO-DATE
+> Task :schedule-core:compileDebugLibraryResources UP-TO-DATE
+> Task :schedule-core:parseDebugLocalResources UP-TO-DATE
+> Task :schedule-core:checkDebugAarMetadata UP-TO-DATE
+> Task :phone-app:packageX08eTestResources UP-TO-DATE
+> Task :schedule-core:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :schedule-core:generateDebugRFile UP-TO-DATE
+> Task :phone-app:checkX08eTestDuplicateClasses UP-TO-DATE
+> Task :phone-app:processDebugNavigationResources UP-TO-DATE
+> Task :phone-app:processX08eTestNavigationResources UP-TO-DATE
+> Task :phone-app:compileDebugNavigationResources UP-TO-DATE
+> Task :phone-app:mergeX08eTestAssets UP-TO-DATE
+> Task :phone-app:checkDebugAarMetadata UP-TO-DATE
+> Task :phone-app:compileX08eTestNavigationResources UP-TO-DATE
+> Task :phone-app:parseDebugLocalResources UP-TO-DATE
+> Task :phone-app:parseX08eTestLocalResources UP-TO-DATE
+> Task :phone-app:compressX08eTestAssets UP-TO-DATE
+> Task :phone-app:checkX08eTestAarMetadata UP-TO-DATE
+> Task :phone-app:generateDebugRFile UP-TO-DATE
+> Task :phone-app:generateX08eTestRFile UP-TO-DATE
+> Task :phone-app:mergeDebugResources UP-TO-DATE
+> Task :phone-app:mergeX08eTestResources UP-TO-DATE
+> Task :schedule-core:kspDebugKotlin UP-TO-DATE
+> Task :phone-app:mergeX08eTestNativeLibs NO-SOURCE
+> Task :phone-app:stripX08eTestDebugSymbols NO-SOURCE
+> Task :phone-app:mergeExtDexX08eTest UP-TO-DATE
+> Task :phone-app:processX08eTestMainManifest UP-TO-DATE
+> Task :phone-app:processDebugMainManifest UP-TO-DATE
+> Task :phone-app:processDebugManifest UP-TO-DATE
+> Task :phone-app:processX08eTestManifest UP-TO-DATE
+> Task :phone-app:processDebugManifestForPackage UP-TO-DATE
+> Task :phone-app:processX08eTestManifestForPackage UP-TO-DATE
+> Task :schedule-core:extractDebugAnnotations UP-TO-DATE
+> Task :schedule-core:compileDebugKotlin UP-TO-DATE
+> Task :schedule-core:compileDebugJavaWithJavac NO-SOURCE
+> Task :schedule-core:processDebugJavaRes UP-TO-DATE
+> Task :schedule-core:bundleLibRuntimeToDirDebug UP-TO-DATE
+> Task :schedule-core:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :schedule-core:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :schedule-core:mergeDebugGeneratedProguardFiles UP-TO-DATE
+> Task :schedule-core:createFullJarDebug UP-TO-DATE
+> Task :schedule-core:mergeDebugJavaResource UP-TO-DATE
+> Task :schedule-core:syncDebugLibJars UP-TO-DATE
+> Task :schedule-core:mergeDebugConsumerProguardFiles UP-TO-DATE
+> Task :schedule-core:bundleDebugLocalLintAar UP-TO-DATE
+> Task :phone-app:mergeLibDexX08eTest UP-TO-DATE
+> Task :schedule-core:generateDebugLintModel UP-TO-DATE
+> Task :schedule-core:generateDebugUnitTestLintModel UP-TO-DATE
+> Task :schedule-core:generateDebugAndroidTestLintModel UP-TO-DATE
+> Task :schedule-core:lintAnalyzeDebug UP-TO-DATE
+> Task :phone-app:processX08eTestResources UP-TO-DATE
+> Task :phone-app:processDebugResources UP-TO-DATE
+> Task :schedule-core:lintAnalyzeDebugUnitTest UP-TO-DATE
+> Task :schedule-core:lintAnalyzeDebugAndroidTest UP-TO-DATE
+
+> Task :phone-app:compileX08eTestKotlin
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/CourseCollectionService.kt:37:50 Java type mismatch: inferred type is 'String?', but 'String' was expected.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/CourseCollectionService.kt:100:19 'fun setRemoteAdapter(p0: Int, p1: Intent!): Unit' is deprecated. Deprecated in Java.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/PhoneEditors.kt:549:81 'static field SOFT_INPUT_ADJUST_RESIZE: Int' is deprecated. Deprecated in Java.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TimetableActivity.kt:112:30 'val lastCustomNonConfigurationInstance: Any?' is deprecated. Use a {@link androidx.lifecycle.ViewModel} to store non config state.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TimetableActivity.kt:159:18 This declaration overrides a deprecated member but is not marked as deprecated itself. Add the '@Deprecated' annotation or suppress the diagnostic.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TimetableActivity.kt:458:81 'static field SOFT_INPUT_ADJUST_RESIZE: Int' is deprecated. Deprecated in Java.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TodayWidgetProvider.kt:55:63 'fun notifyAppWidgetViewDataChanged(p0: Int, p1: Int): Unit' is deprecated. Deprecated in Java.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TodayWidgetProvider.kt:56:101 'fun notifyAppWidgetViewDataChanged(p0: Int, p1: Int): Unit' is deprecated. Deprecated in Java.
+
+> Task :phone-app:compileDebugKotlin
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/CourseCollectionService.kt:37:50 Java type mismatch: inferred type is 'String?', but 'String' was expected.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/CourseCollectionService.kt:100:19 'fun setRemoteAdapter(p0: Int, p1: Intent!): Unit' is deprecated. Deprecated in Java.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/PhoneEditors.kt:549:81 'static field SOFT_INPUT_ADJUST_RESIZE: Int' is deprecated. Deprecated in Java.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TimetableActivity.kt:112:30 'val lastCustomNonConfigurationInstance: Any?' is deprecated. Use a {@link androidx.lifecycle.ViewModel} to store non config state.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TimetableActivity.kt:159:18 This declaration overrides a deprecated member but is not marked as deprecated itself. Add the '@Deprecated' annotation or suppress the diagnostic.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TimetableActivity.kt:458:81 'static field SOFT_INPUT_ADJUST_RESIZE: Int' is deprecated. Deprecated in Java.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TodayWidgetProvider.kt:55:63 'fun notifyAppWidgetViewDataChanged(p0: Int, p1: Int): Unit' is deprecated. Deprecated in Java.
+w: file:///D:/Projects/DormPanel/phone-app/src/main/java/com/dormpanel/phone/TodayWidgetProvider.kt:56:101 'fun notifyAppWidgetViewDataChanged(p0: Int, p1: Int): Unit' is deprecated. Deprecated in Java.
+
+> Task :phone-app:processDebugJavaRes UP-TO-DATE
+> Task :phone-app:compileDebugJavaWithJavac NO-SOURCE
+> Task :phone-app:compileX08eTestJavaWithJavac NO-SOURCE
+> Task :phone-app:processX08eTestJavaRes UP-TO-DATE
+> Task :phone-app:mergeX08eTestJavaResource UP-TO-DATE
+> Task :phone-app:bundleDebugClassesToRuntimeJar
+> Task :phone-app:bundleDebugClassesToCompileJar
+> Task :phone-app:generateDebugLintReportModel
+> Task :phone-app:generateDebugUnitTestLintModel
+> Task :phone-app:generateDebugAndroidTestLintModel
+> Task :phone-app:compileDebugUnitTestKotlin
+> Task :phone-app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :phone-app:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :phone-app:dexBuilderX08eTest
+> Task :phone-app:mergeProjectDexX08eTest
+> Task :phone-app:packageX08eTest
+> Task :phone-app:assembleX08eTest
+> Task :phone-app:createX08eTestApkListingFileRedirect UP-TO-DATE
+> Task :phone-app:testDebugUnitTest
+> Task :phone-app:lintAnalyzeDebugUnitTest
+> Task :phone-app:lintAnalyzeDebugAndroidTest
+> Task :phone-app:lintAnalyzeDebug
+
+> Task :phone-app:lintReportDebug
+Wrote HTML report to file:///D:/Projects/DormPanel/phone-app/build/reports/lint-results-debug.html
+Wrote SARIF report to file:///D:/Projects/DormPanel/phone-app/build/reports/lint-results-debug.sarif
+
+> Task :phone-app:lintDebug
+
+BUILD SUCCESSFUL in 19s
+106 actionable tasks: 17 executed, 89 up-to-date
+Configuration cache entry reused.

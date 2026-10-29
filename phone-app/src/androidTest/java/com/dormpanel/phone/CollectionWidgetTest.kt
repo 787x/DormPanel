@@ -6,6 +6,37 @@ import org.junit.Test
 import java.time.*
 import java.util.concurrent.*
 class CollectionWidgetTest {
+    @Test fun recentColumnsScrollIndependently() {
+        val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
+        check(c.packageName.endsWith(".pr72testbed"))
+        val info=i.uiAutomation.serviceInfo; info.flags=info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS; i.uiAutomation.serviceInfo=info
+        fun nodes(n: android.view.accessibility.AccessibilityNodeInfo?): List<android.view.accessibility.AccessibilityNodeInfo> = if(n==null) emptyList() else listOf(n)+(0 until n.childCount).flatMap { nodes(n.getChild(it)) }
+        fun list(tomorrow: Boolean): android.view.accessibility.AccessibilityNodeInfo {
+            val suffix=if(tomorrow) "recent_tomorrow_list" else "collection_list"
+            return nodes(i.uiAutomation.rootInActiveWindow).first { it.viewIdResourceName?.endsWith(suffix)==true && it.isVisibleToUser }
+        }
+        fun titles(tomorrow: Boolean)=nodes(list(tomorrow)).filter { it.isVisibleToUser && it.viewIdResourceName?.endsWith("recent_title_0")==true }.map { it.text.toString() }
+        fun scroll(tomorrow: Boolean) {
+            val r=android.graphics.Rect(); list(tomorrow).getBoundsInScreen(r)
+            val down=android.os.SystemClock.uptimeMillis()
+            fun event(action: Int,y: Float) { val e=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,r.exactCenterX(),y,0); e.source=android.view.InputDevice.SOURCE_TOUCHSCREEN; i.uiAutomation.injectInputEvent(e,true); e.recycle() }
+            event(0,(r.bottom-15).toFloat())
+            for(n in 1..12) { event(2,r.bottom-15f-(r.height()-30)*n/12); Thread.sleep(35) }
+            event(1,(r.top+15).toFloat()); Thread.sleep(700)
+        }
+        val store=ScheduleStores.create(c); val day=LocalDate.now().dayOfWeek.value
+        val state=ScheduleState(entries=(0..9).flatMap { n -> listOf(TimetableEntry("scroll-t$n","今日$n",day,n*15,1439,"A$n"),TimetableEntry("scroll-m$n","明日$n",day%7+1,n*15,1439,"B$n")) })
+        ScheduleStores.overrideFactory={ object: ScheduleStore by store { override fun loadPresentation(callback: (Result<ScheduleState>)->Unit) { callback(Result.success(state)) } } }
+        fun refresh() { val done=CountDownLatch(1); TodayWidgetUpdates.request(c) { done.countDown() }; assertTrue(done.await(10,TimeUnit.SECONDS)); Thread.sleep(3000) }
+        try {
+            refresh()
+            val today=titles(false); val tomorrow=titles(true)
+            assertTrue(today.isNotEmpty()); assertTrue(tomorrow.isNotEmpty())
+            scroll(true); assertEquals(today,titles(false)); val movedTomorrow=titles(true); assertNotEquals(tomorrow,movedTomorrow)
+            scroll(false); assertEquals(movedTomorrow,titles(true)); assertNotEquals(today,titles(false))
+            assertTrue(i.uiAutomation.rootInActiveWindow.packageName.toString().contains("home") || i.uiAutomation.rootInActiveWindow.packageName.toString().contains("launcher"))
+        } finally { ScheduleStores.overrideFactory=null; refresh() }
+    }
     @Test fun realOccurrenceBudgetsStayIndependent() {
         val c=InstrumentationRegistry.getInstrumentation().targetContext; check(c.packageName.endsWith(".pr72testbed"))
         val zone=ZoneId.systemDefault(); val date=LocalDate.now(zone)
@@ -162,7 +193,7 @@ class CollectionWidgetTest {
         while(found==null && System.currentTimeMillis()<rootDeadline) { Thread.sleep(50); found=i.uiAutomation.rootInActiveWindow }
         val root=checkNotNull(found)
         check(root.packageName.toString().contains("launcher",true) || root.packageName=="com.miui.home")
-        val list=nodes(root).first { it.viewIdResourceName?.endsWith("collection_list")==true }
+        val list=nodes(root).first { it.viewIdResourceName?.endsWith("recent_tomorrow_list")==true }
         val bounds=android.graphics.Rect(); list.getBoundsInScreen(bounds)
         val down=android.os.SystemClock.uptimeMillis()
         fun input(action: Int,x: Float,y: Float) {
@@ -174,7 +205,8 @@ class CollectionWidgetTest {
         for(n in 1..10) { input(2,x,y-n*(bounds.height()-30)/10); Thread.sleep(40) }
         input(1,x,(bounds.top+15).toFloat()); Thread.sleep(600)
         assertEquals(root.packageName,i.uiAutomation.rootInActiveWindow.packageName)
-        val cell=nodes(i.uiAutomation.rootInActiveWindow).first { it.viewIdResourceName?.endsWith("cell_1")==true }
+        val tomorrow=nodes(i.uiAutomation.rootInActiveWindow).first { it.viewIdResourceName?.endsWith("recent_tomorrow_list")==true }
+        val cell=nodes(tomorrow).first { it.viewIdResourceName?.endsWith("cell_0")==true && it.isVisibleToUser }
         assertTrue(cell.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
         val until=System.currentTimeMillis()+5000
         var selected: LocalDate?=null
