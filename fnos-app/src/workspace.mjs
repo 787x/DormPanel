@@ -1,3 +1,4 @@
+import {validateLinkedCourseOverrides} from './projection.mjs';
 import {legacyKey} from './shared-course-colors.mjs';
 import {businessHash} from './v3-protocol.mjs';
 import {scheduleSlots, scheduleRecord, validateScheduleParents} from './shared-course-schedule.mjs';
@@ -15,7 +16,6 @@ import {
   hash,
   overrideKey,
   schemas,
-  termKey,
   uuid,
 } from "./protocol.mjs";
 import { emptyState, same } from "./merge.mjs";
@@ -153,36 +153,48 @@ export class Workspace {
     const existing=new Map(scheduleSlots(state).map(s=>[s.id,s]));
     ensure(slots.every(owns)&&deleteIds.every(id=>existing.has(id)&&owns(existing.get(id))),'安排目标超出选择范围');
     ensure(new Set(deleteIds).size===deleteIds.length&&new Set(slots.map(s=>s.id)).size===slots.length,'重复时段身份');
-    ensure(Object.keys(common).every(k=>['title','teacher','note'].includes(k)),'未知公共字段');
+    ensure(Object.keys(common).every(k=>['title','teacher','note'].includes(k)&&common[k]!==undefined),'未知公共字段');
     let next=structuredClone(state);
     for(const id of target.series) next=this.courseScheduleCandidate(next,slots.filter(s=>s.ownerSeries===id),null,{sourceId:source,ownerSeries:id,deleteIds:deleteIds.filter(key=>existing.get(key).ownerSeries===id)});
     ensure(new Set(overrides.map(o=>o.seriesId)).size===overrides.length,'重复系列覆盖');
     for(const o of overrides){
       ensure(series.has(o.seriesId)&&['upsert','reset'].includes(o.action),'覆盖目标不合法');
-      if(o.action==='upsert') {
-        const p=o.patch??{};
-        if(p.startMinute!=null||p.endMinute!=null||p.timingMode==='custom') ensure(p.timingMode==='custom'&&Number.isInteger(p.startMinute)&&Number.isInteger(p.endMinute)&&p.endMinute>p.startMinute,'自定义时间必须明确提供有效完整起止范围');
-        if(p.periodStart!=null||p.periodEnd!=null||p.timingMode==='linked') {
-          ensure(p.timingMode==='linked'&&Number.isInteger(p.periodStart)&&Number.isInteger(p.periodEnd)&&p.periodStart<=p.periodEnd,'节次编辑必须明确提供完整范围');
-          const owner=state.sources.find(s=>s.id===source),profile=owner&&state.profiles.find(p=>p.termKey===termKey(owner));
-          ensure(profile&&profile.phases.every(phase=>{const a=phase.periods.find(t=>t.periodNumber===p.periodStart),b=phase.periods.find(t=>t.periodNumber===p.periodEnd);return a&&b&&b.end>a.start;}),'来源作息不能解析所选节次');
+      if(o.action==='reset') {applyEdit(next,{kind:'override',sourceId:source,seriesId:o.seriesId,anchorDate:null,action:'reset'});continue;}
+      const fields=schemas.find(s=>s[0]==='classOverrides')[3].slice(4).map(([name])=>name);
+      const p=o.patch;ensure(p&&Object.keys(p).every(k=>fields.includes(k)&&p[k]!==undefined),'未知或未定义覆盖字段');
+      const old=next.classOverrides.find(e=>e.sourceId===source&&e.seriesId===o.seriesId&&e.anchorDate===null);
+      const merged={...Object.fromEntries(fields.map(k=>[k,old?.[k]??null])),...p};
+      const timeKeys=['timingMode','startMinute','endMinute','periodStart','periodEnd'];
+      if(timeKeys.some(k=>Object.hasOwn(p,k))){
+        if(timeKeys.some(k=>Object.hasOwn(p,k)&&p[k]!==null)){
+          if(p.timingMode==='custom'){
+            ensure(Number.isInteger(p.startMinute)&&Number.isInteger(p.endMinute)&&p.endMinute>p.startMinute&&p.periodStart==null&&p.periodEnd==null,'自定义时间必须明确提供完整且不矛盾的起止范围');
+            merged.periodStart=null;merged.periodEnd=null;
+          }else{
+            ensure(p.timingMode==='linked'&&Number.isInteger(p.periodStart)&&Number.isInteger(p.periodEnd)&&p.periodStart<=p.periodEnd&&p.startMinute==null&&p.endMinute==null,'节次编辑必须明确提供完整且不矛盾的范围');
+            merged.startMinute=null;merged.endMinute=null;
+          }
         }
+        ensure(merged.timingMode==='custom'?Number.isInteger(merged.startMinute)&&Number.isInteger(merged.endMinute)&&merged.endMinute>merged.startMinute&&merged.periodStart===null&&merged.periodEnd===null:
+          merged.timingMode==='linked'?Number.isInteger(merged.periodStart)&&Number.isInteger(merged.periodEnd)&&merged.periodStart<=merged.periodEnd&&merged.startMinute===null&&merged.endMinute===null:
+          timeKeys.every(k=>merged[k]===null),'清除字段后时间组合不完整，请明确清除整个时间覆盖或提供完整范围');
       }
-      applyEdit(next,{kind:'override',sourceId:source,seriesId:o.seriesId,anchorDate:null,action:o.action,patch:o.patch});
+      applyEdit(next,{kind:'override',sourceId:source,seriesId:o.seriesId,anchorDate:null,action:fields.every(k=>merged[k]===null)?'reset':'upsert',patch:merged});
     }
     if(Object.keys(common).length){
       for(const id of target.series){const old=next.classOverrides.find(o=>o.sourceId===source&&o.seriesId===id&&o.anchorDate===null);
         const fields=schemas.find(s=>s[0]==='classOverrides')[3].slice(4).map(([name])=>name);
         const patch=Object.fromEntries(fields.filter(k=>old?.[k]!=null).map(k=>[k,old[k]]));
-        applyEdit(next,{kind:'override',sourceId:source,seriesId:id,anchorDate:null,action:'upsert',patch:{...patch,...common}});
+        const combined={...patch,...common};
+        applyEdit(next,{kind:'override',sourceId:source,seriesId:id,anchorDate:null,action:fields.every(k=>combined[k]==null)?'reset':'upsert',patch:combined});
       }
       const registry=new Registry(sharedTypes);let rows=wireRecords(next.sharedRecords);
-      for(const slot of scheduleSlots(next).filter(owns)) rows=registry.replace(rows,scheduleRecord({...slot,...common}));
+      for(const slot of scheduleSlots(next).filter(owns)){ensure(Object.values(common).every(v=>v!==null),'共享安排字段没有继承模式；请用 overrides 清除原系列覆盖，安排字段需明确字符串');rows=registry.replace(rows,scheduleRecord({...slot,...common}));}
       next.sharedRecords=durableRecords(rows);
     }
     ensure(new Set(colors.map(c=>legacyKey(state,source,c.seriesId))).size===colors.length,'同一逻辑课程不能提交竞争的颜色操作');
     for(const color of colors){ensure(series.has(color.seriesId)&&Object.hasOwn(color,'rgb'),'颜色目标不合法');next=changeSharedCourseColor(next,source,color.seriesId,color.rgb);}
-    next=canonical(next);new Registry(sharedTypes).validateState(next);return next;
+    next=canonical(next);new Registry(sharedTypes).validateState(next);validateLinkedCourseOverrides(next,source,overrides.filter(o=>o.action==='upsert'&&['weekday','timingMode','startMinute','endMinute','periodStart','periodEnd'].some(k=>Object.hasOwn(o.patch,k))).map(o=>o.seriesId));return next;
   }
   previewCourseEdit(edit,expected) {
     this.guard?.();ensure(Number.isSafeInteger(expected)&&expected===this.frame.revision,'请求版本过期，请重新读取');

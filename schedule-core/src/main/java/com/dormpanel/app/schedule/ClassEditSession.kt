@@ -3,7 +3,7 @@ package com.dormpanel.app.schedule
 import java.time.*
 
 /** Editing baseline and sparse patch semantics shared by both native editors. */
-class ClassEditSession(state: ScheduleState, val item: ClassOccurrence, val allWeeks: Boolean, private val zone: ZoneId) {
+class ClassEditSession(private val state: ScheduleState, val item: ClassOccurrence, val allWeeks: Boolean, private val zone: ZoneId) {
     val date = item.anchorDate
     val key = ClassOverride.key(item.sourceId, item.seriesId, if (allWeeks) null else date.toString())
     private val monday = date.minusDays((date.dayOfWeek.value - 1).toLong())
@@ -22,8 +22,19 @@ class ClassEditSession(state: ScheduleState, val item: ClassOccurrence, val allW
     val profile = ScheduleProjection.profile(state, item)
     val multiWeekday = item.sourceId != null && state.imported.filter {
         it.sourceId == item.sourceId && it.seriesId == item.seriesId
-    }.map { Instant.ofEpochMilli(it.start).atZone(zone).dayOfWeek }.distinct().size > 1
+    }.map { Instant.ofEpochMilli(it.start).atZone(if (profile!=null) ZoneId.of(it.timezone) else zone).dayOfWeek }.distinct().size > 1
 
+    private val effectiveDates by lazy {
+        val weeks=state.imported.filter {it.sourceId==item.sourceId && it.seriesId==item.seriesId}.map {
+            val d=Instant.ofEpochMilli(it.start).atZone(if(profile!=null) ZoneId.of(it.timezone) else zone).toLocalDate()
+            d.minusDays(d.dayOfWeek.value-1L)
+        }.toMutableSet()
+        state.courseSlots.filter {it.sourceId==item.sourceId && it.enabled && (it.id==item.seriesId || it.replacesSeries==item.seriesId)}.forEach {slot ->
+            slot.weeks.forEach {weeks.add(LocalDate.parse(slot.week1).plusWeeks(it-1L))}
+        }
+        val raw=state.copy(classOverrides=emptyList(),dayAdjustments=emptyList())
+        weeks.flatMap {ScheduleProjection.academicWeek(raw,it,zone)}.filter {it.sourceId==item.sourceId && it.seriesId==item.seriesId}.map {it.academicDate}.distinct()
+    }
     /** Preserve exact inheritance/clear intent when a form field was not changed. */
     fun preserveUntouched(original: ClassPatch, before: ClassPatch, after: ClassPatch) = ClassPatch(
         title = if (after.title == before.title) original.title else after.title,
@@ -59,8 +70,10 @@ class ClassEditSession(state: ScheduleState, val item: ClassOccurrence, val allW
         val problem = when {
             title.isBlank() -> "Enter a course name."
             linked && (first == null || last == null || first > last || range == null) -> "The selected phase has no definition for those periods."
-            linked && allWeeks && profile!!.phases.any { phase -> phase.period(first!!) == null || phase.period(last!!) == null } ->
-                "Every term phase must define those periods for an all-weeks edit."
+            linked && allWeeks && (effectiveDates.isEmpty() || effectiveDates.any { original ->
+                val target=if(multiWeekday) original else original.minusDays(original.dayOfWeek.value-1L).plusDays(selectedWeekday.value-1L)
+                ScheduleProjection.linkedPeriodTimes(profile!!,target,first!!,last!!)==null
+            }) -> "Cannot resolve selected periods on every actual course date; provide a reliable finite range."
             end <= start && !(baseline.end.atZone(zone).toLocalDate() > baseline.date &&
                 !linked && start == baseline.entry.startMinute && end == baseline.entry.endMinute) ->
                 "End must be after start."

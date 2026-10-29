@@ -273,3 +273,19 @@ test('logical multi-series edit is one transaction with common fields, color and
  }
  const digest=businessHash(a.workspace.frame.local);await a.journal.close();const reopened=await openV3Workspace(root,()=>{},identity);assert.equal(businessHash(reopened.workspace.frame.local),digest);await reopened.journal.close();
 });
+
+test('partial override edit preserves persisted fields, rejects incomplete time atomically and reopens',async()=>{
+ const {decode:legacy}=await import('../src/protocol.mjs'),{applyEdit}=await import('../src/workspace.mjs');
+ const s=legacy(await readFile(new URL('../../schedule-core/src/test/resources/sync-v2/complex-root.dpc',import.meta.url))).state;
+ s.sharedRecords=[];s.classOverrides=[];const r=s.imported[0];
+ applyEdit(s,{kind:'override',sourceId:r.sourceId,seriesId:r.seriesId,anchorDate:null,action:'upsert',patch:{title:'Preserved title',teacher:'Preserved teacher',location:'Preserved room',note:'Preserved note',timingMode:'custom',startMinute:810,endMinute:920}});
+ const root=await dir(),identity={writerId:randomUUID(),installationId:randomUUID()},remote=new FakeRemote(),a=await openV3Workspace(root,()=>{},identity),engine=new V3Engine(a.journal,identity.writerId);
+ await engine.initialize(remote,s);for(let n=0;n<3;n++){const b=new Budget();try{await engine.round(remote,new IndexedV3Cache(root,b),b,{discoverySteps:32});}catch(e){if(!/incomplete/.test(e.message))throw e;}}
+ const revision=a.workspace.frame.revision,edit={target:{sourceId:r.sourceId,series:[r.seriesId]},overrides:[{seriesId:r.seriesId,action:'upsert',patch:{timingMode:'custom',startMinute:600,endMinute:660}}]};
+ const before=businessHash(a.workspace.frame.local),bad=structuredClone(edit);bad.overrides[0].patch={timingMode:'custom',startMinute:600};bad.colors=[{seriesId:r.seriesId,rgb:0x445566}];
+ await assert.rejects(a.workspace.saveCourseEdit(bad,revision));assert.equal(businessHash(a.workspace.frame.local),before);
+ const preview=a.workspace.previewCourseEdit(edit,revision),saved=await a.workspace.saveCourseEdit(edit,revision);assert.equal(saved.businessHash,preview.businessHash);
+ const value=saved.state.classOverrides.find(e=>e.seriesId===r.seriesId);assert.equal(value.teacher,'Preserved teacher');assert.equal(value.location,'Preserved room');assert.equal(value.startMinute,600);
+ assert.equal(saved.state.sharedRecords.length,0);await assert.rejects(a.workspace.saveCourseEdit(edit,revision));
+ await a.journal.close();const reopened=await openV3Workspace(root,()=>{},identity);assert.equal(businessHash(reopened.workspace.frame.local),saved.businessHash);await reopened.journal.close();
+});
