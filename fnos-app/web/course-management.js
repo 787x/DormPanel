@@ -49,6 +49,17 @@ export function installCourseManagement(api) {
   let slotPageOffset = 0;
   const slotPageSize = 20;
   let originalSlotMap = new Map();
+  const copiedSlotIds = new Set();
+  const weekText = (weeks) => {
+    const parts = [];
+    for (let i = 0; i < weeks.length; i++) {
+      const a = weeks[i];
+      let b = a;
+      while (weeks[i + 1] === b + 1) b = weeks[++i];
+      parts.push(a === b ? String(a) : a + "–" + b);
+    }
+    return parts.join("、") || "无有效周";
+  };
   const originals = () => [...originalSlotMap.values()];
   const error = el("p");
   error.setAttribute("role", "alert");
@@ -190,6 +201,7 @@ export function installCourseManagement(api) {
     );
     if (t !== ticket || !valid()) return;
     originalSlotMap = new Map(d.slots.map((s) => [s.id, s]));
+    copiedSlotIds.clear();
     slotPageOffset = 0;
     detail = d;
     scope = { ...scope, version: d.version, catalogVersion: d.catalogVersion };
@@ -221,6 +233,9 @@ export function installCourseManagement(api) {
           draft = null;
           list();
         }),
+      );
+      host.append(
+        el("p", "当前颜色：" + colorLabel(detail.course.color.status)),
       );
       for (const s of detail.slots)
         host.append(
@@ -280,15 +295,39 @@ export function installCourseManagement(api) {
         : detail.course.color.rgb;
     color.style.borderLeft =
       "6px solid #" + shownRgb.toString(16).padStart(6, "0");
+    const savedDescription =
+      detail.course.color.status === "UNSUPPORTED"
+        ? "不支持的颜色版本（只读）"
+        : colorLabel(detail.course.color.status) +
+          " #" +
+          detail.course.color.rgb.toString(16).padStart(6, "0").toUpperCase();
+    const pendingColor = el("p");
+    pendingColor.dataset.colorDraft = "true";
+    pendingColor.setAttribute("role", "status");
+    const showColorDraft = () => {
+      const edit = draft.colors?.[0];
+      pendingColor.hidden = !edit;
+      pendingColor.textContent = !edit
+        ? ""
+        : edit.rgb === null
+          ? "待保存：恢复自动颜色（尚未保存）"
+          : "待保存：手动颜色 #" +
+            edit.rgb.toString(16).padStart(6, "0").toUpperCase() +
+            "（尚未保存）";
+    };
     color.append(
-      el("h3", "共享颜色 · " + colorLabel(detail.course.color.status)),
+      el("h3", "共享颜色"),
+      el("p", "当前：" + savedDescription),
+      pendingColor,
     );
+    showColorDraft();
     const updateColor = (rgb) => {
       draft.colors = [{ seriesId: draft.target.series[0], rgb }];
       const hex =
         "#" + (rgb ?? detail.course.automaticRgb).toString(16).padStart(6, "0");
       picker.value = hex;
       color.style.borderLeftColor = hex;
+      showColorDraft();
       changed();
     };
     const picker = field(
@@ -596,9 +635,11 @@ export function installCourseManagement(api) {
           render();
         }),
         button("复制为独立新增时段", () => {
+          const copiedId = crypto.randomUUID();
+          copiedSlotIds.add(copiedId);
           draft.slots.push({
             ...structuredClone(up()),
-            id: crypto.randomUUID(),
+            id: copiedId,
             replacesSeries: null,
           });
           changed();
@@ -753,21 +794,90 @@ export function installCourseManagement(api) {
       if (!valid()) throw Error("预览已失效");
       const output = el("section");
       output.dataset.coursePreview = "true";
-      output.append(
-        el("h3", "保存预览"),
-        el("p", preview.warning),
+      output.className = "course-review";
+      output.append(el("h3", "保存预览"));
+      const overview = el("div");
+      overview.append(el("p", preview.warning));
+      const slotDetails = el("details");
+      slotDetails.append(el("summary", "时段与周次明细"));
+      if (
+        request.slots.length ||
+        request.deleteIds.length ||
+        (request.overrides ?? []).length
+      )
+        overview.append(
+          el(
+            "p",
+            [
+              request.slots.length
+                ? "时段更新 " + request.slots.length + " 项"
+                : "",
+              request.deleteIds.length
+                ? "移除规则/独立时段 " + request.deleteIds.length + " 项"
+                : "",
+              (request.overrides ?? []).length
+                ? "原时段覆盖 " + request.overrides.length + " 项"
+                : "",
+            ]
+              .filter(Boolean)
+              .join("；"),
+          ),
+        );
+      if (preview.restored.length)
+        overview.append(
+          el(
+            "p",
+            "原始系列将重新出现：" +
+              preview.restored.map((r) => r.title).join("、"),
+          ),
+        );
+      if (request.slots.some((s) => s.replacesSeries !== null && !s.enabled))
+        overview.append(
+          el("p", "停用替换规则仍抑制原始系列，原课程不会因此恢复。"),
+        );
+      if (request.slots.some((s) => s.replacesSeries !== null))
+        overview.append(
+          el("p", "有限周替换仅在选定周次上课，范围外原课程不再出现。"),
+        );
+      if (preview.exceptionCount)
+        overview.append(
+          el(
+            "p",
+            "保留指定周例外 " +
+              preview.exceptionCount +
+              " 条；例外可能继续覆盖本次公共字段。",
+          ),
+        );
+      overview.append(
         el(
           "p",
-          "公共字段：" +
-            Object.keys(request.common).join("、") +
-            "；时段更新 " +
-            request.slots.length +
-            "；移除 " +
-            request.deleteIds.length +
-            "；最终投影变化 " +
-            preview.total,
+          preview.total
+            ? "最终课表存在变化：共 " +
+                preview.total +
+                " 条投影差异项；同一实例字段变化可能分别产生旧/新差异项。"
+            : "预览范围内没有逐日期投影差异；业务记录是否变化以候选结果为准。",
+        ),
+        el(
+          "p",
+          "预览范围：" +
+            preview.projectionScope
+              .map((r) => r.start + " 至 " + r.end)
+              .join("；") +
+            "。范围有限，不代表已检查范围外所有日期。",
         ),
       );
+      if (
+        request.deleteIds.some((id) => {
+          const old = originals().find((s) => s.id === id);
+          return (
+            old?.replacesSeries &&
+            !preview.restored.some((r) => r.seriesId === old.ownerSeries)
+          );
+        })
+      )
+        overview.append(
+          el("p", "旧替换规则已移除，但原系列仍受最终替换规则抑制，不会恢复。"),
+        );
       for (const [field, value] of Object.entries(request.common))
         output.append(
           el(
@@ -794,7 +904,7 @@ export function installCourseManagement(api) {
           periodStart: "开始节次",
           periodEnd: "结束节次",
         };
-        output.append(
+        slotDetails.append(
           el(
             "p",
             "原时段 " +
@@ -819,12 +929,14 @@ export function installCourseManagement(api) {
             "p",
             c.rgb === null
               ? "颜色：恢复自动"
-              : "颜色：#" + c.rgb.toString(16).padStart(6, "0"),
+              : "颜色：手动颜色 #" +
+                  c.rgb.toString(16).padStart(6, "0").toUpperCase(),
           ),
         );
+      output.append(overview);
       for (const s of request.slots) {
         const old = originals().find((v) => v.id === s.id);
-        output.append(
+        slotDetails.append(
           el(
             "p",
             (old
@@ -833,7 +945,9 @@ export function installCourseManagement(api) {
                 : !old.enabled && s.enabled
                   ? "重新启用"
                   : "修改"
-              : "新增") +
+              : copiedSlotIds.has(s.id)
+                ? "复制"
+                : "新增") +
               "时段：" +
               s.title +
               "；星期 " +
@@ -841,14 +955,14 @@ export function installCourseManagement(api) {
               "；教室 " +
               s.location +
               "；教学周 " +
-              (old ? old.weeks.join("、") + " → " : "") +
-              s.weeks.join("、"),
+              (old ? weekText(old.weeks) + " → " : "") +
+              weekText(s.weeks),
           ),
         );
       }
       for (const id of request.deleteIds) {
         const s = originals().find((v) => v.id === id);
-        output.append(
+        slotDetails.append(
           el(
             "p",
             s?.replacesSeries
@@ -859,32 +973,52 @@ export function installCourseManagement(api) {
           ),
         );
       }
-      output.append(
+      if (
+        request.slots.length ||
+        request.deleteIds.length ||
+        (request.overrides ?? []).length
+      )
+        output.append(slotDetails);
+      if (preview.exceptionCount) {
+        const exceptions = el("details");
+        exceptions.append(el("summary", "保留的指定周例外明细"));
+        for (const e of preview.exceptions)
+          exceptions.append(
+            el(
+              "p",
+              "例外日期 " +
+                e.anchorDate +
+                "：" +
+                (e.title ?? "") +
+                " " +
+                (e.location ?? "") +
+                " " +
+                (e.note ?? ""),
+            ),
+          );
+        output.append(exceptions);
+      }
+      const projectionDetails = el("details");
+      projectionDetails.dataset.projectionDetails = "true";
+      projectionDetails.append(
+        el("summary", "最终投影逐条差异（" + preview.total + " 条差异项）"),
         el(
           "p",
-          "保留指定周例外 " +
-            preview.exceptionCount +
-            " 条；恢复原始系列 " +
-            preview.restored.length +
-            " 个",
+          preview.total > preview.projection.length
+            ? "共 " +
+                preview.total +
+                " 条差异项，仅展示前 " +
+                preview.projection.length +
+                " 条"
+            : "共 " +
+                preview.total +
+                " 条差异项，展示 " +
+                preview.projection.length +
+                " 条",
         ),
       );
-      for (const e of preview.exceptions)
-        output.append(
-          el(
-            "p",
-            "例外日期 " +
-              e.anchorDate +
-              "：" +
-              (e.title ?? "") +
-              " " +
-              (e.location ?? "") +
-              " " +
-              (e.note ?? ""),
-          ),
-        );
       for (const p of preview.projection)
-        output.append(
+        projectionDetails.append(
           el(
             "p",
             p.action +
@@ -898,6 +1032,7 @@ export function installCourseManagement(api) {
               p.location,
           ),
         );
+      output.append(projectionDetails);
       const advanced = el("details");
       advanced.append(
         el("summary", "高级变更证据"),
@@ -920,7 +1055,9 @@ export function installCourseManagement(api) {
         host.append(output);
         return;
       }
-      output.append(
+      const actions = el("div");
+      actions.className = "course-review-actions";
+      actions.append(
         button("确认一次原子保存", async () => {
           if (busy) return;
           if (!valid() || !preview || capturedDraft !== JSON.stringify(draft))
@@ -943,6 +1080,7 @@ export function installCourseManagement(api) {
           }
         }),
       );
+      output.append(actions);
       host.append(output);
       output.scrollIntoView();
     } finally {

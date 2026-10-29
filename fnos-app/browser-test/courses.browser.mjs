@@ -766,3 +766,309 @@ test("关闭并切换工作区后旧课程查询不能污染重新打开的列�
   ]);
   assert.deepEqual(f.errors, []);
 });
+
+async function saveCourseDraft(page) {
+  await page.getByRole("button", { name: "预览并保存", exact: true }).click();
+  await page
+    .getByRole("button", { name: "确认一次原子保存", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "编辑整门课程", exact: true }),
+  ).toBeVisible();
+}
+async function reopenCourse(page) {
+  await page.getByRole("button", { name: "编辑整门课程", exact: true }).click();
+  await expect(page.locator(".course-manager input[type=color]")).toBeVisible();
+}
+test("颜色状态明确区分已保存、同 RGB 手动草稿、恢复自动与取消", async (t) => {
+  const f = await editorFixture(t),
+    page = f.page,
+    picker = page.locator(".course-manager input[type=color]"),
+    status = page.locator("[data-color-draft]");
+  const automatic = await picker.inputValue();
+  await expect(page.locator(".course-manager")).toContainText(
+    "当前：自动颜色（默认）",
+  );
+  await expect(status).toBeHidden();
+  await picker.fill(automatic);
+  await expect(status).toHaveText(
+    "待保存：手动颜色 " + automatic.toUpperCase() + "（尚未保存）",
+  );
+  await saveCourseDraft(page);
+  await reopenCourse(page);
+  await expect(page.locator(".course-manager")).toContainText(
+    "当前：手动颜色 " + automatic.toUpperCase(),
+  );
+  await expect(status).toBeHidden();
+  await picker.fill("#123abc");
+  await expect(status).toContainText("待保存：手动颜色 #123ABC");
+  await page.getByRole("button", { name: "#8844cc", exact: true }).click();
+  await expect(status).toContainText("#8844CC");
+  await mkdir(new URL("../../docs/screenshots/pr71-ux/", import.meta.url), {
+    recursive: true,
+  });
+  await page.screenshot({
+    path: fileURLToPath(
+      new URL(
+        "../../docs/screenshots/pr71-ux/color-draft.png",
+        import.meta.url,
+      ),
+    ),
+  });
+  await page.getByRole("button", { name: "恢复自动颜色", exact: true }).click();
+  await expect(status).toHaveText("待保存：恢复自动颜色（尚未保存）");
+  await expect(picker).toHaveValue(automatic);
+  await saveCourseDraft(page);
+  await reopenCourse(page);
+  await expect(page.locator(".course-manager")).toContainText(
+    "当前：自动颜色 #",
+  );
+  await expect(status).toBeHidden();
+  const revision = f.app.db.frame.revision;
+  await picker.fill("#abcdef");
+  await page.getByRole("button", { name: "取消草稿", exact: true }).click();
+  await page.locator("#feedbackAccept").click();
+  assert.equal(f.app.db.frame.revision, revision);
+  await page.locator("#coursesPage").click();
+  await reopenCourse(page);
+  await expect(status).toBeHidden();
+  await expect(picker).toHaveValue(automatic);
+});
+for (const kind of ["teacher", "color"])
+  test("大量" + kind + "差异默认摘要、明细折叠、范围与截断明确", async (t) => {
+    const f = await editorFixture(t),
+      page = f.page;
+    if (kind === "teacher") {
+      const { applyEdit } = await import("../src/workspace.mjs");
+      applyEdit(f.app.db.frame.local, {
+        kind: "override",
+        action: "upsert",
+        sourceId: null,
+        seriesId: "x",
+        anchorDate: "2026-10-26",
+        patch: { teacher: "例外教师" },
+      });
+      const label = page
+        .locator(".course-manager label")
+        .filter({ hasText: "教师" })
+        .first();
+      await label.locator("input[type=checkbox]").check();
+      await label.locator("input:not([type=checkbox])").fill("统一教师摘要");
+    } else
+      await page.getByRole("button", { name: "#8844cc", exact: true }).click();
+    const response = page.waitForResponse((r) =>
+      r.url().includes("/api/courses/preview"),
+    );
+    await page.getByRole("button", { name: "预览并保存", exact: true }).click();
+    const data = await (await response).json(),
+      review = page.locator("[data-course-preview]"),
+      details = review.locator("[data-projection-details]");
+    assert(data.total > 100);
+    assert.equal(data.projection.length, 100);
+    await expect(details).not.toHaveAttribute("open", "");
+    await expect(details.locator("p").last()).toBeHidden();
+    await expect(review).toContainText("共 " + data.total + " 条投影差异项");
+    await expect(review).toContainText("预览范围：");
+    await expect(review).toContainText("范围有限");
+    await expect(
+      review
+        .locator("p")
+        .filter({ hasText: "本地无限重复课程的范围外结果不作穷举" }),
+    ).toBeVisible();
+    if (kind === "teacher")
+      await expect(
+        review.locator("p").filter({ hasText: "例外可能继续覆盖本次公共字段" }),
+      ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "确认一次原子保存", exact: true }),
+    ).toBeVisible();
+    await review.evaluate((e) => e.scrollIntoView({ block: "start" }));
+    await page.screenshot({
+      path: fileURLToPath(
+        new URL(
+          "../../docs/screenshots/pr71-ux/preview-summary-wide-" +
+            kind +
+            ".png",
+          import.meta.url,
+        ),
+      ),
+    });
+    await page.setViewportSize({ width: 430, height: 900 });
+    await page.evaluate(
+      () => (document.querySelector(".course-manager").style.fontSize = "22px"),
+    );
+    await review.evaluate((e) => e.scrollIntoView({ block: "start" }));
+    await page.screenshot({
+      path: fileURLToPath(
+        new URL(
+          "../../docs/screenshots/pr71-ux/preview-summary-" + kind + ".png",
+          import.meta.url,
+        ),
+      ),
+    });
+    await details.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    await expect(details).toHaveAttribute("open", "");
+    await expect(details).toContainText(
+      "共 " + data.total + " 条差异项，仅展示前 100 条",
+    );
+    await expect(details.locator("p").last()).toBeVisible();
+    await details
+      .locator("summary")
+      .evaluate((e) => e.scrollIntoView({ block: "start" }));
+    const confirmBox = await page
+      .getByRole("button", { name: "确认一次原子保存", exact: true })
+      .boundingBox();
+    assert(
+      confirmBox &&
+        confirmBox.y >= 0 &&
+        confirmBox.y + confirmBox.height <= 900,
+    );
+    await page.screenshot({
+      path: fileURLToPath(
+        new URL(
+          "../../docs/screenshots/pr71-ux/preview-expanded-" + kind + ".png",
+          import.meta.url,
+        ),
+      ),
+    });
+    await details.locator("summary").click();
+    await expect(details.locator("p").last()).toBeHidden();
+    await page.locator(".course-manager input[type=color]").fill("#abcdef");
+    await expect(review).toHaveCount(0);
+  });
+
+test("时段周次摘要区分停用、复制、删除恢复和重建替换；无变更不提交", async (t) => {
+  const { scheduleRecord } = await import("../src/shared-course-schedule.mjs"),
+    { durableRecords } = await import("../src/shared-records.mjs");
+  const f = await fixture(t),
+    page = f.page;
+  await f.app.db.edit({
+    kind: "entry",
+    action: "upsert",
+    value: {
+      id: "x",
+      title: "原课程",
+      day: 1,
+      startMinute: 480,
+      endMinute: 540,
+      location: "",
+    },
+  });
+  f.app.db.frame.local.sharedRecords = durableRecords([
+    scheduleRecord({
+      id: "r1",
+      sourceId: null,
+      ownerSeries: "x",
+      replacesSeries: "x",
+      week1: "2026-09-07",
+      weeks: [1, 2, 3, 4],
+      weekday: 1,
+      startMinute: 480,
+      endMinute: 540,
+      periodStart: 0,
+      periodEnd: 0,
+      enabled: true,
+      title: "替换课程",
+      location: "A",
+      teacher: "",
+      note: "",
+    }),
+  ]);
+  f.app.db.frame.v3 = { binding: { format: 4 } };
+  await f.open();
+  await page.locator("#coursesPage").click();
+  await reopenCourse(page);
+  await page.getByRole("button", { name: "预览并保存", exact: true }).click();
+  await expect(page.locator("[data-course-preview]")).toContainText(
+    "没有实际变更，无需保存",
+  );
+  await expect(
+    page.getByRole("button", { name: "确认一次原子保存", exact: true }),
+  ).toHaveCount(0);
+  await page.locator("[data-slot-id=r1] .week-picker input").nth(1).uncheck();
+  await page.getByRole("button", { name: "预览并保存", exact: true }).click();
+  let review = page.locator("[data-course-preview]");
+  await review.getByText("时段与周次明细", { exact: true }).click();
+  await expect(review).toContainText("教学周 1–4 → 1、3–4");
+  await page.getByRole("button", { name: "停用安排", exact: true }).click();
+  await page.getByRole("button", { name: "预览并保存", exact: true }).click();
+  await expect(
+    review
+      .locator("p")
+      .filter({ hasText: "停用替换规则仍抑制原始系列，原课程不会因此恢复。" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "复制为独立新增时段", exact: true })
+    .click();
+  await page.getByRole("button", { name: "预览并保存", exact: true }).click();
+  await review.getByText("时段与周次明细", { exact: true }).click();
+  await expect(review).toContainText("复制时段：");
+  await page
+    .getByRole("button", {
+      name: "移除替换规则（可能恢复原始课程）",
+      exact: true,
+    })
+    .click();
+  await page.getByRole("button", { name: "预览并保存", exact: true }).click();
+  await expect(
+    review.locator("p").filter({ hasText: "原始系列将重新出现：" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "有限周替换原始系列", exact: true })
+    .click();
+  await page.locator("#feedbackAccept").click();
+  const added = page.locator("[data-slot-id]").last();
+  await added.locator("input[type=date]").fill("2026-09-07");
+  await added.locator(".week-picker input").nth(0).check();
+  await page.getByRole("button", { name: "预览并保存", exact: true }).click();
+  await expect(
+    review.locator("p").filter({ hasText: "原始系列将重新出现：" }),
+  ).toHaveCount(0);
+  await expect(
+    review
+      .locator("p")
+      .filter({ hasText: "原系列仍受最终替换规则抑制，不会恢复" }),
+  ).toBeVisible();
+  await expect(
+    review.locator("p").filter({ hasText: "有限周替换仅在选定周次上课" }),
+  ).toBeVisible();
+  assert.equal(f.app.db.frame.local.sharedRecords.length, 1);
+});
+
+test("不支持的已保存颜色版本保持只读且不显示待保存普通色", async (t) => {
+  const f = await fixture(t),
+    { change } = await import("../src/shared-course-colors.mjs");
+  await f.app.db.edit({
+    kind: "entry",
+    action: "upsert",
+    value: {
+      id: "x",
+      title: "未来颜色",
+      day: 1,
+      startMinute: 480,
+      endMinute: 540,
+      location: "",
+    },
+  });
+  f.app.db.frame.local = change(
+    { ...f.app.db.frame.local, sharedRecords: [] },
+    null,
+    "x",
+    0x123456,
+  );
+  f.app.db.frame.local.sharedRecords[0].schemaVersion = 2;
+  f.app.db.frame.v3 = { binding: { format: 4 } };
+  await f.open();
+  await f.page.locator("#coursesPage").click();
+  await f.page.getByRole("button", { name: "只读查看", exact: true }).click();
+  await expect(f.page.locator(".course-manager")).toContainText(
+    "当前颜色：不支持的颜色版本",
+  );
+  await expect(f.page.locator(".course-manager input[type=color]")).toHaveCount(
+    0,
+  );
+  await expect(
+    f.page.getByRole("button", { name: "预览并保存", exact: true }),
+  ).toHaveCount(0);
+});
