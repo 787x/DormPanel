@@ -308,6 +308,11 @@ class ScheduleSession(clock: ScheduleClock, private val modeStore: ScheduleModeS
     fun today(clock: ScheduleClock) { selectedDate = clock.today(); month = YearMonth.from(selectedDate); weekStart = selectedDate.minusDays((selectedDate.dayOfWeek.value - 1).toLong()) }
     fun moveMonth(amount: Long) { month = month.plusMonths(amount) }
     fun select(date: LocalDate) { selectedDate = date; month = YearMonth.from(date) }
+    fun openTimetableDate(date: LocalDate) {
+        select(date)
+        weekStart = date.minusDays((date.dayOfWeek.value - 1).toLong())
+        mode = ScheduleMode.TIMETABLE
+    }
     // Rollover retains explicit selection; Today is the deterministic way to follow the new day.
 }
 /** date is display-local. academicDate resolves profile phases; anchorDate is the stable pre-move academic identity. */

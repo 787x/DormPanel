@@ -1,0 +1,19 @@
+--------- beginning of system
+--------- beginning of crash
+--------- beginning of main
+10-29 22:41:43.075 26438 26438 I PR74Review: count=50 firstBindMs=271
+10-29 22:41:44.575 26438 26438 I PR74Review: count=50 fullRenders=2 holders=28
+10-29 22:41:45.106 26438 26438 I PR74Review: count=200 firstBindMs=13
+10-29 22:41:46.020 26438 26438 I PR74Review: count=200 fullRenders=2 holders=28
+10-29 22:43:27.458 26748 26748 I PR74Review: count=50 firstBindMs=80
+10-29 22:43:28.938 26748 26748 I PR74Review: count=50 fullRenders=2 holders=28
+10-29 22:43:29.481 26748 26748 I PR74Review: count=200 firstBindMs=11
+10-29 22:43:30.379 26748 26748 I PR74Review: count=200 fullRenders=2 holders=28
+10-29 22:45:56.892 27199 27199 I PR74Review: count=50 firstBindMs=119
+10-29 22:45:58.144 27199 27199 I PR74Review: count=50 fullRenders=2 holders=28
+10-29 22:45:59.159 27199 27199 I PR74Review: count=200 firstBindMs=14
+10-29 22:45:59.866 27199 27199 I PR74Review: count=200 fullRenders=2 holders=28
+10-29 22:47:52.168 27554 27554 I PR74Review: count=50 firstBindMs=76
+10-29 22:47:53.699 27554 27554 I PR74Review: count=50 fullRenders=2 holders=28
+10-29 22:47:55.104 27554 27554 I PR74Review: count=200 firstBindMs=11
+10-29 22:47:55.844 27554 27554 I PR74Review: count=200 fullRenders=2 holders=28

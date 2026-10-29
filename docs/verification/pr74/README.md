@@ -1,5 +1,7 @@
 # PR74 X08E 课程首页卡片验收
 
+> 最新审查修复与补充验收见 [review-fixes/README.md](review-fixes/README.md)。以下保留初始 HEAD `16ceb01` 的历史记录；列表实现、日期导航与渲染测量以补充记录为准。
+
 基线：main `0724c440bdd109c63a0c3b833a8aa0b953dd618d`，包含 PR72 / PR73。日期：2026-10-29。
 
 ## 实现

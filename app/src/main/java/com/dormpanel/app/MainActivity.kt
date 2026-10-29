@@ -207,8 +207,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun openScheduleDate(date: java.time.LocalDate) {
-        dashboardViewModel.scheduleSession.select(date)
-        dashboardViewModel.scheduleSession.mode = com.dormpanel.app.schedule.ScheduleMode.TIMETABLE
+        dashboardViewModel.scheduleSession.openTimetableDate(date)
         showPage(PanelPage.CALENDAR, null, false)
     }
 

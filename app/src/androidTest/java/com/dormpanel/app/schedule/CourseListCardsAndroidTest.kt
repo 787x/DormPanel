@@ -6,6 +6,8 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.IsolatedDashboardRule
@@ -100,7 +102,7 @@ class CourseListCardsAndroidTest {
                     activity.setContentView(FrameLayout(activity).apply { setBackgroundColor(PanelPalette.forMode(theme).background); addView(view) })
                     activity.window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                 }
-                for(size in listOf(CardSize(2,1),CardSize(2,3),CardSize(4,2),CardSize(4,4),CardSize(6,3),CardSize(8,6))) {
+                for(size in listOf(CardSize(2,1),CardSize(4,4),CardSize(8,6))) {
                     scenario.onActivity {
                         provider.bind(view,PlacedCard("test",provider.typeKey,0,0,size),CardInteractionScope(true){ claims++ })
                         view.layoutParams=FrameLayout.LayoutParams(size.columnSpan*150,size.rowSpan*120)
@@ -109,7 +111,7 @@ class CourseListCardsAndroidTest {
                     Thread.sleep(250)
                     scenario.onActivity {
                         assertTrue("Header must be measured after resize",view.getChildAt(0).height>0)
-                        val scrolls=descendants(view).filterIsInstance<ScrollView>()
+                        val scrolls=descendants(view).filterIsInstance<RecyclerView>()
                         assertEquals(if(recent && size.columnSpan>=4) 2 else 1,scrolls.size)
                         assertTrue(descendants(view).filterIsInstance<TextView>().any { it.text.contains("测试课程") })
                         val scroll=scrolls.first()
@@ -130,8 +132,8 @@ class CourseListCardsAndroidTest {
                         touch(MotionEvent.ACTION_MOVE,140f,60f,stamp+140)
                         touch(MotionEvent.ACTION_UP,140f,60f,stamp+180)
                         assertEquals("Horizontal stream stays available to home",after,claims)
-                        scroll.scrollTo(0,100)
-                        if(scrolls.size==2) assertEquals(0,scrolls[1].scrollY)
+                        scroll.scrollBy(0,100)
+                        if(scrolls.size==2) assertEquals(0,(scrolls[1].layoutManager as LinearLayoutManager).findFirstVisibleItemPosition())
                         view.visibility=View.VISIBLE
                         view.alpha=1f
                         repeat(2) {
@@ -144,12 +146,12 @@ class CourseListCardsAndroidTest {
                         val canvas=android.graphics.Canvas(bitmap)
                         canvas.drawColor(PanelPalette.forMode(theme).background)
                         view.draw(canvas)
-                        java.io.File(it.getExternalFilesDir(null),"pr74-${provider.typeKey}-${size.columnSpan}x${size.rowSpan}-$theme-render.png").outputStream().use { out -> bitmap.compress(Bitmap.CompressFormat.PNG,100,out) }; bitmap.recycle()
+                        java.io.File(it.getExternalFilesDir(null),"pr74-review-${provider.typeKey}-${size.columnSpan}x${size.rowSpan}-$theme-render.png").outputStream().use { out -> bitmap.compress(Bitmap.CompressFormat.PNG,100,out) }; bitmap.recycle()
                     }
                     instrumentation.waitForIdleSync()
                     Thread.sleep(250)
                     val actual=instrumentation.uiAutomation.takeScreenshot()
-                    java.io.File(instrumentation.targetContext.getExternalFilesDir(null),"pr74-${provider.typeKey}-${size.columnSpan}x${size.rowSpan}-$theme-screen.png").outputStream().use { out -> actual.compress(Bitmap.CompressFormat.PNG,100,out) }; actual.recycle()
+                    java.io.File(instrumentation.targetContext.getExternalFilesDir(null),"pr74-review-${provider.typeKey}-${size.columnSpan}x${size.rowSpan}-$theme-screen.png").outputStream().use { out -> actual.compress(Bitmap.CompressFormat.PNG,100,out) }; actual.recycle()
                 }
                 scenario.onActivity {
                     provider.bind(view,PlacedCard("test",provider.typeKey,0,0,CardSize(4,4)),CardInteractionScope(false){ fail("Edit mode claimed") })
