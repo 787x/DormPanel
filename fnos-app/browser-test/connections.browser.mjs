@@ -1122,3 +1122,18 @@ test('二轮61 原位只读刷新废止导入资格，迟到预览不能复活�
     await expect(f.page.locator('#editor')).toBeVisible();await expect(f.save).toBeDisabled();await expect(f.page.getByLabel('来源显示名',{exact:true})).toHaveValue('应保留的来源草稿');await expect(f.page.locator('#formError')).toContainText('草稿已保留');assert.equal(await f.page.locator('#fields input[type=file]').evaluate(e=>e.files.length),1);
   }finally{release();}assert.deepEqual(f.errors,[]);
 });
+
+// PR75 uses the production authenticated socket route and a real browser download.
+test('ICS：预览与浏览器下载同一快照、版本拒绝和只读', async t => {
+ const f=await fixture(t);
+ await f.open();
+ await f.page.locator('#schedulePage').click();
+ await f.page.locator('#manage').click();
+ await f.page.locator('#exportIcs').click();
+ const d=f.page.locator('dialog').filter({has:f.page.getByRole('heading',{name:'导出 ICS',exact:true})});
+ await d.getByRole('button',{name:'预览',exact:true}).click();
+ await expect(d.getByRole('button',{name:'保存文件',exact:true})).toBeEnabled();
+ const downloadPromise=f.page.waitForEvent('download');await d.getByRole('button',{name:'保存文件',exact:true}).click();
+ const download=await downloadPromise;const bytes=await readFile(await download.path());assert.ok(bytes.toString().startsWith('BEGIN:VCALENDAR\r\n'));
+ assert.deepEqual(f.errors,[]);
+});

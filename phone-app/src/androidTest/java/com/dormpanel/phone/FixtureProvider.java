@@ -21,6 +21,8 @@ public class FixtureProvider extends ContentProvider {
     }
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         String name = uri.getLastPathSegment();
+        if (name.equals("export.ics")) return ParcelFileDescriptor.open(new File(getContext().getCacheDir(),name), ParcelFileDescriptor.parseMode(mode));
+        if (name.equals("export-fail.ics")) throw new FileNotFoundException("injected disk full");
         if (!Arrays.asList("wakeup.ics", "hubei_2026-2027-1.csv", "hubei_2026-2027-1.xls", "bad.ics", "future.csv", "night.ics").contains(name)) throw new FileNotFoundException();
         File file = new File(getContext().getCacheDir(), name);
         try (OutputStream out = new FileOutputStream(file)) {

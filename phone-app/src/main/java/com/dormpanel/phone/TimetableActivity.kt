@@ -79,6 +79,52 @@ class TimetableActivity : AppCompatActivity() {
             if (source.ready && !source.error) resumeCheckPending = false
         } else checkOnResume()
     }
+    class IcsRequest : androidx.lifecycle.ViewModel() { var bytes: ByteArray? = null; var choosing = false }
+    private val icsRequest by lazy { androidx.lifecycle.ViewModelProvider(this)[IcsRequest::class.java] }
+    private var pendingIcs: ByteArray?
+        get() = icsRequest.bytes
+        set(value) { icsRequest.bytes=value }
+    private val saveIcs = registerForActivityResult(ActivityResultContracts.CreateDocument("text/calendar")) { uri ->
+        val bytes = pendingIcs
+        icsRequest.choosing=false
+        resumeCheckPending=false
+        pendingIcs = null
+        if (uri != null) {
+            if (bytes == null) {
+                worker.execute { runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver,uri) } }
+                message("导出请求已失效，请重新预览后保存。")
+            } else background({
+                try {
+                    (contentResolver.openOutputStream(uri,"wt") ?: error("无法打开目标文件")).use { it.write(bytes); it.flush() }
+                } catch (e: Exception) {
+                    runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver,uri) }
+                    throw IllegalStateException("文件保存失败；已尝试删除不完整文件，请核对目标位置。${e.message}", e)
+                }
+            }) { message("ICS 文件已保存。") }
+        }
+    }
+    private fun exportCalendar() {
+        if (!source.ready || source.error || source.applyingSnapshot) { message("课表尚未成功读取，请稍后重试。"); return }
+        val layout=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(20),dp(8),dp(20),dp(8)) }
+        val from=EditText(this).apply { hint="开始日期 YYYY-MM-DD"; setText(source.clock.today().toString()) }
+        val until=EditText(this).apply { hint="结束日期 YYYY-MM-DD"; setText(source.clock.today().plusDays(27).toString()) }
+        val zone=EditText(this).apply { hint="IANA 时区"; setText(source.clock.zone().id) }
+        val events=CheckBox(this).apply { text="包含日历事件" }
+        layout.addView(from); layout.addView(until); layout.addView(zone); layout.addView(events)
+        listOf("本周" to 6L,"未来四周" to 27L).forEach { (label,days) -> layout.addView(Button(this).apply { text=label; setOnClickListener { val today=source.clock.today();val first=if(days==6L) today.minusDays((today.dayOfWeek.value-1).toLong()) else today;from.setText(first.toString());until.setText(first.plusDays(days).toString()) } }) }
+        val dialog=AlertDialog.Builder(this).setTitle("导出 ICS（最多 366 天）").setView(ScrollView(this).apply { addView(layout) }).setNegativeButton("取消",null).setPositiveButton("预览",null).create()
+        dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            if(!source.ready || source.error || source.applyingSnapshot) { message("课表尚未成功读取"); return@setOnClickListener }
+            val start=from.text.toString();val end=until.text.toString();val z=zone.text.toString();val include=events.isChecked
+            source.readExportSnapshot { captured -> runOnUiThread { if (!isDestroyed) { captured.onFailure { message(it.message ?: "课表读取失败") }.onSuccess { snapshot ->
+            background({ IcsScheduleExporter.export(snapshot,LocalDate.parse(start),LocalDate.parse(end),ZoneId.of(z),include,source.clock.instant()) }) { result ->
+                dialog.dismiss()
+                AlertDialog.Builder(this).setTitle("导出预览").setMessage("$start 至 $end\n时区 $z\n课程 ${result.courseCount} · 日历事件 ${result.eventCount}\n${result.bytes.size} 字节\n基于本机已保存课表的此预览快照，不代表其他设备已接收。\n用于外部日历交换，不保留课程分组、颜色、来源及同步历史，不是完整备份。超过 256 事件或导入文件预算时可能无法重新导入 DormPanel。")
+                    .setNegativeButton("取消",null).setPositiveButton("保存文件") { _,_ -> pendingIcs=result.bytes;icsRequest.choosing=true;saveIcs.launch("DormPanel-$start-$end.ics") }.show()
+            }
+            } } } }
+        } }; dialog.show()
+    }
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && !source.readOnly && !source.applyingSnapshot) {
             val target = replacement
@@ -153,7 +199,7 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
     private fun checkOnResume() {
-        if (resumeCheckPending && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
+        if (resumeCheckPending && !icsRequest.choosing && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
             resumeCheckPending = false; sharedSync.sync()
         }
     }
@@ -362,9 +408,9 @@ class TimetableActivity : AppCompatActivity() {
     private fun management() {
         if (source.applyingSnapshot) return
         swipeContent?.cancelMotion()
-        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）", "课表显示设置", "课程管理")) { _, i ->
+        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）", "课表显示设置", "课程管理", "导出 ICS")) { _, i ->
             if (i < 3 && source.error) { message(source.editBlockReason.orEmpty()); return@setItems }
-            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) }; 4 -> displaySettings(); 5 -> editors.courseManagement() }
+            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) }; 4 -> displaySettings(); 5 -> editors.courseManagement(); 6 -> exportCalendar() }
         }.setNegativeButton("关闭", null).show()
     }
     private fun displaySettings() {
