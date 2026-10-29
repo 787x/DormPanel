@@ -1,3 +1,4 @@
+import {exportIcs} from './ics-export.mjs';
 import {courses,previewCourse} from './course-management.mjs';
 import {courseEditSchema} from './operations.mjs';
 import { V3Maintenance } from './v3-maintenance.mjs';
@@ -424,7 +425,7 @@ export async function createApp({
       if (path === '/api/sync/discover') {
         send(200, await catalog.discover(u.searchParams.get('workspaceId'), u.searchParams.get('targetConnectionId'))); return;
       }
-      if (path.startsWith('/api/') && !['/api/courses', '/api/maintenance', '/api/agent', '/api/import/rows', '/api/schedule/range', '/api/migration', '/api/history', '/api/history/space', '/api/history/eligibility', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
+      if (path.startsWith('/api/') && !['/api/export/ics', '/api/courses', '/api/maintenance', '/api/agent', '/api/import/rows', '/api/schedule/range', '/api/migration', '/api/history', '/api/history/space', '/api/history/eligibility', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
         send(404, { error: '不存在' }); return;
       }
       ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
@@ -432,6 +433,15 @@ export async function createApp({
         (path === "/api/schedule" ? catalog.manifest.activeId : null);
       const db = path.startsWith('/api/') && !['/api/agent', '/api/manage', '/api/directories'].includes(path) ? await catalog.load(workspaceId) : null;
       if (path === '/api/agent') { ensure(!internal, 'Agent 不能读取管理员审批通道'); send(200, agents.adminSummary()); return; }
+      if (path === '/api/export/ics') {
+        ensure(!internal, 'ICS 下载仅供管理员浏览器使用');
+        validatePageOrigin(req,u.searchParams.get('origin'));
+        ensure(!['cross-site','same-site'].includes(req.headers['sec-fetch-site']), '拒绝跨源下载');
+        ensure(String(db.frame.revision) === u.searchParams.get('version'), '课表版本已变化，请重新预览');
+        const result = exportIcs(db.frame.local, {start:u.searchParams.get('start'),end:u.searchParams.get('end'),zone:u.searchParams.get('zone'),includeEvents:u.searchParams.get('includeEvents')==='true'});
+        res.writeHead(200, {'Content-Type':'text/calendar; charset=utf-8','Content-Disposition':`attachment; filename="DormPanel-${result.start}-${result.end}.ics"`, 'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Course-Count':String(result.courseCount),'X-Event-Count':String(result.eventCount)});
+        res.end(result.bytes); return;
+      }
       if (path === '/api/import/rows') {
         const p = previews.get(u.searchParams.get('id')), offset = Number(u.searchParams.get('offset') ?? 0), limit = Number(u.searchParams.get('limit') ?? 40);
         ensure(p && p.user === user && p.workspaceId === workspaceId && p.expires > Date.now() && p.version === db.frame.revision, '导入预览已失效');
