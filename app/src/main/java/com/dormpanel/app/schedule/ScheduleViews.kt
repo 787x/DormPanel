@@ -28,7 +28,8 @@ internal fun Context.scheduleLabel(label: String, size: Float = 20f) = TextView(
 internal fun Context.scheduleColumn() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
 /** No repeating timer. Only attached, visible surfaces observe broadcasts and one future boundary. */
-internal class ScheduleDisplay(private val view: View, private val source: ScheduleSource, private val render: () -> Unit) {
+internal class ScheduleDisplay(private val view: View, private val source: ScheduleSource, private val render: () -> Unit,
+    private val boundary: () -> Instant = { ScheduleProjection.nextBoundary(source.state, source.clock) }) {
     private var active = false
     private val task = Runnable { refresh() }
     private val listener: () -> Unit = { refresh() }
@@ -52,7 +53,7 @@ internal class ScheduleDisplay(private val view: View, private val source: Sched
     fun refresh() {
         view.removeCallbacks(task)
         render()
-        if (active) view.postDelayed(task, (ScheduleProjection.nextBoundary(source.state, source.clock).toEpochMilli() - source.clock.instant().toEpochMilli()).coerceAtLeast(1))
+        if (active) view.postDelayed(task, (boundary().toEpochMilli() - source.clock.instant().toEpochMilli()).coerceAtLeast(1))
     }
 }
 

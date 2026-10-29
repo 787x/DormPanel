@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.data.FakeDashboardDataSourceTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-29T14:11:25.854Z" hostname="LAPTOP-6ORBUU2C" time="0.002">
+  <properties/>
+  <testcase name="brightness and kelvin commands obey bounds and capabilities" classname="com.dormpanel.app.data.FakeDashboardDataSourceTest" time="0.001"/>
+  <testcase name="toggle notifies subscribers with immutable authoritative state" classname="com.dormpanel.app.data.FakeDashboardDataSourceTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

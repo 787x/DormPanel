@@ -206,6 +206,12 @@ class MainActivity : AppCompatActivity() {
         showPage(router.initialPage, router.direction(currentPage, router.initialPage), animate = true)
     }
 
+    fun openScheduleDate(date: java.time.LocalDate) {
+        dashboardViewModel.scheduleSession.select(date)
+        dashboardViewModel.scheduleSession.mode = com.dormpanel.app.schedule.ScheduleMode.TIMETABLE
+        showPage(PanelPage.CALENDAR, null, false)
+    }
+
     private fun showPage(page: PanelPage, direction: SwipeDirection?, animate: Boolean) {
         val previousView = pageContainer.getChildAt(pageContainer.childCount - 1)
         val nextView = pageViewFactory.create(page, pageContainer)

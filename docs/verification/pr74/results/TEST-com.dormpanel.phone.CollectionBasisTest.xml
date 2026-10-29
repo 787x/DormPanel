@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.phone.CollectionBasisTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-29T13:58:33.871Z" hostname="LAPTOP-6ORBUU2C" time="0.008">
+  <properties/>
+  <testcase name="dateAndZoneCannotBeRelabeledAfterMidnight" classname="com.dormpanel.phone.CollectionBasisTest" time="0.005"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

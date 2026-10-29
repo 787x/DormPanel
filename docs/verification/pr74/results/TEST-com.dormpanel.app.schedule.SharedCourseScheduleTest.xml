@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.schedule.SharedCourseScheduleTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-29T14:11:59.502Z" hostname="LAPTOP-6ORBUU2C" time="0.043">
+  <properties/>
+  <testcase name="replacementKeepsOriginalExceptionAnchorAndCopiesAreIndependent" classname="com.dormpanel.app.schedule.SharedCourseScheduleTest" time="0.006"/>
+  <testcase name="unchangedColorMergesWithRemoteColorAndLifecycleRejectsDanglingParents" classname="com.dormpanel.app.schedule.SharedCourseScheduleTest" time="0.024"/>
+  <testcase name="atomicCandidateStaleGuardAndLegacyProtection" classname="com.dormpanel.app.schedule.SharedCourseScheduleTest" time="0.004"/>
+  <testcase name="projectionAndIndependentSlots" classname="com.dormpanel.app.schedule.SharedCourseScheduleTest" time="0.007"/>
+  <testcase name="strictCodecAndCapability" classname="com.dormpanel.app.schedule.SharedCourseScheduleTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
