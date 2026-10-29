@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.schedule.CourseDayProjectionTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-29T14:11:25.881Z" hostname="LAPTOP-6ORBUU2C" time="0.026">
+  <properties/>
+  <testcase name="adjustmentsAndOverridesUseEffectiveTimes" classname="com.dormpanel.app.schedule.CourseDayProjectionTest" time="0.018"/>
+  <testcase name="timetableTitleUsesSourceNameAndDoesNotDependOnListPosition" classname="com.dormpanel.app.schedule.CourseDayProjectionTest" time="0.001"/>
+  <testcase name="realEndExcludesFinishedAndPreservesOverlap" classname="com.dormpanel.app.schedule.CourseDayProjectionTest" time="0.001"/>
+  <testcase name="midnightAndSystemZoneIntersection" classname="com.dormpanel.app.schedule.CourseDayProjectionTest" time="0.004"/>
+  <testcase name="tomorrowSwitchIsOptionalAndOnlyAfterTodaysCoursesEnd" classname="com.dormpanel.app.schedule.CourseDayProjectionTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-29T14:11:25.836Z" hostname="LAPTOP-6ORBUU2C" time="0.008">
+  <properties/>
+  <testcase name="resize displaces colliding cards" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.004"/>
+  <testcase name="identical complex inputs always produce identical layouts" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.0"/>
+  <testcase name="out of bounds move is rejected without changing layout" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.001"/>
+  <testcase name="resize succeeds" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.0"/>
+  <testcase name="collision deterministically reflows displaced card" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.001"/>
+  <testcase name="failed add leaves a full grid untouched" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.0"/>
+  <testcase name="failed resize restores previous layout" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.0"/>
+  <testcase name="drag into empty space moves only active card" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.0"/>
+  <testcase name="unsupported card size is rejected" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.0"/>
+  <testcase name="deletion frees a cell for a later add" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.0"/>
+  <testcase name="resize reflow is deterministic" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.001"/>
+  <testcase name="several colliding cards reflow while unaffected card stays put" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.0"/>
+  <testcase name="valid placement remains inside bounds and non-overlapping" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.001"/>
+  <testcase name="overlap is detected" classname="com.dormpanel.app.dashboard.layout.DashboardLayoutEngineTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.schedule.ScheduleTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-29T14:11:59.479Z" hostname="LAPTOP-6ORBUU2C" time="0.018">
+  <properties/>
+  <testcase name="sessionSelectionRetainedUntilTodayAcrossTimezoneAndDateChange" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.001"/>
+  <testcase name="selectedScheduleModeSurvivesNewSession" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.001"/>
+  <testcase name="timetableCardDistinguishesCurrentNextEmptyAndFutureBySize" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.001"/>
+  <testcase name="eventCrudIdentityOrderingOverlapAndRoundTrip" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.003"/>
+  <testcase name="equalTitleAndTimeUseStableId" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.0"/>
+  <testcase name="eventProjectionUsesLocalDatesAndExclusiveEnd" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.0"/>
+  <testcase name="closeIgnoresLateLoadAndRefreshNeverWrites" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.001"/>
+  <testcase name="invalidRowsAreHiddenNotReinterpretedOrOverwritten" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.0"/>
+  <testcase name="currentNextAndNextWeekWithOverlaps" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.001"/>
+  <testcase name="sizesUpcomingWhenTodayEmptyAndExactBoundary" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.0"/>
+  <testcase name="timetableCrudStableTieOrderingAndValidation" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.002"/>
+  <testcase name="dstMidnightAndWeeklyCivilTime" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.001"/>
+  <testcase name="leapMonthLocaleAndYearTransitions" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.005"/>
+  <testcase name="successfulRecoveryReloadClearsErrorWithoutReplacingLocalRecords" classname="com.dormpanel.app.schedule.ScheduleTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -171,4 +171,6 @@
     <string name="temperature_unknown">Color temperature · Unknown</string>
     <string name="light_pending_temperature">%1$s · Off · Color temperature is saved for next ON</string>
     <string name="light_number_error">Enter a whole number from %1$d to %2$d</string>
+<string name="schedule_today">Today courses</string>
+<string name="schedule_recent">Upcoming courses</string>
 </resources>

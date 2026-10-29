@@ -10,8 +10,8 @@ import com.dormpanel.app.dashboard.catalog.*
 import com.dormpanel.app.dashboard.model.*
 import java.time.Instant
 
-class ScheduleCatalog : CardCatalog {
-    override val candidates = listOf("calendar" to "Calendar", "timetable" to "Timetable").map { (key, label) ->
+class ScheduleCatalog(private val context: Context) : CardCatalog {
+    override val candidates = listOf("calendar" to "Calendar", "timetable" to "Timetable", "schedule_today" to context.getString(R.string.schedule_today), "schedule_recent" to context.getString(R.string.schedule_recent)).map { (key, label) ->
         CardAddCandidate(key, CardCategory.PRODUCTIVITY, key, label, "Local offline schedule", "{}")
     }
     override fun addListener(listener: (List<CardAddCandidate>) -> Unit) = listener(candidates)

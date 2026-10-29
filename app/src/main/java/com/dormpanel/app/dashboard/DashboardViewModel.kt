@@ -44,8 +44,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val scheduleViewport = com.dormpanel.app.schedule.ScheduleViewport()
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) } +
-        listOf("calendar", "timetable").map { ScheduleCardProvider(it, schedule, appearance) })
-    val catalog: CardCatalog = CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps), ProductivityCatalog(application), ScheduleCatalog())
+        listOf("calendar", "timetable").map { ScheduleCardProvider(it, schedule, appearance) } +
+        listOf(false, true).map { CourseListCardProvider(it, schedule, appearance) })
+    val catalog: CardCatalog = CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps), ProductivityCatalog(application), ScheduleCatalog(application))
     val stateHolder = DashboardStateHolder(
         registry = registry,
         store = DashboardStores.create(application),

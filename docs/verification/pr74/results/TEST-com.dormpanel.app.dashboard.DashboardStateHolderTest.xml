@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.dashboard.DashboardStateHolderTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-29T14:11:25.777Z" hostname="LAPTOP-6ORBUU2C" time="0.047">
+  <properties/>
+  <testcase name="listener closing during load cannot enqueue work after shutdown" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.019"/>
+  <testcase name="legacy mock layout is repaired and valid production layout preserved" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.006"/>
+  <testcase name="automatic fallback persists the chosen size and retains neighbors" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.01"/>
+  <testcase name="first launch seeds once and persists stable ids" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.0"/>
+  <testcase name="late save completion and edits after close cannot change state or notify" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.0"/>
+  <testcase name="drag preview does not persist but committed move does" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.005"/>
+  <testcase name="late load and late failure cannot seed save mutate or notify a closed owner" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.001"/>
+  <testcase name="resize preview does not persist and commit persists exactly once" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.0"/>
+  <testcase name="failed repair keeps quarantine on subsequent edit and late repair callback is ignored" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.0"/>
+  <testcase name="candidate configuration is preserved and duplicate devices get distinct card ids" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.001"/>
+  <testcase name="initialized empty dashboard is restored without reseeding" classname="com.dormpanel.app.dashboard.DashboardStateHolderTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

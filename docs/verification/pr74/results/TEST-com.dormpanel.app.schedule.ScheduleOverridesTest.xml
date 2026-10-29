@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.app.schedule.ScheduleOverridesTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2026-10-29T14:11:59.388Z" hostname="LAPTOP-6ORBUU2C" time="0.084">
+  <properties/>
+  <testcase name="movingLinkedClassAcrossCutoverRecomputesItsClockTime" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.042"/>
+  <testcase name="profileRefreshUsesChangedSnapshotWithoutRewritingImportedRows" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.01"/>
+  <testcase name="makeupPeriodUsesTargetDateAfterAutumnCutover" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.003"/>
+  <testcase name="makeupCopiesTemplateWithoutRecursingThroughSourceDayOverride" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.002"/>
+  <testcase name="oldCsvTermRecoveryRequiresExactParserSignature" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.0"/>
+  <testcase name="allWeeksUsesStructuralSeriesIdentityAndPhaseSpecificTimes" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.001"/>
+  <testcase name="customTimeRemainsFixedAcrossTermPhases" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.001"/>
+  <testcase name="makeupResolvesTargetAcademicPhaseBeforeCrossingDisplayDateBoundary" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.004"/>
+  <testcase name="linkedTimesUseProfileTimezoneAcrossScopesAndMakeup" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.001"/>
+  <testcase name="thisWeekCanMoveAndEditWithoutChangingSourceOrLaterWeek" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.001"/>
+  <testcase name="noClassesSuppressesLocalAndImportedButNotEventsAndResetRestores" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.005"/>
+  <testcase name="linkedDateMoveKeepsOriginalAcademicAnchorAcrossDisplayWeekBoundary" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.002"/>
+  <testcase name="linkedEveningThreePeriodRangeUsesProfileEnd" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.0"/>
+  <testcase name="overnightImportedClassKeepsItsInstantsForNonTimeEdits" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.001"/>
+  <testcase name="editedBuiltInProfileResetIsVisibleWithoutRestart" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.002"/>
+  <testcase name="linkedMondayDisplaysOnSundayAndMetadataEditsKeepAcademicIdentityAndInstants" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.004"/>
+  <testcase name="resetAndSourceReplacementRetainOnlyMatchingSeries" classname="com.dormpanel.app.schedule.ScheduleOverridesTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

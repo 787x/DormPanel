@@ -14,14 +14,8 @@ internal object TodayCourses {
         return tomorrow.copy(next=minOf(tomorrow.next,today.date.plusDays(1).atStartOfDay(zone).toInstant()))
     }
     fun projectDate(state: ScheduleState, now: Instant, zone: ZoneId, date: LocalDate): Day {
-        val start = date.atStartOfDay(zone).toInstant()
-        val end = date.plusDays(1).atStartOfDay(zone).toInstant()
-        val monday = date.minusDays((date.dayOfWeek.value - 1).toLong())
-        val all = ScheduleProjection.week(state, monday, zone).filter { it.start < end && it.end > start }
-            .sortedWith(compareBy<ClassOccurrence> { it.start }.thenBy { it.sourceId.orEmpty() }.thenBy { it.seriesId }.thenBy { it.anchorDate }.thenBy { it.entry.id })
-        val remaining = all.filter { it.end > now }
-        val next = (remaining.flatMap { listOf(it.start, it.end) } + end).filter { it > now }.minOrNull()!!
-        return Day(date, all, remaining, next)
+        val day = CourseDayProjection.projectDate(state, now, zone, date)
+        return Day(day.date, day.all, day.remaining, day.next)
     }
     fun title(state: ScheduleState?) = state?.sources?.singleOrNull()?.displayName?.takeIf { it.isNotBlank() }
         ?: if (state != null && state.sources.size > 1) "合并课表" else "我的课表"

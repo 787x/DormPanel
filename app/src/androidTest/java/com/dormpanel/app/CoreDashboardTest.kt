@@ -226,12 +226,12 @@ class CoreDashboardTest {
                 // "Calendar" also matches the home-page edge hint; require the
                 // Schedule tab Button when that title is checked.
                 val titleMatcher = if (title == "Calendar")
-                    allOf(withText(title), isAssignableFrom(android.widget.Button::class.java))
+                    allOf(org.hamcrest.Matchers.anyOf(withText(title), withText("日历")), isAssignableFrom(android.widget.Button::class.java))
                 else withText(title)
                 onView(titleMatcher).check(matches(isDisplayed()))
                 when (title) {
                     "Apps" -> onView(withId(R.id.apps_home)).perform(ViewActions.click())
-                    "Calendar" -> onView(withText("Home")).perform(ViewActions.click())
+                    "Calendar" -> onView(org.hamcrest.Matchers.anyOf(withText("Home"), withText("返回首页"))).perform(ViewActions.click())
                     else -> navigate(back)
                 }
                 onView(card("Desk light")).check(matches(isDisplayed()))
