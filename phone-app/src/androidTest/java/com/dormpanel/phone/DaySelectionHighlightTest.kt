@@ -7,7 +7,7 @@ import org.junit.Test
 import java.time.LocalDate
 
 class DaySelectionHighlightTest {
-    @Test fun daySelectionMovesBlueBackgroundWithoutLosingDateMarkers() {
+    @Test fun daySelectionKeepsBlueBackgroundAndTodayMarkerWithoutSmallDot() {
         val c=InstrumentationRegistry.getInstrumentation().targetContext
         check(c.packageName.endsWith(".pr72testbed"))
         ActivityScenario.launch<TimetableActivity>(android.content.Intent(c,TimetableActivity::class.java)).use { scenario ->
@@ -27,7 +27,7 @@ class DaySelectionHighlightTest {
                 assertEquals(blue,selectedButton.backgroundTintList!!.defaultColor)
                 assertNotEquals(blue,todayButton.backgroundTintList?.defaultColor)
                 assertTrue(todayButton.text.toString().startsWith("●"))
-                assertTrue(selectedButton.text.toString().contains(" ·"))
+                assertFalse(selectedButton.text.toString().contains("·"))
                 assertTrue(selectedButton.isSelected); assertFalse(todayButton.isSelected)
             }
         }

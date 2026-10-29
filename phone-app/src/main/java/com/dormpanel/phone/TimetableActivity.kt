@@ -290,7 +290,6 @@ class TimetableActivity : AppCompatActivity() {
                     setTypeface(typeface,android.graphics.Typeface.BOLD)
                 } else if (date == body.date) {
                     setTypeface(typeface,android.graphics.Typeface.BOLD)
-                    text = "${labels[i]} ·\n${date.dayOfMonth}"
                 }
                 if (date == source.clock.today()) text = "●${labels[i]}\n${date.dayOfMonth}"
                 if (source.state.daysByDate.containsKey(date.toString())) text = "$text *"
