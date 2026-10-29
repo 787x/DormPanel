@@ -1,0 +1,27 @@
+
+        u0a247 com.dormpanel.schedule.core.test
+>       u0a256 com.dormpanel.timetable.pr72testbed.test
+        u0a250 com.dormpanel.timetable.pr68testbed
+>       u0a255 com.dormpanel.timetable.pr72testbed
+        u0a178 com.android.fileexplorer
+        u0a240 com.tntlikely.beecount.dev.debug
+      RTC_WAKEUP #12: Alarm{54d72c9 type 0 origWhen 1793266360958 whenElapsed 292817317 com.dormpanel.timetable.pr68testbed}
+>       tag=*walarm*:com.dormpanel.phone.WIDGET_REFRESH
+        type=RTC_WAKEUP origWhen=2026-10-29 17:32:40.958 window=+22m29s925ms repeatInterval=0 count=0 flags=0x0
+        policyWhenElapsed: requester=+20m29s437ms app_standby=-9m30s463ms device_idle=-- battery_saver=-9m30s463ms tare=-9m30s463ms power_pending=--
+      com.dormpanel.timetable.pr68testbed, u0: -3h9m30s764ms, 
+>     com.dormpanel.timetable.pr72testbed, u0: -1h8m17s311ms, 
+    
+    Temporary Quota Reserves:
+      u0a255:
+>       [tag=*walarm*:com.dormpanel.phone.WIDGET_REFRESH reason=alarm_cancelled elapsed=-3s715ms rtc=2026-10-29 17:12:07.807]
+    
+    Top Alarms:
+      +929ms 3 wakes 3 alarms, last -3h9m30s764ms:
+>       *walarm*:com.dormpanel.phone.WIDGET_REFRESH
+>   u0a255:com.dormpanel.timetable.pr72testbed +551ms running, 1 wakeups:
+      +551ms 1 wakes 1 alarms, last -1h8m17s311ms:
+>       *walarm*:com.dormpanel.phone.WIDGET_REFRESH
+    
+    Alarm manager stats:
+

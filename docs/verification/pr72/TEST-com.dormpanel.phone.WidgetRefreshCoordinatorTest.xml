@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.dormpanel.phone.WidgetRefreshCoordinatorTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-29T08:09:58.616Z" hostname="LAPTOP-6ORBUU2C" time="0.015">
+<testsuite name="com.dormpanel.phone.WidgetRefreshCoordinatorTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-29T09:22:36.169Z" hostname="LAPTOP-6ORBUU2C" time="0.013">
   <properties/>
-  <testcase name="sameTickTimeoutAndRequestWorkInEitherQueueOrder" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.006"/>
-  <testcase name="twoPhysicalLeasesBoundPermanentlyBlockedRoomQueue" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.005"/>
-  <testcase name="ordinaryTimeoutSchedulesRecoveryWithoutFastLoop" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.0"/>
-  <testcase name="removalCancelsAndLateCallbacksCannotRescheduleOrFinishNewWaiters" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.001"/>
+  <testcase name="sameTickTimeoutAndRequestWorkInEitherQueueOrder" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.004"/>
+  <testcase name="twoPhysicalLeasesBoundPermanentlyBlockedRoomQueue" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.004"/>
+  <testcase name="ordinaryTimeoutSchedulesRecoveryWithoutFastLoop" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.001"/>
+  <testcase name="removalCancelsAndLateCallbacksCannotRescheduleOrFinishNewWaiters" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.0"/>
   <testcase name="synchronousExceptionAndAsyncFailureAcceptLaterSuccess" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.001"/>
   <testcase name="eachBroadcastExpiresOnceEvenWhileNewestReadRemainsBlocked" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.0"/>
-  <testcase name="timeoutWithNewCommitProbesAndNeverPublishesLateSnapshot" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.0"/>
-  <testcase name="requestImmediatelyAfterTimeoutStillGetsReadOpportunity" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.001"/>
+  <testcase name="timeoutWithNewCommitProbesAndNeverPublishesLateSnapshot" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.001"/>
+  <testcase name="requestImmediatelyAfterTimeoutStillGetsReadOpportunity" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.0"/>
   <testcase name="lateResultCannotRollbackSuccessfulProbeOrItsAlarm" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.0"/>
   <testcase name="repeatedRequestsCoalesceAndNormalRefreshKeepsExistingFrame" classname="com.dormpanel.phone.WidgetRefreshCoordinatorTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>

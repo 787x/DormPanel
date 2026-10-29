@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.dormpanel.phone.WeekAxisTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-29T08:09:58.598Z" hostname="LAPTOP-6ORBUU2C" time="0.009">
+<testsuite name="com.dormpanel.phone.WeekAxisTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-29T09:22:36.154Z" hostname="LAPTOP-6ORBUU2C" time="0.008">
   <properties/>
-  <testcase name="periodLabelsRetainActualPhaseNumbersAndClockBounds" classname="com.dormpanel.phone.WeekAxisTest" time="0.002"/>
-  <testcase name="visibleBoundsApplyToBothAxesAndStillIncludeConfiguredPeriods" classname="com.dormpanel.phone.WeekAxisTest" time="0.001"/>
-  <testcase name="eachDateUsesItsEffectivePhaseAndBreaksRemainInvertible" classname="com.dormpanel.phone.WeekAxisTest" time="0.005"/>
-  <testcase name="timeKeepsExactProportionsAndInvertsBeyondBounds" classname="com.dormpanel.phone.WeekAxisTest" time="0.001"/>
-  <testcase name="invalidMissingOverlappingOrWrongTimezoneNeverInventPeriods" classname="com.dormpanel.phone.WeekAxisTest" time="0.0"/>
+  <testcase name="periodLabelsRetainActualPhaseNumbersAndClockBounds" classname="com.dormpanel.phone.WeekAxisTest" time="0.001"/>
+  <testcase name="visibleBoundsApplyToBothAxesAndStillIncludeConfiguredPeriods" classname="com.dormpanel.phone.WeekAxisTest" time="0.002"/>
+  <testcase name="eachDateUsesItsEffectivePhaseAndBreaksRemainInvertible" classname="com.dormpanel.phone.WeekAxisTest" time="0.004"/>
+  <testcase name="timeKeepsExactProportionsAndInvertsBeyondBounds" classname="com.dormpanel.phone.WeekAxisTest" time="0.0"/>
+  <testcase name="invalidMissingOverlappingOrWrongTimezoneNeverInventPeriods" classname="com.dormpanel.phone.WeekAxisTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

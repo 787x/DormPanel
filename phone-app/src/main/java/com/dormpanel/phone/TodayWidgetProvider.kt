@@ -40,14 +40,14 @@ internal object TodayWidgetUpdates {
                 publish = { result ->
                     val now = Instant.now()
                     val zone=ZoneId.systemDefault()
-                    runCatching { if(ids(app).any { CollectionWidgets.isCollection(app,it) }) CollectionWidgets.publish(app,result,now,zone) }.onFailure {
-                        CollectionWidgets.publish(app,Result.failure(it),now,zone)
-                    }
+                    CollectionWidgets.publish(app,result,now,zone)
                     val cache=mutableMapOf<Boolean,Result<Pair<ScheduleState,TodayCourses.Day>>>()
                     var next=now.plusSeconds(1800)
                     result.getOrNull()?.let { state ->
-                        val (today,tomorrow)=CollectionProjection.recent(state,now,zone)
-                        next=minOf(next,today.next,tomorrow.next)
+                        // Display projection failures must not be reclassified as a Store read failure.
+                        runCatching { TodayCourses.project(state,now,zone).next }.getOrNull()?.let { boundary ->
+                            next=minOf(next,boundary)
+                        }
                     }
                     ids(app).forEach { id ->
                         if (CollectionWidgets.isCollection(app,id)) {

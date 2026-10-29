@@ -20,27 +20,29 @@ internal object CollectionWidgets {
     private val processIdentity=java.util.UUID.randomUUID().toString()
     data class Cell(val text: String, val date: LocalDate, val rgb: Int = 0)
     data class Row(val key: String, val cells: List<Cell>)
-    data class Snapshot(val rows: List<Row>, val error: String?, val grid: WeekWidgetGrid? = null, val timeGrid: WeekWidgetGrid? = null, val weekdayGrid: WeekWidgetGrid? = null, val weekdayTimeGrid: WeekWidgetGrid? = null)
-    @Volatile private var recent = Snapshot(emptyList(), "课程仍在加载")
-    @Volatile private var week = recent
-    fun snapshot(isWeek: Boolean) = if (isWeek) week else recent
-    fun instanceSnapshot(context: Context,id: Int,isWeek: Boolean): Snapshot {
-        val data=snapshot(isWeek)
-        if(!isWeek) return data
-        val weekdays=WidgetTitleSettings.weekdays(context,id)
-        val periods=WidgetTitleSettings.periods(context,id)
-        val grid=if(weekdays) if(periods) data.weekdayGrid else data.weekdayTimeGrid else if(periods) data.grid else data.timeGrid
-        return if(grid==null) data else data.copy(grid=grid,rows=(0 until grid.count).map { tile ->
-            Row("${grid.monday}:$periods:$weekdays:$tile",(0..6).map { day -> Cell("",grid.monday.plusDays(day.toLong())) })
-        })
+    data class Snapshot(val rows: List<Row>, val error: String?, val grid: WeekWidgetGrid? = null)
+    private val loading=Snapshot(emptyList(),"课程仍在加载")
+    @Volatile private var publication=Pair(loading,emptyMap<WeekWidgetMode,Snapshot>())
+    fun snapshot(isWeek: Boolean) = if(isWeek) publication.second[WeekWidgetMode()] ?: loading else publication.first
+    fun demand(context: Context): CollectionDemand {
+        val manager=AppWidgetManager.getInstance(context)
+        val recent=manager.getAppWidgetIds(ComponentName(context,RecentCoursesWidgetProvider::class.java)).isNotEmpty()
+        val weeks=manager.getAppWidgetIds(ComponentName(context,WeekCoursesWidgetProvider::class.java)).map { id ->
+            WeekWidgetMode(WidgetTitleSettings.periods(context,id),if(WidgetTitleSettings.weekdays(context,id)) 5 else 7)
+        }.toSet()
+        return CollectionDemand(recent,weeks)
     }
+    fun instanceSnapshot(context: Context,id: Int,isWeek: Boolean): Snapshot = if(!isWeek) publication.first else
+        publication.second[WeekWidgetMode(WidgetTitleSettings.periods(context,id),if(WidgetTitleSettings.weekdays(context,id)) 5 else 7)] ?: loading
     fun isCollection(context: Context,id: Int) = AppWidgetManager.getInstance(context).getAppWidgetInfo(id)?.provider?.className in
         listOf(RecentCoursesWidgetProvider::class.java.name,WeekCoursesWidgetProvider::class.java.name)
     fun isWeek(context: Context,id: Int) = AppWidgetManager.getInstance(context).getAppWidgetInfo(id)?.provider?.className == WeekCoursesWidgetProvider::class.java.name
     fun publish(context: Context,result: Result<ScheduleState>,now: Instant,zone: ZoneId) {
-        val state=result.getOrNull()
-        if(state==null) { recent=Snapshot(emptyList(),"本地课表读取失败，请打开应用检查"); week=recent; return }
-        val colors=CourseColors.snapshot(context,state)
+        val needed=demand(context)
+        val date=now.atZone(zone).toLocalDate()
+        val monday=date.minusDays((date.dayOfWeek.value-1).toLong())
+        val weekItems by lazy { ScheduleProjection.week(result.getOrThrow(),monday,zone) }
+        val colors by lazy { CourseColors.snapshot(context,result.getOrThrow()) }
         fun text(item: ClassOccurrence): String {
             val format=DateTimeFormatter.ofPattern("HH:mm")
             val start=item.start.atZone(zone); val end=item.end.atZone(zone)
@@ -50,20 +52,27 @@ internal object CollectionWidgets {
         }
         fun cell(item: ClassOccurrence?,date: LocalDate,empty: String) = Cell(item?.let(::text) ?: empty,date,
             item?.let { colors.rgb(it) or (0xff shl 24) } ?: 0)
-        val(a,b)=CollectionProjection.recent(state,now,zone)
-        if(a.all.size+b.all.size>512) { recent=Snapshot(emptyList(),"课程过多，请打开应用查看"); week=recent; return }
-        recent=Snapshot((0 until maxOf(1,a.remaining.size,b.all.size)).map { i -> Row("recent:"+listOf(a.remaining.getOrNull(i),b.all.getOrNull(i)).joinToString("|") { item ->
-                item?.let { "${it.sourceId}:${it.seriesId}:${it.anchorDate}:${it.entry.id}" } ?: "empty"
-            },listOf(
-            cell(a.remaining.getOrNull(i),a.date,if(i!=0) "" else if(a.all.isEmpty()) "今天没有课程" else "今天的课程已结束"),
-            cell(b.all.getOrNull(i),b.date,if(i==0) "明天没有课程" else ""))) },null)
-        val monday=a.date.minusDays((a.date.dayOfWeek.value-1).toLong())
-        if(ScheduleProjection.week(state,monday,zone).size>512) { week=Snapshot(emptyList(),"课程过多，请打开应用查看"); return }
-        val grid=WeekWidgetGrid.create(state,monday,zone,colors::rgb,a.date)
-        week=Snapshot((0 until grid.count).map { tile -> Row("$monday:$tile",(0..6).map { day ->
-            Cell("",monday.plusDays(day.toLong()))
-        }) },null,grid,WeekWidgetGrid.create(state,monday,zone,colors::rgb,a.date,false),WeekWidgetGrid.create(state,monday,zone,colors::rgb,a.date,true,5),WeekWidgetGrid.create(state,monday,zone,colors::rgb,a.date,false,5))
+        val built=CollectionProjectionPlanner.build(result,needed,recent={ state ->
+            val(a,b)=CollectionProjection.recent(state,now,zone)
+            require(a.all.size+b.all.size<=512) { "课程过多，请打开应用查看" }
+            Snapshot((0 until maxOf(1,a.remaining.size,b.all.size)).map { i -> Row("recent:"+
+                listOf(a.remaining.getOrNull(i),b.all.getOrNull(i)).joinToString("|") { item ->
+                    item?.let { "${it.sourceId}:${it.seriesId}:${it.anchorDate}:${it.entry.id}" } ?: "empty"
+                },listOf(cell(a.remaining.getOrNull(i),a.date,if(i!=0) "" else if(a.all.isEmpty()) "今天没有课程" else "今天的课程已结束"),
+                    cell(b.all.getOrNull(i),b.date,if(i==0) "明天没有课程" else ""))) },null)
+        },week={ state,mode ->
+            val grid=WeekWidgetGrid.create(state,monday,zone,colors::rgb,date,mode.periods,mode.days,weekItems)
+            Snapshot((0 until grid.count).map { tile -> Row("$monday:${mode.periods}:${mode.days}:$tile",(0..6).map { day ->
+                Cell("",monday.plusDays(day.toLong()))
+            }) },null,grid)
+        })
+        fun resolve(value: Result<Snapshot>): Snapshot = value.getOrElse { error ->
+            Snapshot(emptyList(),if(result.isFailure) "本地课表读取失败，请打开应用检查" else
+                if(error is IllegalArgumentException) "课程过多或显示配置无效，请打开应用检查" else "课程投影失败，请打开应用检查")
+        }
+        publication=Pair(built.recent?.let(::resolve) ?: loading,built.weeks.mapValues { resolve(it.value) })
     }
+
     fun render(context: Context,id: Int,state: ScheduleState?): RemoteViews {
         val isWeek=isWeek(context,id)
         val data=instanceSnapshot(context,id,isWeek)
@@ -96,7 +105,7 @@ internal object CollectionWidgets {
         views.setPendingIntentTemplate(R.id.collection_list,PendingIntent.getActivity(context,id+100000,intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE))
         if(isWeek) (0..6).forEach { day ->
-            views.setViewVisibility(headerIds[day],if(data.grid?.dayCount==5 && day>=5) View.GONE else View.VISIBLE)
+            views.setViewVisibility(headerIds[day],if(WidgetTitleSettings.weekdays(context,id) && day>=5) View.GONE else View.VISIBLE)
             views.setTextViewText(headerIds[day],"${"一二三四五六日"[day]}\n${monday.plusDays(day.toLong()).monthValue}/${monday.plusDays(day.toLong()).dayOfMonth}")
             views.setTextColor(headerIds[day],context.getColor(if(day==date.dayOfWeek.value-1) R.color.collection_ink else R.color.collection_secondary))
             views.setInt(headerIds[day],"setBackgroundColor",if(day==date.dayOfWeek.value-1) (if(context.resources.configuration.uiMode and 48 == 32) 0xff263e53.toInt() else 0xffdceafa.toInt()) else 0)

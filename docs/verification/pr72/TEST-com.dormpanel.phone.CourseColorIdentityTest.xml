@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.dormpanel.phone.CourseColorIdentityTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-29T08:09:58.485Z" hostname="LAPTOP-6ORBUU2C" time="0.018">
+<testsuite name="com.dormpanel.phone.CourseColorIdentityTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-29T09:22:36.101Z" hostname="LAPTOP-6ORBUU2C" time="0.005">
   <properties/>
-  <testcase name="groupingUsesOriginalTitlesAndIsolatesAmbiguityAndSources" classname="com.dormpanel.phone.CourseColorIdentityTest" time="0.016"/>
-  <testcase name="framingAndPersistentAllocation" classname="com.dormpanel.phone.CourseColorIdentityTest" time="0.002"/>
+  <testcase name="groupingUsesOriginalTitlesAndIsolatesAmbiguityAndSources" classname="com.dormpanel.phone.CourseColorIdentityTest" time="0.004"/>
+  <testcase name="framingAndPersistentAllocation" classname="com.dormpanel.phone.CourseColorIdentityTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

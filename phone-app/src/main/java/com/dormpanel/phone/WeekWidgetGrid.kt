@@ -72,9 +72,9 @@ internal class WeekWidgetGrid(val monday: LocalDate,val zone: ZoneId,val segment
         return image
     }
     companion object {
-        fun create(state: ScheduleState,monday: LocalDate,zone: ZoneId,colors: (ClassOccurrence)->Int,now: LocalDate,periodMode: Boolean = true,dayCount: Int = 7): WeekWidgetGrid {
+        fun create(state: ScheduleState,monday: LocalDate,zone: ZoneId,colors: (ClassOccurrence)->Int,now: LocalDate,periodMode: Boolean = true,dayCount: Int = 7,projected: List<ClassOccurrence>? = null): WeekWidgetGrid {
             require(dayCount==5 || dayCount==7)
-            val items=ScheduleProjection.week(state,monday,zone)
+            val items=projected ?: ScheduleProjection.week(state,monday,zone)
             require(items.size<=512) { "Widget course budget exceeded" }
             val segments=WeekLayout.segments(items,monday,zone)
             val(first,last)=WeekLayout.visibleRange(segments,dayCount)

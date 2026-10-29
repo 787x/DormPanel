@@ -6,6 +6,149 @@ import org.junit.Test
 import java.time.*
 import java.util.concurrent.*
 class CollectionWidgetTest {
+    @Test fun realOccurrenceBudgetsStayIndependent() {
+        val c=InstrumentationRegistry.getInstrumentation().targetContext; check(c.packageName.endsWith(".pr72testbed"))
+        val zone=ZoneId.systemDefault(); val date=LocalDate.now(zone)
+        val start=date.atTime(23,0).atZone(zone).toInstant().toEpochMilli(); val end=date.plusDays(1).atTime(1,0).atZone(zone).toInstant().toEpochMilli()
+        val recentHeavy=ScheduleState(imported=(0 until 300).map { n -> ImportedClassOccurrence("b$n","s","b$n",null,start,"预算课程",start,end,zone.id,"教室","",null) })
+        try {
+            CollectionWidgets.publish(c,Result.success(recentHeavy),date.atStartOfDay(zone).toInstant(),zone)
+            assertNotNull(CollectionWidgets.snapshot(false).error); assertNull(CollectionWidgets.snapshot(true).error)
+            assertNotNull(CollectionWidgets.snapshot(true).grid)
+            val other=date.minusDays((date.dayOfWeek.value-1).toLong()).plusDays(if(date.dayOfWeek.value in 1..2) 4 else 0)
+            val a=other.atTime(8,0).atZone(zone).toInstant().toEpochMilli()
+            val weekHeavy=ScheduleState(imported=(0 until 513).map { n -> ImportedClassOccurrence("w$n","s","w$n",null,a,"周预算课程",a,a+3600000,zone.id,"教室","",null) })
+            CollectionWidgets.publish(c,Result.success(weekHeavy),date.atStartOfDay(zone).toInstant(),zone)
+            assertNull(CollectionWidgets.snapshot(false).error); assertNotNull(CollectionWidgets.snapshot(true).error)
+            CollectionWidgets.publish(c,Result.failure(IllegalStateException("read")),java.time.Instant.now(),zone)
+            assertNotNull(CollectionWidgets.snapshot(false).error); assertNotNull(CollectionWidgets.snapshot(true).error)
+        } finally {
+            val done=CountDownLatch(1); TodayWidgetUpdates.request(c) { done.countDown() }; assertTrue(done.await(10,TimeUnit.SECONDS))
+        }
+    }
+    @Test fun markLifecycleInstances() {
+        val c=InstrumentationRegistry.getInstrumentation().targetContext; check(c.packageName.endsWith(".pr72testbed"))
+        val manager=android.appwidget.AppWidgetManager.getInstance(c)
+        val ids=listOf(RecentCoursesWidgetProvider::class.java,WeekCoursesWidgetProvider::class.java).flatMap { manager.getAppWidgetIds(android.content.ComponentName(c,it)).toList() }
+        assertEquals(2,ids.size)
+        c.getSharedPreferences("pr72-audit",0).edit().putString("oldIds",ids.joinToString(",")).commit()
+        ids.forEach { WidgetTitleSettings.save(c,it,"旧实例-$it",periods=false,weekdays=true) }
+        val done=CountDownLatch(1); TodayWidgetUpdates.request(c) { done.countDown() }; assertTrue(done.await(10,TimeUnit.SECONDS)); Thread.sleep(2000)
+    }
+    @Test fun allIsolatedInstancesRemoved() {
+        val c=InstrumentationRegistry.getInstrumentation().targetContext; check(c.packageName.endsWith(".pr72testbed"))
+        val manager=android.appwidget.AppWidgetManager.getInstance(c)
+        listOf(TodayWidgetProvider::class.java,WideTodayWidgetProvider::class.java,RecentCoursesWidgetProvider::class.java,WeekCoursesWidgetProvider::class.java).forEach {
+            assertEquals(0,manager.getAppWidgetIds(android.content.ComponentName(c,it)).size)
+        }
+        val old=c.getSharedPreferences("pr72-audit",0).getString("oldIds","")!!.split(",").map(String::toInt)
+        old.forEach { assertNull(WidgetTitleSettings.get(c,it)); assertFalse(WidgetTitleSettings.weekdays(c,it)); assertTrue(WidgetTitleSettings.periods(c,it)) }
+    }
+    @Test fun readdedInstancesHaveNewIdentityAndDefaults() {
+        val c=InstrumentationRegistry.getInstrumentation().targetContext; check(c.packageName.endsWith(".pr72testbed"))
+        val old=c.getSharedPreferences("pr72-audit",0).getString("oldIds","")!!.split(",").map(String::toInt)
+        val manager=android.appwidget.AppWidgetManager.getInstance(c)
+        val ids=listOf(RecentCoursesWidgetProvider::class.java,WeekCoursesWidgetProvider::class.java).flatMap { manager.getAppWidgetIds(android.content.ComponentName(c,it)).toList() }
+        assertEquals(2,ids.size)
+        ids.forEach { assertFalse(it in old); assertNull(WidgetTitleSettings.get(c,it)); assertFalse(WidgetTitleSettings.weekdays(c,it)); assertTrue(WidgetTitleSettings.periods(c,it)) }
+        val done=CountDownLatch(1); TodayWidgetUpdates.request(c) { done.countDown() }; assertTrue(done.await(10,TimeUnit.SECONDS))
+        assertNull(CollectionWidgets.snapshot(false).error); assertNull(CollectionWidgets.snapshot(true).error)
+        assertEquals(7,CollectionWidgets.snapshot(true).grid!!.dayCount); Thread.sleep(3000)
+        println("old=$old new=$ids")
+    }
+    @Test fun weekDatesExistingActivityFiveDaysAndTitle() {
+        val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
+        check(c.packageName.endsWith(".pr72testbed"))
+        val info=i.uiAutomation.serviceInfo; info.flags=info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS; i.uiAutomation.serviceInfo=info
+        fun nodes(n: android.view.accessibility.AccessibilityNodeInfo?): List<android.view.accessibility.AccessibilityNodeInfo> =
+            if(n==null) emptyList() else listOf(n)+(0 until n.childCount).flatMap { nodes(n.getChild(it)) }
+        fun find(suffix: String): android.view.accessibility.AccessibilityNodeInfo {
+            val end=System.currentTimeMillis()+5000
+            while(System.currentTimeMillis()<end) {
+                nodes(i.uiAutomation.rootInActiveWindow).firstOrNull { it.viewIdResourceName?.endsWith(suffix)==true && it.isVisibleToUser }?.let { return it }
+                Thread.sleep(50)
+            }; error("Missing Launcher node $suffix")
+        }
+        fun tap(node: android.view.accessibility.AccessibilityNodeInfo) {
+            val bounds=android.graphics.Rect(); node.getBoundsInScreen(bounds)
+            println("tap ${node.viewIdResourceName} $bounds")
+            check(bounds.width()>0 && bounds.height()>0)
+            val down=android.os.SystemClock.uptimeMillis()
+            for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)) {
+                val e=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,bounds.exactCenterX(),bounds.exactCenterY(),0)
+                e.source=android.view.InputDevice.SOURCE_TOUCHSCREEN; assertTrue(i.uiAutomation.injectInputEvent(e,true)); e.recycle()
+            }
+        }
+        fun activity(): TimetableActivity {
+            var a: TimetableActivity?=null; val end=System.currentTimeMillis()+5000
+            while(a==null && System.currentTimeMillis()<end) {
+                i.runOnMainSync { a=androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).filterIsInstance<TimetableActivity>().firstOrNull() }; Thread.sleep(50)
+            }; return checkNotNull(a)
+        }
+        fun selected(a: TimetableActivity)=TimetableActivity::class.java.getDeclaredField("selected").apply { isAccessible=true }.get(a)
+        fun home() {
+            c.startActivity(android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            for(page in 0..4) {
+                Thread.sleep(800)
+                if(nodes(i.uiAutomation.rootInActiveWindow).any { it.viewIdResourceName?.endsWith("week_tile")==true && it.isVisibleToUser }) return
+                i.uiAutomation.executeShellCommand("input swipe 950 900 150 900 450").close()
+            }
+            find("week_tile")
+        }
+        val monday=LocalDate.now().minusDays((LocalDate.now().dayOfWeek.value-1).toLong())
+        find("week_tile")
+        tap(find("cell_0"))
+        fun expectDate(date: LocalDate): TimetableActivity {
+            val end=System.currentTimeMillis()+5000
+            var a=activity()
+            while(selected(a)!=date && System.currentTimeMillis()<end) { Thread.sleep(50); a=activity() }
+            assertEquals("action=${a.intent.action}, date=${a.intent.getStringExtra("widgetDate")}",date,selected(a)); return a
+        }
+        val first=expectDate(monday)
+        home()
+        tap(find("cell_3"))
+        val second=expectDate(monday.plusDays(3)); assertSame(first,second)
+        val manager=android.appwidget.AppWidgetManager.getInstance(c)
+        val id=manager.getAppWidgetIds(android.content.ComponentName(c,WeekCoursesWidgetProvider::class.java)).first()
+        val oldDays=WidgetTitleSettings.weekdays(c,id); val oldPeriod=WidgetTitleSettings.periods(c,id)
+        try {
+            WidgetTitleSettings.save(c,id,WidgetTitleSettings.get(c,id) ?: "我的课表",periods=false,weekdays=true)
+            val done=CountDownLatch(1); TodayWidgetUpdates.request(c) { done.countDown() }; assertTrue(done.await(10,TimeUnit.SECONDS))
+            home(); Thread.sleep(2000); find("week_tile")
+            assertFalse(nodes(i.uiAutomation.rootInActiveWindow).any { it.viewIdResourceName?.endsWith("cell_5")==true || it.viewIdResourceName?.endsWith("cell_6")==true })
+            tap(find("cell_4"))
+            expectDate(monday.plusDays(4))
+            home(); tap(find("collection_title"))
+            val title=expectDate(LocalDate.now())
+            assertTrue(TimetableActivity::class.java.getDeclaredField("weekView").apply { isAccessible=true }.getBoolean(title))
+        } finally {
+            WidgetTitleSettings.save(c,id,WidgetTitleSettings.get(c,id) ?: "我的课表",periods=oldPeriod,weekdays=oldDays)
+            val done=CountDownLatch(1); TodayWidgetUpdates.request(c) { done.countDown() }; done.await(10,TimeUnit.SECONDS)
+        }
+    }
+    @Test fun formalCommitRefreshesWithoutManualRequest() {
+        val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
+        check(c.packageName.endsWith(".pr72testbed"))
+        val store=ScheduleStores.create(c)
+        val day=LocalDate.now(); val title="正式提交刷新验收"
+        val done=CountDownLatch(1); var result: Result<Unit>?=null
+        store.put(TimetableEntry("pr72-refresh-proof",title,day.dayOfWeek.value,0,1439,"新地点验收")) { result=it; done.countDown() }
+        assertTrue(done.await(10,TimeUnit.SECONDS)); result!!.getOrThrow()
+        // No TodayWidgetUpdates.request here: exercise PhoneApplication's successful-commit signal.
+        val end=System.currentTimeMillis()+7000
+        while(System.currentTimeMillis()<end && CollectionWidgets.snapshot(false).rows.none { r -> r.cells.any { it.text.contains(title) } }) Thread.sleep(50)
+        assertTrue(CollectionWidgets.snapshot(false).rows.any { r -> r.cells.any { it.text.contains(title) } })
+        assertTrue(CollectionWidgets.snapshot(true).grid!!.segments.any { it.item.entry.id=="pr72-refresh-proof" && it.item.entry.location=="新地点验收" })
+        val loaded=CountDownLatch(1)
+        store.load { assertTrue(it.getOrThrow().entries.any { e -> e.id=="pr72-refresh-proof" && e.location=="新地点验收" }); loaded.countDown() }
+        assertTrue(loaded.await(10,TimeUnit.SECONDS)); Thread.sleep(3000)
+        val info=i.uiAutomation.serviceInfo; info.flags=info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS; i.uiAutomation.serviceInfo=info
+        fun texts(n: android.view.accessibility.AccessibilityNodeInfo?): String = if(n==null) "" else n.text.toString()+n.contentDescription.toString()+(0 until n.childCount).joinToString { texts(n.getChild(it)) }
+        val visibleEnd=System.currentTimeMillis()+7000
+        var visible=false
+        while(!visible && System.currentTimeMillis()<visibleEnd) { visible=texts(i.uiAutomation.rootInActiveWindow).contains(title); if(!visible) Thread.sleep(100) }
+        assertTrue("Launcher must show persisted change",visible)
+    }
     @Test fun launcherRecentScrollThenClickTomorrow() {
         val i=InstrumentationRegistry.getInstrumentation(); val c=i.targetContext
         check(c.packageName.endsWith(".pr72testbed"))
@@ -67,7 +210,6 @@ class CollectionWidgetTest {
             assertNotNull(CollectionWidgets.snapshot(false).error)
             assertNotNull(CollectionWidgets.snapshot(true).error)
             assertNull(CollectionWidgets.snapshot(true).grid)
-            assertNull(CollectionWidgets.snapshot(true).timeGrid)
         } finally { ScheduleStores.overrideFactory=null; refresh() }
         assertNull(CollectionWidgets.snapshot(true).error)
         assertNotNull(CollectionWidgets.snapshot(true).grid)
@@ -97,6 +239,7 @@ class CollectionWidgetTest {
             }
             assertFalse(WidgetTitleSettings.periods(c,id)); assertTrue(WidgetTitleSettings.weekdays(c,id))
             assertTrue(WidgetTitleSettings.periods(c,Int.MAX_VALUE)); assertFalse(WidgetTitleSettings.weekdays(c,Int.MAX_VALUE))
+            val refreshed=CountDownLatch(1); TodayWidgetUpdates.request(c) { refreshed.countDown() }; assertTrue(refreshed.await(10,TimeUnit.SECONDS))
             assertEquals(5,CollectionWidgets.instanceSnapshot(c,id,true).grid!!.dayCount)
             assertTrue(CollectionWidgets.instanceSnapshot(c,id,true).grid!!.axis.periodLabels.isEmpty())
         } finally { WidgetTitleSettings.save(c,id,title,periods=previousPeriods,weekdays=previousDays); val done=CountDownLatch(1); TodayWidgetUpdates.request(c) { done.countDown() }; assertTrue(done.await(10,TimeUnit.SECONDS)); Thread.sleep(3000) }

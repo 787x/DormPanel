@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.dormpanel.phone.CollectionProjectionPlannerTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-29T09:22:35.991Z" hostname="LAPTOP-6ORBUU2C" time="0.029">
+  <properties/>
+  <testcase name="weekOnlyBuildsOnlyDistinctRequestedModes" classname="com.dormpanel.phone.CollectionProjectionPlannerTest" time="0.015"/>
+  <testcase name="recentBudgetFailureDoesNotPoisonWeeksAndWeekFailureDoesNotPoisonRecent" classname="com.dormpanel.phone.CollectionProjectionPlannerTest" time="0.003"/>
+  <testcase name="recentOnlyNeverBuildsWeeks" classname="com.dormpanel.phone.CollectionProjectionPlannerTest" time="0.001"/>
+  <testcase name="failedModeAndNextPublicationNeverReuseOldResults" classname="com.dormpanel.phone.CollectionProjectionPlannerTest" time="0.004"/>
+  <testcase name="storeFailureReachesAllRequestedViewsWithoutProjectionCalls" classname="com.dormpanel.phone.CollectionProjectionPlannerTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
