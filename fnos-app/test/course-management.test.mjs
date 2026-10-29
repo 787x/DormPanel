@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {Workspace} from '../src/workspace.mjs';
+import {courses,previewCourse} from '../src/course-management.mjs';
+import {courseEditSchema} from '../src/operations.mjs';
+import {emptyState} from '../src/merge.mjs';
+import {businessHash} from '../src/v3-protocol.mjs';
+const fixture=()=>new Workspace({}, {revision:1,datasetId:null,local:{...emptyState(),entries:[{id:'a',title:'数学',day:1,startMinute:480,endMinute:540,location:''},{id:'b',title:'数学',day:1,startMinute:480,endMinute:540,location:''}],sharedRecords:[]},v3:{binding:{format:4}}});
+test('逻辑列表稳定身份、分页和旧格式能力',()=>{const w=fixture(),p=courses(w,{limit:1});assert.equal(p.total,2);assert.equal(p.next,1);assert.notEqual(p.rows[0].key,courses(w,{offset:1}).rows[0].key);assert.throws(()=>courses(w,{limit:101}));w.frame.v3.binding.format=3;assert.equal(courses(w).rows[0].editable,false);});
+test('业务预览只读，不返回完整状态，颜色明确且预览过期拒绝',()=>{const w=fixture(),before=businessHash(w.frame.local),edit=courseEditSchema.parse({target:{sourceId:null,series:['a']},common:{teacher:'老师'},colors:[{seriesId:'a',rgb:null}]});const p=previewCourse(w,edit,1);assert.equal(p.state,undefined);assert.equal(businessHash(w.frame.local),before);assert.equal(p.colors[0].rgb,null);assert.notEqual(p.businessHash,before);assert.throws(()=>previewCourse(w,edit,0));assert.throws(()=>courseEditSchema.parse({...edit,state:{}}));});

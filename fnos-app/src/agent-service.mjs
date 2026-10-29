@@ -149,7 +149,7 @@ export class AgentService {
     else if (op.name === 'migration.status') data = { ...data, records:page(data.records) };
     else if (op.name === 'backups.list') data = { ...data, backups:page(data.backups) };
     else if (op.name.startsWith('history.') && Array.isArray(data.rows) && input.limit && data.rows.length > input.limit) { data = { ...data, rows:data.rows.slice(0,input.limit), next:(input.offset ?? 0) + input.limit }; }
-    if (method === 'POST') {
+    if (method === 'POST' && op.permission !== 'read') {
       const current = this.catalog();
       const db = current.manifest.workspaces.some(w => w.id === input.workspaceId) ? await current.load(input.workspaceId) : null;
       data = { ...data, ...(data.workspaceId ? { resultWorkspaceId:data.workspaceId } : {}), ...(data.datasetId ? { resultDatasetId:data.datasetId } : {}), catalogVersion:current.manifest.revision, currentWorkspaceId:current.manifest.activeId, workspaceId:input.workspaceId, version:db?.frame.revision ?? null, datasetId:db?.frame.datasetId ?? null, localSaved:!!db, dirty:db?.dirty() ?? null, pending:db ? !!db.frame.pending : null, receipt:db?.frame.receipt ?? null, status:op.name.startsWith('endpoint.') ? data.status : db?.frame.graph?.status ?? 'unchecked', conflict:!!db?.frame.conflict, error:db?.frame.error ? errorValue(new Error(db.frame.error)) : null, deferred:db?.frame.checkpoint.deferred ?? [], otherDevicesReceived:'unknown' };

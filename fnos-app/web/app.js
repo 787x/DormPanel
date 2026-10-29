@@ -1,3 +1,4 @@
+import {installCourseManagement} from './course-management.js';
 import { scheduleStatus } from './sync-status.js';
 import { notifyUser, confirmAction, requestText } from './feedback.js';
 const $ = (id) => document.getElementById(id),
@@ -161,6 +162,7 @@ async function load() {
                 minute: "2-digit",
                 hourCycle: "h23",
               }).format(new Date(ms));
+          if(Number.isInteger(c.sharedRgb))card.style.borderLeft='6px solid #'+c.sharedRgb.toString(16).padStart(6,'0');
           card.tabIndex = 0;
           card.setAttribute("role", "button");
           card.setAttribute("aria-label", "编辑 " + c.title);
@@ -300,6 +302,7 @@ function renderCreationStatus() {
 
 function postSemantics(path,data) {
   // Temporary import tokens never acquire the page-wide business-write fence.
+  if(path==='/api/courses/preview')return 'read';
   if(path==='/api/import/preview')return 'temporary-preview';
   return ['/api/backups/list','/api/backups/verify','/api/backups/cancel','/api/history/preview','/api/history/cleanup-preview','/api/connections/test','/api/connections/browse'].includes(path)
     || path==='/api/sync' && data.discover
@@ -1837,3 +1840,5 @@ $('historyFilters').onsubmit=event=>{
 $('maintenancePage').onclick=async()=>{await $('historyPage').onclick();$('advancedHistory').open=true;$('advancedHistory').scrollIntoView();};
 navigate('dashboard');
 await load();
+
+installCourseManagement({context:()=>({workspaceId,version,catalogVersion,datasetId:local?.datasetId??null,epoch:loadEpoch,view:viewEpoch}),get,post,load,requireEditing,confirmAction,notifyUser});
