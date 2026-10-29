@@ -1,3 +1,5 @@
+import {legacyKey} from './shared-course-colors.mjs';
+import {businessHash} from './v3-protocol.mjs';
 import {scheduleSlots, scheduleRecord, validateScheduleParents} from './shared-course-schedule.mjs';
 import {Registry, wireRecords, durableRecords} from './shared-records.mjs';
 import {sharedTypes} from './shared-types.mjs';
@@ -13,6 +15,7 @@ import {
   hash,
   overrideKey,
   schemas,
+  termKey,
   uuid,
 } from "./protocol.mjs";
 import { emptyState, same } from "./merge.mjs";
@@ -140,6 +143,56 @@ export class Workspace {
     return task;
   }
   courseSchedules() { return scheduleSlots(this.frame.local); }
+  courseEditCandidate(state,edit) {
+    const {target,slots=[],deleteIds=[],overrides=[],common={},colors=[]}=edit;
+    ensure(target && Array.isArray(target.series)&&target.series.length>0&&new Set(target.series).size===target.series.length,'必须明确选择系列集合');
+    const series=new Set(target.series),source=target.sourceId;
+    const identities=target.series.map(id=>legacyKey(state,source,id));
+    ensure(source===null||new Set(identities).size===1,'导入系列不属于同一原始逻辑课程');
+    const owns=s=>s.sourceId===source&&series.has(s.ownerSeries);
+    const existing=new Map(scheduleSlots(state).map(s=>[s.id,s]));
+    ensure(slots.every(owns)&&deleteIds.every(id=>existing.has(id)&&owns(existing.get(id))),'安排目标超出选择范围');
+    ensure(new Set(deleteIds).size===deleteIds.length&&new Set(slots.map(s=>s.id)).size===slots.length,'重复时段身份');
+    ensure(Object.keys(common).every(k=>['title','teacher','note'].includes(k)),'未知公共字段');
+    let next=structuredClone(state);
+    for(const id of target.series) next=this.courseScheduleCandidate(next,slots.filter(s=>s.ownerSeries===id),null,{sourceId:source,ownerSeries:id,deleteIds:deleteIds.filter(key=>existing.get(key).ownerSeries===id)});
+    ensure(new Set(overrides.map(o=>o.seriesId)).size===overrides.length,'重复系列覆盖');
+    for(const o of overrides){
+      ensure(series.has(o.seriesId)&&['upsert','reset'].includes(o.action),'覆盖目标不合法');
+      if(o.action==='upsert') {
+        const p=o.patch??{};
+        if(p.startMinute!=null||p.endMinute!=null||p.timingMode==='custom') ensure(p.timingMode==='custom'&&Number.isInteger(p.startMinute)&&Number.isInteger(p.endMinute)&&p.endMinute>p.startMinute,'自定义时间必须明确提供有效完整起止范围');
+        if(p.periodStart!=null||p.periodEnd!=null||p.timingMode==='linked') {
+          ensure(p.timingMode==='linked'&&Number.isInteger(p.periodStart)&&Number.isInteger(p.periodEnd)&&p.periodStart<=p.periodEnd,'节次编辑必须明确提供完整范围');
+          const owner=state.sources.find(s=>s.id===source),profile=owner&&state.profiles.find(p=>p.termKey===termKey(owner));
+          ensure(profile&&profile.phases.every(phase=>{const a=phase.periods.find(t=>t.periodNumber===p.periodStart),b=phase.periods.find(t=>t.periodNumber===p.periodEnd);return a&&b&&b.end>a.start;}),'来源作息不能解析所选节次');
+        }
+      }
+      applyEdit(next,{kind:'override',sourceId:source,seriesId:o.seriesId,anchorDate:null,action:o.action,patch:o.patch});
+    }
+    if(Object.keys(common).length){
+      for(const id of target.series){const old=next.classOverrides.find(o=>o.sourceId===source&&o.seriesId===id&&o.anchorDate===null);
+        const fields=schemas.find(s=>s[0]==='classOverrides')[3].slice(4).map(([name])=>name);
+        const patch=Object.fromEntries(fields.filter(k=>old?.[k]!=null).map(k=>[k,old[k]]));
+        applyEdit(next,{kind:'override',sourceId:source,seriesId:id,anchorDate:null,action:'upsert',patch:{...patch,...common}});
+      }
+      const registry=new Registry(sharedTypes);let rows=wireRecords(next.sharedRecords);
+      for(const slot of scheduleSlots(next).filter(owns)) rows=registry.replace(rows,scheduleRecord({...slot,...common}));
+      next.sharedRecords=durableRecords(rows);
+    }
+    ensure(new Set(colors.map(c=>legacyKey(state,source,c.seriesId))).size===colors.length,'同一逻辑课程不能提交竞争的颜色操作');
+    for(const color of colors){ensure(series.has(color.seriesId)&&Object.hasOwn(color,'rgb'),'颜色目标不合法');next=changeSharedCourseColor(next,source,color.seriesId,color.rgb);}
+    next=canonical(next);new Registry(sharedTypes).validateState(next);return next;
+  }
+  previewCourseEdit(edit,expected) {
+    this.guard?.();ensure(Number.isSafeInteger(expected)&&expected===this.frame.revision,'请求版本过期，请重新读取');
+    ensure(this.frame.v3?.binding?.format===4,'Explicit shared dataset upgrade required');
+    const state=this.courseEditCandidate(this.frame.local,edit);return {state,businessHash:businessHash(state),expectedRevision:expected};
+  }
+  saveCourseEdit(edit,expected) {
+    ensure(Number.isSafeInteger(expected),'必须提供 revision');
+    return this.tx(f=>{ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');f.local=this.courseEditCandidate(f.local,edit);return {state:structuredClone(f.local),businessHash:businessHash(f.local)};},expected);
+  }
   courseScheduleCandidate(state,slots,color,target) {
     ensure(target && (target.sourceId===null||typeof target.sourceId==='string') && typeof target.ownerSeries==='string' && Array.isArray(target.deleteIds),'必须明确课程范围和删除 ID');
     const registry=new Registry(sharedTypes),current=wireRecords(state.sharedRecords??[]);registry.writable(current);
@@ -158,14 +211,12 @@ export class Workspace {
     return next;
   }
   previewCourseSchedules(slots,color,expected,target) {
-    this.guard?.();const frame=this.snapshot();
-    ensure(Number.isSafeInteger(expected)&&expected===frame.revision,'请求版本过期，请重新读取');
-    ensure(frame.v3?.binding?.format===4,'Explicit shared dataset upgrade required');
-    return {expectedRevision:expected,state:this.courseScheduleCandidate(frame.local,slots,color,target)};
+    ensure(target&&Array.isArray(target.deleteIds),'必须明确课程范围和删除 ID');ensure(!color||color.sourceId===target.sourceId,'颜色来源不匹配');
+    return this.previewCourseEdit({target:{sourceId:target.sourceId,series:[target.ownerSeries]},slots,deleteIds:target.deleteIds,colors:color?[{seriesId:color.seriesId,rgb:color.rgb}]:[]},expected);
   }
   saveCourseSchedules(slots,color,expected,target) {
-    ensure(Number.isSafeInteger(expected),'必须提供 revision');
-    return this.tx(f=>{ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');f.local=this.courseScheduleCandidate(f.local,slots,color,target);},expected);
+    ensure(target&&Array.isArray(target.deleteIds),'必须明确课程范围和删除 ID');ensure(!color||color.sourceId===target.sourceId,'颜色来源不匹配');
+    return this.saveCourseEdit({target:{sourceId:target.sourceId,series:[target.ownerSeries]},slots,deleteIds:target.deleteIds,colors:color?[{seriesId:color.seriesId,rgb:color.rgb}]:[]},expected);
   }
   setSharedCourseColor(sourceId,seriesId,rgb,expected) {
     return this.tx(f=>{ensure(f.v3?.binding?.format===4,'Explicit shared dataset upgrade required');f.local=changeSharedCourseColor(f.local,sourceId,seriesId,rgb);},expected);

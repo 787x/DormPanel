@@ -51,3 +51,26 @@ DPV3/4 Phone 使用 SharedCourseColors.display；没有共享颜色采用确定�
 - Kotlin 新编辑接口使用 CourseColorEdit.Unchanged 或 Set(rgb)；Set(null) 才表示明确恢复自动。旧 rgb 接口仅为显式颜色操作的兼容包装，不把 null 当作“不修改”。Phone 根据草稿与原模式比较，没有颜色变化就保留原记录；纯无改动不提交。Node 无 color 对象表示不改色，`{sourceId,seriesId,rgb:null}` 明确恢复自动。
 - 来源替换保留仍存在的 sourceId/seriesId 关联；缺失或无法匹配时拒绝整个事务，并列出受影响安排和可执行处理方法。来源删除有引用时拒绝，不提供隐式级联。Phone 提供“移除此课程的全部共享安排规则（恢复原始基线）”的独立草稿确认与原子保存路径；移除所有关联规则后才能操作来源。Node 使用明确 deleteIds 做同样处理。保留新增安排且删除其来源目前不支持，不自动更换身份。规则移除与随后来源操作是两个明确的用户动作，各步均保持引用完整，不宣称为组合级联事务。
 - 本地课程不再默认 20 周。新增本地安排从空周集合开始，用户必须输入范围；单双周按钮必须有明确上限。将无限重复原课程有限替换时，额外勾选确认“范围外不再上课”，否则拒绝接受草稿。导入课程仍由真实实例与有效学期计算周集合。已存在有限规则保持其原周集合，线格式没有变化。
+
+## 第二轮审查：多系列原子课程编辑与父课程删除
+
+Node 新入口 `previewCourseEdit(edit, expectedRevision)` / `saveCourseEdit(edit, expectedRevision)`：
+
+```js
+{
+  target: {sourceId, series: ['A', 'B', 'C']},
+  overrides: [{seriesId:'A', action:'upsert', patch:{timingMode:'custom', startMinute:600, endMinute:660}}],
+  slots: [/* 显式新增或修改的完整时段 */],
+  deleteIds: [/* 明确删除的时段 ID */],
+  common: {teacher:'统一教师', note:'统一备注'},
+  colors: [{seriesId:'A', rgb:0x123456}]
+}
+```
+
+除 target 外其他字段可省略，target 必须明确非空、去重的系列集合。导入系列必须有相同来源及 PR65 原始逻辑身份；人工显示覆盖不参与分组，歧义系列不能扩展为多系列。手动条目必须逐 ID 显式选择。只改选定系列的全周覆盖，指定周覆盖保留。公共字段只允许名称、教师、备注，并作用于选中系列及其安排；未提交的时段保留，删除只按 deleteIds。colors 缺省不改色，rgb:null 明确恢复自动；同一逻辑颜色身份不得有竞争操作。原单系列入口委托此候选/事务，不维护另一套保存语义。
+
+预览及保存都验证同一候选；保存重新在正式 tx 内校验当前身份、能力、完整业务状态与预算。成功返回完整 state 与 businessHash，revision 只前进一次；不提供绕过权限、恢复或冲突保护的入口。
+
+Phone 以 `sourceId==null && ownerSeries==entryId` 检查手动父课程依赖，包含停用安排。详情及普通编辑入口不再允许直接删除被引用父课程，提示先进入课程管理移除规则并保存。正式 Room Writer 在删除事务中再次检查当前依赖；ScheduleSource 删除不再乐观移除内存行，成功后重读，拒绝/失败后重读真实状态，业务拒绝不标成数据库损坏。结果不确定时保留恢复保护，已提交但重读失败则明确提示不得重复删除。无依赖的旧格式课程仍可删除。
+
+全周时间覆盖采用显式完整范围：自定义时间必须提供 custom 模式及有效起止分钟，节次必须提供 linked 模式、完整有序节次并能由来源作息解析；跨午夜新增安排仍使用 course.schedule 的已有语义。导入课程共享颜色针对逻辑课程，因此同一逻辑身份只能给出一次颜色操作；手动多 ID 可以逐 ID 明确给色。

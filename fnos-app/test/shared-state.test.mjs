@@ -243,3 +243,33 @@ test('source lifecycle protected transactions reject dangling references and reo
  const digest=businessHash(a.workspace.frame.local);await a.journal.close();const reopened=await openV3Workspace(root,()=>{},identity);
  assert.equal(businessHash(reopened.workspace.frame.local),digest);assert(!reopened.workspace.frame.local.sources.some(s=>s.id===source));assert.equal(scheduleSlots(reopened.workspace.frame.local).length,0);await reopened.journal.close();
 });
+
+test('logical multi-series edit is one transaction with common fields, color and scoped deletion',async()=>{
+ const {decode:legacy}=await import('../src/protocol.mjs'),{scheduleRecord}=await import('../src/shared-course-schedule.mjs'),{durableRecords}=await import('../src/shared-records.mjs');
+ const seed=legacy(await readFile(new URL('../../schedule-core/src/test/resources/sync-v2/complex-root.dpc',import.meta.url))).state;
+ const raw=seed.imported[0],source=seed.sources.find(s=>s.id===raw.sourceId);
+ seed.imported=['A','B','C','other'].map((id,n)=>({...raw,id:'raw-'+id,seriesId:id,title:id==='other'?'Other':'Math',start:raw.start+BigInt(n*86400000),end:raw.end+BigInt(n*86400000)}));seed.sources=[{...source,occurrenceCount:4,firstStart:seed.imported[0].start,lastEnd:seed.imported[3].end}];seed.classOverrides=[];seed.dayAdjustments=[];
+ const slot=(id,owner)=>({id,sourceId:source.id,ownerSeries:owner,replacesSeries:null,week1:'2026-09-07',weeks:[1,3],weekday:2,startMinute:480,endMinute:540,periodStart:0,periodEnd:0,enabled:true,title:'Math',location:'A',teacher:'T',note:'N'});
+ seed.sharedRecords=durableRecords([scheduleRecord(slot('keep','other')),scheduleRecord(slot('delete-A','A')),scheduleRecord(slot('stay-A','A')),{typeId:'test.note',recordId:'opaque',schemaVersion:1,required:false,dependencies:[],payload:Buffer.from('opaque')}]);
+ const root=await dir(),identity={writerId:randomUUID(),installationId:randomUUID()},remote=new FakeRemote(),a=await openV3Workspace(root,()=>{},identity),engine=new V3Engine(a.journal,identity.writerId);
+ await engine.initialize(remote,seed);for(let n=0;n<3;n++){const b=new Budget();try{await engine.round(remote,new IndexedV3Cache(root,b),b,{discoverySteps:32});}catch(e){if(!/incomplete/.test(e.message))throw e;}}
+ const edit={target:{sourceId:source.id,series:['A','B','C']},slots:[slot('new-B','B')],deleteIds:['delete-A'],overrides:[{seriesId:'A',action:'upsert',patch:{timingMode:'custom',startMinute:600,endMinute:660}},{seriesId:'B',action:'upsert',patch:{location:'New room'}},{seriesId:'C',action:'upsert',patch:{teacher:'New teacher'}}],common:{note:'Common'},colors:[{seriesId:'A',rgb:0x123456}]};
+ const revision=a.workspace.frame.revision,before=businessHash(a.workspace.frame.local),preserved=a.workspace.frame.local.sharedRecords.filter(r=>r.recordId==='keep'||r.typeId==='test.note');
+ const bad=structuredClone(edit);bad.overrides[1].patch={timingMode:'custom',startMinute:600,endMinute:500};await assert.rejects(a.workspace.saveCourseEdit(bad,revision));assert.equal(businessHash(a.workspace.frame.local),before);
+ await assert.rejects(a.workspace.saveCourseEdit({...edit,target:{sourceId:source.id,series:['A','other']}},revision));assert.equal(businessHash(a.workspace.frame.local),before);
+ const originalCommit=a.workspace.store.commitWorkspace;
+ a.workspace.store.commitWorkspace=(prepare,context)=>originalCommit.call(a.workspace.store,()=>{prepare();throw Error('injected course commit failure');},context);
+ try {await assert.rejects(a.workspace.saveCourseEdit(edit,revision),/injected course commit/);} finally {a.workspace.store.commitWorkspace=originalCommit;}
+ assert.equal(businessHash(a.workspace.frame.local),before);assert.equal(a.workspace.frame.revision,revision);
+ const preview=a.workspace.previewCourseEdit(edit,revision),result=await a.workspace.saveCourseEdit(edit,revision);assert.equal(result.businessHash,preview.businessHash);assert.equal(a.workspace.frame.revision,revision+1);
+ assert.deepEqual(a.workspace.frame.local.sharedRecords.filter(r=>r.recordId==='keep'||r.typeId==='test.note'),preserved);assert.equal(a.workspace.frame.local.classOverrides.length,3);assert.equal(rgb(a.workspace.frame.local,source.id,'C'),0x123456);
+ assert(!scheduleSlots(a.workspace.frame.local).some(s=>s.id==='delete-A'));assert(scheduleSlots(a.workspace.frame.local).some(s=>s.id==='stay-A'&&s.note==='Common'));await assert.rejects(a.workspace.saveCourseEdit(edit,revision));
+ if(!process.env.PR70_MULTI_VECTOR) assert.equal(businessHash(a.workspace.frame.local),(await readFile(new URL('../../test-vectors/pr70-multi/hash.txt',import.meta.url),'utf8')).trim());
+ if(process.env.PR70_MULTI_VECTOR){
+  const {projectWeek}=await import('../src/projection.mjs');const state=a.workspace.frame.local;
+  await writeFile(join(process.env.PR70_MULTI_VECTOR,'state.dpv'),encode({format:4,type:2,datasetId:'11111111-1111-1111-1111-111111111111',objectId:'22222222-2222-2222-2222-222222222222',writerId:'33333333-3333-3333-3333-333333333333',epochId:'44444444-4444-4444-4444-444444444444',epochNumber:1,descriptorHash:'1'.repeat(64),refs:[],state}));
+  await writeFile(join(process.env.PR70_MULTI_VECTOR,'hash.txt'),businessHash(state));
+  await writeFile(join(process.env.PR70_MULTI_VECTOR,'projection.json'),JSON.stringify(['2026-09-07','2026-10-12'].flatMap(week=>projectWeek(state,week).map(v=>[v.seriesId,v.start,v.end,v.location,v.teacher,v.note,v.sharedRgb]))));
+ }
+ const digest=businessHash(a.workspace.frame.local);await a.journal.close();const reopened=await openV3Workspace(root,()=>{},identity);assert.equal(businessHash(reopened.workspace.frame.local),digest);await reopened.journal.close();
+});

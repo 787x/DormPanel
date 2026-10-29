@@ -186,11 +186,18 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         if (closed || !ready || readOnly || applyingSnapshot || state.events.none { it.id == id }) return
         state = state.copy(events = state.events.filterNot { it.id == id }); store.deleteEvent(id, completion); refresh()
     }
-    fun deleteEntry(id: String) {
-        if (closed || !ready || readOnly || applyingSnapshot || state.entries.none { it.id == id }) return
-        state = state.copy(entries = state.entries.filterNot { it.id == id },
-            classOverrides = state.classOverrides.filterNot { it.sourceId == null && it.seriesId == id })
-        store.deleteEntry(id, completion); refresh()
+    fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit = {}) {
+        if (!editable || state.entries.none {it.id==id}) {callback(Result.failure(IllegalStateException("课程不可删除，请重新读取")));return}
+        // Never optimistically remove a parent: a dependent may arrive before Writer execution.
+        applyingSnapshot=true;refresh()
+        store.deleteEntry(id) { result ->
+            applyingSnapshot=false
+            if(result.exceptionOrNull() is ScheduleCommitUnconfirmed) {refresh();callback(result)}
+            else reload { loaded ->
+                if(result.isSuccess) localCommitted?.invoke()
+                callback(if(result.isFailure) result else if(loaded.isFailure) Result.failure(IllegalStateException("已删除到本机，但重新读取失败；请恢复读取，勿重复删除",loaded.exceptionOrNull())) else Result.success(Unit))
+            }
+        }
     }
     fun saveDayAdjustment(date: LocalDate, mode: String, weekday: Int? = null, label: String = ""): Boolean {
         val item = if (mode == "normal") null else DayAdjustment(date.toString(), mode, weekday, label.trim())

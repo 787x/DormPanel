@@ -20,6 +20,62 @@ class SharedCourseManagementTest {
     private var shotSuffix=""
     private fun shot(name:String) {i.waitForIdleSync();Thread.sleep(500);val bitmap=i.uiAutomation.takeScreenshot()
         java.io.File(c.getExternalFilesDir(null),"pr70-$name$shotSuffix.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
+    @Test fun roomParentDeletionIsProtectedAndCanFollowExplicitDependencyRemoval() {
+        require(c.packageName.endsWith(".testbed"))
+        com.dormpanel.app.schedule.testing.V3UiFixture(c).use {fixture ->
+            val store=ScheduleStores.create(c) as RoomScheduleStore
+            try {
+                await<Unit>{store.put(TimetableEntry("parent","Parent",1,480,540),it)}
+                store.prepareV3(fixture.account.baseUrl,sharedFormat=true);repeat(16){store.synchronizeV3(fixture.account)}
+                val base=await<ScheduleState>(store::load)
+                val slot=CourseSlot("child",null,"parent",null,"2026-09-07",listOf(1),2,480,540,0,0,true,"Child","","","")
+                await<Unit>{store.putSharedRecords(listOf(SharedCourseSchedule.record(slot)),SyncV3Codec.businessHash(base),it)}
+                for(enabled in listOf(true,false)) {
+                    var saved=await<ScheduleState>(store::load)
+                    await<Unit>{store.putSharedRecords(listOf(SharedCourseSchedule.record(slot.copy(enabled=enabled))),SyncV3Codec.businessHash(saved),it)}
+                    saved=await<ScheduleState>(store::load)
+                    assertTrue(runCatching {await<Unit>{store.deleteEntry("parent",it)}}.isFailure)
+                    assertEquals(SyncV3Codec.businessHash(saved),SyncV3Codec.businessHash(await<ScheduleState>(store::load)))
+                }
+                val saved=await<ScheduleState>(store::load)
+                await<Unit>{store.putSharedRecords(emptyList(),SyncV3Codec.businessHash(saved),it)}
+                await<Unit>{store.deleteEntry("parent",it)}
+                assertTrue(await<ScheduleState>(store::load).entries.isEmpty())
+            } finally {store.close()}
+        }
+    }
+    @Test fun referencedParentDetailsHideDeleteAndRejectionKeepsDisplay() {
+        require(c.packageName.endsWith(".testbed"))
+        for(enabled in listOf<Boolean?>(null,true,false)) {
+            val monday=java.time.LocalDate.now().with(java.time.DayOfWeek.MONDAY)
+            val slot=CourseSlot("child",null,"parent",null,monday.toString(),listOf(1),2,480,540,0,0,enabled==true,"Child","","","")
+            var saved=ScheduleState(entries=listOf(TimetableEntry("parent","Parent",1,480,540)),sharedRecords=if(enabled==null) emptyList() else listOf(SharedCourseSchedule.record(slot)))
+            ScheduleStores.overrideFactory={object:ScheduleStore {
+                override fun load(callback:(Result<ScheduleState>)->Unit)=callback(Result.success(saved))
+                override fun put(event:CalendarEvent,callback:(Result<Unit>)->Unit) {}
+                override fun put(entry:TimetableEntry,callback:(Result<Unit>)->Unit) {}
+                override fun deleteEvent(id:String,callback:(Result<Unit>)->Unit) {}
+                override fun deleteEntry(id:String,callback:(Result<Unit>)->Unit) {callback(runCatching {SharedCourseSchedule.requireDeletable(saved,id);saved=saved.copy(entries=emptyList())})}
+                override fun close() {}
+            }}
+            try {launchPhoneTestActivity().use { scenario ->
+                Thread.sleep(1200)
+                scenario.onActivity { activity ->
+                    val editor=TimetableActivity::class.java.getDeclaredField("editors").apply {isAccessible=true}.get(activity) as PhoneEditors
+                    assertTrue(activity.source.ready);assertFalse(activity.source.error);assertFalse(activity.source.applyingSnapshot);assertFalse(activity.busy)
+                    editor.classDetail(ScheduleProjection.week(saved,monday,activity.source.clock.zone()).first {it.seriesId=="parent"})
+                    assertTrue((PhoneEditors::class.java.getDeclaredField("dialogs").apply {isAccessible=true}.get(editor) as List<*>).isNotEmpty())
+                };Thread.sleep(500)
+                if(enabled==null) {
+                    onView(withText("Delete recurring class")).inRoot(isDialog()).perform(scrollTo(),click());assertTrue(saved.entries.isEmpty())
+                } else {
+                    onView(withText("Delete recurring class")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                    scenario.onActivity { activity -> activity.source.deleteEntry("parent") {result ->assertTrue(result.isFailure)};assertEquals(saved,activity.source.state);assertFalse(activity.source.error) }
+                    assertEquals(1,saved.entries.size)
+                }
+            }} finally {ScheduleStores.overrideFactory=null}
+        }
+    }
     @Test fun rotationRetainsAcceptedCourseDraftWithoutWriting() {
         require(c.packageName.endsWith(".testbed"))
         val state=ScheduleState(entries=listOf(TimetableEntry("draft","草稿恢复",1,480,540)),sharedRecords=emptyList())

@@ -931,6 +931,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     }
     override fun deleteEvent(id: String, callback: (Result<Unit>) -> Unit) = write(callback) { database.dao().deleteEvent(id) }
     override fun deleteEntry(id: String, callback: (Result<Unit>) -> Unit) = write(callback) {
+        SharedCourseSchedule.requireDeletable(readState(),id)
         database.runInTransaction { database.dao().deleteEntry(id); database.dao().deleteLocalOverrides(id) }
     }
     override fun putDayAdjustment(item: DayAdjustment?, date: String, callback: (Result<Unit>) -> Unit) = write(callback) {

@@ -117,6 +117,7 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
         if (!enabled() || !source.ready || source.applyingSnapshot) return
         val owner = source.state.sources.firstOrNull { it.id == item.sourceId }
         val managedSlot = source.state.courseSlots.any { it.id==item.entry.id }
+        val referencedParent=item.sourceId==null && SharedCourseSchedule.localDependents(source.state,item.seriesId).isNotEmpty()
         val info = buildString {
             append(scheduleDate(item.date)).append(" · ").append(item.date.dayOfWeek)
             append("\n").append(context.scheduleTime(item.start)).append(" – ").append(context.scheduleTime(item.end))
@@ -146,10 +147,11 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             if (blocked()) return@scheduleButton
             source.saveClassOverride(item.sourceId, item.seriesId, null, null); dialog.dismiss()
         })
-        if (item.sourceId == null && !managedSlot && !source.readOnly) content.addView(context.scheduleButton("Delete recurring class") {
+        if (item.sourceId == null && !managedSlot && !referencedParent && !source.readOnly) content.addView(context.scheduleButton("Delete recurring class") {
             if (blocked()) return@scheduleButton
-            source.deleteEntry(item.seriesId); dialog.dismiss()
+            source.deleteEntry(item.seriesId) { result -> result.onSuccess {dialog.dismiss()}.onFailure {Toast.makeText(context,it.message ?: "删除未完成",Toast.LENGTH_LONG).show()} }
         })
+        if(referencedParent) content.addView(context.scheduleLabel("此手动父课程仍被共享安排引用（含停用安排）。请先在课程管理移除关联规则并保存，再删除。",16f))
         content.addView(context.scheduleButton("管理整门课") {
             dialog.dismiss(); courseManagement(item)
         })
@@ -822,7 +824,8 @@ internal class PhoneEditors(private val context: Context, private val source: Sc
             row.addView(button, LinearLayout.LayoutParams(0, context.dp(52), 1f))
         }
         time("Start", { start }, { start = it }); time("End", { end }, { end = it }); fields.addView(row); fields.addView(location)
-        editor(if (existing == null) "Add class" else "Edit class", fields, existing?.let { { source.deleteEntry(it.id) } }) {
+        if(existing!=null && SharedCourseSchedule.localDependents(source.state,existing.id).isNotEmpty()) fields.addView(context.scheduleLabel("此课程仍被共享安排引用（含停用安排），不能直接删除。请返回课程管理，先明确移除关联规则并成功保存。",16f))
+        editor(if (existing == null) "Add class" else "Edit class", fields, existing?.takeIf {SharedCourseSchedule.localDependents(source.state,it.id).isEmpty()}?.let { { source.deleteEntry(it.id) {result -> result.onFailure {error ->Toast.makeText(context,error.message ?: "删除未完成",Toast.LENGTH_LONG).show()} } } }) {
             when {
                 title.text.isBlank() -> "Enter a title."
                 end <= start -> "End must be after start on the same day."

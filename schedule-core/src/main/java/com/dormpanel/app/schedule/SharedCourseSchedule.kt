@@ -52,6 +52,11 @@ object SharedCourseSchedule : SharedTypeAdapter {
         val slot=decode(record)
         return setOf(if(slot.sourceId==null) "class:${slot.ownerSeries}" else "source:${slot.sourceId}")
     }
+    fun localDependents(state: ScheduleState, id: String) = slots(state).filter {it.sourceId==null && it.ownerSeries==id}
+    fun requireDeletable(state: ScheduleState, id: String) {
+        val dependencies=localDependents(state,id)
+        check(dependencies.isEmpty()) {"课程仍被 ${dependencies.size} 条共享安排引用（含停用安排）。请进入课程管理，先明确移除关联规则并成功保存，再删除课程。"}
+    }
     fun slots(state: ScheduleState) = state.courseSlots
     override fun validateState(state: ScheduleState) = validateParents(state)
     fun validateParents(state: ScheduleState) {
