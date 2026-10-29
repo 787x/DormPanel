@@ -1,0 +1,6 @@
+
+com.dormpanel.phone.DaySelectionHighlightTest:.
+
+Time: 62.317
+
+OK (1 test)

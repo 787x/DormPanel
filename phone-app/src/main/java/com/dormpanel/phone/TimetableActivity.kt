@@ -282,9 +282,11 @@ class TimetableActivity : AppCompatActivity() {
             days.addView(scheduleButton("${labels[i]}\n${date.dayOfMonth}") { if (body.active) { selected = date; weekView = false; render() } }.apply {
                 textSize = 12f; minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0; includeFontPadding = false; setPadding(0, 0, 0, 0)
                 isSelected = date == body.date
-                if (date == source.clock.today()) {
+                if (if (weekView) date == source.clock.today() else date == body.date) {
                     backgroundTintList = android.content.res.ColorStateList.valueOf(if (dark) 0xff263e53.toInt() else 0xffdceafa.toInt())
                     setTextColor(if (dark) android.graphics.Color.WHITE else android.graphics.Color.rgb(30,55,80))
+                }
+                if (date == source.clock.today()) {
                     setTypeface(typeface,android.graphics.Typeface.BOLD)
                 } else if (date == body.date) {
                     setTypeface(typeface,android.graphics.Typeface.BOLD)
