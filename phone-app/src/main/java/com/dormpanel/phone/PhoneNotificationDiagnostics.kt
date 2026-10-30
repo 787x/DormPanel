@@ -42,6 +42,6 @@ internal object PhoneNotificationDiagnostics {
             注意：焦点协议或用户开关为真，不代表小米业务场景审核通过。
             小米后台本地通知白名单状态没有可靠的公共查询 API，请在真机按测试文档人工验证。
             设备锁屏展示、实际提升和后台触发时效不能由这份诊断证明。
-        """.trimIndent()
+        """.trimIndent() + "\n\n" + CourseNoticeObservability.summary(context)
     }
 }

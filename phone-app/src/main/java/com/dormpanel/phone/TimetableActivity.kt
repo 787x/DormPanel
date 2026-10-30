@@ -576,14 +576,22 @@ class TimetableActivity : AppCompatActivity() {
                 .getOrElse { "通知能力检查失败：${it.javaClass.simpleName}" }
             runOnUiThread {
                 if (isDestroyed || isFinishing) return@runOnUiThread
-                AlertDialog.Builder(this).setTitle("手机通知能力诊断")
+                val dialog = AlertDialog.Builder(this).setTitle("手机通知能力诊断")
                     .setMessage(report)
                     .setPositiveButton("确定", null)
                     .setNeutralButton("系统通知设置") { _, _ ->
                         val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                             .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
                         runCatching { startActivity(intent) }
-                    }.show()
+                    }
+                if (android.os.Build.VERSION.SDK_INT >= 36) {
+                    dialog.setNegativeButton("实时更新权限") { _, _ ->
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                        runCatching { startActivity(intent) }
+                    }
+                }
+                dialog.show()
             }
         }
     }

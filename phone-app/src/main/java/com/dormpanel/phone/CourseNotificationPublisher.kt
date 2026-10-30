@@ -88,5 +88,6 @@ internal object CourseNotificationPublisher {
                 .setDeleteIntent(stop)
         }
         manager.notify(ID, builder.build())
+        CourseNoticeObservability.notifyReturned(context)
     }
 }

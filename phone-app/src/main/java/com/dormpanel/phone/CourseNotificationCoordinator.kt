@@ -45,8 +45,14 @@ internal object CourseNotificationCoordinator {
                     CourseNotificationPublisher.publish(app, displayed, opts, promote = tracked != null)
                     schedule(app, displayed.nextWake)
                 },
-                timedOut = { Log.w(TAG, "Schedule read timed out; keeping last notification") },
-                recover = { schedule(app, Instant.now().plusSeconds(300)) },
+                timedOut = {
+                    Log.w(TAG, "Schedule read timed out; keeping last notification")
+                    CourseNoticeObservability.failed(app, "Store read timeout")
+                },
+                recover = {
+                    CourseNoticeObservability.failed(app, "Store read/publish retry")
+                    schedule(app, Instant.now().plusSeconds(300))
+                },
                 cancel = {
                     app.getSystemService(AlarmManager::class.java).cancel(alarm(app))
                     CourseNotificationPublisher.cancel(app)
@@ -64,6 +70,7 @@ internal object CourseNotificationCoordinator {
     private fun schedule(context: Context, next: Instant) {
         val manager = context.getSystemService(AlarmManager::class.java)
         manager.cancel(alarm(context))
+        CourseNoticeObservability.scheduled(context, next)
         manager.setAndAllowWhileIdle(
             AlarmManager.RTC_WAKEUP,
             maxOf(next.toEpochMilli(), System.currentTimeMillis() + 1000),
@@ -83,6 +90,8 @@ class CourseNotificationReceiver : BroadcastReceiver() {
                 Intent.ACTION_MY_PACKAGE_REPLACED,
                 STOP_TRACKING_ACTION
             )) return
+        if (intent.action == "com.dormpanel.phone.COURSE_NOTICE_REFRESH")
+            CourseNoticeObservability.fired(context)
         val pending = goAsync()
         if (intent.action == STOP_TRACKING_ACTION) CourseLiveTracking.stop(context)
         CourseNotificationCoordinator.request(context) { pending.finish() }
