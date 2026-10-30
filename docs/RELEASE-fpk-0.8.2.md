@@ -16,3 +16,5 @@ ICS 是外部日历交换，不是 DormPanel 完整业务备份；最多 366 天
 
 ## 验收证据与边界
 复用 [PR71](pr71-validation.md)、[PR72](verification/pr72/README.md)、[PR74 修复](verification/pr74/review-fixes/README.md)及 [PR75 ICS](ics-export.md) 的专项验收；PR73 证据见[缓存有效期](verification/pr73-cache-expiry/README.md)、[教学周](verification/pr73-factory-week/README.md)与[审查修复](verification/pr73-review-fixes/README.md)。本轮只补正式产物版本、身份、签名、包内容及哈希门禁，不重复增长、故障矩阵、Widget 全套或长期 soak。PR75 已记录的 Kotlin 缓存读取断言及 Node 增长/worker 基线失败保持披露，不声称全量回归全绿。本轮未安装日用 APK/FPK，未更改 Writer、工作区、凭据或同步绑定；历史隔离验收不等于本轮正式候选安装 PASS。
+
+最终源码、资产哈希及本轮门禁结果见[联合发布记录](release-android-0111-fpk-082.md)。
