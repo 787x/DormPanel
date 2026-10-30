@@ -39,3 +39,9 @@ Android 原生 Live Updates 只用于明确主动开启的实时跟踪尝试，�
 - 独立 `.pr76testbed` 包构建及 Android 9 模拟器 instrumentation：`CourseNotificationTest` 1 项通过，验证设置持久化、同 ID 更新、ongoing/onlyAlertOnce、系统 Chronometer 起止时间、PRIVATE/publicVersion 脱敏及 OFF 取消。未改动日用 Store。
 - MIX 2S（API 33）隔离包安装成功，instrumentation 返回 `Process crashed`，日志显示进程被 SIGKILL；未取得成功验收结果，未据此断言具体厂商限制原因。
 - **仍未验证**：Android 13 权限弹窗与拒绝的交互、系统渠道关闭、通知点击与设置大字体触控、真实锁屏视觉脱敏/倒计时、HyperOS 后台延迟、Doze、重启和原位升级恢复。模拟器通知对象断言不代替这些验收。PR 保持 Draft。
+
+### MIX 2S 重试与杀进程诊断（2026-10-30）
+- 设备：MIX 2S Emerald Edition，API 33，系统显示版本 `V14.0.23.10.8.DEV`（MIUI）；不能据此宣称 HyperOS 验收。
+- 使用新鲜隔离包状态复现失败：通知入队后，logcat 记录 `POST_NOTIFICATIONS` 权限变更，`am_kill` 原因为 `PermissionHelper`，随后 SIGKILL；包权限变为 `granted=false`。本次明确是系统权限变更导致测试进程终止，未观察到应用 Java 崩溃。渠道首次初始化与撤权的时间关联不能证明 MIUI 内部具体策略。
+- 保留已创建渠道，仅移除隔离包的 `course_notice_settings.xml` 测试配置并重新授予通知权限后，`CourseNotificationTest` 连续两次通过（各 1 项）：一次 root 启动，一次普通 shell 启动。无需修改系统省电策略；未触及日用包或日用 Store。
+- 真机通过范围仅为 notification 对象、设置持久化及 OFF 取消等该测试中的断言；没有将其扩大为锁屏视觉、通知点击、权限弹窗、重启恢复或 HyperOS 后台验收。保持 Draft。
