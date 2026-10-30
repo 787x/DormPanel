@@ -527,6 +527,8 @@ class TimetableActivity : AppCompatActivity() {
                     privacy.isChecked
                 )
                 CourseNoticeSettings.write(this, options)
+                // Turning notifications off must also end an explicitly tracked session.
+                if (options.mode == CourseNoticeMode.OFF) CourseLiveTracking.stop(this)
                 if (options.mode != CourseNoticeMode.OFF &&
                     android.os.Build.VERSION.SDK_INT >= 33 &&
                     checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
