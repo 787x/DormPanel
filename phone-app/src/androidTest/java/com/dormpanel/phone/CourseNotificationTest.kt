@@ -29,6 +29,9 @@ class CourseNotificationTest {
             CourseNotificationPublisher.publish(c,CourseNoticePlan(course,true,false,course.end),options)
             Thread.sleep(500)
             val active=manager.activeNotifications.single { it.id==21001 }.notification
+            assertEquals(R.drawable.ic_notification_course, active.smallIcon.resId)
+            assertEquals(R.drawable.ic_notification_course, active.publicVersion.smallIcon.resId)
+            assertTrue(active.timeoutAfter in 1..600_000)
             assertEquals(Notification.VISIBILITY_PRIVATE,active.visibility)
             assertTrue(active.flags and Notification.FLAG_ONGOING_EVENT != 0)
             assertTrue(active.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
@@ -40,6 +43,16 @@ class CourseNotificationTest {
             CourseNotificationPublisher.publish(c,CourseNoticePlan(course,false,true,course.start),options)
             Thread.sleep(500)
             assertEquals(course.start.toEpochMilli(),manager.activeNotifications.single { it.id==21001 }.notification.`when`)
+            // With no refresh at all, the OS still removes the expired notification.
+            CourseNotificationPublisher.publish(c,
+                CourseNoticePlan(course,true,false,Instant.now().plusMillis(1000)),options)
+            val expiryLimit=android.os.SystemClock.elapsedRealtime()+15_000
+            while (manager.activeNotifications.any { it.id==21001 } &&
+                android.os.SystemClock.elapsedRealtime()<expiryLimit) Thread.sleep(250)
+            assertFalse(manager.activeNotifications.any { it.id==21001 })
+            CourseNotificationPublisher.publish(c,CourseNoticePlan(course,true,false,course.end),options)
+            Thread.sleep(500)
+            assertTrue(manager.activeNotifications.any { it.id==21001 })
             CourseNoticeSettings.write(c,options.copy(mode=CourseNoticeMode.OFF))
             val done=CountDownLatch(1)
             CourseNotificationCoordinator.request(c) { done.countDown() }

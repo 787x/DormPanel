@@ -26,7 +26,6 @@ internal object CourseNotificationPublisher {
             CHANNEL, "课程状态", NotificationManager.IMPORTANCE_LOW
         ).apply {
             description = "本地课程进度和下一节课"
-            lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
         })
         return (Build.VERSION.SDK_INT < 33 ||
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
@@ -56,17 +55,19 @@ internal object CourseNotificationPublisher {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val builder = NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_timetable)
+            .setSmallIcon(R.drawable.ic_notification_course)
             .setContentTitle(title)
             .setContentText(subtitle)
             .setContentIntent(open)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setAutoCancel(false)
+            // System-side expiry survives process death and delayed/non-exact refresh alarms.
+            .setTimeoutAfter((plan.nextWake.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(1))
             .setVisibility(if (options.hideOnLockscreen) NotificationCompat.VISIBILITY_PRIVATE
                 else NotificationCompat.VISIBILITY_PUBLIC)
             .setPublicVersion(NotificationCompat.Builder(context, CHANNEL)
-                .setSmallIcon(R.drawable.ic_timetable)
+                .setSmallIcon(R.drawable.ic_notification_course)
                 .setContentTitle("DormPanel · 课程状态")
                 .setContentText("点按查看课表")
                 .build())

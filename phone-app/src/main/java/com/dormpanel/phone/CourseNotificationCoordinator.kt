@@ -24,6 +24,21 @@ internal object CourseNotificationCoordinator {
     fun request(context: Context, done: () -> Unit = {}) {
         val app = context.applicationContext
         main.post {
+            val deadlines = app.getSharedPreferences("course_notice_validity", Context.MODE_PRIVATE)
+            val validity = CourseNoticeValidity(
+                read = { if (deadlines.contains("until")) deadlines.getLong("until", 0) else null },
+                write = { until ->
+                    val edit = deadlines.edit()
+                    if (until == null) edit.remove("until") else edit.putLong("until", until)
+                    // Persist before notify; an interrupted process must fail closed.
+                    if (!edit.commit()) {
+                        CourseNotificationPublisher.cancel(app)
+                        if (until != null) error("Cannot persist course notice deadline")
+                    }
+                },
+                cancel = { CourseNotificationPublisher.cancel(app) }
+            )
+            validity.expire(System.currentTimeMillis())
             val machine = coordinator ?: WidgetRefreshCoordinator<ScheduleState>(
                 present = { CourseNoticeSettings.read(app).mode != CourseNoticeMode.OFF &&
                     CourseNotificationPublisher.available(app) },
@@ -34,21 +49,22 @@ internal object CourseNotificationCoordinator {
                     }
                 },
                 publish = { result ->
-                    // Failure is not an empty schedule. Preserve the last published frame.
+                    // Failure is not an empty schedule. Recovery retains only an unexpired frame.
                     val state = result.getOrNull()
                     if (state != null) {
                         val now = Instant.now()
                         val opts = CourseNoticeSettings.read(app)
                         val plan = CourseNoticePlanner.plan(state, now, ZoneId.systemDefault(), opts)
+                        validity.remember(plan.nextWake.toEpochMilli())
                         CourseNotificationPublisher.publish(app, plan, opts)
                         schedule(app, plan.nextWake)
-                    } else Log.w(TAG, "Schedule read failed; retaining notification")
+                    } else Log.w(TAG, "Schedule read failed; checking notification expiry")
                 },
-                timedOut = { Log.w(TAG, "Schedule read timed out; keeping last notification") },
-                recover = { schedule(app, Instant.now().plusSeconds(300)) },
+                timedOut = { Log.w(TAG, "Schedule read timed out; checking notification expiry") },
+                recover = { schedule(app, Instant.ofEpochMilli(validity.retryAt(System.currentTimeMillis()))) },
                 cancel = {
                     app.getSystemService(AlarmManager::class.java).cancel(alarm(app))
-                    CourseNotificationPublisher.cancel(app)
+                    validity.clear()
                 }
             ).also { coordinator = it }
             machine.request(done)
