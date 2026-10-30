@@ -1,5 +1,5 @@
 param(
-    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\android-v0.1.10'),
+    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\android-v0.1.11'),
     [string]$BuildToolsDirectory,
     [switch]$AndroidOnly
 )

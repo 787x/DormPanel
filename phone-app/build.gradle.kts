@@ -6,8 +6,8 @@ android {
         applicationId = "com.dormpanel.timetable"
         minSdk = 28
         targetSdk = 37
-        versionCode = 11
-        versionName = "0.1.9"
+        versionCode = 12
+        versionName = "0.1.10"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     // Both apps retain the approved identity. Secrets stay on the build machine.
