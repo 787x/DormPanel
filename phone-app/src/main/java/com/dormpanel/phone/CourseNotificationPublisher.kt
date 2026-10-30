@@ -13,6 +13,8 @@ import androidx.core.app.NotificationManagerCompat
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+internal const val STOP_TRACKING_ACTION = "com.dormpanel.phone.STOP_COURSE_TRACKING"
+
 /** Normal local notification; no permanent foreground service. */
 internal object CourseNotificationPublisher {
     private const val CHANNEL = "course_status"
@@ -20,7 +22,7 @@ internal object CourseNotificationPublisher {
     private val timeFormat = DateTimeFormatter.ofPattern("HH:mm")
     fun cancel(context: Context) = NotificationManagerCompat.from(context).cancel(ID)
 
-    fun publish(context: Context, plan: CourseNoticePlan, options: CourseNoticeOptions) {
+    fun publish(context: Context, plan: CourseNoticePlan, options: CourseNoticeOptions, promote: Boolean = false) {
         val course = plan.course ?: run { cancel(context); return }
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(
@@ -66,6 +68,25 @@ internal object CourseNotificationPublisher {
                 .setUsesChronometer(true)
                 .setChronometerCountDown(true)
         } else builder.setShowWhen(false)
+        if (promote && Build.VERSION.SDK_INT >= 36) {
+            // A request, not proof of eligibility or elevation; do not use Xiaomi private extras.
+            val stop = PendingIntent.getBroadcast(
+                context, 21002,
+                Intent(context, CourseNotificationReceiver::class.java).setAction(STOP_TRACKING_ACTION),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.setRequestPromotedOngoing(true)
+                .addAction(R.drawable.ic_timetable, "结束跟踪", stop)
+                .setDeleteIntent(stop)
+        } else if (promote) {
+            val stop = PendingIntent.getBroadcast(
+                context, 21002,
+                Intent(context, CourseNotificationReceiver::class.java).setAction(STOP_TRACKING_ACTION),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(R.drawable.ic_timetable, "结束跟踪", stop)
+                .setDeleteIntent(stop)
+        }
         manager.notify(ID, builder.build())
     }
 }

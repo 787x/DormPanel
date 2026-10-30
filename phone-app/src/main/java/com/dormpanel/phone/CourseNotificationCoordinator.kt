@@ -25,7 +25,8 @@ internal object CourseNotificationCoordinator {
         val app = context.applicationContext
         main.post {
             val machine = coordinator ?: WidgetRefreshCoordinator<ScheduleState>(
-                present = { CourseNoticeSettings.read(app).mode != CourseNoticeMode.OFF },
+                present = { CourseNoticeSettings.read(app).mode != CourseNoticeMode.OFF ||
+                    CourseLiveTracking.hasActive(app, Instant.now()) },
                 later = { ms, f -> main.postDelayed(f, ms); Unit },
                 read = { callback ->
                     ScheduleStores.create(app, TermScheduleProfileStore(app)).loadPresentation { result ->
@@ -36,8 +37,13 @@ internal object CourseNotificationCoordinator {
                     val now = Instant.now()
                     val opts = CourseNoticeSettings.read(app)
                     val plan = CourseNoticePlanner.plan(result.getOrThrow(), now, ZoneId.systemDefault(), opts)
-                    CourseNotificationPublisher.publish(app, plan, opts)
-                    schedule(app, plan.nextWake)
+                    val tracked = CourseLiveTracking.match(app, plan.occurrences, now)
+                    val displayed = if (tracked != null) plan.copy(
+                        course = tracked, inProgress = true, imminent = false,
+                        nextWake = minOf(plan.nextWake, tracked.end)
+                    ) else plan
+                    CourseNotificationPublisher.publish(app, displayed, opts, promote = tracked != null)
+                    schedule(app, displayed.nextWake)
                 },
                 timedOut = { Log.w(TAG, "Schedule read timed out; keeping last notification") },
                 recover = { schedule(app, Instant.now().plusSeconds(300)) },
@@ -74,9 +80,11 @@ class CourseNotificationReceiver : BroadcastReceiver() {
                 Intent.ACTION_TIME_CHANGED,
                 Intent.ACTION_TIMEZONE_CHANGED,
                 Intent.ACTION_DATE_CHANGED,
-                Intent.ACTION_MY_PACKAGE_REPLACED
+                Intent.ACTION_MY_PACKAGE_REPLACED,
+                STOP_TRACKING_ACTION
             )) return
         val pending = goAsync()
+        if (intent.action == STOP_TRACKING_ACTION) CourseLiveTracking.stop(context)
         CourseNotificationCoordinator.request(context) { pending.finish() }
     }
 }

@@ -16,7 +16,8 @@ internal data class CourseNoticePlan(
     val course: ClassOccurrence?,
     val inProgress: Boolean,
     val imminent: Boolean,
-    val nextWake: Instant
+    val nextWake: Instant,
+    val occurrences: List<ClassOccurrence>
 )
 internal object CourseNoticePlanner {
     fun plan(state: ScheduleState, now: Instant, zone: ZoneId, options: CourseNoticeOptions): CourseNoticePlan {
@@ -45,7 +46,8 @@ internal object CourseNoticePlanner {
             selected,
             current != null && selected == current,
             imminent && selected == upcoming,
-            next
+            next,
+            all
         )
     }
 }
