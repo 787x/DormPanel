@@ -25,7 +25,8 @@ internal object CourseNotificationCoordinator {
         val app = context.applicationContext
         main.post {
             val machine = coordinator ?: WidgetRefreshCoordinator<ScheduleState>(
-                present = { CourseNoticeSettings.read(app).mode != CourseNoticeMode.OFF },
+                present = { CourseNoticeSettings.read(app).mode != CourseNoticeMode.OFF &&
+                    CourseNotificationPublisher.available(app) },
                 later = { ms, f -> main.postDelayed(f, ms); Unit },
                 read = { callback ->
                     ScheduleStores.create(app, TermScheduleProfileStore(app)).loadPresentation { result ->
@@ -33,11 +34,15 @@ internal object CourseNotificationCoordinator {
                     }
                 },
                 publish = { result ->
-                    val now = Instant.now()
-                    val opts = CourseNoticeSettings.read(app)
-                    val plan = CourseNoticePlanner.plan(result.getOrThrow(), now, ZoneId.systemDefault(), opts)
-                    CourseNotificationPublisher.publish(app, plan, opts)
-                    schedule(app, plan.nextWake)
+                    // Failure is not an empty schedule. Preserve the last published frame.
+                    val state = result.getOrNull()
+                    if (state != null) {
+                        val now = Instant.now()
+                        val opts = CourseNoticeSettings.read(app)
+                        val plan = CourseNoticePlanner.plan(state, now, ZoneId.systemDefault(), opts)
+                        CourseNotificationPublisher.publish(app, plan, opts)
+                        schedule(app, plan.nextWake)
+                    } else Log.w(TAG, "Schedule read failed; retaining notification")
                 },
                 timedOut = { Log.w(TAG, "Schedule read timed out; keeping last notification") },
                 recover = { schedule(app, Instant.now().plusSeconds(300)) },

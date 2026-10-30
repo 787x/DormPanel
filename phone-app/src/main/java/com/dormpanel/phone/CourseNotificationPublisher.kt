@@ -20,15 +20,24 @@ internal object CourseNotificationPublisher {
     private val timeFormat = DateTimeFormatter.ofPattern("HH:mm")
     fun cancel(context: Context) = NotificationManagerCompat.from(context).cancel(ID)
 
-    fun publish(context: Context, plan: CourseNoticePlan, options: CourseNoticeOptions) {
-        val course = plan.course ?: run { cancel(context); return }
+    fun available(context: Context): Boolean {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(
             CHANNEL, "课程状态", NotificationManager.IMPORTANCE_LOW
-        ).apply { description = "本地课程进度和下一节课" })
-        if (Build.VERSION.SDK_INT >= 33 &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+        ).apply {
+            description = "本地课程进度和下一节课"
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
+        })
+        return (Build.VERSION.SDK_INT < 33 ||
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
+            NotificationManagerCompat.from(context).areNotificationsEnabled() &&
+            manager.getNotificationChannel(CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
+    fun publish(context: Context, plan: CourseNoticePlan, options: CourseNoticeOptions) {
+        val course = plan.course ?: run { cancel(context); return }
+        val manager = context.getSystemService(NotificationManager::class.java)
+        if (options.mode == CourseNoticeMode.OFF || !available(context)) { cancel(context); return }
 
         val zone = ZoneId.systemDefault()
         val time = timeFormat.format(course.start.atZone(zone)) + "–" +

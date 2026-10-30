@@ -18,8 +18,8 @@ import java.util.concurrent.Executors
 class TimetableActivity : AppCompatActivity() {
     private val requestNoticePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) {
-            CourseNoticeSettings.write(this, CourseNoticeOptions())
-            if (!isDestroyed) message("通知权限未开启，课程通知保持关闭。")
+            // Retain options for recovery after a later system permission grant.
+            if (!isDestroyed) message("通知权限未开启，课程通知暂不显示；可在系统设置中授权。")
         }
         CourseNotificationCoordinator.request(this)
     }
@@ -261,7 +261,7 @@ class TimetableActivity : AppCompatActivity() {
         unregisterReceiver(clockChanges)
         super.onStop()
     }
-    override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
+    override fun onResume() { super.onResume(); CourseNotificationCoordinator.request(this); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
     private fun checkOnResume() {
         if (resumeCheckPending && !icsRequest.choosing && !icsRequest.writing && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
             resumeCheckPending = false; sharedSync.sync()
@@ -498,11 +498,12 @@ class TimetableActivity : AppCompatActivity() {
         labels.forEachIndexed { i, label ->
             group.addView(RadioButton(this).apply {
                 text = label
-                isChecked = i == selected
+                id = android.view.View.generateViewId()
                 minHeight = dp(44)
                 setOnClickListener { selected = i }
             })
         }
+        group.check(group.getChildAt(selected).id)
         layout.addView(group)
         layout.addView(scheduleLabel("课前开始显示", 14f))
         val lead = Spinner(this).apply {
@@ -517,7 +518,7 @@ class TimetableActivity : AppCompatActivity() {
         }
         layout.addView(privacy)
         layout.addView(scheduleLabel("通知仅使用本地课表，无需持续后台服务。省电或厂商限制可能让切换延迟。", 12f))
-        AlertDialog.Builder(this).setTitle("课程通知").setView(layout)
+        AlertDialog.Builder(this).setTitle("课程通知").setView(ScrollView(this).apply { addView(layout) })
             .setNegativeButton("取消", null)
             .setPositiveButton("保存") { _, _ ->
                 val options = CourseNoticeOptions(
@@ -526,11 +527,12 @@ class TimetableActivity : AppCompatActivity() {
                     privacy.isChecked
                 )
                 CourseNoticeSettings.write(this, options)
+                CourseNotificationCoordinator.request(this)
                 if (options.mode != CourseNoticeMode.OFF &&
                     android.os.Build.VERSION.SDK_INT >= 33 &&
                     checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     requestNoticePermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                } else CourseNotificationCoordinator.request(this)
+                }
             }.show()
     }
 

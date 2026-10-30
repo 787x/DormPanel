@@ -29,3 +29,13 @@
 Android 原生 Live Updates 只用于明确主动开启的实时跟踪尝试，系统可以拒绝提升。小米焦点通知/超级岛（P2）需要另行申请业务准入；P1 不写入未授权 `miui.focus.param` 假装上岛。
 
 **验收状态：尚未执行物理设备验证。** 若某测试机器不提供 Android SDK、ADB 或通知权限，则应如实标记未执行。
+
+## PR76 补充验证（2026-10-30）
+- 修复设置单选按钮独立 ID 和初次回显；设置内容可滚动。设置变化立即撤下旧通知，防止旧公开详情残留。
+- 权限拒绝保留配置，不循环申请；返回应用重新检查权限、总开关和渠道。不可展示时取消通知与闹钟，不读取 Store；用户主动保存开启配置时才申请权限。
+- 失败读取保留原通知，5 分钟非精确闹钟重试；复用协调器的 7 秒读取超时、8 秒广播完成期限和最多两个未返回读取限制。迟到/重复结果无发布权。
+- nextWake 检查全部重叠起止/提前边界，但仅在实际选中课程或阶段变化时唤醒；本地午夜重新投影。不承诺非精确闹钟准点。
+- `:phone-app:assembleDebug :phone-app:testDebugUnitTest`：通过。新增三档提前窗口精确边界、重叠切换/无效边界、倒序输入稳定性、导入跨午夜/跨周及 UTC、关闭再开启拒绝旧结果测试；现有协调器故障/超时/恢复测试全部运行。
+- 独立 `.pr76testbed` 包构建及 Android 9 模拟器 instrumentation：`CourseNotificationTest` 1 项通过，验证设置持久化、同 ID 更新、ongoing/onlyAlertOnce、系统 Chronometer 起止时间、PRIVATE/publicVersion 脱敏及 OFF 取消。未改动日用 Store。
+- MIX 2S（API 33）隔离包安装成功，instrumentation 返回 `Process crashed`，日志显示进程被 SIGKILL；未取得成功验收结果，未据此断言具体厂商限制原因。
+- **仍未验证**：Android 13 权限弹窗与拒绝的交互、系统渠道关闭、通知点击与设置大字体触控、真实锁屏视觉脱敏/倒计时、HyperOS 后台延迟、Doze、重启和原位升级恢复。模拟器通知对象断言不代替这些验收。PR 保持 Draft。

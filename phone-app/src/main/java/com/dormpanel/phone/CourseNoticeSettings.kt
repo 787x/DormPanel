@@ -13,6 +13,8 @@ internal object CourseNoticeSettings {
         return CourseNoticeOptions(mode, lead, p.getBoolean("private", true))
     }
     fun write(context: Context, options: CourseNoticeOptions) {
+        // Do not retain a public/old-mode frame while the new Store read is pending.
+        if (read(context) != options) CourseNotificationPublisher.cancel(context)
         context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit()
             .putString("mode", options.mode.name)
             .putInt("lead", options.leadMinutes.coerceIn(1, 60))
