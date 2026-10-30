@@ -142,4 +142,12 @@ class WidgetRefreshCoordinatorTest {
         h.answer(0,"late"); h.answer(1,"latest")
         h.advance(20000); assertEquals(1,first); assertEquals(1,second)
     }
+
+    @Test fun offThenOnBeforeOldReadReturnsCannotPublishOldResult() {
+        val h=Harness(); h.machine.request()
+        h.widgets=false; h.machine.request()
+        h.widgets=true; h.machine.request()
+        h.answer(0,"before off"); assertTrue(h.frames.isEmpty())
+        h.answer(1,"after on"); assertEquals(listOf("after on"),h.frames)
+    }
 }

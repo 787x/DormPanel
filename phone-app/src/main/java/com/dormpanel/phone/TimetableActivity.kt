@@ -16,6 +16,13 @@ import java.util.concurrent.Executors
 
 /** Offline UI. The shared source owns all effective state and serialized database writes. */
 class TimetableActivity : AppCompatActivity() {
+    private val requestNoticePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) {
+            // Retain options for recovery after a later system permission grant.
+            if (!isDestroyed) message("通知权限未开启，课程通知暂不显示；可在系统设置中授权。")
+        }
+        CourseNotificationCoordinator.request(this)
+    }
     private lateinit var profiles: TermScheduleProfileStore
     internal lateinit var source: ScheduleSource
     internal lateinit var sharedSync: SharedScheduleController
@@ -254,7 +261,7 @@ class TimetableActivity : AppCompatActivity() {
         unregisterReceiver(clockChanges)
         super.onStop()
     }
-    override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
+    override fun onResume() { super.onResume(); CourseNotificationCoordinator.request(this); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
     private fun checkOnResume() {
         if (resumeCheckPending && !icsRequest.choosing && !icsRequest.writing && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
             resumeCheckPending = false; sharedSync.sync()
@@ -467,9 +474,9 @@ class TimetableActivity : AppCompatActivity() {
     private fun management() {
         if (source.applyingSnapshot) return
         swipeContent?.cancelMotion()
-        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）", "课表显示设置", "课程管理", "导出 ICS")) { _, i ->
+        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）", "课表显示设置", "课程通知", "课程管理", "导出 ICS")) { _, i ->
             if (i < 3 && source.error) { message(source.editBlockReason.orEmpty()); return@setItems }
-            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) }; 4 -> displaySettings(); 5 -> editors.courseManagement(); 6 -> exportCalendar() }
+            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) }; 4 -> displaySettings(); 5 -> noticeSettings(); 6 -> editors.courseManagement(); 7 -> exportCalendar() }
         }.setNegativeButton("关闭", null).show()
     }
     private fun displaySettings() {
@@ -482,6 +489,53 @@ class TimetableActivity : AppCompatActivity() {
             .setPositiveButton("保存") { _,_ -> swipeDates = toggle.isChecked; saveDisplayPreferences(); render() }
             .setNegativeButton("取消",null).show()
     }
+    private fun noticeSettings() {
+        val original = CourseNoticeSettings.read(this)
+        val labels = arrayOf("关闭（默认）", "全天显示当前 / 下一节课", "仅课前和上课中")
+        val layout = scheduleColumn().apply { setPadding(dp(20), dp(12), dp(20), dp(8)) }
+        val group = RadioGroup(this)
+        var selected = original.mode.ordinal
+        labels.forEachIndexed { i, label ->
+            group.addView(RadioButton(this).apply {
+                text = label
+                id = android.view.View.generateViewId()
+                minHeight = dp(44)
+                setOnClickListener { selected = i }
+            })
+        }
+        group.check(group.getChildAt(selected).id)
+        layout.addView(group)
+        layout.addView(scheduleLabel("课前开始显示", 14f))
+        val lead = Spinner(this).apply {
+            adapter = ArrayAdapter(this@TimetableActivity, android.R.layout.simple_spinner_dropdown_item,
+                arrayOf("提前 5 分钟", "提前 15 分钟", "提前 30 分钟"))
+            setSelection(listOf(5, 15, 30).indexOf(original.leadMinutes).coerceAtLeast(0))
+        }
+        layout.addView(lead)
+        val privacy = CheckBox(this).apply {
+            text = "锁屏隐藏课程详情"
+            isChecked = original.hideOnLockscreen
+        }
+        layout.addView(privacy)
+        layout.addView(scheduleLabel("通知仅使用本地课表，无需持续后台服务。省电或厂商限制可能让切换延迟。", 12f))
+        AlertDialog.Builder(this).setTitle("课程通知").setView(ScrollView(this).apply { addView(layout) })
+            .setNegativeButton("取消", null)
+            .setPositiveButton("保存") { _, _ ->
+                val options = CourseNoticeOptions(
+                    CourseNoticeMode.entries[selected],
+                    listOf(5, 15, 30)[lead.selectedItemPosition],
+                    privacy.isChecked
+                )
+                CourseNoticeSettings.write(this, options)
+                CourseNotificationCoordinator.request(this)
+                if (options.mode != CourseNoticeMode.OFF &&
+                    android.os.Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestNoticePermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }.show()
+    }
+
     private fun chooseFile(target: String?) {
         source.editBlockReason?.let { message(it); return }
         if (!source.editable) return
