@@ -53,6 +53,7 @@ android {
 dependencies {
     implementation(project(":schedule-core"))
     implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.ktx)
     testImplementation(libs.junit)
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
