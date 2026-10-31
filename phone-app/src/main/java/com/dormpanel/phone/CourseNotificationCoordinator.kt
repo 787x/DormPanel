@@ -40,8 +40,14 @@ internal object CourseNotificationCoordinator {
             )
             validity.expire(System.currentTimeMillis())
             val machine = coordinator ?: WidgetRefreshCoordinator<ScheduleState>(
-                present = { CourseNoticeSettings.read(app).mode != CourseNoticeMode.OFF &&
-                    CourseNotificationPublisher.available(app) },
+                present = {
+                    val options = CourseNoticeSettings.read(app)
+                    if (options.mode == CourseNoticeMode.OFF) {
+                        // Turning ordinary notices off must also end an explicit tracking session.
+                        CourseLiveTracking.stop(app)
+                        false
+                    } else CourseNotificationPublisher.available(app)
+                },
                 later = { ms, f -> main.postDelayed(f, ms); Unit },
                 read = { callback ->
                     ScheduleStores.create(app, TermScheduleProfileStore(app)).loadPresentation { result ->
@@ -54,7 +60,11 @@ internal object CourseNotificationCoordinator {
                     if (state != null) {
                         val now = Instant.now()
                         val opts = CourseNoticeSettings.read(app)
-                        val plan = CourseNoticePlanner.plan(state, now, ZoneId.systemDefault(), opts)
+                        val session = CourseLiveTracking.read(app)
+                        val plan = CourseNoticePlanner.plan(state, now, ZoneId.systemDefault(), opts, session)
+                        // A session that no longer resolves to the same in-progress instance
+                        // (ended, cancelled, rescheduled, source replaced) is retired now.
+                        if (session != null && plan.tracked == null) CourseLiveTracking.stop(app)
                         validity.remember(plan.nextWake.toEpochMilli())
                         CourseNotificationPublisher.publish(app, plan, opts)
                         schedule(app, plan.nextWake)
@@ -64,6 +74,7 @@ internal object CourseNotificationCoordinator {
                 recover = { schedule(app, Instant.ofEpochMilli(validity.retryAt(System.currentTimeMillis()))) },
                 cancel = {
                     app.getSystemService(AlarmManager::class.java).cancel(alarm(app))
+                    CourseNoticeObservability.unscheduled(app)
                     validity.clear()
                 }
             ).also { coordinator = it }
@@ -84,6 +95,8 @@ internal object CourseNotificationCoordinator {
             maxOf(next.toEpochMilli(), System.currentTimeMillis() + 1000),
             alarm(context)
         )
+        // Record only after the alarm was actually submitted.
+        CourseNoticeObservability.scheduled(context, next)
     }
 }
 
@@ -95,9 +108,13 @@ class CourseNotificationReceiver : BroadcastReceiver() {
                 Intent.ACTION_TIME_CHANGED,
                 Intent.ACTION_TIMEZONE_CHANGED,
                 Intent.ACTION_DATE_CHANGED,
-                Intent.ACTION_MY_PACKAGE_REPLACED
+                Intent.ACTION_MY_PACKAGE_REPLACED,
+                STOP_TRACKING_ACTION
             )) return
+        if (intent.action == "com.dormpanel.phone.COURSE_NOTICE_REFRESH")
+            CourseNoticeObservability.fired(context)
         val pending = goAsync()
+        if (intent.action == STOP_TRACKING_ACTION) CourseLiveTracking.stop(context)
         CourseNotificationCoordinator.request(context) { pending.finish() }
     }
 }

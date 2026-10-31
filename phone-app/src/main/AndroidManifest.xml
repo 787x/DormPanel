@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <application android:name=".PhoneApplication" android:usesCleartextTraffic="true" android:theme="@style/PhoneTheme" android:icon="@drawable/ic_timetable" android:dataExtractionRules="@xml/data_extraction_rules" android:label="DormPanel 课程表" android:allowBackup="false" android:fullBackupContent="false" android:supportsRtl="true">
         <receiver android:name=".CourseNotificationReceiver" android:exported="false">
             <intent-filter>
