@@ -80,6 +80,7 @@ class TimetableActivity : AppCompatActivity() {
     private var replacement: String? = null
     internal var busy = false; private set
     private val worker = Executors.newSingleThreadExecutor()
+    private val diagnosticsRunning = java.util.concurrent.atomic.AtomicBoolean(false)
     private val listener: () -> Unit = {
         render()
         if (source.retryingLocalRead) {
@@ -550,8 +551,7 @@ class TimetableActivity : AppCompatActivity() {
             layout.addView(scheduleLabel(trackingText, 13f))
             layout.addView(scheduleButton(if (trackingActive) "结束跟踪" else "跟踪当前课程（实验）") {
                 if (CourseLiveTracking.read(this)?.active(Instant.now()) == true) {
-                    CourseLiveTracking.stop(this)
-                    CourseNotificationCoordinator.request(this)
+                    CourseNotificationCoordinator.stopTracking(this)
                     message("已结束跟踪。")
                     rebuild()
                 } else {
@@ -573,9 +573,12 @@ class TimetableActivity : AppCompatActivity() {
                     privacy
                 )
                 CourseNoticeSettings.write(this, options)
-                // Turning notifications off must also end an explicitly tracked session.
-                if (options.mode == CourseNoticeMode.OFF) CourseLiveTracking.stop(this)
-                CourseNotificationCoordinator.request(this)
+                // Turning notifications off must also immediately end/cancel any tracking.
+                if (options.mode == CourseNoticeMode.OFF) {
+                    CourseNotificationCoordinator.stopTracking(this)
+                } else {
+                    CourseNotificationCoordinator.request(this)
+                }
                 if (options.mode != CourseNoticeMode.OFF &&
                     android.os.Build.VERSION.SDK_INT >= 33 &&
                     checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -637,29 +640,38 @@ class TimetableActivity : AppCompatActivity() {
     }
 
     private fun notificationDiagnostics() {
-        worker.execute {
-            val report = runCatching { PhoneNotificationDiagnostics.report(applicationContext) }
-                .getOrElse { "通知能力检查失败：${it.javaClass.simpleName}" }
-            runOnUiThread {
-                if (isDestroyed || isFinishing) return@runOnUiThread
-                val dialog = AlertDialog.Builder(this).setTitle("手机通知能力诊断")
-                    .setMessage(report)
-                    .setPositiveButton("确定", null)
-                    .setNeutralButton("系统通知设置") { _, _ ->
-                        val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
-                        runCatching { startActivity(intent) }
+        // Diagnostics may query vendor ContentProviders that can block. Run it on a
+        // dedicated one-shot thread so it never occupies the single-threaded course
+        // import/export queue, and keep at most one in flight.
+        if (!diagnosticsRunning.compareAndSet(false, true)) return
+        Thread {
+            try {
+                val report = runCatching { PhoneNotificationDiagnostics.report(applicationContext) }
+                    .getOrElse { "通知能力检查失败：${it.javaClass.simpleName}" }
+                runOnUiThread {
+                    diagnosticsRunning.set(false)
+                    if (isDestroyed || isFinishing) return@runOnUiThread
+                    val dialog = AlertDialog.Builder(this).setTitle("手机通知能力诊断")
+                        .setMessage(report)
+                        .setPositiveButton("确定", null)
+                        .setNeutralButton("系统通知设置") { _, _ ->
+                            val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                            runCatching { startActivity(intent) }
+                        }
+                    if (android.os.Build.VERSION.SDK_INT >= 36) {
+                        dialog.setNegativeButton("实时更新权限") { _, _ ->
+                            val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                            runCatching { startActivity(intent) }
+                        }
                     }
-                if (android.os.Build.VERSION.SDK_INT >= 36) {
-                    dialog.setNegativeButton("实时更新权限") { _, _ ->
-                        val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
-                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
-                        runCatching { startActivity(intent) }
-                    }
+                    dialog.show()
                 }
-                dialog.show()
+            } finally {
+                diagnosticsRunning.set(false)
             }
-        }
+        }.apply { isDaemon = true; name = "phone-notification-diagnostics" }.start()
     }
 
     private fun chooseFile(target: String?) {

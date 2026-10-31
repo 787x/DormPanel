@@ -71,13 +71,15 @@ internal object CourseNotificationCoordinator {
                         if (session != null && plan.tracked == null) CourseLiveTracking.stop(app)
                         validity.remember(plan.nextWake.toEpochMilli())
                         try {
+                            // Publisher and schedule record their own specific failure stage
+                            // and rethrow. We only keep the Throwable reference for deduping
+                            // the coordinator's duplicate Result.failure callback, then let
+                            // the exception reach WidgetRefreshCoordinator so recovery runs.
                             CourseNotificationPublisher.publish(app, plan, opts)
                             schedule(app, plan.nextWake)
                         } catch (e: Exception) {
-                            // Publisher/schedule already record their specific stage.
-                            // Keep the Throwable reference to deduplicate the coordinator's
-                            // duplicate Result.failure callback that reuses the same instance.
                             lastRecordedFailure = e
+                            throw e
                         }
                     } else {
                         val failure = result.exceptionOrNull()
@@ -85,13 +87,20 @@ internal object CourseNotificationCoordinator {
                             Log.w(TAG, "Schedule read failed; checking notification expiry")
                             CourseNoticeObservability.failed(app, "Store 读取失败: ${failure?.javaClass?.simpleName ?: "未知异常"}")
                         }
+                        // Clear the marker after the retransmitted failure is handled, so a
+                        // later genuine Store failure is always recorded.
+                        lastRecordedFailure = null
                     }
                 },
                 timedOut = {
                     Log.w(TAG, "Schedule read timed out; checking notification expiry")
                     CourseNoticeObservability.failed(app, "Store 读取超时")
                 },
-                recover = { schedule(app, Instant.ofEpochMilli(validity.retryAt(System.currentTimeMillis()))) },
+                recover = {
+                    // A failed recovery alarm must not escape the coordinator: the existing
+                    // notification timeoutAfter and persisted validity still bound the frame.
+                    runCatching { schedule(app, Instant.ofEpochMilli(validity.retryAt(System.currentTimeMillis()))) }
+                },
                 cancel = {
                     app.getSystemService(AlarmManager::class.java).cancel(alarm(app))
                     CourseNoticeObservability.unscheduled(app)
@@ -100,6 +109,21 @@ internal object CourseNotificationCoordinator {
             ).also { coordinator = it }
             machine.request(done)
         }
+    }
+
+    /** Single reliable "end tracking" entry shared by the Activity and the notification
+     *  action. Removes the saved session and immediately takes down the old tracking
+     *  notification without waiting for the async Store read, then re-requests so the
+     *  ordinary notice mode republishes the correct state. */
+    fun stopTracking(context: Context, done: () -> Unit = {}) {
+        val app = context.applicationContext
+        CourseLiveTracking.stop(app)
+        // Immediate, synchronous removal: never leave a stale promoted/tracking frame
+        // waiting for a Store read that may fail or time out.
+        runCatching { CourseNotificationPublisher.cancel(app) }
+        runCatching { app.getSystemService(AlarmManager::class.java).cancel(alarm(app)) }
+        CourseNoticeObservability.unscheduled(app)
+        request(app, done)
     }
 
     private fun alarm(context: Context) = PendingIntent.getBroadcast(
@@ -136,10 +160,15 @@ class CourseNotificationReceiver : BroadcastReceiver() {
                 Intent.ACTION_MY_PACKAGE_REPLACED,
                 STOP_TRACKING_ACTION
             )) return
+        val pending = goAsync()
         if (intent.action == "com.dormpanel.phone.COURSE_NOTICE_REFRESH")
             CourseNoticeObservability.fired(context)
-        val pending = goAsync()
-        if (intent.action == STOP_TRACKING_ACTION) CourseLiveTracking.stop(context)
-        CourseNotificationCoordinator.request(context) { pending.finish() }
+        if (intent.action == STOP_TRACKING_ACTION) {
+            // Ends and takes down the old tracking frame immediately; the coordinator
+            // then refreshes the ordinary notification asynchronously.
+            CourseNotificationCoordinator.stopTracking(context) { pending.finish() }
+        } else {
+            CourseNotificationCoordinator.request(context) { pending.finish() }
+        }
     }
 }
