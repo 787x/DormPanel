@@ -150,4 +150,51 @@ class WidgetRefreshCoordinatorTest {
         h.answer(0,"before off"); assertTrue(h.frames.isEmpty())
         h.answer(1,"after on"); assertEquals(listOf("after on"),h.frames)
     }
+
+    @Test fun publishExceptionIsRetransmittedAsSameThrowableForDeduplication() {
+        // WidgetRefreshCoordinator retransmits the exact Throwable that publish() threw
+        // as Result.failure, so the coordinator can deduplicate the second callback
+        // without overwriting the specific failure stage.
+        val timers = mutableListOf<Triple<Long, Int, () -> Unit>>()
+        var order = 0
+        var now = 0L
+        val reads = mutableListOf<(Result<String>) -> Unit>()
+        var recovery = 0
+        val captures = mutableListOf<Throwable?>()
+        val thrown = IllegalStateException("notify failed")
+        val machine = WidgetRefreshCoordinator<String>(
+            { true }, { ms, task -> timers.add(Triple(now + ms, order++, task)) },
+            { cb -> reads.add(cb) },
+            { result ->
+                if (result.isSuccess) throw thrown
+                captures.add(result.exceptionOrNull())
+            },
+            {}, { recovery++ }, {})
+        machine.request()
+        reads.single()(Result.success("value"))
+        assertEquals(1, captures.size)
+        assertSame(thrown, captures.single())
+        assertEquals(1, recovery)
+    }
+
+    @Test fun recoveryStillRunsWhenRetransmittedFailureHandlingAlsoThrows() {
+        // A second failure while handling the retransmitted Result.failure must not
+        // escape or suppress the recovery path (bounded retry, no crash loop).
+        val timers = mutableListOf<Triple<Long, Int, () -> Unit>>()
+        var order = 0
+        var now = 0L
+        val reads = mutableListOf<(Result<String>) -> Unit>()
+        var recovery = 0
+        val machine = WidgetRefreshCoordinator<String>(
+            { true }, { ms, task -> timers.add(Triple(now + ms, order++, task)) },
+            { cb -> reads.add(cb) },
+            { result ->
+                if (result.isSuccess) throw IllegalStateException("publish failed")
+                throw IllegalStateException("retransmitted failure handling failed")
+            },
+            {}, { recovery++ }, {})
+        machine.request()
+        reads.single()(Result.success("value"))
+        assertEquals(1, recovery)
+    }
 }
