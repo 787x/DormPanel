@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -14,6 +15,19 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 internal const val STOP_TRACKING_ACTION = "com.dormpanel.phone.STOP_COURSE_TRACKING"
+
+/** One PendingIntent identity per tracking session: the data URI includes the session token,
+ *  so FLAG_UPDATE_CURRENT can never rewrite an older session's stop action into a newer one.
+ *  Extras carry only the token (no course content or credentials). */
+internal fun trackingStopPendingIntent(context: Context, sessionToken: String): PendingIntent =
+    PendingIntent.getBroadcast(
+        context, 21002,
+        Intent(context, CourseNotificationReceiver::class.java)
+            .setAction(STOP_TRACKING_ACTION)
+            .setData(Uri.parse("$TRACKING_STOP_URI/$sessionToken"))
+            .putExtra(EXTRA_TRACKING_SESSION, sessionToken),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
 
 /** Normal local notification; no permanent foreground service. */
 internal object CourseNotificationPublisher {
@@ -80,17 +94,16 @@ internal object CourseNotificationPublisher {
                     .setChronometerCountDown(true)
             } else builder.setShowWhen(false)
             if (plan.tracking) {
-                val stop = PendingIntent.getBroadcast(
-                    context, 21002,
-                    Intent(context, CourseNotificationReceiver::class.java).setAction(STOP_TRACKING_ACTION),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                builder.addAction(R.drawable.ic_notification_course, "结束跟踪", stop)
-                    .setDeleteIntent(stop)
-                // Only a valid, explicit tracking session requests promotion on Android 16+.
-                // Not a proof of eligibility or actual promotion; the system may still show a
-                // normal notification (no Xiaomi private extras, no custom RemoteViews).
-                if (Build.VERSION.SDK_INT >= 36) builder.setRequestPromotedOngoing(true)
+                val sessionId = plan.trackingSessionId
+                if (sessionId != null) {
+                    val stop = trackingStopPendingIntent(context, sessionId)
+                    builder.addAction(R.drawable.ic_notification_course, "结束跟踪", stop)
+                        .setDeleteIntent(stop)
+                    // Only a valid, explicit tracking session requests promotion on Android 16+.
+                    // Not a proof of eligibility or actual promotion; the system may still show a
+                    // normal notification (no Xiaomi private extras, no custom RemoteViews).
+                    if (Build.VERSION.SDK_INT >= 36) builder.setRequestPromotedOngoing(true)
+                }
             }
             manager.notify(ID, builder.build())
             // Only after notify() actually returned do we record delivery and (for API 36+)

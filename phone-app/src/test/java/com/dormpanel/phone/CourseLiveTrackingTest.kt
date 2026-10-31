@@ -26,4 +26,22 @@ class CourseLiveTrackingTest {
         assertFalse(tracked.matches(classItem.copy(end=end.plusSeconds(60))))
         assertFalse(tracked.matches(classItem.copy(sourceId="other")))
     }
+
+    @Test fun stopIsBoundToTheSessionThatCreatedIt() {
+        val first = tracked.copy(token = "session-a")
+        val second = tracked.copy(token = "session-b")
+        // Restarting the very same course instance is still a new session.
+        assertTrue(first.stopAllowed("session-a"))
+        assertFalse(first.stopAllowed("session-b"))
+        assertFalse(second.stopAllowed("session-a"))
+        assertTrue(second.stopAllowed("session-b"))
+    }
+
+    @Test fun blankOrMissingTokenCannotStopAnySession() {
+        val legacy = tracked.copy(token = "")
+        assertFalse(legacy.stopAllowed(null))
+        assertFalse(legacy.stopAllowed(""))
+        assertFalse(tracked.stopAllowed(null))
+        assertFalse(tracked.stopAllowed(""))
+    }
 }

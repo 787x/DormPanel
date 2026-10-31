@@ -81,6 +81,7 @@ class TimetableActivity : AppCompatActivity() {
     internal var busy = false; private set
     private val worker = Executors.newSingleThreadExecutor()
     private val diagnosticsRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var diagnosticsDialog: AlertDialog? = null
     private val listener: () -> Unit = {
         render()
         if (source.retryingLocalRead) {
@@ -279,6 +280,8 @@ class TimetableActivity : AppCompatActivity() {
     }
     override fun onDestroy() {
         icsOutcomeDialog?.dismiss(); icsOutcomeDialog = null
+        diagnosticsDialog?.dismiss(); diagnosticsDialog = null
+        diagnosticsRunning.set(false)
         sharedDialog?.dismiss(); sharedSync.close()
         source.unsubscribe(listener); editors.close(); source.close(); worker.shutdown()
         super.onDestroy()
@@ -642,36 +645,56 @@ class TimetableActivity : AppCompatActivity() {
     private fun notificationDiagnostics() {
         // Diagnostics may query vendor ContentProviders that can block. Run it on a
         // dedicated one-shot thread so it never occupies the single-threaded course
-        // import/export queue, and keep at most one in flight.
+        // import/export queue. The flag stays held until the result dialog is dismissed,
+        // so rapid repeated taps cannot start parallel queries or stack duplicate dialogs.
+        if (diagnosticsDialog?.isShowing == true) return
         if (!diagnosticsRunning.compareAndSet(false, true)) return
-        Thread {
-            try {
-                val report = runCatching { PhoneNotificationDiagnostics.report(applicationContext) }
-                    .getOrElse { "通知能力检查失败：${it.javaClass.simpleName}" }
-                runOnUiThread {
-                    diagnosticsRunning.set(false)
-                    if (isDestroyed || isFinishing) return@runOnUiThread
-                    val dialog = AlertDialog.Builder(this).setTitle("手机通知能力诊断")
-                        .setMessage(report)
-                        .setPositiveButton("确定", null)
-                        .setNeutralButton("系统通知设置") { _, _ ->
-                            val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
-                            runCatching { startActivity(intent) }
-                        }
-                    if (android.os.Build.VERSION.SDK_INT >= 36) {
-                        dialog.setNegativeButton("实时更新权限") { _, _ ->
-                            val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
-                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
-                            runCatching { startActivity(intent) }
-                        }
-                    }
-                    dialog.show()
+        val thread = Thread {
+            val report = runCatching { PhoneNotificationDiagnostics.report(applicationContext) }
+                .getOrElse { "通知能力检查失败：${it.javaClass.simpleName}" }
+            runOnUiThread { showDiagnostics(report) }
+        }
+        try {
+            thread.apply { isDaemon = true; name = "phone-notification-diagnostics" }.start()
+        } catch (e: Throwable) {
+            // Failed to start the worker: never leave the entry permanently disabled.
+            diagnosticsRunning.set(false)
+        }
+    }
+
+    private fun showDiagnostics(report: String) {
+        if (isDestroyed || isFinishing) {
+            diagnosticsRunning.set(false)
+            return
+        }
+        try {
+            val builder = AlertDialog.Builder(this).setTitle("手机通知能力诊断")
+                .setMessage(report)
+                .setPositiveButton("确定", null)
+                .setNeutralButton("系统通知设置") { _, _ ->
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                    runCatching { startActivity(intent) }
                 }
-            } finally {
+            if (android.os.Build.VERSION.SDK_INT >= 36) {
+                builder.setNegativeButton("实时更新权限") { _, _ ->
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                    runCatching { startActivity(intent) }
+                }
+            }
+            val dialog = builder.create()
+            dialog.setOnDismissListener {
+                diagnosticsDialog = null
                 diagnosticsRunning.set(false)
             }
-        }.apply { isDaemon = true; name = "phone-notification-diagnostics" }.start()
+            diagnosticsDialog = dialog
+            dialog.show()
+        } catch (e: Throwable) {
+            // A failed UI presentation must not lock diagnostics out forever.
+            diagnosticsDialog = null
+            diagnosticsRunning.set(false)
+        }
     }
 
     private fun chooseFile(target: String?) {

@@ -21,7 +21,9 @@ internal data class CourseNoticePlan(
     val inProgress: Boolean,
     val imminent: Boolean,
     val nextWake: Instant,
-    val tracked: ClassOccurrence? = null
+    val tracked: ClassOccurrence? = null,
+    /** Token of the explicit session that produced [tracked]; null when not tracking. */
+    val trackingSessionId: String? = null
 ) {
     val tracking: Boolean get() = tracked != null
 }
@@ -86,7 +88,8 @@ internal object CourseNoticePlanner {
 
         // A tracked in-progress class must never be refreshed later than its own end.
         val trackedEnd = shown.tracked?.end?.takeIf { it > now && it < baseNext }
+        val sessionId = shown.tracked?.let { trackedSession?.token?.takeIf { token -> token.isNotBlank() } }
         return CourseNoticePlan(shown.course, shown.inProgress, shown.imminent,
-            trackedEnd ?: baseNext, shown.tracked)
+            trackedEnd ?: baseNext, shown.tracked, sessionId)
     }
 }

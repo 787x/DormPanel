@@ -112,12 +112,22 @@ internal object CourseNotificationCoordinator {
     }
 
     /** Single reliable "end tracking" entry shared by the Activity and the notification
-     *  action. Removes the saved session and immediately takes down the old tracking
-     *  notification without waiting for the async Store read, then re-requests so the
-     *  ordinary notice mode republishes the correct state. */
-    fun stopTracking(context: Context, done: () -> Unit = {}) {
+     *  action. For notification actions [expectedSessionId] must match the saved session;
+     *  a stale or unknown token is ignored without touching the current session, its
+     *  notification, alarm or next refresh. A valid stop removes the saved session and
+     *  immediately takes down the old tracking notification without waiting for the
+     *  async Store read, then re-requests so the ordinary mode republishes. */
+    fun stopTracking(context: Context, done: () -> Unit = {}, expectedSessionId: String? = null) {
         val app = context.applicationContext
-        CourseLiveTracking.stop(app)
+        val stopped = if (expectedSessionId != null) {
+            CourseLiveTracking.stopIfSession(app, expectedSessionId)
+        } else {
+            CourseLiveTracking.stop(app)
+            true
+        }
+        // An invalid/expired action must not cancel the new session's notification,
+        // alarm or refresh plan.
+        if (!stopped) { done(); return }
         // Immediate, synchronous removal: never leave a stale promoted/tracking frame
         // waiting for a Store read that may fail or time out.
         runCatching { CourseNotificationPublisher.cancel(app) }
@@ -164,9 +174,15 @@ class CourseNotificationReceiver : BroadcastReceiver() {
         if (intent.action == "com.dormpanel.phone.COURSE_NOTICE_REFRESH")
             CourseNoticeObservability.fired(context)
         if (intent.action == STOP_TRACKING_ACTION) {
-            // Ends and takes down the old tracking frame immediately; the coordinator
-            // then refreshes the ordinary notification asynchronously.
-            CourseNotificationCoordinator.stopTracking(context) { pending.finish() }
+            // Bind the action to the session that created this PendingIntent. A stale
+            // action from an older session (or a legacy action without a token) is ignored.
+            val token = intent.getStringExtra(EXTRA_TRACKING_SESSION)?.takeIf { it.isNotBlank() }
+                ?: intent.data?.lastPathSegment?.takeIf { it.isNotBlank() }
+            if (token == null) {
+                pending.finish()
+            } else {
+                CourseNotificationCoordinator.stopTracking(context, { pending.finish() }, token)
+            }
         } else {
             CourseNotificationCoordinator.request(context) { pending.finish() }
         }

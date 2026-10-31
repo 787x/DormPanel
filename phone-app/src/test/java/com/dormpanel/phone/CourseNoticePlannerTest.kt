@@ -159,4 +159,28 @@ class CourseNoticePlannerTest {
         assertTrue(afterMidnight.tracking)
         assertEquals(end,afterMidnight.nextWake)
     }
+
+    @Test fun trackingSessionTokenSurvivesContentEditsButNotRestarts() {
+        val state=ScheduleState(entries=listOf(first,second))
+        val sessionA=TrackedCourse(null,"a",at(8).toEpochMilli(),at(10).toEpochMilli(),"session-a")
+        val p=CourseNoticePlanner.plan(state,at(9),zone,CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),sessionA)
+        assertTrue(p.tracking)
+        assertEquals("session-a",p.trackingSessionId)
+
+        // A title/detail edit is not a new session.
+        val edited=ScheduleState(entries=listOf(first.copy(title="改名"),second))
+        assertEquals("session-a",
+            CourseNoticePlanner.plan(edited,at(9),zone,CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),sessionA).trackingSessionId)
+
+        // Restarting the same course produces a new session identity.
+        val restarted=sessionA.copy(token="session-b")
+        assertEquals("session-b",
+            CourseNoticePlanner.plan(state,at(9),zone,CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),restarted).trackingSessionId)
+
+        // A legacy session without a token still tracks, but has no session-bound stop id.
+        val legacy=sessionA.copy(token="")
+        val legacyPlan=CourseNoticePlanner.plan(state,at(9),zone,CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),legacy)
+        assertTrue(legacyPlan.tracking)
+        assertNull(legacyPlan.trackingSessionId)
+    }
 }

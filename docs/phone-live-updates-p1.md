@@ -16,6 +16,14 @@
 - 停止跟踪、课程提交、闹钟广播与 Store 回调交错时，过期结果不能重新激活已停止的跟踪；协调器沿用小组件已有的超时/过期结果防护，不增加轮询。
 - 恢复失败沿用 P0 已有的 5 分钟有限重试，不增加永久前台服务、精确闹钟特殊权限或新数据源。
 
+## 会话级停止归属
+- 每次明确开始跟踪都生成独立会话 token 并与会话一起持久化；重新跟踪同一课程也是新会话。
+- 课程内容（标题/教室）修改不产生新 token；课程实例身份 `sourceId + seriesId + start + end` 继续用于验证课程是否变化，不代替会话身份。
+- 通知「结束跟踪」与 `deleteIntent` 使用**每会话唯一**的 PendingIntent：data URI 携带会话 token，`FLAG_UPDATE_CURRENT` 不会把旧会话操作改写为新会话。
+- Receiver 只在校验 token 与当前会话一致时才执行停止；旧会话、已结束或无效 token 的操作被安全忽略，不取消当前会话的通知、闹钟或下次刷新计划。
+- 校验与清除在同一同步步骤内完成，新会话不会被迟到的旧停止操作误删；旧版本的“无 token”遗留会话在读取时安全迁移出新 token，遗留操作无法删除新会话。
+- 应用内主动结束跟踪仍为无条件入口。
+
 ## Android 16+（API 36）Live Updates 接入
 - 只用公开 Android / AndroidX API：`NotificationCompat.Builder.setRequestPromotedOngoing(true)`、`NotificationManager.canPostPromotedNotifications()`、`POST_PROMOTED_NOTIFICATIONS` 权限声明。
 - 只有明确处于有效主动跟踪状态的通知才请求 promoted ongoing；用户结束跟踪后，后续普通通知不再携带提升请求。
@@ -39,6 +47,7 @@
 - 最后一次计划唤醒（仅在闹钟/调度真正提交后记录，取消或关闭时清除）、最近闹钟广播收到时间、最近 `notify()` 正常返回时间、最近一次失败及时间。
 - Xiaomi 焦点协议版本与用户开关为**只读、尽力查询**，明确区分协议支持、用户开关与厂商业务准入；不把查询结果解释为已获得小米超级岛授权。不实现 `miui.focus.param`、MiPush 或私有岛通知模板。
 - 不记录课程私密内容、WebDAV 凭据或敏感数据；避免持续日志、频繁轮询或无限累积诊断状态。查询失败/API 不可用显示“未知/不可用”，不误报为已授权。
+- 诊断在独立一次性后台线程执行并通过单次运行门控：快速重复点击不会并发查询或堆叠弹窗；结果对话框关闭后才允许再次查询；Activity 销毁、查询或展示异常不会永久锁住入口。
 
 ## 真机验收矩阵（未来参考，不作为本 PR 验收门槛）
 以下设备矩阵在具备时执行并记录构建 commit、机型、Android API、系统版本、权限设置、截图/录屏、预计/实际通知变化时点：
@@ -75,7 +84,8 @@ adb logcat -d -v time | grep -i DormPanelCourseNotice
 ./gradlew :phone-app:testDebugUnitTest
 ```
 - `assembleDebug`：通过。
-- `testDebugUnitTest`：通过（82 项）。覆盖 `CourseNoticePlannerTest`（含新增跟踪优先、身份稳定、内容修改、时间变化、OFF 不发布、会话结束/取消、跨午夜边界）、`CourseNoticeTrackingLifecycleTest`（跟踪生命周期与有效期）、`CourseLiveTrackingTest`、`CourseNoticeValidityTest`、`WidgetRefreshCoordinatorTest` 与既有 P0 规划/有效期测试。
+- `testDebugUnitTest`：通过（89 项）。覆盖 `CourseNoticePlannerTest`（含新增跟踪优先、身份稳定、内容修改、时间变化、OFF 不发布、会话结束/取消、跨午夜边界、会话 token 传播）、`CourseNoticeTrackingLifecycleTest`（跟踪生命周期与有效期）、`CourseLiveTrackingTest`（含会话级停止归属、旧/缺失 token 不能停止）、`CourseNoticeValidityTest`、`WidgetRefreshCoordinatorTest` 与既有 P0 规划/有效期测试。
+- 隔离环境设备验证（MIX 2S / API 33，测试包 `com.dormpanel.timetable.testbed`）：`CourseTrackingSessionTest` 2 项通过，验证真实 PendingIntent 身份（不同会话 token 生成不同 PendingIntent，`FLAG_UPDATE_CURRENT` 不改写旧操作）、会话隔离停止（旧 A 停止不影响 B）、同课重启为新会话、遗留无 token 会话迁移且不受未知操作影响。
 - 低版本兼容：MIX 2S（API 33 / MIUI 14）已连接，作为低版本退化确认环境；不在本 PR 中把 Android 9 或 MIUI 测试矩阵作为验收门槛。
 
 ## 尚未验证
