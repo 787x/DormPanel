@@ -13,6 +13,8 @@ import androidx.core.app.NotificationManagerCompat
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+internal const val STOP_TRACKING_ACTION = "com.dormpanel.phone.STOP_COURSE_TRACKING"
+
 /** Normal local notification; no permanent foreground service. */
 internal object CourseNotificationPublisher {
     private const val CHANNEL = "course_status"
@@ -76,6 +78,23 @@ internal object CourseNotificationPublisher {
                 .setUsesChronometer(true)
                 .setChronometerCountDown(true)
         } else builder.setShowWhen(false)
+        if (plan.tracking) {
+            val stop = PendingIntent.getBroadcast(
+                context, 21002,
+                Intent(context, CourseNotificationReceiver::class.java).setAction(STOP_TRACKING_ACTION),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(R.drawable.ic_notification_course, "结束跟踪", stop)
+                .setDeleteIntent(stop)
+            // Only a valid, explicit tracking session requests promotion on Android 16+.
+            // Not a proof of eligibility or actual promotion; the system may still show a
+            // normal notification (no Xiaomi private extras, no custom RemoteViews).
+            if (Build.VERSION.SDK_INT >= 36) {
+                builder.setRequestPromotedOngoing(true)
+                CourseNoticeObservability.promoteRequested(context)
+            }
+        }
         manager.notify(ID, builder.build())
+        CourseNoticeObservability.notifyReturned(context)
     }
 }

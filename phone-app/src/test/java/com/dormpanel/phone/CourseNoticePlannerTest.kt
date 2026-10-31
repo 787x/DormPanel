@@ -93,4 +93,70 @@ class CourseNoticePlannerTest {
         assertTrue(utc.inProgress)
         assertEquals(end,utc.nextWake)
     }
+
+    @Test fun trackedCourseTakesPriorityAndWakesAtItsEnd() {
+        val state=ScheduleState(entries=listOf(first,second))
+        val tracked=TrackedCourse(null,"a",at(8).toEpochMilli(),at(10).toEpochMilli())
+        val p=CourseNoticePlanner.plan(state,at(9),zone,CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),tracked)
+        assertEquals("a",p.course?.seriesId)
+        assertTrue(p.tracking)
+        assertTrue(p.inProgress)
+        assertFalse(p.imminent)
+        assertEquals(at(10),p.nextWake)
+    }
+
+    @Test fun trackedContentChangeKeepsIdentityAndTimingChangeInvalidates() {
+        val edited=ScheduleState(entries=listOf(first.copy(title="改名"),second))
+        val tracked=TrackedCourse(null,"a",at(8).toEpochMilli(),at(10).toEpochMilli())
+        val p=CourseNoticePlanner.plan(edited,at(9),zone,CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),tracked)
+        assertEquals("改名",p.course?.entry?.title)
+        assertTrue(p.tracking)
+
+        val moved=ScheduleState(entries=listOf(first.copy(startMinute=720,endMinute=780),second))
+        val q=CourseNoticePlanner.plan(moved,at(12,30),zone,CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),tracked)
+        assertNull(q.tracked)
+        assertFalse(q.tracking)
+    }
+
+    @Test fun trackingOffDoesNotPublishEvenWithStoredSession() {
+        val tracked=TrackedCourse(null,"a",at(8).toEpochMilli(),at(10).toEpochMilli())
+        val p=CourseNoticePlanner.plan(ScheduleState(entries=listOf(first,second)),at(9),zone,
+            CourseNoticeOptions(CourseNoticeMode.OFF,15),tracked)
+        assertNull(p.course)
+        assertFalse(p.tracking)
+        assertEquals(date.plusDays(1).atStartOfDay(zone).toInstant(),p.nextWake)
+    }
+
+    @Test fun trackedSessionEndOrCancellationReturnsToOrdinaryPlan() {
+        val tracked=TrackedCourse(null,"a",at(8).toEpochMilli(),at(10).toEpochMilli())
+        val p=CourseNoticePlanner.plan(ScheduleState(entries=listOf(first,second)),at(10,50),zone,
+            CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),tracked)
+        assertFalse(p.tracking)
+        assertEquals(second.id,p.course?.seriesId)
+
+        val cancelled=ScheduleState()
+        val q=CourseNoticePlanner.plan(cancelled,at(9),zone,CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),tracked)
+        assertNull(q.tracked)
+        assertFalse(q.tracking)
+        assertNull(q.course)
+    }
+
+    @Test fun crossMidnightTrackedCourseWakesAtMidnightReprojection() {
+        val start=LocalDate.of(2026,10,25).atTime(23,50).atZone(zone).toInstant()
+        val end=start.plusSeconds(7200)
+        val row=ImportedClassOccurrence("night","source","series",null,start.toEpochMilli(),
+            "Night",start.toEpochMilli(),end.toEpochMilli(),zone.id,"Room","",null)
+        val state=ScheduleState(imported=listOf(row))
+        val tracked=TrackedCourse("source","series",start.toEpochMilli(),end.toEpochMilli())
+        val p=CourseNoticePlanner.plan(state,start.plusSeconds(60),zone,CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),tracked)
+        assertEquals("Night",p.course?.entry?.title)
+        assertTrue(p.tracking)
+        // Local midnight reprojection is the next boundary; the session continues after it.
+        assertEquals(LocalDate.of(2026,10,26).atStartOfDay(zone).toInstant(),p.nextWake)
+        val afterMidnight=CourseNoticePlanner.plan(state,
+            LocalDate.of(2026,10,26).atTime(0,30).atZone(zone).toInstant(),zone,
+            CourseNoticeOptions(CourseNoticeMode.NEAR_CLASS,15),tracked)
+        assertTrue(afterMidnight.tracking)
+        assertEquals(end,afterMidnight.nextWake)
+    }
 }
