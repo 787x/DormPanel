@@ -2,7 +2,16 @@ package com.dormpanel.phone
 
 import android.content.Context
 import com.dormpanel.app.schedule.ClassOccurrence
+import com.dormpanel.app.schedule.ScheduleClock
+import com.dormpanel.app.schedule.ScheduleProjection
+import com.dormpanel.app.schedule.ScheduleState
 import java.time.Instant
+
+/** 当前正在进行的课程（作为开始跟踪的候选）。纯投影，不修改任何状态。 */
+internal fun currentInProgressCourse(state: ScheduleState, clock: ScheduleClock, now: Instant): ClassOccurrence? =
+    ScheduleProjection.occurrences(state, clock)
+        .filter { it.start <= now && it.end > now }
+        .minWithOrNull(compareBy<ClassOccurrence> { it.end }.thenBy { it.start }.thenBy { it.entry.id })
 
 /** Explicit, per-class session. No background service, and never auto-started from a timetable. */
 internal data class TrackedCourse(val sourceId: String?, val seriesId: String, val start: Long, val end: Long) {

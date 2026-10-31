@@ -4,6 +4,7 @@ import com.dormpanel.app.schedule.*
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.*
+import java.util.Locale
 
 /**
  * P1 life-cycle rules that do not need Android: the tracked session is a pure identity
@@ -60,5 +61,53 @@ class CourseNoticeTrackingLifecycleTest {
         validity.expire(at(10).toEpochMilli())
         assertFalse(visible)
         assertNull(saved)
+    }
+
+    private val clock = object : ScheduleClock {
+        override fun instant() = at(9)
+        override fun zone() = zone
+        override fun locale() = Locale.getDefault()
+    }
+
+    @Test fun confirmedCourseMustStillBeInProgressAtConfirmationTime() {
+        val state = ScheduleState(entries = listOf(first, second))
+        // Dialog opened at 09:59 while "数学" is in progress.
+        val opened = currentInProgressCourse(state, object : ScheduleClock {
+            override fun instant() = at(9, 59)
+            override fun zone() = zone
+            override fun locale() = Locale.getDefault()
+        }, at(9, 59))
+        assertEquals("a", opened?.seriesId)
+        // User confirms at 10:05, after the class ended: no current course anymore.
+        val confirmed = currentInProgressCourse(state, object : ScheduleClock {
+            override fun instant() = at(10, 5)
+            override fun zone() = zone
+            override fun locale() = Locale.getDefault()
+        }, at(10, 5))
+        assertNull(confirmed)
+    }
+
+    @Test fun confirmedCourseIdentityMustMatchSnapshotTakenWhenDialogOpened() {
+        // Dialog opened while the original 08:00-10:00 class was current.
+        val original = ScheduleState(entries = listOf(first, second))
+        val opened = currentInProgressCourse(original, object : ScheduleClock {
+            override fun instant() = at(9)
+            override fun zone() = zone
+            override fun locale() = Locale.getDefault()
+        }, at(9))!!
+        // Before confirming, the class is rescheduled to 12:00-13:00.
+        val moved = ScheduleState(entries = listOf(first.copy(startMinute = 720, endMinute = 780), second))
+        val confirmed = currentInProgressCourse(moved, object : ScheduleClock {
+            override fun instant() = at(12, 30)
+            override fun zone() = zone
+            override fun locale() = Locale.getDefault()
+        }, at(12, 30))
+        // Same series id but different occurrence times: identity must not match the
+        // freeze taken when the dialog opened.
+        val sameIdentity = confirmed != null &&
+            confirmed.sourceId == opened.sourceId && confirmed.seriesId == opened.seriesId &&
+            confirmed.start.toEpochMilli() == opened.start.toEpochMilli() &&
+            confirmed.end.toEpochMilli() == opened.end.toEpochMilli()
+        assertFalse(sameIdentity)
     }
 }

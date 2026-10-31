@@ -20,6 +20,10 @@ internal object CourseNotificationCoordinator {
     private var coordinator: WidgetRefreshCoordinator<ScheduleState>? = null
     private const val ACTION = "com.dormpanel.phone.COURSE_NOTICE_REFRESH"
     private const val TAG = "DormPanelCourseNotice"
+    /** Last publish/schedule exception already recorded; the coordinator's duplicate
+     *  Result.failure callback reuses the same Throwable instance, so it must not
+     *  overwrite the specific stage with a generic "Store read failed" record. */
+    private var lastRecordedFailure: Throwable? = null
 
     fun request(context: Context, done: () -> Unit = {}) {
         val app = context.applicationContext
@@ -66,11 +70,27 @@ internal object CourseNotificationCoordinator {
                         // (ended, cancelled, rescheduled, source replaced) is retired now.
                         if (session != null && plan.tracked == null) CourseLiveTracking.stop(app)
                         validity.remember(plan.nextWake.toEpochMilli())
-                        CourseNotificationPublisher.publish(app, plan, opts)
-                        schedule(app, plan.nextWake)
-                    } else Log.w(TAG, "Schedule read failed; checking notification expiry")
+                        try {
+                            CourseNotificationPublisher.publish(app, plan, opts)
+                            schedule(app, plan.nextWake)
+                        } catch (e: Exception) {
+                            // Publisher/schedule already record their specific stage.
+                            // Keep the Throwable reference to deduplicate the coordinator's
+                            // duplicate Result.failure callback that reuses the same instance.
+                            lastRecordedFailure = e
+                        }
+                    } else {
+                        val failure = result.exceptionOrNull()
+                        if (failure !== lastRecordedFailure) {
+                            Log.w(TAG, "Schedule read failed; checking notification expiry")
+                            CourseNoticeObservability.failed(app, "Store 读取失败: ${failure?.javaClass?.simpleName ?: "未知异常"}")
+                        }
+                    }
                 },
-                timedOut = { Log.w(TAG, "Schedule read timed out; checking notification expiry") },
+                timedOut = {
+                    Log.w(TAG, "Schedule read timed out; checking notification expiry")
+                    CourseNoticeObservability.failed(app, "Store 读取超时")
+                },
                 recover = { schedule(app, Instant.ofEpochMilli(validity.retryAt(System.currentTimeMillis()))) },
                 cancel = {
                     app.getSystemService(AlarmManager::class.java).cancel(alarm(app))
@@ -89,14 +109,19 @@ internal object CourseNotificationCoordinator {
     )
     private fun schedule(context: Context, next: Instant) {
         val manager = context.getSystemService(AlarmManager::class.java)
-        manager.cancel(alarm(context))
-        manager.setAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            maxOf(next.toEpochMilli(), System.currentTimeMillis() + 1000),
-            alarm(context)
-        )
-        // Record only after the alarm was actually submitted.
-        CourseNoticeObservability.scheduled(context, next)
+        try {
+            manager.cancel(alarm(context))
+            CourseNoticeObservability.unscheduled(context)
+            val target = maxOf(next.toEpochMilli(), System.currentTimeMillis() + 1000)
+            manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, target, alarm(context))
+            // Record the actual submitted trigger time only after setAndAllowWhileIdle returned.
+            CourseNoticeObservability.scheduled(context, Instant.ofEpochMilli(target))
+        } catch (e: Exception) {
+            // A failed replacement must not leave the prior plan looking current.
+            CourseNoticeObservability.unscheduled(context)
+            CourseNoticeObservability.failed(context, "Alarm 调度异常: ${e.javaClass.simpleName}")
+            throw e
+        }
     }
 }
 

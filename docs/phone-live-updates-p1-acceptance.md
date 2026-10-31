@@ -11,14 +11,17 @@
 | 材料 | 说明 | 获取方式 |
 | --- | --- | --- |
 | **测试版 APK** | `phone-app-x08eTest.apk`（包名 `com.dormpanel.timetable.testbed`，版本 `0.1.10`，debug 签名） | `./gradlew :phone-app:assembleX08eTest` 产物：`phone-app/build/outputs/apk/x08eTest/phone-app-x08eTest.apk` |
-| **日用 APK（不安装也可）** | 正式包 `com.dormpanel.timetable` | 仅用于对照，建议验收时 **先卸载日用包或与其共存前确认可区分** |
+| **日用 DormPanel** | 正式包 `com.dormpanel.timetable` | **不需要卸载**；本验收全程使用隔离测试包，不要操作或清除日用应用/数据 |
 | **测试课表数据** | 含至少两节连续的课程 + 一节跨时段课程，方便观察课前/上课/下课/重叠切换 | 在测试包内 `管理 → 导入 ICS / CSV`；**不要使用真实日用课表** |
 | Android 设备 | HyperOS 2 / HyperOS 3（推荐各一台）；如只有 MIUI 14（API 33）也可做低版本对照 | — |
 | adb | 用于安装、授权、logcat、dumpsys | Android SDK platform-tools |
 | 可选：Android Studio Logcat | 对照诊断中的 UTC 时间点 | — |
 
-> 构建命令在仓库根目录执行。测试包与日用包 `applicationId` 不同，可同时安装；
-> 验收结束后 `adb uninstall com.dormpanel.timetable.testbed` 清理即可，不影响日用数据。
+> 构建命令在仓库根目录执行。测试包与日用包 `applicationId` 不同，可安全共存；
+> **不建议卸载日用 DormPanel，也不清除其数据**。验收结束后只允许清理隔离测试包及其测试数据：
+> ```bash
+> adb uninstall com.dormpanel.timetable.testbed
+> ```
 
 ---
 

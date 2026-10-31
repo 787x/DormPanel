@@ -493,65 +493,84 @@ class TimetableActivity : AppCompatActivity() {
         val original = CourseNoticeSettings.read(this)
         val labels = arrayOf("关闭（默认）", "全天显示当前 / 下一节课", "仅课前和上课中")
         val layout = scheduleColumn().apply { setPadding(dp(20), dp(12), dp(20), dp(8)) }
-        val group = RadioGroup(this)
+        // Holds unsaved selections across in-place tracking refresh.
         var selected = original.mode.ordinal
-        labels.forEachIndexed { i, label ->
-            group.addView(RadioButton(this).apply {
-                text = label
-                id = android.view.View.generateViewId()
-                minHeight = dp(44)
-                setOnClickListener { selected = i }
-            })
-        }
-        group.check(group.getChildAt(selected).id)
-        layout.addView(group)
-        layout.addView(scheduleLabel("课前开始显示", 14f))
-        val lead = Spinner(this).apply {
-            adapter = ArrayAdapter(this@TimetableActivity, android.R.layout.simple_spinner_dropdown_item,
-                arrayOf("提前 5 分钟", "提前 15 分钟", "提前 30 分钟"))
-            setSelection(listOf(5, 15, 30).indexOf(original.leadMinutes).coerceAtLeast(0))
-        }
-        layout.addView(lead)
-        val privacy = CheckBox(this).apply {
-            text = "锁屏隐藏课程详情"
-            isChecked = original.hideOnLockscreen
-        }
-        layout.addView(privacy)
-        layout.addView(scheduleLabel("通知仅使用本地课表，无需持续后台服务。省电或厂商限制可能让切换延迟。", 12f))
+        var lead = original.leadMinutes
+        var privacy = original.hideOnLockscreen
 
-        // ---- P1: 主动跟踪当前课程（实验）----
-        val tracking = CourseLiveTracking.read(this)
-        val trackingActive = tracking?.active(Instant.now()) == true
-        val effectiveTracking = tracking?.takeIf { trackingActive }
-        val trackedTitle = effectiveTracking?.let { session ->
-            source.state.let { state ->
-                ScheduleProjection.occurrences(state, source.clock)
-                    .firstOrNull { it.sourceId == session.sourceId && it.seriesId == session.seriesId &&
-                        it.start.toEpochMilli() == session.start && it.end.toEpochMilli() == session.end }?.entry?.title
-            } ?: "已结束或已调整的课程"
+        fun rebuild() {
+            layout.removeAllViews()
+            val group = RadioGroup(this)
+            labels.forEachIndexed { i, label ->
+                group.addView(RadioButton(this).apply {
+                    text = label
+                    id = android.view.View.generateViewId()
+                    minHeight = dp(44)
+                    isChecked = i == selected
+                    setOnClickListener { selected = i }
+                })
+            }
+            group.check(group.getChildAt(selected).id)
+            layout.addView(group)
+            layout.addView(scheduleLabel("课前开始显示", 14f))
+            val leadSpinner = Spinner(this).apply {
+                adapter = ArrayAdapter(this@TimetableActivity, android.R.layout.simple_spinner_dropdown_item,
+                    arrayOf("提前 5 分钟", "提前 15 分钟", "提前 30 分钟"))
+                setSelection(listOf(5, 15, 30).indexOf(lead).coerceAtLeast(0))
+                onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                    override fun onItemSelected(p: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                        lead = listOf(5, 15, 30)[pos]
+                    }
+                    override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+                }
+            }
+            layout.addView(leadSpinner)
+            val privacyBox = CheckBox(this).apply {
+                text = "锁屏隐藏课程详情"
+                isChecked = privacy
+                setOnCheckedChangeListener { _, checked -> privacy = checked }
+            }
+            layout.addView(privacyBox)
+            layout.addView(scheduleLabel("通知仅使用本地课表，无需持续后台服务。省电或厂商限制可能让切换延迟。", 12f))
+
+            // ---- P1: 主动跟踪当前课程（实验）----
+            val tracking = CourseLiveTracking.read(this)
+            val trackingActive = tracking?.active(Instant.now()) == true
+            val effectiveTracking = tracking?.takeIf { trackingActive }
+            val trackedTitle = effectiveTracking?.let { session ->
+                source.state.let { state ->
+                    ScheduleProjection.occurrences(state, source.clock)
+                        .firstOrNull { it.sourceId == session.sourceId && it.seriesId == session.seriesId &&
+                            it.start.toEpochMilli() == session.start && it.end.toEpochMilli() == session.end }?.entry?.title
+                } ?: "已结束或已调整的课程"
+            }
+            val trackingText = effectiveTracking?.let { session ->
+                "正在跟踪：$trackedTitle · 预计 ${timeText(Instant.ofEpochMilli(session.end))} 结束\nAndroid 16+ 会尝试申请 Live Updates 提升，系统可能只显示普通通知。"
+            } ?: "未在跟踪课程。可对正在进行的课手动开启实时跟踪。"
+            layout.addView(scheduleLabel(trackingText, 13f))
+            layout.addView(scheduleButton(if (trackingActive) "结束跟踪" else "跟踪当前课程（实验）") {
+                if (CourseLiveTracking.read(this)?.active(Instant.now()) == true) {
+                    CourseLiveTracking.stop(this)
+                    CourseNotificationCoordinator.request(this)
+                    message("已结束跟踪。")
+                    rebuild()
+                } else {
+                    // The confirmation dialog is asynchronous; refresh its action only
+                    // after the user confirms a valid current course.
+                    startTrackingCurrent { rebuild() }
+                }
+            })
+            layout.addView(scheduleButton("查看通知能力诊断") { notificationDiagnostics() })
         }
-        val trackingText = effectiveTracking?.let { session ->
-            "正在跟踪：$trackedTitle · 预计 ${timeText(Instant.ofEpochMilli(session.end))} 结束\nAndroid 16+ 会尝试申请 Live Updates 提升，系统可能只显示普通通知。"
-        } ?: "未在跟踪课程。可对正在进行的课手动开启实时跟踪。"
-        layout.addView(scheduleLabel(trackingText, 13f))
-        val trackButton = scheduleButton(if (trackingActive) "结束跟踪" else "跟踪当前课程（实验）") {
-            // Read again at tap time so a stale label never drives the action.
-            if (CourseLiveTracking.read(this)?.active(Instant.now()) == true) {
-                CourseLiveTracking.stop(this)
-                CourseNotificationCoordinator.request(this)
-                message("已结束跟踪。")
-            } else startTrackingCurrent()
-        }
-        layout.addView(trackButton)
-        layout.addView(scheduleButton("查看通知能力诊断") { notificationDiagnostics() })
+        rebuild()
 
         AlertDialog.Builder(this).setTitle("课程通知").setView(ScrollView(this).apply { addView(layout) })
             .setNegativeButton("取消", null)
             .setPositiveButton("保存") { _, _ ->
                 val options = CourseNoticeOptions(
                     CourseNoticeMode.entries[selected],
-                    listOf(5, 15, 30)[lead.selectedItemPosition],
-                    privacy.isChecked
+                    lead,
+                    privacy
                 )
                 CourseNoticeSettings.write(this, options)
                 // Turning notifications off must also end an explicitly tracked session.
@@ -569,7 +588,7 @@ class TimetableActivity : AppCompatActivity() {
         java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(instant)
 
     /** Only an in-progress course from a successfully loaded local timetable can be tracked. */
-    private fun startTrackingCurrent() {
+    private fun startTrackingCurrent(onStarted: () -> Unit = {}) {
         if (CourseNoticeSettings.read(this).mode == CourseNoticeMode.OFF) {
             message("课程通知当前为关闭状态。请先在“课程通知”中开启普通通知，再开始跟踪。")
             return
@@ -578,10 +597,7 @@ class TimetableActivity : AppCompatActivity() {
             message("本地课表尚未成功读取，暂不能开始跟踪。")
             return
         }
-        val now = source.clock.instant()
-        val current = ScheduleProjection.occurrences(source.state, source.clock)
-            .filter { it.start <= now && it.end > now }
-            .minWithOrNull(compareBy<ClassOccurrence> { it.end }.thenBy { it.start }.thenBy { it.entry.id })
+        val current = currentInProgressCourse(source.state, source.clock, source.clock.instant())
         if (current == null) {
             message("当前没有正在进行的课程。只能主动跟踪上课中的课程。")
             return
@@ -589,8 +605,29 @@ class TimetableActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("跟踪当前课程（实验）")
             .setMessage("开始跟踪「${current.entry.title}」，直到本节课结束。Android 16+ 将尝试申请 Live Updates 提升；系统可能只显示普通通知。课程表不是官方典型 Live Updates 场景，不保证获得提升。")
             .setPositiveButton("开始跟踪") { _, _ ->
-                if (CourseLiveTracking.start(this, current, now)) {
+                // Re-validate at confirmation time: the course may have ended, moved,
+                // cancelled or the source may have changed while the dialog was open.
+                if (CourseNoticeSettings.read(this).mode == CourseNoticeMode.OFF) {
+                    message("课程通知已关闭，未开始跟踪。请先开启普通通知。")
+                    return@setPositiveButton
+                }
+                if (!source.ready || source.error || source.retryingLocalRead) {
+                    message("本地课表状态已变化，未开始跟踪。请稍后重试。")
+                    return@setPositiveButton
+                }
+                val confirmNow = source.clock.instant()
+                val confirmed = currentInProgressCourse(source.state, source.clock, confirmNow)
+                    ?.takeIf { it.sourceId == current.sourceId && it.seriesId == current.seriesId &&
+                        it.start.toEpochMilli() == current.start.toEpochMilli() &&
+                        it.end.toEpochMilli() == current.end.toEpochMilli() }
+                if (confirmed == null) {
+                    message("课程已结束、取消或调整，未开始跟踪。请刷新课表后再试。")
+                    return@setPositiveButton
+                }
+                // Only a currently-valid, identity-stable in-progress occurrence is used.
+                if (CourseLiveTracking.start(this, confirmed, confirmNow)) {
                     CourseNotificationCoordinator.request(this)
+                    onStarted()
                     if (android.os.Build.VERSION.SDK_INT >= 33 &&
                         checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                         requestNoticePermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
