@@ -14,12 +14,31 @@ import java.time.Instant
 import java.time.ZoneId
 
 /**
- * Runs against the isolated testbed package. Verifies the platform-level PendingIntent
- * identity (not just token string comparison) and the session check-and-clear storage.
+ * Runs only on the isolated testbed package. Verifies the platform-level PendingIntent
+ * identity (PendingIntent.equals compares the system identity, not the Java reference)
+ * and the session check-and-clear storage. It modifies tracking prefs and cancels the
+ * course notification, so it must never execute against the daily package.
  */
 class CourseTrackingSessionTest {
+    /** Refuses to run unless the target app is an explicitly isolated testbed package:
+     *  the daily package is `com.dormpanel.timetable` (no suffix); testbeds are
+     *  `com.dormpanel.timetable.<suffix>` where the suffix ends in "testbed" (Gradle
+     *  `dormpanel.testSuffix`, default `.testbed`; historical runs used `.pr76testbed`).
+     *  Called before any state modification so a wrong package fails without touching data. */
+    private fun requireIsolatedTestbed(context: Context) {
+        val pkg = context.packageName
+        val allowed = pkg.startsWith("com.dormpanel.timetable.") &&
+            pkg != "com.dormpanel.timetable" &&
+            pkg.endsWith("testbed")
+        if (!allowed) {
+            fail("CourseTrackingSessionTest must run only on the isolated testbed package " +
+                "(com.dormpanel.timetable.*testbed); refusing to touch package: $pkg")
+        }
+    }
+
     @Test fun stopPendingIntentIsPerSessionAndStaleActionsCannotStopNewSession() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        requireIsolatedTestbed(context)
         val now = Instant.now()
         val zone = ZoneId.systemDefault()
         val course = ClassOccurrence(
@@ -36,9 +55,15 @@ class CourseTrackingSessionTest {
             val stopB = trackingStopPendingIntent(context, "session-b")
             assertEquals("session-b", CourseLiveTracking.read(context)?.token)
 
-            // Different session tokens must produce distinct PendingIntent identities;
-            // FLAG_UPDATE_CURRENT must not rewrite A into B.
-            assertNotSame(stopA, stopB)
+            // PendingIntent.equals() compares the system identity (creator + token), so
+            // two different session tokens must be different PendingIntents — and the same
+            // token must evaluate equal again. This is not just a Java reference check.
+            assertNotEquals(stopA, stopB)
+            assertEquals(stopB, trackingStopPendingIntent(context, "session-b"))
+            assertEquals(stopA, trackingStopPendingIntent(context, "session-a"))
+
+            // FLAG_NO_CREATE proves A's PendingIntent identity still exists separately
+            // after B was created; FLAG_UPDATE_CURRENT did not rewrite it into B.
             val stillA = PendingIntent.getBroadcast(
                 context, 21002,
                 Intent(context, CourseNotificationReceiver::class.java)
@@ -46,6 +71,7 @@ class CourseTrackingSessionTest {
                     .setData(Uri.parse("$TRACKING_STOP_URI/session-a")),
                 PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
             assertNotNull(stillA)
+            assertNotEquals(stopB, stillA)
 
             // A stale action for A cannot clear or end the current B session.
             assertFalse(CourseLiveTracking.stopIfSession(context, "session-a"))
@@ -68,6 +94,7 @@ class CourseTrackingSessionTest {
 
     @Test fun legacySessionWithoutTokenGetsMigratedAndCannotBeStoppedByUnknownAction() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        requireIsolatedTestbed(context)
         val now = Instant.now()
         val prefs = context.getSharedPreferences("course_live_tracking", Context.MODE_PRIVATE)
         try {
