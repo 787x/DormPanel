@@ -24,9 +24,24 @@ internal object CourseNotificationCoordinator {
     fun request(context: Context, done: () -> Unit = {}) {
         val app = context.applicationContext
         main.post {
+            val deadlines = app.getSharedPreferences("course_notice_validity", Context.MODE_PRIVATE)
+            val validity = CourseNoticeValidity(
+                read = { if (deadlines.contains("until")) deadlines.getLong("until", 0) else null },
+                write = { until ->
+                    val edit = deadlines.edit()
+                    if (until == null) edit.remove("until") else edit.putLong("until", until)
+                    // Persist before notify; an interrupted process must fail closed.
+                    if (!edit.commit()) {
+                        CourseNotificationPublisher.cancel(app)
+                        if (until != null) error("Cannot persist course notice deadline")
+                    }
+                },
+                cancel = { CourseNotificationPublisher.cancel(app) }
+            )
+            validity.expire(System.currentTimeMillis())
             val machine = coordinator ?: WidgetRefreshCoordinator<ScheduleState>(
-                present = { CourseNoticeSettings.read(app).mode != CourseNoticeMode.OFF ||
-                    CourseLiveTracking.hasActive(app, Instant.now()) },
+                present = { CourseNoticeSettings.read(app).mode != CourseNoticeMode.OFF &&
+                    CourseNotificationPublisher.available(app) },
                 later = { ms, f -> main.postDelayed(f, ms); Unit },
                 read = { callback ->
                     ScheduleStores.create(app, TermScheduleProfileStore(app)).loadPresentation { result ->
@@ -34,28 +49,22 @@ internal object CourseNotificationCoordinator {
                     }
                 },
                 publish = { result ->
-                    val now = Instant.now()
-                    val opts = CourseNoticeSettings.read(app)
-                    val plan = CourseNoticePlanner.plan(result.getOrThrow(), now, ZoneId.systemDefault(), opts)
-                    val tracked = CourseLiveTracking.match(app, plan.occurrences, now)
-                    val displayed = if (tracked != null) plan.copy(
-                        course = tracked, inProgress = true, imminent = false,
-                        nextWake = minOf(plan.nextWake, tracked.end)
-                    ) else plan
-                    CourseNotificationPublisher.publish(app, displayed, opts, promote = tracked != null)
-                    schedule(app, displayed.nextWake)
+                    // Failure is not an empty schedule. Recovery retains only an unexpired frame.
+                    val state = result.getOrNull()
+                    if (state != null) {
+                        val now = Instant.now()
+                        val opts = CourseNoticeSettings.read(app)
+                        val plan = CourseNoticePlanner.plan(state, now, ZoneId.systemDefault(), opts)
+                        validity.remember(plan.nextWake.toEpochMilli())
+                        CourseNotificationPublisher.publish(app, plan, opts)
+                        schedule(app, plan.nextWake)
+                    } else Log.w(TAG, "Schedule read failed; checking notification expiry")
                 },
-                timedOut = {
-                    Log.w(TAG, "Schedule read timed out; keeping last notification")
-                    CourseNoticeObservability.failed(app, "Store read timeout")
-                },
-                recover = {
-                    CourseNoticeObservability.failed(app, "Store read/publish retry")
-                    schedule(app, Instant.now().plusSeconds(300))
-                },
+                timedOut = { Log.w(TAG, "Schedule read timed out; checking notification expiry") },
+                recover = { schedule(app, Instant.ofEpochMilli(validity.retryAt(System.currentTimeMillis()))) },
                 cancel = {
                     app.getSystemService(AlarmManager::class.java).cancel(alarm(app))
-                    CourseNotificationPublisher.cancel(app)
+                    validity.clear()
                 }
             ).also { coordinator = it }
             machine.request(done)
@@ -70,7 +79,6 @@ internal object CourseNotificationCoordinator {
     private fun schedule(context: Context, next: Instant) {
         val manager = context.getSystemService(AlarmManager::class.java)
         manager.cancel(alarm(context))
-        CourseNoticeObservability.scheduled(context, next)
         manager.setAndAllowWhileIdle(
             AlarmManager.RTC_WAKEUP,
             maxOf(next.toEpochMilli(), System.currentTimeMillis() + 1000),
@@ -87,13 +95,9 @@ class CourseNotificationReceiver : BroadcastReceiver() {
                 Intent.ACTION_TIME_CHANGED,
                 Intent.ACTION_TIMEZONE_CHANGED,
                 Intent.ACTION_DATE_CHANGED,
-                Intent.ACTION_MY_PACKAGE_REPLACED,
-                STOP_TRACKING_ACTION
+                Intent.ACTION_MY_PACKAGE_REPLACED
             )) return
-        if (intent.action == "com.dormpanel.phone.COURSE_NOTICE_REFRESH")
-            CourseNoticeObservability.fired(context)
         val pending = goAsync()
-        if (intent.action == STOP_TRACKING_ACTION) CourseLiveTracking.stop(context)
         CourseNotificationCoordinator.request(context) { pending.finish() }
     }
 }

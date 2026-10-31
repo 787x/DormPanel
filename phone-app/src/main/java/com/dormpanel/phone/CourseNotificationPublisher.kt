@@ -13,8 +13,6 @@ import androidx.core.app.NotificationManagerCompat
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-internal const val STOP_TRACKING_ACTION = "com.dormpanel.phone.STOP_COURSE_TRACKING"
-
 /** Normal local notification; no permanent foreground service. */
 internal object CourseNotificationPublisher {
     private const val CHANNEL = "course_status"
@@ -22,15 +20,23 @@ internal object CourseNotificationPublisher {
     private val timeFormat = DateTimeFormatter.ofPattern("HH:mm")
     fun cancel(context: Context) = NotificationManagerCompat.from(context).cancel(ID)
 
-    fun publish(context: Context, plan: CourseNoticePlan, options: CourseNoticeOptions, promote: Boolean = false) {
-        val course = plan.course ?: run { cancel(context); return }
+    fun available(context: Context): Boolean {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(
             CHANNEL, "课程状态", NotificationManager.IMPORTANCE_LOW
-        ).apply { description = "本地课程进度和下一节课" })
-        if (Build.VERSION.SDK_INT >= 33 &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+        ).apply {
+            description = "本地课程进度和下一节课"
+        })
+        return (Build.VERSION.SDK_INT < 33 ||
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
+            NotificationManagerCompat.from(context).areNotificationsEnabled() &&
+            manager.getNotificationChannel(CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
+    fun publish(context: Context, plan: CourseNoticePlan, options: CourseNoticeOptions) {
+        val course = plan.course ?: run { cancel(context); return }
+        val manager = context.getSystemService(NotificationManager::class.java)
+        if (options.mode == CourseNoticeMode.OFF || !available(context)) { cancel(context); return }
 
         val zone = ZoneId.systemDefault()
         val time = timeFormat.format(course.start.atZone(zone)) + "–" +
@@ -49,17 +55,19 @@ internal object CourseNotificationPublisher {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val builder = NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_timetable)
+            .setSmallIcon(R.drawable.ic_notification_course)
             .setContentTitle(title)
             .setContentText(subtitle)
             .setContentIntent(open)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setAutoCancel(false)
+            // System-side expiry survives process death and delayed/non-exact refresh alarms.
+            .setTimeoutAfter((plan.nextWake.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(1))
             .setVisibility(if (options.hideOnLockscreen) NotificationCompat.VISIBILITY_PRIVATE
                 else NotificationCompat.VISIBILITY_PUBLIC)
             .setPublicVersion(NotificationCompat.Builder(context, CHANNEL)
-                .setSmallIcon(R.drawable.ic_timetable)
+                .setSmallIcon(R.drawable.ic_notification_course)
                 .setContentTitle("DormPanel · 课程状态")
                 .setContentText("点按查看课表")
                 .build())
@@ -68,26 +76,6 @@ internal object CourseNotificationPublisher {
                 .setUsesChronometer(true)
                 .setChronometerCountDown(true)
         } else builder.setShowWhen(false)
-        if (promote && Build.VERSION.SDK_INT >= 36) {
-            // A request, not proof of eligibility or elevation; do not use Xiaomi private extras.
-            val stop = PendingIntent.getBroadcast(
-                context, 21002,
-                Intent(context, CourseNotificationReceiver::class.java).setAction(STOP_TRACKING_ACTION),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            builder.setRequestPromotedOngoing(true)
-                .addAction(R.drawable.ic_timetable, "结束跟踪", stop)
-                .setDeleteIntent(stop)
-        } else if (promote) {
-            val stop = PendingIntent.getBroadcast(
-                context, 21002,
-                Intent(context, CourseNotificationReceiver::class.java).setAction(STOP_TRACKING_ACTION),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            builder.addAction(R.drawable.ic_timetable, "结束跟踪", stop)
-                .setDeleteIntent(stop)
-        }
         manager.notify(ID, builder.build())
-        CourseNoticeObservability.notifyReturned(context)
     }
 }

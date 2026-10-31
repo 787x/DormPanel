@@ -18,9 +18,8 @@ import java.util.concurrent.Executors
 class TimetableActivity : AppCompatActivity() {
     private val requestNoticePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) {
-            CourseLiveTracking.stop(this)
-            CourseNoticeSettings.write(this, CourseNoticeOptions())
-            if (!isDestroyed) message("通知权限未开启，课程通知保持关闭。")
+            // Retain options for recovery after a later system permission grant.
+            if (!isDestroyed) message("通知权限未开启，课程通知暂不显示；可在系统设置中授权。")
         }
         CourseNotificationCoordinator.request(this)
     }
@@ -262,7 +261,7 @@ class TimetableActivity : AppCompatActivity() {
         unregisterReceiver(clockChanges)
         super.onStop()
     }
-    override fun onResume() { super.onResume(); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
+    override fun onResume() { super.onResume(); CourseNotificationCoordinator.request(this); resumeCheckPending = true; if (::root.isInitialized) { render(); checkOnResume() } }
     private fun checkOnResume() {
         if (resumeCheckPending && !icsRequest.choosing && !icsRequest.writing && source.ready && !source.error && !source.retryingLocalRead && ::sharedSync.isInitialized && source.state.sync != null && !sharedSync.busy) {
             resumeCheckPending = false; sharedSync.sync()
@@ -475,9 +474,9 @@ class TimetableActivity : AppCompatActivity() {
     private fun management() {
         if (source.applyingSnapshot) return
         swipeContent?.cancelMotion()
-        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）", "课表显示设置", "课程通知", "跟踪当前课程（实验）", "通知能力诊断", "课程管理", "导出 ICS")) { _, i ->
+        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）", "课表显示设置", "课程通知", "课程管理", "导出 ICS")) { _, i ->
             if (i < 3 && source.error) { message(source.editBlockReason.orEmpty()); return@setItems }
-            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) }; 4 -> displaySettings(); 5 -> noticeSettings(); 6 -> trackCurrentCourse(); 7 -> notificationDiagnostics(); 8 -> editors.courseManagement(); 9 -> exportCalendar() }
+            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) }; 4 -> displaySettings(); 5 -> noticeSettings(); 6 -> editors.courseManagement(); 7 -> exportCalendar() }
         }.setNegativeButton("关闭", null).show()
     }
     private fun displaySettings() {
@@ -499,11 +498,12 @@ class TimetableActivity : AppCompatActivity() {
         labels.forEachIndexed { i, label ->
             group.addView(RadioButton(this).apply {
                 text = label
-                isChecked = i == selected
+                id = android.view.View.generateViewId()
                 minHeight = dp(44)
                 setOnClickListener { selected = i }
             })
         }
+        group.check(group.getChildAt(selected).id)
         layout.addView(group)
         layout.addView(scheduleLabel("课前开始显示", 14f))
         val lead = Spinner(this).apply {
@@ -518,7 +518,7 @@ class TimetableActivity : AppCompatActivity() {
         }
         layout.addView(privacy)
         layout.addView(scheduleLabel("通知仅使用本地课表，无需持续后台服务。省电或厂商限制可能让切换延迟。", 12f))
-        AlertDialog.Builder(this).setTitle("课程通知").setView(layout)
+        AlertDialog.Builder(this).setTitle("课程通知").setView(ScrollView(this).apply { addView(layout) })
             .setNegativeButton("取消", null)
             .setPositiveButton("保存") { _, _ ->
                 val options = CourseNoticeOptions(
@@ -527,75 +527,13 @@ class TimetableActivity : AppCompatActivity() {
                     privacy.isChecked
                 )
                 CourseNoticeSettings.write(this, options)
-                // Turning notifications off must also end an explicitly tracked session.
-                if (options.mode == CourseNoticeMode.OFF) CourseLiveTracking.stop(this)
+                CourseNotificationCoordinator.request(this)
                 if (options.mode != CourseNoticeMode.OFF &&
                     android.os.Build.VERSION.SDK_INT >= 33 &&
                     checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     requestNoticePermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                } else CourseNotificationCoordinator.request(this)
-            }.show()
-    }
-
-    private fun trackCurrentCourse() {
-        if (CourseLiveTracking.hasActive(this, Instant.now())) {
-            AlertDialog.Builder(this).setTitle("跟踪课程")
-                .setMessage("正在跟踪一节课。结束后将恢复普通通知设置。")
-                .setPositiveButton("结束跟踪") { _, _ ->
-                    CourseLiveTracking.stop(this)
-                    CourseNotificationCoordinator.request(this)
-                }.setNegativeButton("取消", null).show()
-            return
-        }
-        if (!source.ready || source.error || source.retryingLocalRead) {
-            message("本地课表尚未成功读取，暂不能开始跟踪。")
-            return
-        }
-        val now = source.clock.instant()
-        val current = ScheduleProjection.occurrences(source.state, source.clock)
-            .filter { it.start <= now && it.end > now }
-            .minWithOrNull(compareBy<ClassOccurrence> { it.end }.thenBy { it.start }.thenBy { it.entry.id })
-        if (current == null) {
-            message("当前没有正在进行的课程。只能主动跟踪上课中的课程。")
-            return
-        }
-        AlertDialog.Builder(this).setTitle("跟踪当前课程（实验）")
-            .setMessage("开始跟踪「${current.entry.title}」，直到本节课结束。Android 16+ 将尝试申请 Live Updates 提升；系统可能只显示普通通知。课程表不是官方典型 Live Updates 场景，不保证获得提升。")
-            .setPositiveButton("开始跟踪") { _, _ ->
-                if (CourseLiveTracking.start(this, current, Instant.now())) {
-                    CourseNotificationCoordinator.request(this)
-                    if (android.os.Build.VERSION.SDK_INT >= 33 &&
-                        checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                        requestNoticePermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                } else message("课程已经结束，请刷新课表再试。")
-            }.setNegativeButton("取消", null).show()
-    }
-
-    private fun notificationDiagnostics() {
-        worker.execute {
-            val report = runCatching { PhoneNotificationDiagnostics.report(applicationContext) }
-                .getOrElse { "通知能力检查失败：${it.javaClass.simpleName}" }
-            runOnUiThread {
-                if (isDestroyed || isFinishing) return@runOnUiThread
-                val dialog = AlertDialog.Builder(this).setTitle("手机通知能力诊断")
-                    .setMessage(report)
-                    .setPositiveButton("确定", null)
-                    .setNeutralButton("系统通知设置") { _, _ ->
-                        val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
-                        runCatching { startActivity(intent) }
-                    }
-                if (android.os.Build.VERSION.SDK_INT >= 36) {
-                    dialog.setNegativeButton("实时更新权限") { _, _ ->
-                        val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
-                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
-                        runCatching { startActivity(intent) }
-                    }
                 }
-                dialog.show()
-            }
-        }
+            }.show()
     }
 
     private fun chooseFile(target: String?) {

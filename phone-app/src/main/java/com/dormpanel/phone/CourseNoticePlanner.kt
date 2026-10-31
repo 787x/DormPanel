@@ -16,8 +16,7 @@ internal data class CourseNoticePlan(
     val course: ClassOccurrence?,
     val inProgress: Boolean,
     val imminent: Boolean,
-    val nextWake: Instant,
-    val occurrences: List<ClassOccurrence>
+    val nextWake: Instant
 )
 internal object CourseNoticePlanner {
     fun plan(state: ScheduleState, now: Instant, zone: ZoneId, options: CourseNoticeOptions): CourseNoticePlan {
@@ -27,27 +26,30 @@ internal object CourseNoticePlanner {
             override fun locale() = Locale.getDefault()
         }
         val all = ScheduleProjection.occurrences(state, clock)
-        val current = all.filter { it.start <= now && it.end > now }
-            .minWithOrNull(compareBy<ClassOccurrence> { it.end }.thenBy { it.start }.thenBy { it.entry.id })
-        val upcoming = all.firstOrNull { it.start > now }
         val lead = options.leadMinutes.coerceIn(1, 60).toLong() * 60
-        val imminent = upcoming != null && !upcoming.start.minusSeconds(lead).isAfter(now)
-        val selected = when (options.mode) {
-            CourseNoticeMode.OFF -> null
-            CourseNoticeMode.ALWAYS -> current ?: upcoming
-            CourseNoticeMode.NEAR_CLASS -> current ?: upcoming?.takeIf { imminent }
+        fun display(at: Instant): Triple<ClassOccurrence?, Boolean, Boolean> {
+            val current = all.filter { it.start <= at && it.end > at }
+                .minWithOrNull(compareBy<ClassOccurrence> { it.end }.thenBy { it.start }
+                    .thenBy { it.sourceId ?: "" }.thenBy { it.entry.id })
+            val upcoming = all.firstOrNull { it.start > at }
+            val imminent = upcoming != null && !upcoming.start.minusSeconds(lead).isAfter(at)
+            val selected = when (options.mode) {
+                CourseNoticeMode.OFF -> null
+                CourseNoticeMode.ALWAYS -> current ?: upcoming
+                CourseNoticeMode.NEAR_CLASS -> current ?: upcoming?.takeIf { imminent }
+            }
+            return Triple(selected, current != null && selected == current,
+                imminent && selected == upcoming)
         }
-        // Every overlap boundary matters; local midnight handles new imported schedules.
+        val shown = display(now)
+        // Reproject at the local date boundary (including DST). Within this projection,
+        // wake only when the selected course or its displayed phase actually changes.
         val midnight = now.atZone(zone).toLocalDate().plusDays(1).atStartOfDay(zone).toInstant()
-        val next = (sequenceOf(midnight) + all.asSequence().flatMap {
-            sequenceOf(it.start.minusSeconds(lead), it.start, it.end)
-        }).filter { it > now }.minOrNull() ?: now.plusSeconds(1800)
-        return CourseNoticePlan(
-            selected,
-            current != null && selected == current,
-            imminent && selected == upcoming,
-            next,
-            all
-        )
+        val next = if (options.mode == CourseNoticeMode.OFF) midnight else
+            all.asSequence().flatMap {
+                sequenceOf(it.start.minusSeconds(lead), it.start, it.end)
+            }.filter { it > now && it < midnight }.distinct().sorted()
+                .firstOrNull { display(it) != shown } ?: midnight
+        return CourseNoticePlan(shown.first, shown.second, shown.third, next)
     }
 }
