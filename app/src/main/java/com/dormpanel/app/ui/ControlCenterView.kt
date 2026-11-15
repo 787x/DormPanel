@@ -44,6 +44,10 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     private val webDavSettings: WebDavSettings? = null,
     private val webDavSync: WebDavSyncController? = null,
 ) : LinearLayout(context), PageInteraction {
+    private var openWeatherCenter: (() -> Unit)? = null
+
+    internal fun setWeatherCenterAction(open: () -> Unit) { openWeatherCenter = open }
+
     private val density = resources.displayMetrics.density
     private fun dp(value: Int) = (value * density).roundToInt()
     private var claimed = false
@@ -169,6 +173,14 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
             setOnClickListener {
                 onGestureClaimed()
                 com.dormpanel.app.weather.WeatherSettingsDialog(context, backend.weatherServices).show()
+            }
+        })
+        if (backend != null) right.addView(Button(context).apply {
+            text = "天气中心"
+            minimumHeight = dp(52)
+            setOnClickListener {
+                onGestureClaimed()
+                openWeatherCenter?.invoke()
             }
         })
         right.addView(section("Home Assistant"))

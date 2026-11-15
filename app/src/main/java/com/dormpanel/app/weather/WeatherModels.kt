@@ -38,6 +38,7 @@ data class WeatherPlace(
     val name: String,
     val zone: ZoneId,
     val sources: List<WeatherSourceRef>,
+    val favorite: Boolean = false,
 ) {
     init { require(id.isNotBlank() && name.isNotBlank() && sources.isNotEmpty()) }
 }

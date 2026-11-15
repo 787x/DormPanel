@@ -331,8 +331,8 @@ class CoreDashboardTest {
                     }
                 }
                 onView(card("Demo 天气")).perform(ViewActions.click())
-                onView(withText("24°C  多云")).check(matches(isDisplayed()))
-                onView(withText("关闭")).perform(ViewActions.click())
+                onView(withText(containsString("演示天气"))).check(matches(isDisplayed()))
+                onView(withText("‹ 返回")).perform(ViewActions.click())
                 onView(withId(R.id.dashboard_grid)).perform(GeneralClickAction(Tap.LONG, { view ->
                     val position = IntArray(2).also(view::getLocationOnScreen)
                     floatArrayOf(position[0] + view.width * .25f, position[1] + view.height * .80f)
@@ -370,6 +370,23 @@ class CoreDashboardTest {
                     assertEquals(bound.encode(), saved.last().configurationJson)
                     assertEquals(3, saved.last().row)
                 }
+                onView(card("测试武汉")).perform(ViewActions.click())
+                fun selection(activity: MainActivity) = (activity.findViewById<android.view.ViewGroup>(R.id.page_container)
+                    .getChildAt(0) as com.dormpanel.app.weather.WeatherCenterView).selection
+                scenario.onActivity { assertEquals(district, selection(it).source); assertEquals(city.id, selection(it).placeId) }
+                onView(withText("和风天气")).perform(ViewActions.click())
+                onView(withText(containsString("weather.home"))).perform(ViewActions.click())
+                scenario.recreate()
+                scenario.onActivity {
+                    assertEquals(home, selection(it).source)
+                    assertEquals(city.id, selection(it).placeId)
+                    assertEquals(saved, model(it).stateHolder.state.cards)
+                }
+                androidx.test.espresso.Espresso.pressBack()
+                onView(card("测试武汉")).perform(ViewActions.longClick())
+                onView(withText("查看天气")).perform(ViewActions.click())
+                scenario.onActivity { assertEquals(district, selection(it).source) }
+                onView(withText("‹ 返回")).perform(ViewActions.click())
                 repeat(2) {
                     onView(card("测试武汉")).perform(ViewActions.longClick())
                     onView(withText("测试武汉")).check(matches(isDisplayed()))

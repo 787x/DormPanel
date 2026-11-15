@@ -34,13 +34,24 @@ class PanelPageViewFactory(
     private val webDavSync: com.dormpanel.app.schedule.WebDavSyncController? = null,
     private val scheduleViewport: com.dormpanel.app.schedule.ScheduleViewport = com.dormpanel.app.schedule.ScheduleViewport(),
 ) {
+    internal var openWeather: (com.dormpanel.app.weather.WeatherCenterSelection) -> Unit = {}
+    internal var weatherSelection = com.dormpanel.app.weather.WeatherCenterSelection(legacy = true)
+    internal var backFromWeather: () -> Unit = {}
+
     fun create(page: PanelPage, parent: ViewGroup): View {
+        if (page == PanelPage.WEATHER) return com.dormpanel.app.weather.WeatherCenterView(inflater.context, backend, appearance,
+            weatherSelection, backFromWeather)
         if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, receiveTimetable, manageTimetables, scheduleViewport)
         if (page == PanelPage.APPS) return com.dormpanel.app.apps.AppsPageView(inflater.context, apps, apps.icons, appearance, onReturnHome, installApk)
         if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed)
-        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, deviceControls, onPageGestureClaimed, backend, startupPolicy, webDavSettings, webDavSync)
+        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, deviceControls, onPageGestureClaimed, backend, startupPolicy, webDavSettings, webDavSync).apply {
+            setWeatherCenterAction { openWeather(com.dormpanel.app.weather.WeatherCenterSelection()) }
+        }
         if (page == PanelPage.HOME) {
             return (inflater.inflate(R.layout.view_home_page, parent, false) as DashboardPageView).apply {
+                setWeatherNavigation { action -> openWeather(com.dormpanel.app.weather.WeatherCenterSelection(
+                    action.placeId, action.source, legacy = action.placeId == null,
+                )) }
                 bind(dashboardStateHolder, cardRegistry, onPageGestureClaimed, catalog, appearance, backend)
             }
         }
@@ -79,7 +90,7 @@ class PanelPageViewFactory(
             R.string.home_control_description,
             R.string.home_control_return_hint,
         )
-        PanelPage.HOME -> error("Home uses its dedicated layout")
+        PanelPage.HOME, PanelPage.WEATHER -> error("Page uses its dedicated layout")
     }
 
     private data class PageContent(

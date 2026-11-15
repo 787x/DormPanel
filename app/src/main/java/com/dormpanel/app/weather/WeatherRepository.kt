@@ -175,6 +175,16 @@ class WeatherRepository internal constructor(
         }
     }
 
+    /** Sidebar summary of current data already loaded by a page or card. */
+    internal fun cachedCurrent(placeId: String, source: WeatherSourceRef): WeatherSnapshot? {
+        val place = places.get(placeId)?.takeIf { source in it.sources } ?: return null
+        val instant = now()
+        val plan = provider(source).plan(source, place.zone, WeatherQuery(WeatherBlock.CURRENT), instant)
+        if (plan.unavailable != null) return null
+        val entry = entries[plan.key] ?: return null
+        return snapshot(entry, source, place.zone, plan.query, instant)
+    }
+
     fun capabilities(placeId: String, source: WeatherSourceRef): WeatherCapabilities {
         val place = places.get(placeId)
         if (place == null || source !in place.sources) return WeatherCapabilities(

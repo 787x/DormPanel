@@ -9,7 +9,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-internal enum class WeatherSymbol { SUN, MOON, PARTLY, PARTLY_NIGHT, CLOUD, RAIN, SNOW, STORM, FOG, HAZE, WIND, UNKNOWN }
+internal enum class WeatherSymbol { SUN, MOON, PARTLY, PARTLY_NIGHT, CLOUD, RAIN, SNOW, STORM, FOG, HAZE, WIND, UNKNOWN, THERMOMETER, DROPLET, GAUGE }
 internal data class WeatherSky(val symbol: WeatherSymbol, val description: String)
 internal data class WeatherLine(val label: String, val sky: WeatherSky, val temperature: String?, val rain: String?)
 
