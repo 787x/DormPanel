@@ -15,7 +15,8 @@ internal class WeatherCardFeed(
     private var blocks = emptySet<WeatherBlock>()
     private var compactForecast = false
     private var forecastBlock: WeatherBlock? = null
-    private val declinedForecasts = mutableSetOf<WeatherBlock>()
+    private val unsupportedForecasts = mutableSetOf<WeatherBlock>()
+    private val emptyForecasts = mutableSetOf<WeatherBlock>()
     private var syncing = false
     private var resync = false
     private var generation = 0
@@ -61,7 +62,10 @@ internal class WeatherCardFeed(
         }
         this.configuration = configuration
         this.blocks = blocks
-        if (!compactForecast) declinedForecasts.clear()
+        if (!compactForecast) {
+            unsupportedForecasts.clear()
+            emptyForecasts.clear()
+        }
         this.compactForecast = compactForecast
         subscribe()
     }
@@ -88,46 +92,69 @@ internal class WeatherCardFeed(
             if (subscriptions.isNotEmpty()) stopSubscriptions()
             return
         }
-        forecastBlock = if (!compactForecast) null else if (binding.source is WeatherSourceRef.HomeAssistant) {
-            val current = snapshots[WeatherBlock.CURRENT]
-            val features = current?.haForecastFeatures
-            val candidates = haForecastOrder.filter {
-                features == null || features and checkNotNull(it.haForecastFeature()) != 0
-            }
-            if (current == null || (current.data == null && current.state in setOf(WeatherState.UNLOADED, WeatherState.LOADING))) null
-            else candidates.firstOrNull { it !in declinedForecasts } ?: forecastBlock?.takeIf { it in candidates }
-        } else WeatherBlock.DAILY
-        val required = blocks + listOfNotNull(forecastBlock)
+        val ha = binding.source as? WeatherSourceRef.HomeAssistant
+        val current = snapshots[WeatherBlock.CURRENT]
+        val candidates = if (ha != null && compactForecast) haForecastCandidates(current) else emptyList()
+        forecastBlock = when {
+            !compactForecast -> null
+            ha == null -> WeatherBlock.DAILY
+            else -> candidates.firstOrNull { it !in unsupportedForecasts && it !in emptyForecasts }
+                ?: forecastBlock?.takeIf { it in candidates }
+                ?: candidates.firstOrNull { it in emptyForecasts }
+        }
+        val recovery = if (current == null || current.network == WeatherNetworkStatus.OFFLINE ||
+            current.state in setOf(WeatherState.ERROR, WeatherState.UNAUTHORIZED, WeatherState.UNCONFIGURED)) emptyList()
+        else candidates.takeWhile { it != forecastBlock }.filter { it in emptyForecasts }
+        val required = blocks + listOfNotNull(forecastBlock) + recovery
         (subscriptions.keys - required).forEach {
             snapshots.remove(it)
             subscriptions.remove(it)?.close()
         }
         val active = generation
         (required - subscriptions.keys).forEach { block ->
-            subscriptions[block] = repository.observe(
-                binding.placeId, binding.source, WeatherQuery(block),
-                automatic = true,
-            ) { snapshot ->
-                if (active != generation || (block !in blocks && block != forecastBlock)) return@observe
+            val listener: (WeatherSnapshot) -> Unit = listener@{ snapshot ->
+                if (active != generation) return@listener
                 val previous = snapshots.put(block, snapshot)
-                if (previous == snapshot) return@observe
-                if (compactForecast && binding.source is WeatherSourceRef.HomeAssistant) {
-                    if (block == WeatherBlock.CURRENT &&
-                        (previous?.haForecastFeatures != snapshot.haForecastFeatures ||
-                            (previous?.state == WeatherState.ERROR && snapshot.state == WeatherState.FRESH) ||
-                            (previous?.network == WeatherNetworkStatus.OFFLINE && snapshot.network != WeatherNetworkStatus.OFFLINE))) {
-                        declinedForecasts.clear()
+                if (previous == snapshot) return@listener
+                if (ha != null && compactForecast) {
+                    val recheck = if (block == WeatherBlock.CURRENT) {
+                        previous != null && (previous.haForecastFeatures != snapshot.haForecastFeatures ||
+                            (previous.state in setOf(WeatherState.ERROR, WeatherState.UNAUTHORIZED, WeatherState.UNCONFIGURED) &&
+                                snapshot.state == WeatherState.FRESH) ||
+                            (previous.network == WeatherNetworkStatus.OFFLINE && snapshot.network != WeatherNetworkStatus.OFFLINE))
+                    } else {
+                        if (snapshot.data is WeatherData.Forecast) {
+                            emptyForecasts -= block
+                        } else if (snapshot.state == WeatherState.UNSUPPORTED && !snapshot.refreshing) {
+                            emptyForecasts -= block
+                            unsupportedForecasts += block
+                        } else if (snapshot.haForecastRecovering || (snapshot.state == WeatherState.EMPTY && !snapshot.refreshing)) {
+                            emptyForecasts += block
+                        }
+                        false
                     }
-                    // Keep a transient failure subscribed so its next live update can recover.
-                    if (block == forecastBlock && snapshot.data == null &&
-                        (snapshot.state == WeatherState.EMPTY || snapshot.state == WeatherState.UNSUPPORTED)) {
-                        declinedForecasts += block
+                    if (recheck) {
+                        val reconsidered = haForecastCandidates(snapshot).filterTo(mutableSetOf()) {
+                            it in emptyForecasts || it in unsupportedForecasts
+                        }
+                        unsupportedForecasts.clear()
+                        if (reconsidered.isNotEmpty()) repository.recheckEmptyHaForecasts(binding.placeId, ha, reconsidered)
                     }
                     subscribe()
                 }
                 changed()
             }
+            subscriptions[block] = if (ha != null && compactForecast && block in haForecastOrder) {
+                repository.observeHaCardForecast(binding.placeId, ha, block, listener)
+            } else repository.observe(binding.placeId, binding.source, WeatherQuery(block), automatic = true, listener)
         }
+    }
+
+    private fun haForecastCandidates(current: WeatherSnapshot?): List<WeatherBlock> {
+        if (current == null || (current.data == null &&
+                current.state in setOf(WeatherState.UNLOADED, WeatherState.LOADING))) return emptyList()
+        val features = current.haForecastFeatures ?: return haForecastOrder
+        return haForecastOrder.filter { features and checkNotNull(it.haForecastFeature()) != 0 }
     }
 
     fun refresh(): Map<WeatherBlock, WeatherRefreshResult> =
@@ -136,7 +163,8 @@ internal class WeatherCardFeed(
     private fun stopSubscriptions() {
         generation++
         forecastBlock = null
-        declinedForecasts.clear()
+        unsupportedForecasts.clear()
+        emptyForecasts.clear()
         snapshots.clear()
         val previous = subscriptions.values.toList()
         subscriptions.clear()

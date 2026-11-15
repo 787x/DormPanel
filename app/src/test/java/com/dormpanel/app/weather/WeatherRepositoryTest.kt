@@ -1,5 +1,7 @@
 package com.dormpanel.app.weather
 
+import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
+import com.dormpanel.app.dashboard.card.WeatherCardFeed
 import com.dormpanel.app.ha.ManualScheduler
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -160,6 +162,218 @@ class WeatherRepositoryTest {
         }
     }
 
+    @Test fun emptyDailyRecoversOnSharedTimerWithoutCurrentUpdates() = Fixture().use { f ->
+        val (config, first) = f.bindHaCard()
+        val current = f.jobs.single()
+        current.send(haFeatures(7))
+        f.advance()
+        val daily = f.jobs.last()
+        daily.send(HA_EMPTY_FORECAST)
+        f.advance()
+        assertTrue(daily.cancelled)
+        val fallback = f.jobs.last()
+        fallback.send(HA_FORECAST)
+        f.advance()
+        assertEquals(WeatherBlock.TWICE_DAILY, first.forecast?.query?.block)
+
+        // A later card uses the same stored result and deadline.
+        f.advance(300)
+        val second = f.haCard(config)
+        assertEquals(3, f.jobs.size)
+        f.advance(599)
+        assertEquals(3, f.jobs.size)
+        f.advance(1)
+        val probe = f.jobs.last()
+        assertEquals(WeatherBlock.DAILY, probe.block)
+        assertEquals(4, f.jobs.size)
+        assertEquals(WeatherBlock.TWICE_DAILY, first.forecast?.query?.block)
+        assertEquals(WeatherBlock.TWICE_DAILY, second.forecast?.query?.block)
+        first.close()
+        assertFalse(probe.cancelled)
+        assertFalse(fallback.cancelled)
+        probe.send(HA_FORECAST)
+        f.advance()
+        assertEquals(WeatherBlock.DAILY, second.forecast?.query?.block)
+        assertTrue(fallback.cancelled)
+        assertFalse(probe.cancelled)
+        second.close()
+        assertTrue(f.jobs.all { it.cancelled })
+    }
+
+    @Test fun repeatedEmptyAndSilentProbesStayBoundedWhileFallbackIsShown() = Fixture().use { f ->
+        val (config, feed) = f.bindHaCard()
+        f.jobs.single().send(haFeatures(3))
+        f.advance()
+        f.jobs.last().send(HA_EMPTY_FORECAST)
+        f.advance()
+        val fallback = f.jobs.last()
+        assertEquals(WeatherBlock.HOURLY, fallback.block)
+        fallback.send(HA_FORECAST)
+        f.advance()
+
+        repeat(3) { round ->
+            repeat(5) { feed.bind(config, setOf(WeatherBlock.CURRENT), compactForecast = true) }
+            f.advance(899)
+            assertEquals(round + 1, f.jobs.count { it.block == WeatherBlock.DAILY })
+            f.advance(1)
+            val probe = f.jobs.last()
+            assertEquals(WeatherBlock.DAILY, probe.block)
+            assertEquals(WeatherBlock.HOURLY, feed.forecast?.query?.block)
+            probe.send(HA_EMPTY_FORECAST)
+            f.advance()
+            assertTrue(probe.cancelled)
+            assertFalse(fallback.cancelled)
+        }
+        f.advance(900)
+        val silent = f.jobs.last()
+        f.advance(89)
+        assertFalse(silent.cancelled)
+        f.advance(1)
+        assertTrue(silent.cancelled)
+        assertEquals(WeatherBlock.HOURLY, feed.forecast?.query?.block)
+        f.advance(809)
+        assertEquals(5, f.jobs.count { it.block == WeatherBlock.DAILY })
+        f.advance(1)
+        assertEquals(6, f.jobs.count { it.block == WeatherBlock.DAILY })
+        feed.close()
+    }
+
+    @Test fun twiceDailyCanRecoverWhileDailyRemainsEmpty() = Fixture().use { f ->
+        val (_, feed) = f.bindHaCard()
+        f.jobs.single().send(haFeatures(7))
+        f.advance()
+        f.jobs.last().send(HA_EMPTY_FORECAST)
+        f.advance()
+        f.jobs.last().send(HA_EMPTY_FORECAST)
+        f.advance()
+        val hourly = f.jobs.last()
+        assertEquals(WeatherBlock.HOURLY, hourly.block)
+        hourly.send(HA_FORECAST)
+        f.advance()
+
+        f.advance(900)
+        assertEquals(WeatherBlock.HOURLY, feed.forecast?.query?.block)
+        val daily = f.jobs.last { it.block == WeatherBlock.DAILY }
+        val twice = f.jobs.last { it.block == WeatherBlock.TWICE_DAILY }
+        daily.send(HA_EMPTY_FORECAST)
+        twice.send(HA_FORECAST)
+        f.advance()
+        assertEquals(WeatherBlock.TWICE_DAILY, feed.forecast?.query?.block)
+        assertTrue(daily.cancelled)
+        assertTrue(hourly.cancelled)
+        assertFalse(twice.cancelled)
+        feed.close()
+    }
+
+    @Test fun authorizationAndConfigurationFailuresStopRecoveryUntilCurrentRecovers() {
+        for (failure in listOf(WeatherState.UNAUTHORIZED, WeatherState.UNCONFIGURED)) Fixture().use { f ->
+            val (_, feed) = f.bindHaCard()
+            val current = f.jobs.single()
+            current.send(haFeatures(3))
+            f.advance()
+            f.jobs.last().send(HA_EMPTY_FORECAST)
+            f.advance()
+            f.jobs.last().send(HA_FORECAST)
+            f.advance(900)
+            val probe = f.jobs.last()
+            assertEquals(WeatherBlock.DAILY, probe.block)
+            probe.fail(failure)
+            current.fail(failure)
+            f.advance()
+            assertTrue(probe.cancelled)
+            f.advance(3600)
+            assertEquals(2, f.jobs.count { it.block == WeatherBlock.DAILY })
+            assertEquals(WeatherBlock.HOURLY, feed.forecast?.query?.block)
+            current.send(haFeatures(3))
+            f.advance()
+            assertEquals(3, f.jobs.count { it.block == WeatherBlock.DAILY })
+            f.jobs.last().send(HA_FORECAST)
+            f.advance()
+            assertEquals(WeatherBlock.DAILY, feed.forecast?.query?.block)
+            feed.close()
+        }
+    }
+
+    @Test fun unsupportedTypesStayIdleUntilCapabilityChanges() = Fixture().use { f ->
+        val (config, feed) = f.bindHaCard(compactForecast = false)
+        val current = f.jobs.single()
+        current.send(haFeatures(2))
+        f.advance()
+        assertEquals(1, f.jobs.size)
+        feed.bind(config, setOf(WeatherBlock.CURRENT), compactForecast = true)
+        f.advance()
+        f.jobs.last().send(HA_FORECAST)
+        f.advance(3600)
+        assertEquals(listOf(WeatherBlock.CURRENT, WeatherBlock.HOURLY), f.jobs.map { it.block })
+
+        current.send(haFeatures(7))
+        f.advance()
+        val unsupported = f.jobs.last()
+        assertEquals(WeatherBlock.DAILY, unsupported.block)
+        unsupported.fail(WeatherState.UNSUPPORTED)
+        f.advance()
+        assertTrue(unsupported.cancelled)
+        assertEquals(WeatherBlock.TWICE_DAILY, f.jobs.last().block)
+        f.advance(3600)
+        assertEquals(1, f.jobs.count { it.block == WeatherBlock.DAILY })
+        current.send(haFeatures(3))
+        f.advance()
+        assertEquals(2, f.jobs.count { it.block == WeatherBlock.DAILY })
+        feed.close()
+    }
+
+    @Test fun sourceChangeCancelsRecoveryAndRejectsLateProbeResults() = Fixture().use { f ->
+        val (_, feed) = f.bindHaCard()
+        f.jobs.single().send(haFeatures(7))
+        f.advance()
+        f.jobs.last().send(HA_EMPTY_FORECAST)
+        f.advance(0)
+        f.advance(900)
+        val probe = f.jobs.last()
+        assertEquals(WeatherBlock.DAILY, probe.block)
+        val other = WeatherSourceRef.HomeAssistant("weather.other", "server")
+        f.places.save(WeatherPlace("other-ha", "Other", f.zone, listOf(other)))
+        feed.bind(WeatherCardConfiguration.Bound("other-ha", other), setOf(WeatherBlock.CURRENT), compactForecast = true)
+        assertTrue(probe.cancelled)
+        val otherCurrent = f.jobs.last()
+        otherCurrent.send(haFeatures(2))
+        probe.send(HA_FORECAST)
+        f.advance()
+        val hourly = f.jobs.last()
+        hourly.send(HA_FORECAST)
+        f.advance()
+        assertEquals(other, feed.forecast?.source)
+        assertEquals(WeatherBlock.HOURLY, feed.forecast?.query?.block)
+        val count = f.jobs.size
+        feed.close()
+        f.advance(3600)
+        assertEquals(count, f.jobs.size)
+        assertTrue(f.jobs.all { it.cancelled })
+    }
+
+    private fun Fixture.bindHaCard(compactForecast: Boolean = true): Pair<WeatherCardConfiguration.Bound, WeatherCardFeed> {
+        live = true
+        haWire = true
+        val source = WeatherSourceRef.HomeAssistant("weather.review", "server")
+        places.save(WeatherPlace("review", "家", zone, listOf(source)))
+        val config = WeatherCardConfiguration.Bound("review", source)
+        return config to haCard(config, compactForecast)
+    }
+
+    private fun Fixture.haCard(config: WeatherCardConfiguration.Bound, compactForecast: Boolean = true) =
+        WeatherCardFeed(com.dormpanel.app.data.FakeDashboardDataSource(), repository) {}.apply {
+            bind(config, setOf(WeatherBlock.CURRENT), compactForecast = compactForecast)
+        }
+
+    private fun haFeatures(flags: Int) = """{"attrs":{"supported_features":$flags,"temperature_unit":"°C"}}"""
+
+    private companion object {
+        const val HA_EMPTY_FORECAST = """{"forecast":[]}"""
+        const val HA_FORECAST = """{"attrs":{"temperature_unit":"°C"},"forecast":[
+            {"datetime":"2026-11-15T15:00:00Z","temperature":17,"is_daytime":false}
+        ]}"""
+    }
+
     @Test fun emptyDailyFallsBackAndReconnectRechecksDaily() = Fixture().use { f ->
         f.live = true
         f.haWire = true
@@ -182,8 +396,12 @@ class WeatherRepositoryTest {
         f.advance()
         current.send(attrs)
         f.advance()
-        assertTrue(twice.cancelled)
+        assertFalse(twice.cancelled)
         assertEquals(WeatherBlock.DAILY, f.jobs.last().block)
+        f.jobs.last().send(HA_FORECAST)
+        f.advance()
+        assertTrue(twice.cancelled)
+        assertEquals(WeatherBlock.DAILY, feed.forecast?.query?.block)
         feed.close()
     }
 
