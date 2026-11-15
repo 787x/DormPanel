@@ -82,10 +82,13 @@ class WeatherPlaceStore internal constructor(
     fun isTemporary(id: String) = id in temporary
 
     fun save(place: WeatherPlace) {
-        if (place.id in temporary) {
-            temporary[place.id] = place
-            notifyChanged()
-        } else persist(saved + (place.id to place))
+        require(place.id !in temporary) { "请通过收藏流程保存预览地点" }
+        persist(saved + (place.id to place))
+    }
+
+    internal fun saveFavorite(place: WeatherPlace) {
+        require(place.sources.none { it is WeatherSourceRef.QWeather && temporary[place.id]?.sources.orEmpty().any { preview -> preview === it } })
+        persist(saved + (place.id to place)) { temporary.remove(place.id) }
     }
 
     internal fun addLookup(place: WeatherPlace) {
@@ -105,11 +108,12 @@ class WeatherPlaceStore internal constructor(
     }
 
     private fun notifyChanged() = listeners.toList().forEach { it() }
-    private fun persist(next: Map<String, WeatherPlace>) {
+    private fun persist(next: Map<String, WeatherPlace>, committed: () -> Unit = {}) {
         require(next.size <= 100) { "已保存的地点已达上限" }
         check(write(JSONArray(next.values.map(::encode)).toString())) { "无法保存地点" }
         saved.clear()
         saved.putAll(next)
+        committed()
         notifyChanged()
     }
 
@@ -120,6 +124,7 @@ class WeatherPlaceStore internal constructor(
                     is WeatherSourceRef.QWeather -> JSONObject().put("kind", "qw")
                         .put("lat", source.coordinates.latitude.toPlainString()).put("lon", source.coordinates.longitude.toPlainString())
                         .put("location", source.locationId)
+                    is WeatherSourceRef.QWeatherCity -> JSONObject().put("kind", "qw-city").put("location", source.locationId)
                     is WeatherSourceRef.HomeAssistant -> JSONObject().put("kind", "ha")
                         .put("entity", source.entityId).put("server", source.serverId)
                 }
@@ -130,6 +135,7 @@ class WeatherPlaceStore internal constructor(
                 when (source.getString("kind")) {
                     "qw" -> WeatherSourceRef.QWeather(WeatherCoordinates(BigDecimal(source.getString("lat")),
                         BigDecimal(source.getString("lon"))), source.text("location"))
+                    "qw-city" -> WeatherSourceRef.QWeatherCity(source.getString("location"))
                     "ha" -> WeatherSourceRef.HomeAssistant(source.getString("entity"), source.getString("server"))
                     else -> error("Unknown weather source")
                 }
@@ -141,7 +147,7 @@ internal data class WeatherCacheRecord(val wire: JSONObject, val fetchedAt: Inst
 
 internal interface WeatherCache {
     fun read(group: String, key: String, done: (WeatherCacheRecord?) -> Unit)
-    fun write(group: String, key: String, record: WeatherCacheRecord)
+    fun write(group: String, key: String, record: WeatherCacheRecord, done: (Boolean) -> Unit)
     fun clear(groups: Set<String>?)
 }
 
@@ -165,25 +171,30 @@ internal class DiskWeatherCache(
         }
     }
 
-    override fun write(group: String, key: String, record: WeatherCacheRecord) {
+    override fun write(group: String, key: String, record: WeatherCacheRecord, done: (Boolean) -> Unit) {
         worker.execute {
-            runCatching {
+            val persisted = runCatching {
                 directory.mkdirs()
                 val json = JSONObject().put("fetchedAt", record.fetchedAt.toString()).put("payload", record.wire)
                 val bytes = json.toString().toByteArray()
-                if (bytes.size > MAX_FILE) return@runCatching
+                check(bytes.size <= MAX_FILE)
                 val file = AtomicFile(file(group, key))
                 val stream = file.startWrite()
                 try {
                     stream.write(bytes)
+                    stream.fd.sync()
                     file.finishWrite(stream)
                 } catch (e: Exception) {
                     file.failWrite(stream)
                     throw e
                 }
+                check(file.readFully().contentEquals(bytes))
+            }.isSuccess
+            if (persisted) runCatching {
                 directory.listFiles { candidate -> candidate.extension == "json" }.orEmpty()
                     .sortedByDescending(File::lastModified).drop(128).forEach { AtomicFile(it).delete() }
             }
+            dispatch { done(persisted) }
         }
     }
 

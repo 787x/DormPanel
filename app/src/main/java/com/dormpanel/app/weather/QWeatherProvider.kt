@@ -25,6 +25,7 @@ internal data class QWeatherEndpoint(val path: String, val parameters: Map<Strin
 internal class QWeatherApi(
     http: OkHttpClient,
     private val now: () -> Instant,
+    private val offline: () -> Boolean = { false },
     private val requestUrl: (QWeatherConfig, QWeatherEndpoint) -> HttpUrl = { config, endpoint -> endpoint.url(config.host) },
 ) {
     private val client = http.newBuilder().followRedirects(false).followSslRedirects(false)
@@ -45,8 +46,12 @@ internal class QWeatherApi(
         val call = client.newCall(request)
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                if (!call.isCanceled()) callback(WeatherResult.Failed(WeatherFailure(WeatherState.ERROR,
-                    if (e is javax.net.ssl.SSLException) "HTTPS 证书验证失败" else "天气连接失败或超时", recoverOnNetwork = e !is javax.net.ssl.SSLException)))
+                if (call.isCanceled()) return
+                val tls = generateSequence<Throwable>(e) { it.cause }.any { it is javax.net.ssl.SSLException }
+                val recoverable = !tls && (offline() || e is java.net.UnknownHostException ||
+                    e is java.net.ConnectException || e is java.net.NoRouteToHostException)
+                callback(WeatherResult.Failed(WeatherFailure(WeatherState.ERROR,
+                    if (tls) "HTTPS 证书验证失败" else "天气连接失败或超时", recoverOnNetwork = recoverable)))
             }
             override fun onResponse(call: Call, response: Response) {
                 val result = response.use {
@@ -108,15 +113,22 @@ internal class QWeatherProvider(
     private val config: () -> QWeatherConfig?,
     private val configurationError: () -> String,
     private val budget: QWeatherBudget,
+    private val dispatch: (() -> Unit) -> Unit,
 ) : WeatherProvider {
     override fun plan(source: WeatherSourceRef, zone: ZoneId, query: WeatherQuery, now: Instant): WeatherPlan {
-        require(source is WeatherSourceRef.QWeather)
+        val city = source as? WeatherSourceRef.QWeatherCity
+        val position = when (source) {
+            is WeatherSourceRef.QWeather -> source
+            is WeatherSourceRef.QWeatherCity -> WeatherSourceRef.QWeather(
+                WeatherCoordinates(java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO), source.locationId)
+            is WeatherSourceRef.HomeAssistant -> error("Unexpected HA source")
+        }
         val account = config()
         val today = now.atZone(zone).toLocalDate()
         val datedQuery = if (query.block in setOf(WeatherBlock.SUN, WeatherBlock.MOON, WeatherBlock.HISTORY)) {
             query.copy(date = query.date ?: if (query.block == WeatherBlock.HISTORY) today.minusDays(1) else today)
         } else query
-        val endpoint = endpoint(source, datedQuery)
+        val endpoint = endpoint(position, datedQuery)
         val error = when {
             endpoint == null -> WeatherFailure(WeatherState.UNSUPPORTED,
                 if (query.block == WeatherBlock.HISTORY) "历史天气需要明确的 Location ID" else "和风没有半日预报")
@@ -130,18 +142,90 @@ internal class QWeatherProvider(
         val parse = { json: JSONObject, timeZone: ZoneId -> QWeatherParser.parse(json, timeZone, datedQuery) }
         val url = endpoint?.url("cache.qweatherapi.com")
         val key = url?.encodedPath.orEmpty() + "?" + url?.encodedQuery.orEmpty()
-        val group = if (query.block == WeatherBlock.HISTORY && source.locationId != null)
-            "qw-history:${source.locationId}" else "qw:${source.coordinates.path}"
-        return WeatherPlan("qw:${account?.id}:$key:${query.block}", group, datedQuery,
+        val group = when {
+            query.block == WeatherBlock.HISTORY && position.locationId != null -> "qw-history:${position.locationId}"
+            city != null -> "qw-city:${city.locationId}"
+            else -> "qw:${position.coordinates.path}"
+        }
+        val cityKey = city?.takeIf { query.block != WeatherBlock.HISTORY }?.let { "city:${it.locationId}:" }.orEmpty()
+        return WeatherPlan("qw:${account?.id}:$cityKey$key:${query.block}", group, datedQuery,
             parse, { callback ->
-                if (account == null || endpoint == null) {
-                    callback(WeatherResult.Failed(checkNotNull(error)))
-                    val cancel: () -> Unit = {}
-                    cancel
-                } else request(account, endpoint, query.block.core, { parse(it, zone) }) { result ->
+                val confirmed = checkNotNull(account)
+                fun fetch(target: QWeatherEndpoint) = request(confirmed, target, query.block.core, { parse(it, zone) }) { result ->
                     callback(if (result is WeatherResult.Data) result.copy(zone = zone) else result)
                 }
-            }, unavailable = error)
+                if (city == null || query.block == WeatherBlock.HISTORY) fetch(checkNotNull(endpoint))
+                else resolveAndFetch(confirmed, city, query.block.core, now, { result ->
+                    when (result) {
+                        is CityResolution.Failure -> {
+                            callback(WeatherResult.Failed(result.error))
+                            val cancel: () -> Unit = {}
+                            cancel
+                        }
+                        is CityResolution.Position -> fetch(checkNotNull(endpoint(
+                            WeatherSourceRef.QWeather(result.coordinates, city.locationId), datedQuery)))
+                    }
+                })
+            }, unavailable = error, restriction = { account?.let { budget.restriction(it.id, query.block.core) } })
+    }
+
+    private sealed interface CityResolution {
+        data class Position(val coordinates: WeatherCoordinates) : CityResolution
+        data class Failure(val error: WeatherFailure) : CityResolution
+    }
+    private class CityLookup {
+        val consumers = mutableListOf<(CityResolution) -> Unit>()
+        var cancel: (() -> Unit)? = null
+    }
+    private data class ResolvedCity(val coordinates: WeatherCoordinates, val validUntil: Instant)
+    private val lookups = mutableMapOf<Pair<String, String>, CityLookup>()
+    private val resolved = LinkedHashMap<Pair<String, String>, ResolvedCity>(16, 0.75f, true)
+
+    fun configurationChanged() {
+        resolved.clear()
+    }
+
+    private fun resolveAndFetch(
+        account: QWeatherConfig, city: WeatherSourceRef.QWeatherCity, core: Boolean, now: Instant,
+        fetch: (CityResolution) -> (() -> Unit),
+    ): () -> Unit {
+        val key = account.id to city.locationId
+        resolved[key]?.takeIf { now < it.validUntil }?.let { return fetch(CityResolution.Position(it.coordinates)) }
+        var stopWeather: (() -> Unit)? = null
+        val consume: (CityResolution) -> Unit = { stopWeather = fetch(it) }
+        val existing = lookups[key]
+        val job = existing ?: CityLookup().also { lookups[key] = it }
+        job.consumers += consume
+        if (existing == null) {
+            job.cancel = request(account, cityLookup(city.locationId), core, { ParsedWeather(null) }) { result ->
+                dispatch {
+                    if (lookups[key] !== job) return@dispatch
+                    lookups.remove(key)
+                    val outcome = when (result) {
+                        is WeatherResult.Failed -> CityResolution.Failure(result.failure)
+                        is WeatherResult.Data -> {
+                            val coordinates = cityCoordinates(result.wire, city.locationId)
+                            if (coordinates == null) CityResolution.Failure(
+                                WeatherFailure(WeatherState.UNSUPPORTED, "和风未找到此公开地点编号"))
+                            else {
+                                resolved[key] = ResolvedCity(coordinates, now.plusSeconds(86_400))
+                                if (resolved.size > 32) resolved.remove(resolved.keys.first())
+                                CityResolution.Position(coordinates)
+                            }
+                        }
+                    }
+                    job.consumers.toList().forEach { it(outcome) }
+                }
+            }
+        }
+        return {
+            stopWeather?.invoke()
+            job.consumers.remove(consume)
+            if (job.consumers.isEmpty() && lookups[key] === job) {
+                lookups.remove(key)
+                job.cancel?.invoke()
+            }
+        }
     }
 
     fun request(account: QWeatherConfig, endpoint: QWeatherEndpoint, core: Boolean,
@@ -149,7 +233,7 @@ internal class QWeatherProvider(
                 callback: (WeatherResult) -> Unit): () -> Unit {
         val denied = budget.acquire(account.id, core, explicitTest)
         if (denied != null) {
-            callback(WeatherResult.Failed(denied))
+            callback(WeatherResult.Failed(denied.copy(attempted = false)))
             return {}
         }
         return api.execute(account, endpoint, parse) { result ->
@@ -159,6 +243,11 @@ internal class QWeatherProvider(
     }
 
     companion object {
+        internal fun cityCoordinates(wire: JSONObject, id: String): WeatherCoordinates? =
+            wire.objects("location").firstOrNull { it.text("id") == id }?.let {
+                runCatching { WeatherCoordinates(it.getString("lat").toBigDecimal(), it.getString("lon").toBigDecimal()) }.getOrNull()
+            }
+
         fun cityLookup(query: String) = QWeatherEndpoint("geo/v2/city/lookup",
             mapOf("location" to query, "number" to "10", "lang" to "zh"))
 

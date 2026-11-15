@@ -24,6 +24,10 @@ sealed interface WeatherSourceRef {
     data class QWeather(val coordinates: WeatherCoordinates, val locationId: String? = null) : WeatherSourceRef {
         init { require(locationId == null || locationId.matches(Regex("[A-Za-z0-9]{1,40}"))) }
     }
+    /** A Location ID distributed by the public QWeather LocationList. */
+    data class QWeatherCity(val locationId: String) : WeatherSourceRef {
+        init { require(locationId.matches(Regex("[0-9]{9}"))) }
+    }
     data class HomeAssistant(val entityId: String, val serverId: String) : WeatherSourceRef {
         init { require(entityId.matches(Regex("weather\\.[a-z0-9_]+")) && serverId.isNotBlank()) }
     }
@@ -60,6 +64,8 @@ data class WeatherQuery(
     }
 }
 
+enum class WeatherPersistence { NONE, SESSION_ONLY, SAVING, SAVED, FAILED }
+
 enum class WeatherState {
     UNLOADED, LOADING, FRESH, STALE, EMPTY, UNSUPPORTED, UNCONFIGURED, UNAUTHORIZED, BUDGET, ERROR
 }
@@ -87,6 +93,8 @@ data class WeatherSnapshot(
     val error: String? = null,
     val upstreamTag: String? = null,
     val refreshing: Boolean = false,
+    val persistence: WeatherPersistence = WeatherPersistence.NONE,
+    val unchanged: Boolean = false,
 )
 
 data class WeatherPeriod(

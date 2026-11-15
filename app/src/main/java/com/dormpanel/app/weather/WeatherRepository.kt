@@ -14,7 +14,7 @@ class WeatherRepository internal constructor(
     private val now: () -> Instant,
 ) : AutoCloseable {
     interface Subscription : AutoCloseable {
-        fun refresh()
+        fun refresh(): WeatherRefreshResult
     }
 
     private inner class Demand(
@@ -30,10 +30,30 @@ class WeatherRepository internal constructor(
         var requested = false
         var manualActive = false
         var last: WeatherSnapshot? = null
-        override fun refresh() {
-            if (this !in demands) return
+        var unavailable: WeatherFailure? = null
+        override fun refresh(): WeatherRefreshResult {
+            val current = entry
+            val instant = now()
+            fun blocked(reason: String, at: Instant? = null) = WeatherRefreshResult(WeatherRefreshStatus.BLOCKED, reason, at)
+            if (this !in demands || current == null) return blocked("地点或来源已移除")
+            unavailable?.let { return blocked(it.message, it.retryAt) }
+            if (current.plan.live) return blocked("HA 数据由状态与预报订阅更新")
+            if (!foreground) return blocked("请在面板前台刷新")
+            if (current.inFlight) {
+                manualActive = true
+                return WeatherRefreshResult(WeatherRefreshStatus.JOINED)
+            }
+            if (requested) return WeatherRefreshResult(WeatherRefreshStatus.QUEUED)
+            val due = maxOf(current.lastAttempt.plusSeconds(minimumSeconds(current)), retryAt(current))
+            current.plan.restriction()?.let { restriction ->
+                return blocked(restriction.message, restriction.retryAt?.let { maxOf(it, due) })
+            }
+            current.failure?.takeIf { it.state == WeatherState.UNSUPPORTED || it.state == WeatherState.UNAUTHORIZED }
+                ?.let { return blocked(it.message) }
+            if (instant < due) return blocked(current.failure?.message ?: "刷新间隔未到", due)
             requested = true
             reconcile()
+            return WeatherRefreshResult(if (manualActive) WeatherRefreshStatus.STARTED else WeatherRefreshStatus.QUEUED)
         }
         override fun close() {
             if (demands.remove(this)) {
@@ -55,7 +75,12 @@ class WeatherRepository internal constructor(
         var record: WeatherCacheRecord? = null
         val parsed = mutableMapOf<ZoneId, ParsedWeather>()
         var failure: WeatherFailure? = null
-        var nextAttempt = Instant.EPOCH
+        var lastAttempt = Instant.EPOCH
+        var failedAt = Instant.EPOCH
+        var recoveredAt: Instant? = null
+        var lastRecovery = Instant.EPOCH
+        var persistence = WeatherPersistence.NONE
+        var unchanged = false
         var running = false
         var inFlight = false
         var cancel: (() -> Unit)? = null
@@ -66,7 +91,45 @@ class WeatherRepository internal constructor(
     private val demands = linkedSetOf<Demand>()
     private val entries = LinkedHashMap<String, Entry>(16, 0.75f, true)
     private var timer: (() -> Unit)? = null
+    private var refreshPolicy = WeatherRefreshPolicy()
+
+    internal fun usePolicy(policy: WeatherRefreshPolicy) {
+        refreshPolicy = policy
+        reconcile()
+    }
+
+    internal fun estimatedRequests(policy: WeatherRefreshPolicy, days: Int): Pair<Int, Int> {
+        val savedLocations = places.places.filterNot { places.isTemporary(it.id) }
+            .flatMap { it.sources }.mapNotNull {
+                when (it) {
+                    is WeatherSourceRef.QWeather -> it.coordinates.path
+                    is WeatherSourceRef.QWeatherCity -> "city:" + it.locationId
+                    else -> null
+                }
+            }.distinct()
+        val active = demands.filter { it.automatic && it.source !is WeatherSourceRef.HomeAssistant }
+            .mapNotNull { it.entry }.distinct().filter { !it.plan.live && it.plan.unavailable == null }
+            .map { it.plan.query.block }.filter { it !in setOf(WeatherBlock.HISTORY, WeatherBlock.SUN, WeatherBlock.MOON) }
+        return policy.estimate(savedLocations.flatMap { WeatherBlock.entries.filter(WeatherBlock::core) }, days) to
+            policy.estimate(active, days)
+    }
+
+    private fun intervalSeconds(entry: Entry): Long = 60 *
+        (if (entry.plan.live) entry.plan.query.block.minutes else refreshPolicy.minutes(entry.plan.query.block))
+
+    private fun minimumSeconds(entry: Entry): Long = 60 *
+        (RefreshInterval.forBlock(entry.plan.query.block)?.minimum ?: entry.plan.query.block.minutes)
+
+    private fun retryAt(entry: Entry): Instant {
+        val failure = entry.failure ?: return Instant.EPOCH
+        val providerLimit = failure.retryAt ?: Instant.EPOCH
+        if (failure.state == WeatherState.BUDGET) return providerLimit
+        val backoff = (60L * (1 shl (entry.retryCount - 1).coerceIn(0, 5))).coerceAtLeast(intervalSeconds(entry))
+        val local = entry.recoveredAt ?: entry.failedAt.plusSeconds(backoff)
+        return maxOf(local, providerLimit)
+    }
     private var foreground = true
+    private var recoveryPending = false
     private var closed = false
     private var reconciling = false
     private var repeat = false
@@ -100,15 +163,30 @@ class WeatherRepository internal constructor(
     fun setForeground(active: Boolean) {
         if (foreground == active) return
         foreground = active
-        reconcile()
+        if (active && recoveryPending) onNetworkAvailable() else reconcile()
     }
 
     internal fun onNetworkAvailable() {
-        val earliest = now().plusSeconds(5)
-        entries.values.filter { it.failure?.recoverOnNetwork == true && it.retryCount == 1 }.forEach {
-            it.nextAttempt = minOf(it.nextAttempt, earliest)
+        if (closed) return
+        recoveryPending = !foreground
+        if (!foreground) return
+        val instant = now()
+        val candidates = demands.filter { it.automatic && it.query.block.core && it.zone != null }
+            .mapNotNull { demand -> demand.entry?.takeIf { entry ->
+                expiry(entry, checkNotNull(demand.zone))?.let { instant >= it } != false
+            } }.distinct()
+        candidates.filter {
+            it.failure?.recoverOnNetwork == true && it.failure?.retryAt == null && it.recoveredAt == null &&
+                instant >= it.lastRecovery.plusSeconds(60)
+        }.forEach {
+            it.lastRecovery = instant
+            it.recoveredAt = instant.plusSeconds(5)
         }
         reconcile()
+    }
+
+    internal fun onNetworkLost() {
+        recoveryPending = false
     }
 
     internal fun onConfigurationChanged(resetBudget: Boolean = false, resetAuthorization: Boolean = false) {
@@ -117,7 +195,7 @@ class WeatherRepository internal constructor(
                 (resetAuthorization && it.plan.key.startsWith("qw:") && it.failure?.statusCode == 401)
         }.forEach {
             it.failure = null
-            it.nextAttempt = Instant.EPOCH
+            it.recoveredAt = null
         }
         reconcile()
     }
@@ -134,6 +212,8 @@ class WeatherRepository internal constructor(
         entries.values.filter { groups == null || it.plan.group in groups }.forEach {
             stop(it)
             it.record = null
+            it.persistence = WeatherPersistence.NONE
+            it.unchanged = false
             it.parsed.clear()
             it.diskLoaded = true
             it.loadingDisk = false
@@ -147,6 +227,7 @@ class WeatherRepository internal constructor(
         entry.cancel = null
         entry.running = false
         entry.inFlight = false
+        demands.filter { it.entry == entry }.forEach { it.manualActive = false }
         entry.loadingDisk = false
     }
 
@@ -176,6 +257,7 @@ class WeatherRepository internal constructor(
             val place = places.get(demand.placeId)
             if (place == null || demand.source !in place.sources) {
                 demand.entry = null
+                demand.requested = false
                 demand.emit(WeatherSnapshot(demand.source, demand.zone ?: java.time.ZoneOffset.UTC, demand.query,
                     WeatherState.UNSUPPORTED, error = "地点或绑定的来源已移除"))
                 return@forEach
@@ -183,7 +265,11 @@ class WeatherRepository internal constructor(
             demand.zone = place.zone
             val plan = provider(demand.source).plan(demand.source, place.zone, demand.query, instant)
             val entry = entries.getOrPut(plan.key) { Entry(plan) }
-            if (demand.entry != entry) demand.manualActive = false
+            if (demand.entry != entry) {
+                demand.manualActive = false
+                demand.requested = false
+            }
+            demand.unavailable = plan.unavailable
             demand.entry = entry
             demand.boundQuery = plan.query
             if (plan.unavailable == null) active.getOrPut(entry, ::mutableListOf) += demand
@@ -196,8 +282,6 @@ class WeatherRepository internal constructor(
 
         entries.values.toList().filter { it !in active }.forEach {
             if (it.running || it.loadingDisk) stop(it)
-            // Reattaching a live consumer must observe HA state immediately.
-            if (it.plan.live) it.nextAttempt = Instant.EPOCH
         }
         if (closed) return
         var next: Instant? = null
@@ -218,16 +302,23 @@ class WeatherRepository internal constructor(
             val onDemand = eligible.any { it.requested }
             val auto = eligible.any { it.automatic } && entry.plan.query.block != WeatherBlock.HISTORY
             val permanent = entry.failure?.state in setOf(WeatherState.UNAUTHORIZED, WeatherState.UNSUPPORTED)
-            val due = if (entry.plan.live || onDemand || entry.failure != null) entry.nextAttempt else maxOf(
-                entry.nextAttempt, expiry ?: Instant.EPOCH)
-            if (foreground && !entry.running && !entry.loadingDisk && (onDemand || auto) && (!permanent || onDemand)) {
+            val due = when {
+                entry.plan.live -> Instant.EPOCH
+                entry.recoveredAt != null -> retryAt(entry)
+                onDemand -> maxOf(entry.lastAttempt.plusSeconds(minimumSeconds(entry)), retryAt(entry))
+                else -> maxOf(
+                    entry.lastAttempt.plusSeconds(minimumSeconds(entry)),
+                    retryAt(entry), expiry ?: Instant.EPOCH,
+                )
+            }
+            if (foreground && !entry.running && !entry.loadingDisk && (onDemand || auto) && (!permanent || entry.plan.live)) {
                 if (instant >= due && (entry.plan.live || httpSlots > 0)) {
                     if (!entry.plan.live) httpSlots--
                     eligible.forEach {
                         it.manualActive = it.requested
                         it.requested = false
                     }
-                    start(entry, durable, instant)
+                    start(entry, instant)
                 } else wake(due)
             } else if (entry.running) eligible.filter { it.requested }.forEach {
                 it.manualActive = true
@@ -266,14 +357,20 @@ class WeatherRepository internal constructor(
             entry.loadingDisk = false
             entry.diskLoaded = true
             entry.record = record?.takeIf { it.fetchedAt <= now() }
+            entry.record?.let {
+                entry.persistence = WeatherPersistence.SAVED
+                entry.lastAttempt = maxOf(entry.lastAttempt, it.fetchedAt)
+            }
             reconcile()
         }
     }
 
-    private fun start(entry: Entry, durable: Boolean, instant: Instant) {
+    private fun start(entry: Entry, instant: Instant) {
         entry.running = true
         entry.inFlight = true
-        entry.nextAttempt = instant.plusSeconds(30)
+        val previousAttempt = entry.lastAttempt
+        entry.lastAttempt = instant
+        entry.recoveredAt = null
         val generation = ++entry.generation
         entry.cancel = entry.plan.start { result ->
             scheduler.execute {
@@ -285,31 +382,47 @@ class WeatherRepository internal constructor(
                     entry.cancel = null
                 }
                 val received = now()
+                entry.unchanged = false
                 when (result) {
                     is WeatherResult.Data -> {
                         entry.failure = null
                         entry.retryCount = 0
                         val record = WeatherCacheRecord(result.wire, received)
                         val hasData = result.parsed.data != null
-                        entry.nextAttempt = received.plusSeconds(if (hasData) 30 else entry.plan.query.block.minutes * 60)
                         if (hasData || entry.record == null) {
+                            val previous = entry.record?.wire
+                            val previousTag = previous?.optJSONObject("metadata")?.text("tag")
+                            val previousParsed = result.zone?.let(entry.parsed::get)
+                            entry.unchanged = hasData && (
+                                (previousTag != null && previousTag == result.parsed.tag) || previousParsed == result.parsed)
                             entry.record = record
                             entry.parsed.clear()
                             result.zone?.let { entry.parsed[it] = result.parsed }
-                            if (durable || demands.any { it.entry == entry && !places.isTemporary(it.placeId) })
-                                cache.write(entry.plan.group, entry.plan.key, record)
+                            entry.persistence = WeatherPersistence.SESSION_ONLY
+                            if (demands.any { it.entry == entry && !places.isTemporary(it.placeId) })
+                                save(entry, record)
                         } else {
+                            entry.failedAt = received
                             entry.failure = WeatherFailure(WeatherState.EMPTY, "服务当前无数据，保留上次结果")
                         }
                     }
                     is WeatherResult.Failed -> {
+                        if (!result.failure.attempted) entry.lastAttempt = previousAttempt
                         entry.failure = result.failure
-                        val seconds = (60L * (1 shl entry.retryCount.coerceAtMost(5)))
-                            .coerceAtLeast(entry.plan.query.block.minutes * 60)
+                        entry.failedAt = received
                         entry.retryCount++
-                        entry.nextAttempt = maxOf(received.plusSeconds(seconds), result.failure.retryAt ?: Instant.MIN)
                     }
                 }
+                reconcile()
+            }
+        }
+    }
+
+    private fun save(entry: Entry, record: WeatherCacheRecord) {
+        entry.persistence = WeatherPersistence.SAVING
+        cache.write(entry.plan.group, entry.plan.key, record) { success ->
+            if (!closed && entry.record === record && entries[entry.plan.key] === entry) {
+                entry.persistence = if (success) WeatherPersistence.SAVED else WeatherPersistence.FAILED
                 reconcile()
             }
         }
@@ -318,7 +431,7 @@ class WeatherRepository internal constructor(
     private fun expiry(entry: Entry, zone: ZoneId): Instant? {
         val record = entry.record ?: return null
         val block = entry.plan.query.block
-        val expiresAt = record.fetchedAt.plusSeconds(block.minutes * 60)
+        val expiresAt = record.fetchedAt.plusSeconds(intervalSeconds(entry))
         if (block !in setOf(WeatherBlock.DAILY, WeatherBlock.AIR_DAILY, WeatherBlock.INDICES)) return expiresAt
         val nextDay = record.fetchedAt.atZone(zone).toLocalDate().plusDays(1).atStartOfDay(zone).toInstant()
         return minOf(expiresAt, nextDay)
@@ -343,7 +456,7 @@ class WeatherRepository internal constructor(
             else -> WeatherState.FRESH
         }
         return WeatherSnapshot(source, zone, query, state, data, record?.fetchedAt, parsed?.dataAt, expiresAt, stale,
-            parsed?.attribution ?: WeatherAttribution(), entry.failure?.message, parsed?.tag, entry.inFlight)
+            parsed?.attribution ?: WeatherAttribution(), entry.failure?.message, parsed?.tag, entry.inFlight, entry.persistence, entry.unchanged)
     }
 
     private fun activeAlerts(data: WeatherData.Alerts, instant: Instant): WeatherData.Alerts {

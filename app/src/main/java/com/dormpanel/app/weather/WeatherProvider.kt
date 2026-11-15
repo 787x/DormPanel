@@ -4,7 +4,7 @@ import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
 
-internal data class WeatherFailure(val state: WeatherState, val message: String, val retryAt: Instant? = null, val recoverOnNetwork: Boolean = false, val statusCode: Int? = null)
+internal data class WeatherFailure(val state: WeatherState, val message: String, val retryAt: Instant? = null, val recoverOnNetwork: Boolean = false, val statusCode: Int? = null, val attempted: Boolean = true)
 internal sealed interface WeatherResult {
     data class Data(val wire: JSONObject, val parsed: ParsedWeather, val zone: ZoneId? = null) : WeatherResult
     data class Failed(val failure: WeatherFailure) : WeatherResult
@@ -18,6 +18,7 @@ internal data class WeatherPlan(
     val start: ((WeatherResult) -> Unit) -> (() -> Unit),
     val live: Boolean = false,
     val unavailable: WeatherFailure? = null,
+    val restriction: () -> WeatherFailure? = { null },
 )
 
 internal interface WeatherProvider {

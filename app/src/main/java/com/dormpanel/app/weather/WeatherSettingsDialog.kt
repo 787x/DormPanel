@@ -6,6 +6,9 @@ import android.text.util.Linkify
 import android.view.View
 import android.view.WindowManager
 import android.widget.ArrayAdapter
+import android.widget.AdapterView
+import android.text.TextWatcher
+import android.text.Editable
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -32,7 +35,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
             status.text = if (weather.settings.config != null) "和风天气已配置" else weather.settings.problem
             list.removeAllViews()
             places.places.forEach { place ->
-                val suffix = if (places.isTemporary(place.id)) " · 本次会话" else ""
+                val suffix = if (places.isTemporary(place.id)) " · 临时预览" else ""
                 list.addView(button("${place.name} · ${place.zone.id}$suffix") { placeMenu(place.id) })
             }
         }
@@ -71,7 +74,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         var stopTest: (() -> Unit)? = null
         fun renderStats() {
             val now = weather.budget.stats()
-            stats.text = "${now.month} UTC 本机请求 ${now.requests} / ${now.limit}\n" +
+            stats.text = "${now.month} UTC 本机已用 ${now.requests} / ${now.limit}，剩余 ${now.remaining}\n" +
                 "最近成功 ${now.lastSuccess ?: "—"}\n最近错误 ${now.lastError ?: "—"}"
         }
         apiKey.setOnCheckedChangeListener { _, checked ->
@@ -115,16 +118,80 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
             }
         }))
         layout.addView(stats)
+        layout.addView(button("刷新周期设置") { refreshSettings(::renderStats) })
         renderStats()
         dialog.setOnDismissListener { stopTest?.invoke(); secret.text.clear() }
     }
 
+    private fun refreshSettings(updated: () -> Unit) {
+        val layout = column()
+        val policy = weather.refreshPolicy
+        val mode = Spinner(context).apply {
+            contentDescription = "和风刷新模式"
+            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, WeatherRefreshMode.entries.map { it.title })
+            setSelection(policy.mode.ordinal)
+        }
+        val fields = RefreshInterval.entries.associateWith {
+            field("${it.title}（${it.minimum}–${it.maximum} 分钟）", (policy.custom[it] ?: it.standard).toString()).apply {
+                inputType = InputType.TYPE_CLASS_NUMBER
+            }
+        }
+        val advanced = column()
+        fields.forEach { (kind, field) -> advanced.addView(row(label(kind.title), field)) }
+        val estimate = label("")
+        val status = label("")
+        fun readPolicy(): WeatherRefreshPolicy {
+            val selected = WeatherRefreshMode.entries[mode.selectedItemPosition.coerceAtLeast(0)]
+            val custom = if (selected == WeatherRefreshMode.CUSTOM) fields.mapValues { (kind, field) ->
+                field.value().toLongOrNull()?.takeIf { it in kind.minimum..kind.maximum }
+                    ?: throw IllegalArgumentException("${kind.title}请输入 ${kind.minimum}–${kind.maximum} 分钟")
+            } else policy.custom
+            return WeatherRefreshPolicy(selected, custom)
+        }
+        fun render() {
+            val custom = mode.selectedItemPosition == WeatherRefreshMode.CUSTOM.ordinal
+            advanced.visibility = if (custom) View.VISIBLE else View.GONE
+            estimate.text = runCatching {
+                val candidate = readPolicy()
+                val (saved, active) = repository.estimatedRequests(candidate, weather.budget.stats().month.lengthOfMonth())
+                "整月预计请求（按全天运行）\n已保存地点的核心天气约 $saved 次，当前自动订阅约 $active 次\n" +
+                    "两项分别估算，未计入手动请求、重试和地点解析。实际费用以和风账单为准。"
+            }.getOrElse { "填入有效周期后计算预计请求量" }
+        }
+        mode.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) = render()
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        fields.values.forEach { field -> field.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = render()
+            override fun afterTextChanged(s: Editable?) = Unit
+        }) }
+        layout.addView(label("周期仅作用于和风天气。HA 继续接收服务器推送。"))
+        layout.addView(mode)
+        layout.addView(estimate)
+        layout.addView(button("保存刷新周期") {
+            action(status) {
+                weather.setRefreshPolicy(readPolicy())
+                status.text = "刷新周期已保存并生效"
+                updated()
+            }
+        })
+        layout.addView(status)
+        layout.addView(advanced)
+        render()
+        dialog("和风刷新周期", layout)
+    }
+
     private fun placeMenu(id: String) {
         val place = places.get(id) ?: return
-        AlertDialog.Builder(context).setTitle(place.name).setItems(arrayOf("检查天气数据", "编辑地点", "清除此地点天气缓存", "删除地点")) { _, index ->
+        val temporary = places.isTemporary(id)
+        val actions = arrayOf("检查天气数据", if (temporary) "收藏此地点" else "编辑地点", "清除此地点天气缓存", "删除地点")
+        AlertDialog.Builder(context).setTitle(place.name).setItems(actions) { _, index ->
             when (index) {
                 0 -> chooseSource(place)
-                1 -> edit(place)
+                1 -> if (temporary) favorite(id, place.sources.filterIsInstance<WeatherSourceRef.QWeather>().single().locationId)
+                    else edit(place)
                 2 -> confirm("清除该地点使用的来源缓存？") { repository.clearCache(id) }
                 3 -> confirm("删除地点「${place.name}」？") { places.delete(id) }
             }
@@ -134,7 +201,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
     private fun search() {
         val layout = column()
         val name = field("城市、区县或行政区域")
-        val status = label("搜索结果可在本次会话中使用。长期保存请添加自定义地点。")
+        val status = label("请选择地点预览或收藏。收藏使用和风公开目录中的地点编号。")
         val results = column()
         val dialog = dialog("搜索和风地点", layout)
         var stop: (() -> Unit)? = null
@@ -160,21 +227,55 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
     private fun selectCity(city: WeatherServices.City) {
         val layout = column()
         val zone = field("地点时区（例如 Asia/Shanghai）", city.zone?.id.orEmpty())
-        val status = label("此地点可使用到应用进程退出")
+        val status = label("预览保留至应用进程退出。收藏后可长期使用。")
         val dialog = dialog(city.name, layout)
         layout.addView(zone)
         layout.addView(status)
-        layout.addView(button("使用地点") {
+        layout.addView(row(button("临时预览") {
             action(status) {
                 val place = weather.select(city, zone.parseZone())
                 dialog.dismiss()
                 chooseSource(place)
             }
-        })
+        }, button("收藏此地点") {
+            dialog.dismiss()
+            favorite(null, city.locationId)
+        }))
     }
 
-    private fun edit(place: WeatherPlace?) {
+    private fun favorite(previewId: String?, locationId: String?) {
+        val layout = column()
+        val name = field("收藏名称（自行填写）")
+        val zone = field("地点时区（自行填写，例如 Asia/Shanghai）")
+        val status = label("仅使用和风公开目录发布的地点编号。未收录地点可填写独立获得的经纬度。")
+        val dialog = dialog("收藏天气地点", layout)
+        var cancel: (() -> Unit)? = null
+        layout.addView(name)
+        layout.addView(zone)
+        layout.addView(status)
+        layout.addView(row(button("验证并收藏") {
+            action(status) {
+                val timeZone = zone.parseZone()
+                cancel?.invoke()
+                status.text = "正在核对公开地点编号…"
+                cancel = weather.favorite(previewId, locationId, name.value(), timeZone) { place, error ->
+                    if (place == null) status.text = error.orEmpty()
+                    else {
+                        dialog.dismiss()
+                        chooseSource(place)
+                    }
+                }
+            }
+        }, button("用自有坐标收藏") {
+            dialog.dismiss()
+            edit(null, previewId)
+        }))
+        dialog.setOnDismissListener { cancel?.invoke() }
+    }
+
+    private fun edit(place: WeatherPlace?, previewId: String? = null) {
         val existingQ = place?.sources?.filterIsInstance<WeatherSourceRef.QWeather>()?.firstOrNull()
+        val existingCity = place?.sources?.filterIsInstance<WeatherSourceRef.QWeatherCity>()?.firstOrNull()
         val existingHa = place?.sources?.filterIsInstance<WeatherSourceRef.HomeAssistant>().orEmpty()
         val ha = (weather.haSources() + existingHa.map { it to it.entityId }).distinctBy { it.first }
         val layout = column()
@@ -190,6 +291,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         val dialog = dialog(if (place == null) "添加地点" else "编辑地点", layout)
         layout.addView(name)
         layout.addView(zone)
+        if (existingCity != null) layout.addView(label("公开地点编号 ${existingCity.locationId}。填写经纬度可改为自定义来源。"))
         layout.addView(label("和风天气坐标"))
         layout.addView(row(latitude, longitude))
         layout.addView(locationId)
@@ -208,9 +310,11 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
                     val id = locationId.value().ifEmpty { null }
                     require(id == null || id.matches(Regex("[A-Za-z0-9]{1,40}"))) { "Location ID 格式不正确" }
                     sources.add(0, WeatherSourceRef.QWeather(WeatherCoordinates(lat, lon), id))
-                }
+                } else if (existingCity != null) sources.add(0, existingCity)
+                if (previewId != null) require(sources.any { it is WeatherSourceRef.QWeather }) { "请填写自己的经纬度" }
                 require(name.value().isNotEmpty() && sources.isNotEmpty()) { "请填写地点名称并添加至少一个天气来源" }
-                places.save(WeatherPlace(place?.id ?: UUID.randomUUID().toString(), name.value(), zone.parseZone(), sources))
+                val saved = WeatherPlace(place?.id ?: previewId ?: UUID.randomUUID().toString(), name.value(), zone.parseZone(), sources)
+                if (previewId == null) places.save(saved) else places.saveFavorite(saved)
                 dialog.dismiss()
             }
         })
@@ -227,7 +331,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         val layout = column()
         val dialog = dialog("${place.name} · ${sourceName(source)}", layout)
         val data = column()
-        val requests = mutableListOf<WeatherRepository.Subscription>()
+        val requests = mutableMapOf<WeatherBlock, WeatherRepository.Subscription>()
         val status = label("")
         val dates = field("专项日期 YYYY-MM-DD（选填）")
         val choices = WeatherBlock.entries
@@ -236,17 +340,29 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         }
         val details = label("").apply { autoLinkMask = Linkify.WEB_URLS; linksClickable = true }
         var extra: WeatherRepository.Subscription? = null
-        layout.addView(row(select, dates, button("请求") {
+        var extraQuery: WeatherQuery? = null
+        val live = source is WeatherSourceRef.HomeAssistant
+        if (live) layout.addView(label("HA 状态和预报由服务器推送。查看预报会订阅 HA 已有数据。"))
+        else layout.addView(button("刷新核心天气") {
+            status.text = requests.filterKeys(WeatherBlock::core).map { (block, request) ->
+                blockName(block) + " · " + refreshText(request.refresh(), place.zone)
+            }.joinToString("\n")
+        })
+        layout.addView(row(select, dates, button(if (live) "查看选中数据" else "刷新选中数据") {
             action(status) {
                 val block = choices[select.selectedItemPosition]
                 val date = dates.value().ifEmpty { null }?.let {
                     runCatching { LocalDate.parse(it) }.getOrElse { throw IllegalArgumentException("日期格式应为 YYYY-MM-DD") }
                 }
-                extra?.close()
-                extra = repository.observe(place.id, source, WeatherQuery(block, date = date), automatic = false) {
-                    details.text = snapshotText(it)
-                }.also { it.refresh() }
-                status.text = ""
+                val query = WeatherQuery(block, date = date)
+                if (extraQuery != query) {
+                    extra?.close()
+                    extra = repository.observe(place.id, source, query, automatic = live) {
+                        details.text = snapshotText(it)
+                    }
+                    extraQuery = query
+                }
+                status.text = if (live) "" else refreshText(checkNotNull(extra).refresh(), place.zone)
             }
         }))
         layout.addView(status)
@@ -256,19 +372,36 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         choices.forEach { block ->
             val result = label("").apply { autoLinkMask = Linkify.WEB_URLS; linksClickable = true }
             data.addView(result)
-            requests += repository.observe(place.id, source, WeatherQuery(block)) { result.text = snapshotText(it) }
+            requests[block] = repository.observe(place.id, source, WeatherQuery(block)) { result.text = snapshotText(it) }
         }
-        dialog.setOnDismissListener { extra?.close(); requests.forEach { it.close() } }
+        dialog.setOnDismissListener { extra?.close(); requests.values.forEach { it.close() } }
+    }
+
+    private fun refreshText(result: WeatherRefreshResult, zone: ZoneId): String = when (result.status) {
+        WeatherRefreshStatus.STARTED -> "已开始刷新（结果见数据状态）"
+        WeatherRefreshStatus.JOINED -> "已加入正在刷新的请求"
+        WeatherRefreshStatus.QUEUED -> "已排队"
+        WeatherRefreshStatus.BLOCKED -> listOfNotNull(result.reason, result.retryAt?.let {
+            "最早 " + DateTimeFormatter.ofPattern("MM-dd HH:mm:ss z").withZone(zone).format(it)
+        }).joinToString(" · ")
     }
 
     private fun snapshotText(snapshot: WeatherSnapshot): String = buildString {
         append(blockName(snapshot.query.block)).append(" · ").append(stateName(snapshot.state))
-        if (snapshot.stale) append(" · 上次缓存")
+        if (snapshot.stale) append(" · 上次数据")
+        if (snapshot.unchanged && !snapshot.refreshing) append(" · 服务暂无新数据")
         if (snapshot.refreshing && snapshot.state != WeatherState.LOADING) append(" · 更新中")
         val dateFormat = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss z").withZone(snapshot.zone)
         snapshot.fetchedAt?.let { append(" · 获取于 ").append(dateFormat.format(it)) }
         snapshot.dataAt?.let { append(" · 数据时间 ").append(dateFormat.format(it)) }
         snapshot.error?.let { append("\n").append(it) }
+        when (snapshot.persistence) {
+            WeatherPersistence.SAVED -> append(" · 已保存离线缓存")
+            WeatherPersistence.SAVING -> append(" · 正在写入离线缓存")
+            WeatherPersistence.FAILED -> append("\n离线缓存写入失败，当前数据仅在内存中")
+            WeatherPersistence.SESSION_ONLY -> append(" · 仅在本次会话可用")
+            WeatherPersistence.NONE -> Unit
+        }
         when (val data = snapshot.data) {
             is WeatherData.Current -> {
                 val c = data.conditions
@@ -302,7 +435,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
     }
 
     private fun sourceName(source: WeatherSourceRef) = when (source) {
-        is WeatherSourceRef.QWeather -> "和风天气"
+        is WeatherSourceRef.QWeather, is WeatherSourceRef.QWeatherCity -> "和风天气"
         is WeatherSourceRef.HomeAssistant -> source.entityId
     }
 

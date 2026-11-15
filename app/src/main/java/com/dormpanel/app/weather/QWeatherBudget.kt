@@ -6,7 +6,9 @@ import java.time.YearMonth
 import java.time.ZoneOffset
 
 internal data class QWeatherStatistics(val month: YearMonth, val requests: Int, val limit: Int,
-    val lastSuccess: Instant?, val lastError: String?)
+    val lastSuccess: Instant?, val lastError: String?) {
+    val remaining get() = (limit - requests).coerceAtLeast(0)
+}
 
 internal class QWeatherBudget(private val prefs: SharedPreferences, private val now: () -> Instant) {
     private var retryUntil: Instant? = null
@@ -19,7 +21,7 @@ internal class QWeatherBudget(private val prefs: SharedPreferences, private val 
     @Synchronized fun stats(): QWeatherStatistics {
         val month = month()
         return QWeatherStatistics(month, if (prefs.getString("month", null) == month.toString()) prefs.getInt("count", 0) else 0,
-            prefs.getInt("limit", 3000),
+            prefs.getInt("limit", DEFAULT_LIMIT),
             prefs.getLong("success", -1).takeIf { it >= 0 }?.let(Instant::ofEpochMilli), prefs.getString("error", null))
     }
 
@@ -44,7 +46,7 @@ internal class QWeatherBudget(private val prefs: SharedPreferences, private val 
         }
     }
 
-    @Synchronized fun acquire(id: String, core: Boolean, explicitTest: Boolean = false): WeatherFailure? {
+    @Synchronized fun restriction(id: String, core: Boolean, explicitTest: Boolean = false): WeatherFailure? {
         if (id != activeAccount) return WeatherFailure(WeatherState.UNCONFIGURED, "天气凭据已切换")
         if (authenticationRejected && !explicitTest)
             return WeatherFailure(WeatherState.UNAUTHORIZED, "认证已拒绝，请重新配置凭据或手动测试", statusCode = 401)
@@ -54,13 +56,21 @@ internal class QWeatherBudget(private val prefs: SharedPreferences, private val 
         val stats = stats()
         val ceiling = if (core) stats.limit else stats.limit * 8 / 10
         if (stats.requests >= ceiling) return WeatherFailure(WeatherState.BUDGET,
-            if (core) "本机已达月请求上限" else "本机剩余预算保留给核心天气",
+            if (core) "本机已达月请求上限，次月 UTC 或提高上限后恢复" else "剩余额度保留给核心天气，次月 UTC 或提高上限后恢复",
             stats.month.plusMonths(1).atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC))
+        return null
+    }
+
+    @Synchronized fun acquire(id: String, core: Boolean, explicitTest: Boolean = false): WeatherFailure? {
+        restriction(id, core, explicitTest)?.let { return it }
+        val stats = stats()
         if (!prefs.edit().putString("month", stats.month.toString()).putInt("count", stats.requests + 1).commit())
             return WeatherFailure(WeatherState.ERROR, "无法保存本机请求计数")
         if (explicitTest) nextExplicitTestAt = now().plusSeconds(10)
         return null
     }
+
+    companion object { const val DEFAULT_LIMIT = 30_000 }
 
     @Synchronized fun record(id: String, result: WeatherResult, explicitTest: Boolean) {
         if (id != activeAccount) return
