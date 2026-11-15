@@ -5,7 +5,7 @@ enum class Availability { AVAILABLE, UNAVAILABLE, STALE }
 /** Forecast timestamps and typed values can map directly from a future weather service. */
 data class WeatherForecast(
     val timeEpochMillis: Long, val condition: String, val low: Int?, val high: Int?,
-    val hourlyTemperature: Int? = null, val isDaytime: Boolean? = null, val rainProbability: Double? = null,
+    val forecastTemperature: Int? = null, val isDaytime: Boolean? = null, val rainProbability: Double? = null,
 )
 
 data class WeatherState(

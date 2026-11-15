@@ -29,6 +29,7 @@ internal data class ParsedWeather(
     val attribution: WeatherAttribution = WeatherAttribution(),
     val dataAt: Instant? = null,
     val tag: String? = null,
+    val haForecastFeatures: Int? = null,
 )
 
 internal object QWeatherParser {

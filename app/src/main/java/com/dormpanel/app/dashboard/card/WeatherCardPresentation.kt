@@ -109,7 +109,7 @@ internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeTod
         } else item.conditions
         val daytime = item.period.isDaytime ?: if (conditions === item.night?.conditions) false else null
         WeatherLine(label, sky(conditions.code, conditions.description, daytime),
-            if (query.block == WeatherBlock.HOURLY) conditions.temperature.value("°")
+            if (query.block != WeatherBlock.DAILY) conditions.temperature.value("°")
             else range(item.conditions.minTemperature, item.conditions.maxTemperature, "°"),
             conditions.precipitationProbability.value("%")?.let { "降水 $it" })
     }.take(limit).toList()
@@ -148,7 +148,7 @@ internal fun LegacyWeather.lines(now: Instant, limit: Int): List<WeatherLine> {
         }
         if (entityId != null && local.toLocalDate() < today) return@mapNotNull null
         WeatherLine(label, sky(it.condition, daytime = it.isDaytime),
-            if (forecastType == "hourly") it.hourlyTemperature.value(temperatureUnit) else range(it.low, it.high, temperatureUnit),
+            if (forecastType != "daily") it.forecastTemperature.value(temperatureUnit) else range(it.low, it.high, temperatureUnit),
             it.rainProbability.value("%")?.let { probability -> "降水 $probability" })
     }.take(limit).toList()
 }

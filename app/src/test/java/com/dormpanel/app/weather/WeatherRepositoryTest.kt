@@ -14,6 +14,7 @@ class WeatherRepositoryTest {
         var account = "one"
         var restriction: WeatherFailure? = null
         var live = false
+        var haWire = false
         var serializedPlaces = "[]"
         val zone = ZoneId.of("Asia/Tokyo")
         val places = WeatherPlaceStore(serializedPlaces) { serializedPlaces = it; true }
@@ -29,9 +30,11 @@ class WeatherRepositoryTest {
                     is WeatherSourceRef.QWeatherCity -> source.locationId
                 }
                 val key = "$account:$group:${query.block}:${query.language}"
-                val parse = { wire: JSONObject, timeZone: ZoneId -> QWeatherParser.parse(wire, timeZone, query) }
+                val parse = { wire: JSONObject, timeZone: ZoneId ->
+                    if (haWire) HaWeatherParser.parse(wire, timeZone, query.block) else QWeatherParser.parse(wire, timeZone, query)
+                }
                 return WeatherPlan(key, group, query, parse, { callback ->
-                    val job = Job(key, query.block) { result -> callback(result) }
+                    val job = Job(key, query.block, parse) { result -> callback(result) }
                     jobs += job
                     val cancel: () -> Unit = { job.cancelled = true }
                     cancel
@@ -89,15 +92,99 @@ class WeatherRepositoryTest {
         }
     }
 
-    private class Job(val key: String, val block: WeatherBlock, val callback: (WeatherResult) -> Unit) {
+    private class Job(val key: String, val block: WeatherBlock, val parse: (JSONObject, ZoneId) -> ParsedWeather, val callback: (WeatherResult) -> Unit) {
         var cancelled = false
         fun send(json: String) {
             val wire = JSONObject(json)
-            callback(WeatherResult.Data(wire, QWeatherParser.parse(wire, ZoneId.of("Asia/Tokyo"), WeatherQuery(block))))
+            callback(WeatherResult.Data(wire, parse(wire, ZoneId.of("Asia/Tokyo"))))
         }
         fun current(value: Int) = send("""{"temperature":{"unit":"°C","value":$value}}""")
         fun fail(state: WeatherState, retry: Instant? = null, network: Boolean = false) =
             callback(WeatherResult.Failed(WeatherFailure(state, "test error", retry, network)))
+    }
+
+    @Test fun cardForecastChoosesOneHaTypeAndRecoversFromTemporaryFailures() {
+        val choices = mapOf(1 to WeatherBlock.DAILY, 2 to WeatherBlock.HOURLY,
+            4 to WeatherBlock.TWICE_DAILY, 7 to WeatherBlock.DAILY)
+        for ((features, expected) in choices) Fixture().use { f ->
+            f.live = true
+            f.haWire = true
+            val source = WeatherSourceRef.HomeAssistant("weather.review", "server")
+            val place = WeatherPlace("review", "家", f.zone, listOf(source))
+            f.places.save(place)
+            val config = com.dormpanel.app.dashboard.card.WeatherCardConfiguration.Bound(place.id, source)
+            val demo = com.dormpanel.app.data.FakeDashboardDataSource()
+            val feeds = List(2) { com.dormpanel.app.dashboard.card.WeatherCardFeed(demo, f.repository) {} }
+            feeds.forEach { it.bind(config, setOf(WeatherBlock.CURRENT), compactForecast = true) }
+            assertEquals(listOf(WeatherBlock.CURRENT), f.jobs.map { it.block })
+            val current = f.jobs.single()
+            fun announce(flags: Int) {
+                current.send("""{"attrs":{"supported_features":$flags,"temperature_unit":"°C"}}""")
+                f.advance()
+            }
+            announce(features)
+            assertEquals(listOf(WeatherBlock.CURRENT, expected), f.jobs.map { it.block })
+            val prediction = f.jobs.last()
+            prediction.fail(WeatherState.ERROR)
+            f.advance()
+            assertFalse(prediction.cancelled)
+            assertEquals(WeatherState.ERROR, feeds.first().forecast?.state)
+            prediction.send("""{"attrs":{"temperature_unit":"°C"},"forecast":[
+                {"datetime":"2026-11-15T15:00:00Z","temperature":17,"is_daytime":false}
+            ]}""")
+            f.advance()
+            feeds.forEach { feed ->
+                val snapshot = checkNotNull(feed.forecast)
+                assertEquals(expected, snapshot.query.block)
+                assertEquals(WeatherState.FRESH, snapshot.state)
+                val reading = (snapshot.data as WeatherData.Forecast).entries.single().conditions
+                assertEquals(17.0, reading.temperature)
+                assertEquals(if (expected == WeatherBlock.DAILY) 17.0 else null, reading.maxTemperature)
+                assertNull(reading.minTemperature)
+                assertNull(reading.precipitationProbability)
+            }
+            feeds.last().close()
+            feeds.first().bind(config.copy(displayName = "阳台"), setOf(WeatherBlock.CURRENT), compactForecast = true)
+            assertEquals(2, f.jobs.size)
+            assertFalse(prediction.cancelled)
+            feeds.last().bind(config, setOf(WeatherBlock.CURRENT), compactForecast = true)
+            val next = if (expected == WeatherBlock.HOURLY) WeatherBlock.TWICE_DAILY else WeatherBlock.HOURLY
+            announce(if (next == WeatherBlock.HOURLY) 2 else 4)
+            assertTrue(prediction.cancelled)
+            assertEquals(next, f.jobs.last().block)
+            assertEquals(3, f.jobs.size)
+            feeds.first().close()
+            assertFalse(f.jobs.last().cancelled)
+            feeds.last().close()
+            assertTrue(f.jobs.all { it.cancelled })
+        }
+    }
+
+    @Test fun emptyDailyFallsBackAndReconnectRechecksDaily() = Fixture().use { f ->
+        f.live = true
+        f.haWire = true
+        val source = WeatherSourceRef.HomeAssistant("weather.review", "server")
+        f.places.save(WeatherPlace("review", "家", f.zone, listOf(source)))
+        val feed = com.dormpanel.app.dashboard.card.WeatherCardFeed(com.dormpanel.app.data.FakeDashboardDataSource(), f.repository) {}
+        feed.bind(com.dormpanel.app.dashboard.card.WeatherCardConfiguration.Bound("review", source),
+            setOf(WeatherBlock.CURRENT), compactForecast = true)
+        val current = f.jobs.single()
+        val attrs = """{"attrs":{"supported_features":7,"temperature_unit":"°C"}}"""
+        current.send(attrs)
+        f.advance()
+        val daily = f.jobs.last()
+        daily.send("""{"forecast":[]}""")
+        f.advance()
+        assertTrue(daily.cancelled)
+        val twice = f.jobs.last()
+        assertEquals(WeatherBlock.TWICE_DAILY, twice.block)
+        current.fail(WeatherState.ERROR)
+        f.advance()
+        current.send(attrs)
+        f.advance()
+        assertTrue(twice.cancelled)
+        assertEquals(WeatherBlock.DAILY, f.jobs.last().block)
+        feed.close()
     }
 
     @Test fun cardFeedsShareSourceButSwitchInIsolationAndReleaseDetailDemand() = Fixture().use { f ->

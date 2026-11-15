@@ -486,7 +486,8 @@ class WeatherRepository internal constructor(
         }
         return WeatherSnapshot(source, zone, query, state, data, record?.fetchedAt, parsed?.dataAt, expiresAt, stale,
             parsed?.attribution ?: WeatherAttribution(), entry.failure?.message, parsed?.tag, entry.inFlight, entry.persistence, entry.unchanged,
-            if (entry.failure?.offline == true) WeatherNetworkStatus.OFFLINE else networkFor(source), entry.failure?.statusCode)
+            if (entry.failure?.offline == true) WeatherNetworkStatus.OFFLINE else networkFor(source), entry.failure?.statusCode,
+            parsed?.haForecastFeatures)
     }
 
     private fun activeAlerts(data: WeatherData.Alerts, instant: Instant): WeatherData.Alerts {

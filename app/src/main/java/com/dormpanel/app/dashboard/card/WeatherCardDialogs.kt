@@ -8,6 +8,11 @@ import android.view.Gravity
 import android.view.View
 import android.view.Window
 import android.widget.Button
+import android.widget.EditText
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.text.InputFilter
+import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -93,31 +98,65 @@ internal class WeatherSourcePicker(
     private val haName: (WeatherSourceRef.HomeAssistant) -> String?,
     private val initial: WeatherCardConfiguration,
     private val openSettings: () -> Unit,
-    private val confirm: (WeatherCardConfiguration) -> Boolean,
+    private val editDisplay: Boolean = false,
+    private val confirm: (WeatherSourcePicker, WeatherCardConfiguration) -> Unit,
 ) : WeatherPanel(context, appearance, "选择天气地点", 840) {
     private val choices = column()
     private val status = label(18f)
-    private var placeId: String? = null
-    private var selected: WeatherCardConfiguration? = null
-    private var stopPlaces: (() -> Unit)? = null
-    private val back = button("返回地点") { placeId = null; selected = null; render() }
-    private val select = button("确认") {
-        selected?.let {
-            if (it.canSave(repository.places) && confirm(it)) dismiss()
-            else status.text = "无法应用所选来源，请检查来源和桌面状态"
+    private val original = initial as? WeatherCardConfiguration.Bound
+    private var selected: WeatherCardConfiguration? = original?.takeIf { editDisplay && it.canSave(repository.places) }
+    private var placeId: String? = (selected as? WeatherCardConfiguration.Bound)?.placeId
+    private var saving = false
+    private var saveFailed = false
+    private val alias = EditText(context).apply {
+        contentDescription = "卡片名称"
+        setSingleLine()
+        filters = arrayOf(InputFilter.LengthFilter(80))
+    }
+    private val metricOptions = listOf(null, WeatherCardMetric.FEELS_LIKE, WeatherCardMetric.HUMIDITY, WeatherCardMetric.WIND)
+    private val metricButtons = listOf("自动", "体感温度", "湿度", "风速").map { name ->
+        RadioButton(context).apply {
+            id = View.generateViewId()
+            text = name
+            textSize = 18f
+            minimumHeight = 52.dp
         }
+    }
+    private val metric = RadioGroup(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        metricButtons.forEach { addView(it, RadioGroup.LayoutParams(0, -2, 1f)) }
+    }
+    private val preferences = column().apply {
+        addView(label(18f, "卡片名称（留空使用地点名称）"))
+        addView(alias)
+        addView(label(18f, "次要天气指标"))
+        addView(metric)
+    }
+    private var stopPlaces: (() -> Unit)? = null
+    private val cancel = button("取消") { dismiss() }
+    private val back = button("返回地点") { placeId = null; selected = null; render() }
+    private val settingsButton = button("天气服务与地点", openSettings)
+    private val select = button("确认") {
+        val draft = draft()
+        if (draft != null && draft.canSave(repository.places)) confirm(this, draft)
+        else status.text = "无法应用所选来源，请检查来源和桌面状态"
     }
 
     init {
-        body(column().apply { addView(status); addView(choices) })
-        actions.addView(button("取消") { dismiss() })
+        body(column().apply { addView(status); addView(choices); addView(preferences) })
+        root.isFocusableInTouchMode = true
+        root.requestFocus()
+        actions.addView(cancel)
         actions.addView(back)
-        actions.addView(button("天气服务与地点") { openSettings() })
+        actions.addView(settingsButton)
         actions.addView(select)
+        populatePreferences(selected as? WeatherCardConfiguration.Bound)
     }
 
     override fun onStart() {
         super.onStart()
+        window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN or
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         stopPlaces = repository.places.observe(::render)
         render()
     }
@@ -141,6 +180,7 @@ internal class WeatherSourcePicker(
                 render()
             }) }
             choices.addView(button("默认天气 · HA Preferred weather / Demo") {
+                saveFailed = false
                 selected = WeatherCardConfiguration.Default
                 selectedText("默认天气")
             })
@@ -160,8 +200,10 @@ internal class WeatherSourcePicker(
                     else -> ""
                 }
                 choices.addView(button(name + warning) {
-                    val old = initial as? WeatherCardConfiguration.Bound
-                    selected = WeatherCardConfiguration.Bound(place.id, source, old?.displayName, old?.metric)
+                    val old = draft() as? WeatherCardConfiguration.Bound ?: original
+                    saveFailed = false
+                    selected = old?.select(place.id, source) ?: WeatherCardConfiguration.Bound(place.id, source)
+                    populatePreferences(selected as WeatherCardConfiguration.Bound)
                     selectedText(name + warning)
                 })
             }
@@ -170,7 +212,8 @@ internal class WeatherSourcePicker(
         if (pending != null && pending.canSave(repository.places)) selectedText(
             if (pending is WeatherCardConfiguration.Bound) sourceLabel(pending.source) else "默认天气")
         else selected = null
-        select.isEnabled = selected != null
+        preferences.visibility = if (selected is WeatherCardConfiguration.Bound) View.VISIBLE else View.GONE
+        updateSaveControls()
         back.visibility = if (place == null) View.GONE else View.VISIBLE
         style(appearance.state)
     }
@@ -186,7 +229,47 @@ internal class WeatherSourcePicker(
 
     private fun selectedText(name: String) {
         status.text = "已选择 ${repository.places.get(placeId.orEmpty())?.name.orEmpty()}  $name".trimEnd()
-        select.isEnabled = true
+        preferences.visibility = if (selected is WeatherCardConfiguration.Bound) View.VISIBLE else View.GONE
+        updateSaveControls()
+    }
+
+    private fun draft() = when (val config = selected) {
+        is WeatherCardConfiguration.Bound -> config.copy(
+            displayName = alias.text.toString().trim().ifEmpty { null },
+            metric = metricOptions.getOrNull(metricButtons.indexOfFirst { it.id == metric.checkedRadioButtonId }),
+        )
+        else -> config
+    }
+
+    private fun populatePreferences(config: WeatherCardConfiguration.Bound?) {
+        alias.hint = config?.placeId?.let(repository.places::get)?.name ?: "地点默认名称"
+        alias.setText(config?.displayName.orEmpty())
+        metric.check(metricButtons[metricOptions.indexOf(config?.metric)].id)
+    }
+
+    fun showSaveState(inProgress: Boolean, failed: Boolean = false) {
+        saving = inProgress
+        saveFailed = failed
+        updateSaveControls()
+    }
+
+    fun showRejected() {
+        showSaveState(false)
+        status.text = "无法应用所选配置，请检查来源和桌面状态"
+    }
+
+    private fun updateSaveControls() {
+        setCancelable(!saving)
+        for (index in 0 until choices.childCount) choices.getChildAt(index).isEnabled = !saving
+        back.isEnabled = !saving
+        settingsButton.isEnabled = !saving
+        alias.isEnabled = !saving
+        metricButtons.forEach { it.isEnabled = !saving }
+        cancel.isEnabled = !saving
+        select.isEnabled = selected != null && !saving
+        select.text = if (saveFailed) "重试保存" else if (editDisplay) "保存" else "确认"
+        if (saving) status.text = "正在保存卡片设置…"
+        else if (saveFailed) status.text = "卡片设置未保存。当前修改已保留，可重试保存。"
     }
 }
 
@@ -198,16 +281,23 @@ internal class WeatherDetailDialog(
     private val configuration: WeatherCardConfiguration,
     private val changeBinding: () -> Unit,
     private val more: (() -> Unit)?,
+    private val editDisplay: (() -> Unit)? = null,
 ) : WeatherPanel(context, appearance, "天气详情", 1080) {
     private val feed = WeatherCardFeed(source, repository, ::render)
     private val provider = label(18f)
+    private val officialLink = label(18f, "和风天气官网").apply {
+        paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+        isFocusable = true
+        setOnClickListener { openWeatherLink(QWEATHER_WEBSITE) }
+    }
+    private val currentAttribution = label(16f)
     private val icon = WeatherIconView(context)
     private val reading = label(36f)
     private val current = label(19f)
     private val feedback = label(17f)
     private val forecasts = listOf(WeatherBlock.HOURLY, WeatherBlock.DAILY, WeatherBlock.TWICE_DAILY)
     private val sections = (forecasts + listOf(WeatherBlock.AIR_CURRENT, WeatherBlock.ALERTS))
-        .associateWith { label(18f) }
+        .associateWith { label(18f) to label(16f) }
     private val refresh = button("刷新天气") {
         feedback.text = feed.refresh().entries.groupBy { it.value.reason ?: "已提交刷新" }
             .entries.joinToString("\n") { (message, items) ->
@@ -222,21 +312,24 @@ internal class WeatherDetailDialog(
         val left = column().apply {
             setPadding(0, 0, 24.dp, 0)
             addView(provider)
+            addView(officialLink)
             addView(LinearLayout(context).apply {
                 gravity = Gravity.CENTER_VERTICAL
                 addView(icon, LinearLayout.LayoutParams(56.dp, 56.dp).apply { marginEnd = 12.dp })
                 addView(reading, LinearLayout.LayoutParams(0, -2, 1f))
             })
             addView(current)
+            addView(currentAttribution)
             addView(feedback)
         }
-        val right = column().apply { sections.values.forEach(::addView) }
+        val right = column().apply { sections.values.forEach { (data, attribution) -> addView(data); addView(attribution) } }
         body(LinearLayout(context).apply {
             addView(left, LinearLayout.LayoutParams(0, -2, 1f))
             addView(right, LinearLayout.LayoutParams(0, -2, 1.25f))
         })
         actions.addView(button("关闭") { dismiss() })
         actions.addView(button("切换天气", changeBinding))
+        editDisplay?.let { actions.addView(button("卡片显示设置", it)) }
         actions.addView(refresh)
         more?.let { actions.addView(button("查看天气", it)) }
     }
@@ -260,7 +353,11 @@ internal class WeatherDetailDialog(
 
     override fun style(state: AppearanceState) {
         super.style(state)
-        icon.tint(PanelPalette.forMode(state.themeMode).accent)
+        val accent = PanelPalette.forMode(state.themeMode).accent
+        icon.tint(accent)
+        officialLink.setTextColor(accent)
+        currentAttribution.setLinkTextColor(accent)
+        sections.values.forEach { (_, attribution) -> attribution.setLinkTextColor(accent) }
     }
 
     private fun render() {
@@ -276,6 +373,8 @@ internal class WeatherDetailDialog(
         val unit = validLegacy?.temperatureUnit ?: "°C"
         val temp = if (validLegacy != null) validLegacy.temperature.value(unit) else conditions?.temperature.value(unit)
         heading.text = feed.place?.name ?: legacy?.name ?: feed.bound?.displayName ?: "天气详情"
+        val source = feed.bound?.source
+        officialLink.visibility = if (source != null && source !is WeatherSourceRef.HomeAssistant) View.VISIBLE else View.GONE
         provider.text = listOfNotNull(
             feed.bound?.let { weatherSourceName(it.source) } ?: legacy?.let {
                 it.entityId?.let { entity -> "Home Assistant · $entity" } ?: if (it.name != null) "Demo" else "HA Preferred weather"
@@ -300,11 +399,13 @@ internal class WeatherDetailDialog(
             conditions?.pressure.value(" hPa")?.let { "气压 $it" },
             conditions?.visibility?.div(1000).value(" km")?.let { "能见度 $it" },
             conditions?.uvIndex.value("")?.let { "紫外线 $it" },
-            snapshot?.attributionLine(),
         ).joinToString("\n")
         refresh.isEnabled = feed.place != null
-        sections.forEach { (block, label) ->
+        currentAttribution.showWeatherAttribution(snapshot?.attribution)
+        sections.forEach { (block, views) ->
+            val (label, attribution) = views
             val part = feed[block]
+            attribution.showWeatherAttribution(part?.attribution)
             val legacyBlock = when (legacy?.forecastType) {
                 "daily" -> WeatherBlock.DAILY
                 "hourly" -> WeatherBlock.HOURLY
@@ -328,7 +429,7 @@ internal class WeatherDetailDialog(
                 }
                 val header = blockName(block)
                 val text = (listOfNotNull(header, part?.let(::weatherStatus), part?.error) +
-                    records + listOfNotNull(part?.attributionLine())).joinToString("\n")
+                    records).joinToString("\n")
                 label.text = android.text.SpannableString(text).apply {
                     setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, header.length, 0)
                     setSpan(android.text.style.RelativeSizeSpan(1.2f), 0, header.length, 0)
@@ -336,10 +437,6 @@ internal class WeatherDetailDialog(
             }
         }
     }
-
-    private fun WeatherSnapshot.attributionLine() =
-        (attribution.sources + attribution.statements + attribution.licenses + listOfNotNull(attribution.link))
-            .distinct().joinToString("\n").ifBlank { null }
 
     private fun blockName(block: WeatherBlock) = when (block) {
         WeatherBlock.CURRENT -> "实时天气"

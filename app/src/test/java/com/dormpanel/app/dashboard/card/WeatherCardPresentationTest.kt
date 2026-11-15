@@ -28,6 +28,13 @@ class WeatherCardPresentationTest {
             .forEach { assertEquals(it, WeatherCardConfiguration.Invalid, WeatherCardConfiguration.decode(it)) }
     }
 
+    @Test fun crossingPlacesResetsAliasButSamePlaceSourceChangeKeepsIt() {
+        val original = WeatherCardConfiguration.Bound("wuhan", source, "武汉宿舍", WeatherCardMetric.WIND)
+        val ha = WeatherSourceRef.HomeAssistant("weather.home", "server")
+        assertEquals(original.copy(source = ha), original.select("wuhan", ha))
+        assertEquals(original.copy(placeId = "beijing", displayName = null), original.select("beijing", source))
+    }
+
     @Test fun datesAndTemperatureSemanticsFollowBlockAndPlaceZone() {
         val hour = WeatherForecast(WeatherPeriod(instant), WeatherConditions(code = "150", temperature = 6.0))
         val hourly = snapshot(WeatherBlock.HOURLY, hour)
@@ -42,10 +49,11 @@ class WeatherCardPresentationTest {
         assertEquals("11月16日", daily.forecastLines(instant, 3).single().label)
         assertEquals("高 13°", daily.forecastLines(instant, 3).single().temperature)
         val periods = snapshot(WeatherBlock.TWICE_DAILY,
-            hour.copy(period = hour.period.copy(isDaytime = false), conditions = WeatherConditions(code = "sunny", maxTemperature = 8.0)),
+            hour.copy(period = hour.period.copy(isDaytime = false), conditions = WeatherConditions(code = "sunny", temperature = 8.0)),
             hour.copy(period = hour.period.copy(isDaytime = true)))
         assertEquals(listOf("11月16日 夜间", "11月16日 白天"), periods.forecastLines(instant, 3).map { it.label })
         assertEquals(WeatherSymbol.MOON, periods.forecastLines(instant, 3).first().sky.symbol)
+        assertEquals("8°", periods.forecastLines(instant, 3).first().temperature)
         assertNull(WeatherConditions().metric(WeatherCardMetric.HUMIDITY))
         assertEquals("湿度 0%", WeatherConditions(humidity = 0.0).metric(WeatherCardMetric.HUMIDITY))
     }

@@ -101,6 +101,7 @@ data class WeatherSnapshot(
     val unchanged: Boolean = false,
     val network: WeatherNetworkStatus = WeatherNetworkStatus.UNKNOWN,
     val failureCode: Int? = null,
+    val haForecastFeatures: Int? = null,
 )
 
 data class WeatherPeriod(

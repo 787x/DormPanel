@@ -14,10 +14,13 @@ import com.dormpanel.app.dashboard.card.canSave
 import java.util.UUID
 import com.dormpanel.app.dashboard.catalog.CardAddCandidate
 
+enum class ConfigurationSaveState { SAVING, FAILED }
+
 data class DashboardUiState(
     val cards: List<PlacedCard> = emptyList(),
     val loaded: Boolean = false,
     val storageError: Boolean = false,
+    val configurationSaves: Map<String, ConfigurationSaveState> = emptyMap(),
 )
 
 class DashboardStateHolder(
@@ -29,6 +32,9 @@ class DashboardStateHolder(
     // All owner operations and callbacks run on the UI scheduler.
     private var closed = false
     private var pendingRecovery: List<QuarantinedCard>? = null
+    private class ConfigurationWrite(var attempt: Long = 0)
+    private val configurationWrites = mutableMapOf<String, ConfigurationWrite>()
+    private var writeAttempt = 0L
     private val listeners = linkedSetOf<(DashboardUiState) -> Unit>()
     var state = DashboardUiState()
         private set
@@ -70,9 +76,14 @@ class DashboardStateHolder(
         if (card.providerType != "weather" || !validWeatherConfiguration(configurationJson)) {
             return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_CONFIGURATION, state.cards)
         }
-        if (card.configurationJson == configurationJson && !state.storageError) {
+        if (closed) return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_EXISTING_LAYOUT, state.cards)
+        val saveState = state.configurationSaves[cardId]
+        if (card.configurationJson == configurationJson &&
+            (saveState == ConfigurationSaveState.SAVING || (saveState == null && !state.storageError))) {
             return LayoutMutationResult.Success(state.cards)
         }
+        configurationWrites[cardId] = ConfigurationWrite()
+        state = state.copy(configurationSaves = state.configurationSaves + (cardId to ConfigurationSaveState.SAVING))
         return commit(LayoutMutationResult.Success(state.cards.map {
             if (it.id == cardId) it.copy(configurationJson = configurationJson) else it
         }))
@@ -141,7 +152,10 @@ class DashboardStateHolder(
     private fun commit(result: LayoutMutationResult): LayoutMutationResult {
         if (closed) return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_EXISTING_LAYOUT, state.cards)
         if (result is LayoutMutationResult.Success) {
-            state = state.copy(cards = result.cards, storageError = false)
+            val ids = result.cards.mapTo(mutableSetOf()) { it.id }
+            configurationWrites.keys.retainAll(ids)
+            state = state.copy(cards = result.cards, storageError = false,
+                configurationSaves = state.configurationSaves.filterKeys { it in ids })
             persist(result.cards)
             notifyListeners()
         }
@@ -150,22 +164,33 @@ class DashboardStateHolder(
 
     private fun persist(cards: List<PlacedCard>) {
         if (closed) return
+        val attempt = ++writeAttempt
+        val writes = configurationWrites.toMap()
+        writes.values.forEach { it.attempt = attempt }
         val recovery = pendingRecovery
-        if (recovery == null) store.save(cards, ::onSaved)
-        else store.saveRepair(cards, recovery) { result ->
-            if (closed) return@saveRepair
-            // Keep retrying the atomic repair on subsequent edits if disk persistence failed.
-            if (result.isSuccess && pendingRecovery === recovery) pendingRecovery = null
-            onSaved(result)
-        }
-    }
+        val complete: (Result<Unit>) -> Unit = complete@{ result ->
+            if (closed) return@complete
+            if (recovery != null && result.isSuccess && pendingRecovery === recovery) pendingRecovery = null
 
-    private fun onSaved(result: Result<Unit>) {
-        if (closed) return
-        if (result.isFailure && !state.storageError) {
-            state = state.copy(storageError = true)
-            notifyListeners()
+            val saves = state.configurationSaves.toMutableMap()
+            writes.forEach { (id, write) ->
+                if (configurationWrites[id] === write) {
+                    if (result.isSuccess) {
+                        configurationWrites.remove(id)
+                        saves.remove(id)
+                    } else if (write.attempt == attempt) {
+                        saves[id] = ConfigurationSaveState.FAILED
+                    }
+                }
+            }
+            val error = if (attempt == writeAttempt) result.isFailure else state.storageError
+            if (error != state.storageError || saves != state.configurationSaves) {
+                state = state.copy(storageError = error, configurationSaves = saves)
+                notifyListeners()
+            }
         }
+        if (recovery == null) store.save(cards, complete)
+        else store.saveRepair(cards, recovery, complete)
     }
 
     private fun notifyListeners() {

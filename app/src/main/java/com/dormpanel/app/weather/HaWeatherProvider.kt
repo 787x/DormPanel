@@ -7,6 +7,13 @@ import java.time.Instant
 import java.time.ZoneId
 import kotlin.math.pow
 
+internal fun WeatherBlock.haForecastFeature(): Int? = when (this) {
+    WeatherBlock.DAILY -> 1
+    WeatherBlock.HOURLY -> 2
+    WeatherBlock.TWICE_DAILY -> 4
+    else -> null
+}
+
 internal class HaWeatherProvider(
     private val ha: HaDashboardDataSource,
     private val serverId: () -> String,
@@ -14,12 +21,7 @@ internal class HaWeatherProvider(
 ) : WeatherProvider {
     override fun plan(source: WeatherSourceRef, zone: ZoneId, query: WeatherQuery, now: Instant): WeatherPlan {
         require(source is WeatherSourceRef.HomeAssistant)
-        val forecast = when (query.block) {
-            WeatherBlock.DAILY -> "daily" to 1
-            WeatherBlock.HOURLY -> "hourly" to 2
-            WeatherBlock.TWICE_DAILY -> "twice_daily" to 4
-            else -> null
-        }
+        val forecast = query.block.haForecastFeature()
         val account = accountId()
         val unavailable = when {
             forecast == null && query.block != WeatherBlock.CURRENT ->
@@ -57,13 +59,12 @@ internal class HaWeatherProvider(
                         lastCurrent = identity
                         send(value)
                     }
-                } else if (entity.attributes.has("supported_features") &&
-                    entity.attributes.optInt("supported_features") and forecast.second == 0) {
+                } else if (entity.attributes.optInt("supported_features", -1) and forecast == 0) {
                     stopForecast?.invoke()
                     stopForecast = null
                     fail(WeatherState.UNSUPPORTED, "此 HA 实体不支持此预报类型")
                 } else if (stopForecast == null) {
-                    stopForecast = ha.forecasts.observe(source.entityId, forecast.first) { result ->
+                    stopForecast = ha.forecasts.observe(source.entityId, query.block.name.lowercase(java.util.Locale.ROOT)) { result ->
                         if (result.forecast != null) send(wire().put("forecast", result.forecast))
                         else fail(WeatherState.ERROR, "HA 天气预报暂不可用")
                     }
@@ -92,12 +93,13 @@ internal object HaWeatherParser {
                 val time = it.time("datetime")
                 val conditions = conditions(it, attrs, it.text("condition"))
                 WeatherForecast(WeatherPeriod(time, date = if (block != WeatherBlock.HOURLY) time?.atZone(zone)?.toLocalDate() else null,
-                    isDaytime = it.opt("is_daytime") as? Boolean), if (block == WeatherBlock.HOURLY) conditions else
+                    isDaytime = it.opt("is_daytime") as? Boolean), if (block != WeatherBlock.DAILY) conditions else
                     conditions.copy(maxTemperature = conditions.temperature))
             }.takeIf { it.isNotEmpty() }?.let(WeatherData::Forecast)
         }
         return ParsedWeather(data, WeatherAttribution(sources = listOfNotNull("Home Assistant", attrs.text("attribution"))),
-            wire.time("time"))
+            wire.time("time"), haForecastFeatures = if (block == WeatherBlock.CURRENT)
+                attrs.optInt("supported_features", -1).takeIf { it >= 0 } else null)
     }
 
     internal fun conditions(row: JSONObject, attrs: JSONObject, code: String?): WeatherConditions {

@@ -16,6 +16,9 @@ sealed interface WeatherCardConfiguration {
         val displayName: String? = null,
         val metric: WeatherCardMetric? = null,
     ) : WeatherCardConfiguration {
+        fun select(placeId: String, source: WeatherSourceRef) =
+            copy(placeId = placeId, source = source, displayName = displayName.takeIf { this.placeId == placeId })
+
         fun encode(): String = JSONObject().put("version", VERSION).put("placeId", placeId)
             .put("source", WeatherSourceJson.encode(source)).put("displayName", displayName)
             .put("metric", metric?.name).toString()

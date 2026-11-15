@@ -147,8 +147,8 @@ class HaEntityStore {
             ?.optJSONArray("forecast")?.objects().orEmpty().mapNotNull { item -> runCatching {
                 val temperature = item.number("temperature")?.roundToInt()
                 WeatherForecast(OffsetDateTime.parse(item.getString("datetime")).toInstant().toEpochMilli(), item.text("condition"),
-                    item.number("templow")?.roundToInt(), temperature.takeIf { type != "hourly" },
-                    temperature.takeIf { type == "hourly" }, item.opt("is_daytime") as? Boolean,
+                    item.number("templow")?.roundToInt().takeIf { type == "daily" }, temperature.takeIf { type == "daily" },
+                    temperature.takeIf { type != "daily" }, item.opt("is_daytime") as? Boolean,
                     item.number("precipitation_probability")?.takeIf { it in 0.0..100.0 })
             }.getOrNull() }
     }
