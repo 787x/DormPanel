@@ -119,27 +119,32 @@ class WeatherPlaceStore internal constructor(
 
     companion object {
         private fun encode(place: WeatherPlace) = JSONObject().put("id", place.id).put("name", place.name)
-            .put("zone", place.zone.id).put("sources", JSONArray(place.sources.map { source ->
-                when (source) {
-                    is WeatherSourceRef.QWeather -> JSONObject().put("kind", "qw")
-                        .put("lat", source.coordinates.latitude.toPlainString()).put("lon", source.coordinates.longitude.toPlainString())
-                        .put("location", source.locationId)
-                    is WeatherSourceRef.QWeatherCity -> JSONObject().put("kind", "qw-city").put("location", source.locationId)
-                    is WeatherSourceRef.HomeAssistant -> JSONObject().put("kind", "ha")
-                        .put("entity", source.entityId).put("server", source.serverId)
-                }
-            }))
+            .put("zone", place.zone.id).put("sources", JSONArray(place.sources.map(WeatherSourceJson::encode)))
 
         private fun decode(row: JSONObject) = WeatherPlace(row.getString("id"), row.getString("name"), ZoneId.of(row.getString("zone")),
-            row.objects("sources").map { source ->
-                when (source.getString("kind")) {
-                    "qw" -> WeatherSourceRef.QWeather(WeatherCoordinates(BigDecimal(source.getString("lat")),
-                        BigDecimal(source.getString("lon"))), source.text("location"))
-                    "qw-city" -> WeatherSourceRef.QWeatherCity(source.getString("location"))
-                    "ha" -> WeatherSourceRef.HomeAssistant(source.getString("entity"), source.getString("server"))
-                    else -> error("Unknown weather source")
-                }
-            })
+            row.objects("sources").map(WeatherSourceJson::decode))
+    }
+}
+
+internal object WeatherSourceJson {
+    fun encode(source: WeatherSourceRef): JSONObject = when (source) {
+        is WeatherSourceRef.QWeather -> JSONObject().put("kind", "qw")
+            .put("lat", source.coordinates.latitude.toString()).put("lon", source.coordinates.longitude.toString())
+            .put("location", source.locationId)
+        is WeatherSourceRef.QWeatherCity -> JSONObject().put("kind", "qw-city").put("location", source.locationId)
+        is WeatherSourceRef.HomeAssistant -> JSONObject().put("kind", "ha")
+            .put("entity", source.entityId).put("server", source.serverId)
+    }
+
+    fun decode(row: JSONObject): WeatherSourceRef {
+        fun string(key: String) = row.get(key) as? String ?: error("Invalid weather source field")
+        return when (string("kind")) {
+            "qw" -> WeatherSourceRef.QWeather(WeatherCoordinates(BigDecimal(string("lat")), BigDecimal(string("lon"))),
+                if (row.has("location")) string("location") else null)
+            "qw-city" -> WeatherSourceRef.QWeatherCity(string("location"))
+            "ha" -> WeatherSourceRef.HomeAssistant(string("entity"), string("server"))
+            else -> error("Unknown weather source")
+        }
     }
 }
 

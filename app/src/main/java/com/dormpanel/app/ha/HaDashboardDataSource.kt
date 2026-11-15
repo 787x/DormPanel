@@ -227,7 +227,8 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         if (type != null) legacyForecast = forecasts.observe(entity, type) { result ->
             if (connected && entity == weatherId && result.forecast != null) {
                 val payload = JSONObject().put(entity, JSONObject().put("forecast", result.forecast))
-                store.forecast = HaEntityStore.forecast(JSONObject().put("response", payload), entity)
+                store.forecastType = type
+                store.forecast = HaEntityStore.forecast(JSONObject().put("response", payload), entity, type)
                 publish(homeRelevant = false)
             }
         }

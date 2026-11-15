@@ -100,6 +100,56 @@ class WeatherRepositoryTest {
             callback(WeatherResult.Failed(WeatherFailure(state, "test error", retry, network)))
     }
 
+    @Test fun cardFeedsShareSourceButSwitchInIsolationAndReleaseDetailDemand() = Fixture().use { f ->
+        val ha = WeatherSourceRef.HomeAssistant("weather.home", "server")
+        val shanghai = WeatherSourceRef.QWeatherCity("101020100")
+        f.places.save(WeatherPlace("ha", "家", f.zone, listOf(ha)))
+        f.places.save(WeatherPlace("sh", "上海", f.zone, listOf(shanghai)))
+        val demo = com.dormpanel.app.data.FakeDashboardDataSource()
+        val feeds = List(4) { com.dormpanel.app.dashboard.card.WeatherCardFeed(demo, f.repository) {} }
+        val bindings = listOf("a" to f.source, "other" to f.other, "ha" to ha, "a" to f.source).map {
+            com.dormpanel.app.dashboard.card.WeatherCardConfiguration.Bound(it.first, it.second)
+        }
+        val current = WeatherBlock.CURRENT
+        fun temperature(index: Int) = (feeds[index][current]?.data as? WeatherData.Current)?.conditions?.temperature
+        feeds.zip(bindings).forEach { (feed, binding) -> feed.bind(binding, setOf(current)) }
+        assertEquals(2, f.jobs.size) // Third distinct source waits for the shared concurrent request budget.
+        f.jobs[1].current(12)
+        f.advance()
+        f.jobs[2].current(18)
+        f.advance()
+        assertEquals(listOf(null, 12.0, 18.0, null), feeds.indices.map(::temperature))
+        val old = f.jobs[0]
+        val replacement = com.dormpanel.app.dashboard.card.WeatherCardConfiguration.Bound("sh", shanghai)
+        feeds[0].bind(replacement, setOf(current))
+        assertNull(temperature(0))
+        assertFalse(old.cancelled) // The fourth card still owns a demand for Wuhan.
+        old.current(28)
+        f.advance()
+        assertNull(temperature(0))
+        assertEquals(28.0, temperature(3))
+        f.jobs.last().current(21)
+        f.advance()
+        assertEquals(listOf(21.0, 12.0, 18.0, 28.0), feeds.indices.map(::temperature))
+
+        val detail = com.dormpanel.app.dashboard.card.WeatherCardFeed(demo, f.repository) {}
+        repeat(3) {
+            detail.bind(replacement, setOf(current, WeatherBlock.ALERTS))
+            assertEquals(21.0, (detail[current]?.data as? WeatherData.Current)?.conditions?.temperature)
+            val alerts = f.jobs.last()
+            assertEquals(WeatherBlock.ALERTS, alerts.block)
+            detail.close()
+            assertTrue(alerts.cancelled)
+            alerts.send("""{"alerts":[]}""")
+            f.advance()
+            assertNull(detail[WeatherBlock.ALERTS])
+        }
+        f.places.delete("sh")
+        assertTrue(feeds[0].invalid)
+        assertNull(temperature(0))
+        feeds.forEach { it.close() }
+    }
+
     private fun temperature(snapshots: List<WeatherSnapshot>): Double? =
         (snapshots.last().data as? WeatherData.Current)?.conditions?.temperature
 

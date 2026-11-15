@@ -1,6 +1,12 @@
 package com.dormpanel.app.dashboard
 
 import com.dormpanel.app.dashboard.card.coreCardRegistry
+import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
+import com.dormpanel.app.dashboard.layout.LayoutFailureReason
+import com.dormpanel.app.weather.WeatherPlace
+import com.dormpanel.app.weather.WeatherPlaceStore
+import com.dormpanel.app.weather.WeatherSourceRef
+import java.time.ZoneId
 import com.dormpanel.app.appearance.*
 import com.dormpanel.app.data.FakeDashboardDataSource
 import com.dormpanel.app.dashboard.layout.LayoutMutationResult
@@ -101,6 +107,37 @@ class DashboardStateHolderTest {
         assertEquals(listOf(bedside.configurationJson, bedside.configurationJson, ceiling.configurationJson), holder.state.cards.map { it.configurationJson })
         assertEquals(3, holder.state.cards.map { it.id }.distinct().size)
         assertEquals(holder.state.cards, store.savedSnapshots.last())
+    }
+
+    @Test fun `configuration writes are scoped to one card and unauthorized bindings are rejected`() {
+        val places = WeatherPlaceStore("[]") { true }
+        val source = WeatherSourceRef.QWeatherCity("101010100")
+        val place = WeatherPlace("beijing", "北京", ZoneId.of("Asia/Shanghai"), listOf(source))
+        places.save(place)
+        places.addLookup(place.copy(id = "preview"))
+        val store = DelayedStore()
+        val holder = DashboardStateHolder(registry(), store, places)
+        store.loaded(Result.success(StoredDashboard(false, 0, emptyList())))
+        val initial = holder.state.cards
+        val binding = WeatherCardConfiguration.Bound(place.id, source)
+        fun failure(cardId: String, config: String) =
+            (holder.updateConfiguration(cardId, config) as LayoutMutationResult.Failure).reason
+        assertEquals(LayoutFailureReason.CARD_NOT_FOUND, failure("missing", binding.encode()))
+        assertEquals(LayoutFailureReason.INVALID_CONFIGURATION, failure("seed-clock", binding.encode()))
+        assertEquals(LayoutFailureReason.INVALID_CONFIGURATION, failure("seed-weather", """{"version":2}"""))
+        assertEquals(LayoutFailureReason.INVALID_CONFIGURATION, failure("seed-weather", binding.copy(placeId = "preview").encode()))
+        assertEquals(LayoutFailureReason.INVALID_CONFIGURATION,
+            failure("seed-weather", binding.copy(source = WeatherSourceRef.QWeatherCity("101020100")).encode()))
+        assertEquals(initial, holder.state.cards)
+        assertEquals(1, store.saves)
+
+        assertTrue(holder.updateConfiguration("seed-weather", binding.encode()) is LayoutMutationResult.Success)
+        assertEquals(initial.map { if (it.id == "seed-weather") it.copy(configurationJson = binding.encode()) else it }, holder.state.cards)
+        assertEquals(2, store.saves)
+        store.saved(Result.failure(IllegalStateException("disk full")))
+        assertTrue(holder.state.storageError)
+        assertTrue(holder.updateConfiguration("seed-weather", binding.encode()) is LayoutMutationResult.Success)
+        assertEquals(3, store.saves)
     }
 
     private fun registry() = coreCardRegistry(FakeDashboardDataSource(), AppearanceController(object : AppearanceStore {

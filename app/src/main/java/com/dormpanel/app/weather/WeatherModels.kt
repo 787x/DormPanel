@@ -100,6 +100,7 @@ data class WeatherSnapshot(
     val persistence: WeatherPersistence = WeatherPersistence.NONE,
     val unchanged: Boolean = false,
     val network: WeatherNetworkStatus = WeatherNetworkStatus.UNKNOWN,
+    val failureCode: Int? = null,
 )
 
 data class WeatherPeriod(

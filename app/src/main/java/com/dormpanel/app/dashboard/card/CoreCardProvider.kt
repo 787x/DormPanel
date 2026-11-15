@@ -25,10 +25,14 @@ class ClockCardProvider(private val appearance: AppearanceController) : Producti
     override fun createView(context: Context): View = ClockCardView(context, appearance)
 }
 
-class WeatherCardProvider(private val source: DashboardDataSource, private val appearance: AppearanceController) : ProductionCardProvider(
+class WeatherCardProvider(
+    private val source: DashboardDataSource,
+    private val appearance: AppearanceController,
+    private val repository: com.dormpanel.app.weather.WeatherRepository? = null,
+) : ProductionCardProvider(
     "weather", R.string.card_weather, R.string.card_weather_description, CardSize(4, 3),
 ) {
-    override fun createView(context: Context): View = WeatherCardView(context, appearance, source)
+    override fun createView(context: Context): View = WeatherCardView(context, appearance, source, repository)
 }
 
 class SensorCardProvider(private val source: DashboardDataSource, private val appearance: AppearanceController) : ProductionCardProvider(
@@ -43,7 +47,11 @@ class LightCardProvider(private val source: DashboardDataSource, private val app
     override fun createView(context: Context): View = LightCardView(context, appearance, source)
 }
 
-fun coreCardRegistry(source: DashboardDataSource, appearance: AppearanceController) = DashboardCardRegistry(listOf(
-    ClockCardProvider(appearance), WeatherCardProvider(source, appearance),
+fun coreCardRegistry(
+    source: DashboardDataSource,
+    appearance: AppearanceController,
+    weather: com.dormpanel.app.weather.WeatherRepository? = null,
+) = DashboardCardRegistry(listOf(
+    ClockCardProvider(appearance), WeatherCardProvider(source, appearance, weather),
     SensorCardProvider(source, appearance), LightCardProvider(source, appearance),
 ))

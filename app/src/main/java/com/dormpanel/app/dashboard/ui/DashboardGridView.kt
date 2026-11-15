@@ -47,6 +47,7 @@ class DashboardGridView @JvmOverloads constructor(
     private var displayedCards = emptyList<PlacedCard>()
     private lateinit var stateHolder: DashboardStateHolder
     private lateinit var registry: DashboardCardRegistry
+    private var onWeatherAction: (com.dormpanel.app.dashboard.card.WeatherCardNavigation) -> Unit = {}
     private var onEnterEditMode: () -> Unit = {}
     private var onGestureClaimed: () -> Unit = {}
     private var onOperationRejected: (String) -> Unit = {}
@@ -61,10 +62,12 @@ class DashboardGridView @JvmOverloads constructor(
         registry: DashboardCardRegistry,
         onEnterEditMode: () -> Unit,
         onGestureClaimed: () -> Unit,
+        onWeatherAction: (com.dormpanel.app.dashboard.card.WeatherCardNavigation) -> Unit = {},
         onOperationRejected: (String) -> Unit,
     ) {
         this.stateHolder = stateHolder
         this.registry = registry
+        this.onWeatherAction = onWeatherAction
         this.onEnterEditMode = onEnterEditMode
         this.onGestureClaimed = onGestureClaimed
         this.onOperationRejected = onOperationRejected
@@ -393,6 +396,7 @@ class DashboardGridView @JvmOverloads constructor(
 
     private fun cardInteractions() = CardInteractionScope(
         enabled = !editMode,
+        navigateWeather = onWeatherAction,
         onGestureClaimed = onGestureClaimed,
     )
 

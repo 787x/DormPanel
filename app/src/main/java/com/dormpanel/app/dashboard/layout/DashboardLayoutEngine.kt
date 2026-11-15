@@ -11,6 +11,7 @@ fun interface CardSizeCatalog {
 
 enum class LayoutFailureReason {
     CARD_NOT_FOUND,
+    INVALID_CONFIGURATION,
     DUPLICATE_CARD_ID,
     UNKNOWN_PROVIDER,
     UNSUPPORTED_SIZE,

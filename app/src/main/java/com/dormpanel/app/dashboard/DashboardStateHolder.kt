@@ -9,6 +9,8 @@ import com.dormpanel.app.dashboard.model.DashboardGridPolicy
 import com.dormpanel.app.dashboard.model.PlacedCard
 import com.dormpanel.app.dashboard.persistence.DashboardStore
 import com.dormpanel.app.dashboard.persistence.QuarantinedCard
+import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
+import com.dormpanel.app.dashboard.card.canSave
 import java.util.UUID
 import com.dormpanel.app.dashboard.catalog.CardAddCandidate
 
@@ -21,6 +23,7 @@ data class DashboardUiState(
 class DashboardStateHolder(
     private val registry: DashboardCardRegistry,
     private val store: DashboardStore,
+    private val weatherPlaces: com.dormpanel.app.weather.WeatherPlaceStore? = null,
 ) {
     private val engine = DashboardLayoutEngine(DashboardGridPolicy.definition, registry)
     // All owner operations and callbacks run on the UI scheduler.
@@ -47,6 +50,9 @@ class DashboardStateHolder(
     fun add(candidate: CardAddCandidate): LayoutMutationResult {
         val provider = registry.provider(candidate.providerType)
             ?: return LayoutMutationResult.Failure(LayoutFailureReason.UNKNOWN_PROVIDER, state.cards)
+        if (provider.typeKey == "weather" && !validWeatherConfiguration(candidate.configurationJson)) {
+            return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_CONFIGURATION, state.cards)
+        }
         val newCard = PlacedCard(
             id = UUID.randomUUID().toString(),
             providerType = provider.typeKey,
@@ -57,6 +63,23 @@ class DashboardStateHolder(
         )
         return commit(engine.addBestFit(state.cards, newCard))
     }
+
+    fun updateConfiguration(cardId: String, configurationJson: String): LayoutMutationResult {
+        val card = state.cards.firstOrNull { it.id == cardId }
+            ?: return LayoutMutationResult.Failure(LayoutFailureReason.CARD_NOT_FOUND, state.cards)
+        if (card.providerType != "weather" || !validWeatherConfiguration(configurationJson)) {
+            return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_CONFIGURATION, state.cards)
+        }
+        if (card.configurationJson == configurationJson && !state.storageError) {
+            return LayoutMutationResult.Success(state.cards)
+        }
+        return commit(LayoutMutationResult.Success(state.cards.map {
+            if (it.id == cardId) it.copy(configurationJson = configurationJson) else it
+        }))
+    }
+
+    private fun validWeatherConfiguration(json: String) =
+        WeatherCardConfiguration.decode(json).canSave(weatherPlaces)
 
     fun delete(cardId: String): LayoutMutationResult = commit(engine.delete(state.cards, cardId))
 

@@ -4,7 +4,7 @@ import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
 
-internal data class WeatherFailure(val state: WeatherState, val message: String, val retryAt: Instant? = null, val recoverOnNetwork: Boolean = false, val statusCode: Int? = null, val attempted: Boolean = true) {
+internal data class WeatherFailure(val state: WeatherState, val message: String, val retryAt: Instant? = null, val recoverOnNetwork: Boolean = false, val statusCode: Int? = null, val attempted: Boolean = true, val offline: Boolean = false) {
     val blocksRetry get() = state == WeatherState.INVALID_REQUEST || state == WeatherState.UNAUTHORIZED ||
         state == WeatherState.UNSUPPORTED
 }

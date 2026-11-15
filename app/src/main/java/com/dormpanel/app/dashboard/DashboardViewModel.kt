@@ -42,7 +42,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val sharedSchedule = SharedScheduleController(application, schedule, accounts = webDav.settings)
     val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
     val scheduleViewport = com.dormpanel.app.schedule.ScheduleViewport()
-    val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance).providers +
+    val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance, dataSource.weatherRepository).providers +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) } +
         listOf("calendar", "timetable").map { ScheduleCardProvider(it, schedule, appearance) } +
         listOf(false, true).map { CourseListCardProvider(it, schedule, appearance) })
@@ -50,6 +50,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val stateHolder = DashboardStateHolder(
         registry = registry,
         store = DashboardStores.create(application),
+        weatherPlaces = dataSource.weatherRepository.places,
     )
 
     init {

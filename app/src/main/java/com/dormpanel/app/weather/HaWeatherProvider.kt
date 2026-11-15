@@ -33,7 +33,8 @@ internal class HaWeatherProvider(
         return WeatherPlan("$group:$account:${query.block}", group, query, parse, { emit ->
             var stopForecast: (() -> Unit)? = null
             var lastCurrent: String? = null
-            fun fail(state: WeatherState, message: String) = emit(WeatherResult.Failed(WeatherFailure(state, message)))
+            fun fail(state: WeatherState, message: String, offline: Boolean = false) =
+                emit(WeatherResult.Failed(WeatherFailure(state, message, offline = offline)))
             fun update() {
                 if (accountId() != account || serverId() != source.serverId) return
                 val entity = ha.store.entities[source.entityId]?.takeIf(ha.store::enabled)
@@ -43,7 +44,8 @@ internal class HaWeatherProvider(
                     lastCurrent = null
                     val authError = ha.status.state == HaConnectionState.AUTH_ERROR
                     fail(if (authError) WeatherState.UNAUTHORIZED else WeatherState.ERROR,
-                        if (authError) "HA 认证失败，请检查凭据" else "HA 连接或天气实体暂不可用")
+                        if (authError) "HA 认证失败，请检查凭据" else "HA 连接或天气实体暂不可用",
+                        offline = !ha.connected && !authError)
                     return
                 }
                 fun send(wire: JSONObject) = emit(WeatherResult.Data(wire, parse(wire, zone), zone))
@@ -98,7 +100,7 @@ internal object HaWeatherParser {
             wire.time("time"))
     }
 
-    private fun conditions(row: JSONObject, attrs: JSONObject, code: String?): WeatherConditions {
+    internal fun conditions(row: JSONObject, attrs: JSONObject, code: String?): WeatherConditions {
         fun quantity(key: String, unit: String, conversions: Map<String, Double>): Double? =
             row.number(key)?.let { value -> conversions[attrs.text(unit)]?.times(value)?.takeIf(Double::isFinite) }
         fun temperature(key: String) = row.number(key)?.let {
