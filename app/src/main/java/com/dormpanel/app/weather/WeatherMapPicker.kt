@@ -25,19 +25,20 @@ internal object WeatherMapPicker {
     fun show(context: Context, seed: WeatherCoordinates?, onPoint: (WeatherCoordinates) -> Unit): AlertDialog {
         val ui = WeatherCenterContent(context, PanelPalette.forMode(ThemeMode.DARK))
         val body = ui.column().apply { setPadding(ui.dp(16), 0, ui.dp(16), 0) }
-        val coordinates = ui.label("点击地图选择位置", 18f)
+        val coordinates = ui.label("正在加载离线底图", 18f)
         val map = CoordinateMap(context, seed) {
             coordinates.text = "纬度 ${it.latitude.toPlainString()}  ·  经度 ${it.longitude.toPlainString()}"
         }
         body.addView(map, LinearLayout.LayoutParams(-1, ui.dp(300)))
         body.addView(coordinates)
-        body.addView(ui.row(ui.button("缩小") { map.zoom(.5f) }, ui.button("放大") { map.zoom(2f) },
-            ui.button("选地图中心") { map.chooseCenter() }))
-        body.addView(ui.label("拖动或缩放后选择坐标。底图为概览，精确坐标可在表单中修改。", 14f))
+        val controls = ui.row(ui.button("缩小") { map.zoom(.5f) }, ui.button("放大") { map.zoom(2f) },
+            ui.button("选地图中心") { map.chooseCenter() })
+        body.addView(controls)
+        body.addView(ui.label("离线概览地图，仅显示陆地轮廓和参考城市，不含道路、校园或建筑细节。可在地点表单手动填写精确经纬度。", 14f))
         body.addView(ui.button("底图 · Natural Earth") {
             body.openWeatherLink("https://www.naturalearthdata.com/about/terms-of-use/")
         })
-        val dialog = AlertDialog.Builder(context).setTitle("在地图上选点").setView(body)
+        val dialog = AlertDialog.Builder(context).setTitle("在离线概览地图上选点").setView(body)
             .setNegativeButton("手动输入", null).setPositiveButton("使用坐标", null).show()
         val accept = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
         accept.isEnabled = seed != null
@@ -54,10 +55,12 @@ internal object WeatherMapPicker {
                 if (world == null) {
                     coordinates.text = "底图无法读取，请返回手动输入经纬度。"
                     body.removeView(map)
+                    body.removeView(controls)
                     accept.isEnabled = false
                     map.onSelectionChanged = {}
                 } else {
                     map.world = world
+                    if (map.selected == null) coordinates.text = "点击地图选择位置"
                     map.invalidate()
                 }
             }

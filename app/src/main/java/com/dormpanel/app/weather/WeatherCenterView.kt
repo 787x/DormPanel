@@ -3,6 +3,7 @@ package com.dormpanel.app.weather
 import android.content.Context
 import android.view.MotionEvent
 import android.view.View
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -38,14 +39,19 @@ internal class WeatherCenterView(
     private val sidebar = ui.column()
     private val cityRows = ui.column()
     private val cityScroll = ScrollView(context).apply {
+        tag = "weather_city_list"
         addView(cityRows)
+        cityRows.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top != oldBottom - oldTop) schedulePreviews()
+        }
         setOnScrollChangeListener { _, _, _, _, _ -> schedulePreviews() }
         addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> schedulePreviews() }
     }
     private data class CityRow(val place: WeatherPlace, val item: LinearLayout, val summary: TextView, val icon: WeatherIconView)
     private val cities = linkedMapOf<String, CityRow>()
     private val previews = linkedMapOf<Pair<String, WeatherSourceRef>, WeatherRepository.Subscription>()
-    private val updatePreviews = Runnable { bindPreviews() }
+    private val updatePreviews = Runnable { bindPreviews(add = true) }
+    private val trimPreviews = Runnable { bindPreviews(add = false) }
     private val detail = ui.column()
     private val scroll = ScrollView(context).apply { addView(detail); isFillViewport = true }
     private val stops = linkedMapOf<WeatherQuery, WeatherRepository.Subscription>()
@@ -58,6 +64,9 @@ internal class WeatherCenterView(
     private var listeningLegacy = false
     private var section = Section.FORECAST
     private var range = 24
+    private var hourlyRequestRange = 24
+    private var hourlyMetric = HourlyMetric.TEMPERATURE
+    private val rangeButtons = linkedMapOf<Int, Button>()
     private var historyDate: LocalDate? = null
     private var requestedHistory: LocalDate? = null
     private var shownPlace: WeatherPlace? = initial.placeId?.let(places::get)
@@ -150,11 +159,14 @@ internal class WeatherCenterView(
             return
         }
         alertPopup?.dismiss()
-        release()
+        release(includePreviews = false)
         selection = resolved
         shownPlace = place
-        section = Section.FORECAST
+        if (section != Section.SKY || resolved.source == null || resolved.source is WeatherSourceRef.HomeAssistant)
+            section = Section.FORECAST
         range = 24
+        hourlyRequestRange = 24
+        hourlyMetric = HourlyMetric.TEMPERATURE
         historyDate = null
         requestedHistory = null
         buildPage()
@@ -195,33 +207,39 @@ internal class WeatherCenterView(
         val conditions = reading.conditions()
         val sky = sky(conditions?.code, conditions?.description)
         city.icon.symbol = sky.symbol
+        val status = reading?.let {
+            if (it.state == WeatherState.UNLOADED && it.network != WeatherNetworkStatus.OFFLINE) "等待刷新"
+            else weatherStatus(it)
+        }
         val summary = if (conditions != null) {
             listOfNotNull(conditions.temperature.value("°C"), sky.description,
-                "已过期".takeIf { reading?.stale == true }).joinToString(" · ")
-        } else if (places.isTemporary(city.place.id)) "临时预览"
-        else "点击查看天气"
+                status?.takeUnless { it == "最新" }).joinToString(" · ")
+        } else status ?: if (places.isTemporary(city.place.id)) "临时预览" else "待加载"
         city.summary.text = summary
         val selectionLabel = if (city.place.id == selection.placeId) "已选中 · " else ""
         city.item.contentDescription = "$selectionLabel${city.place.name} · $summary"
     }
 
     private fun schedulePreviews() {
+        cityScroll.removeCallbacks(trimPreviews)
+        cityScroll.postOnAnimation(trimPreviews)
         cityScroll.removeCallbacks(updatePreviews)
-        cityScroll.postOnAnimation(updatePreviews)
+        cityScroll.postDelayed(updatePreviews, 120)
     }
 
-    private fun bindPreviews() {
+    private fun bindPreviews(add: Boolean) {
         if (!active || !isAttachedToWindow) return
         val top = cityScroll.scrollY
         val bottom = top + cityScroll.height
         val visible = cities.values.filter { city ->
-            city.place.id != selection.placeId && city.item.bottom > top && city.item.top < bottom
+            city.place.id != selection.placeId && !places.isTemporary(city.place.id) &&
+                city.item.bottom > top && city.item.top < bottom
         }.associateBy { it.place.id to it.place.sources.first() }
-        (previews.keys - visible.keys).forEach { previews.remove(it)?.close() }
-        (visible.keys - previews.keys).forEach { (id, source) ->
-            // QWeather thumbnails can read the existing cache. HA current weather reads the live entity.
-            previews[id to source] = repository.observe(id, source, WeatherQuery(WeatherBlock.CURRENT),
-                automatic = source is WeatherSourceRef.HomeAssistant) { snapshot ->
+        repository.closeSubscriptions((previews.keys - visible.keys).mapNotNull(previews::remove))
+        if (!add) return
+        (visible.keys - previews.keys).forEach { key ->
+            val (id, source) = key
+            previews[key] = repository.observeCurrentPreview(id, source) { snapshot ->
                 if (id != selection.placeId) cities[id]?.takeIf { it.place.sources.first() == source }
                     ?.let { renderCity(it, snapshot) }
             }
@@ -231,6 +249,7 @@ internal class WeatherCenterView(
     private fun buildPage(): Unit = with(ui) {
         detail.removeAllViews()
         sections.clear()
+        rangeButtons.clear()
         shownPlace = selection.placeId?.let(places::get)
         header = column()
         detail.addView(header)
@@ -266,12 +285,11 @@ internal class WeatherCenterView(
                 detail.addView(tabs)
                 if (section == Section.FORECAST) detail.addView(row().apply {
                     listOf(24, 48, 72, 240).forEach { hours ->
-                        addView(button(if (hours == 240) "最多 240 小时" else "$hours 小时", selected = range == hours) {
-                            if (range != hours) {
-                                range = hours
-                                buildPage()
-                            }
-                        }, LayoutParams(0, -2, 1f).apply { marginEnd = dp(4); bottomMargin = dp(6) })
+                        val control = button(if (hours == 240) "最多 240 小时" else "$hours 小时", selected = range == hours) {
+                            selectRange(hours)
+                        }
+                        rangeButtons[hours] = control
+                        addView(control, LayoutParams(0, -2, 1f).apply { marginEnd = dp(4); bottomMargin = dp(6) })
                     }
                 })
                 if (section == Section.HISTORY) detail.addView(button(historyDate?.format(centerDate) ?: "选择历史日期") {
@@ -293,6 +311,17 @@ internal class WeatherCenterView(
                 if (section == Section.SKY) renderBlock(WeatherBlock.DAILY, daily)
             }
         }
+        subscribe()
+    }
+
+    private fun selectRange(hours: Int) {
+        if (range == hours) return
+        val previous = snapshots.values.firstOrNull { it.query.block == WeatherBlock.HOURLY }
+        range = hours
+        val ha = selection.source is WeatherSourceRef.HomeAssistant
+        if (!ha && (hours > hourlyRequestRange || previous.entries().isEmpty())) hourlyRequestRange = hours
+        rangeButtons.forEach { (value, button) -> ui.markSelected(button, value == hours) }
+        renderBlock(WeatherBlock.HOURLY, previous)
         subscribe()
     }
 
@@ -350,7 +379,7 @@ internal class WeatherCenterView(
     }
 
     private fun addBlock(block: WeatherBlock) {
-        sections[block] = ui.card().also(detail::addView)
+        sections[block] = ui.card().apply { tag = block }.also(detail::addView)
         renderBlock(block, snapshots.values.firstOrNull { it.query.block == block })
     }
 
@@ -363,7 +392,7 @@ internal class WeatherCenterView(
         if (!ha) add(WeatherQuery(WeatherBlock.ALERTS))
         when (section) {
             Section.FORECAST -> {
-                add(WeatherQuery(WeatherBlock.HOURLY, hours = if (ha) 24 else range))
+                add(WeatherQuery(WeatherBlock.HOURLY, hours = if (ha) 24 else hourlyRequestRange))
                 if (ha) add(WeatherQuery(WeatherBlock.TWICE_DAILY))
             }
             Section.RAIN -> add(WeatherQuery(WeatherBlock.MINUTELY))
@@ -388,10 +417,10 @@ internal class WeatherCenterView(
         val source = selection.source ?: return
         val token = generation
         val desired = queries()
-        (stops.keys - desired.toSet()).forEach { query ->
-            stops.remove(query)?.close()
+        repository.closeSubscriptions((stops.keys - desired.toSet()).mapNotNull { query ->
             snapshots.remove(query)
-        }
+            stops.remove(query)
+        })
         desired.filterNot { it in stops }.forEach { query ->
             val sub = repository.observe(place.id, source, query, automatic = query.block != WeatherBlock.HISTORY) { snapshot ->
                 if (token != generation || query !in queries()) return@observe
@@ -422,13 +451,14 @@ internal class WeatherCenterView(
         }
     }
 
-    private fun release(clear: Boolean = true) {
+    private fun release(clear: Boolean = true, includePreviews: Boolean = true) {
         generation++
         cityScroll.removeCallbacks(updatePreviews)
-        previews.values.forEach { it.close() }
-        previews.clear()
-        stops.values.forEach { it.close() }
+        cityScroll.removeCallbacks(trimPreviews)
+        val closing = stops.values.toList() + if (includePreviews) previews.values.toList() else emptyList()
         stops.clear()
+        if (includePreviews) previews.clear()
+        repository.closeSubscriptions(closing)
         if (clear) snapshots.clear()
         if (listeningLegacy) backend.removeListener(legacyListener)
         listeningLegacy = false
@@ -473,39 +503,21 @@ internal class WeatherCenterView(
             return
         }
         val box = sections[block] ?: return
-        val dailyPart = if (block in astronomyBlocks) dailyAstronomy(block) else null
-        val reuseDaily = dailyPart != null && (!needsAstronomy(block) || snapshot?.data == null)
-        val shown = if (reuseDaily) daily?.copy(data = WeatherData.Astronomy(checkNotNull(dailyPart))) else snapshot
-        ui.render(box, block, shown, range, zone) { builder ->
+        if (block in astronomyBlocks) {
+            ui.renderAstronomy(box, block, centerAstronomy(block, daily, snapshot, Instant.now(), zone), zone)
+            return
+        }
+        ui.render(box, block, snapshot, range, zone, hourlyMetric, { hourlyMetric = it }) { builder ->
             val popup = show(builder)
             if (block == WeatherBlock.ALERTS) alertPopup = popup
         }
-        if (reuseDaily && needsAstronomy(block) && snapshot?.data == null) box.addView(ui.metadata(snapshot))
     }
 
     private val astronomyBlocks = listOf(WeatherBlock.SUN, WeatherBlock.MOON)
-    private val lunarEvents = setOf(AstronomicalEvent.MOONRISE, AstronomicalEvent.MOONSET, AstronomicalEvent.MOON_TRANSIT,
-        AstronomicalEvent.MOON_UNDERFOOT)
-
-    private fun dailyAstronomy(block: WeatherBlock): WeatherAstronomy? {
-        val data = daily.today(Instant.now())?.astronomy ?: return null
-        val moon = block == WeatherBlock.MOON
-        return data.copy(
-            events = data.events.filterKeys { (it in lunarEvents) == moon },
-            localEvents = data.localEvents.filterKeys { (it in lunarEvents) == moon },
-            phase = data.phase.takeIf { moon },
-            hourlyPhases = data.hourlyPhases.takeIf { moon }.orEmpty(),
-        ).takeIf { it.events.isNotEmpty() || it.localEvents.isNotEmpty() || it.phase != null || it.hourlyPhases.isNotEmpty() }
-    }
-
     private fun needsAstronomy(block: WeatherBlock): Boolean {
-        val data = daily ?: return false
-        if (data.state in setOf(WeatherState.LOADING, WeatherState.UNLOADED) && data.data == null) return false
-        val part = dailyAstronomy(block) ?: return true
-        val events = if (block == WeatherBlock.MOON) listOf(AstronomicalEvent.MOONRISE, AstronomicalEvent.MOONSET)
-            else listOf(AstronomicalEvent.SUNRISE, AstronomicalEvent.SUNSET)
-        return events.any { it !in part.events && it !in part.localEvents } ||
-            (block == WeatherBlock.MOON && part.phase == null && part.hourlyPhases.isEmpty())
+        val info = centerAstronomy(block, daily, null, Instant.now(), zone)
+        // Once started, a supplement stays useful while the daily request is retrying.
+        return info.needsSupplement || (info.waitingForDaily && WeatherQuery(block) in stops)
     }
 
     private fun show(builder: AlertDialog.Builder): AlertDialog {

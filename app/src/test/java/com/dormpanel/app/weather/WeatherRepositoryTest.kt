@@ -594,6 +594,52 @@ class WeatherRepositoryTest {
     private fun temperature(snapshots: List<WeatherSnapshot>): Double? =
         (snapshots.last().data as? WeatherData.Current)?.conditions?.temperature
 
+    @Test fun visiblePreviewsUseOneSlotShareCurrentAndCancelQueuedCitiesTogether() = Fixture().use { f ->
+        f.save("hidden", WeatherSourceRef.QWeather(WeatherCoordinates("31".toBigDecimal(), "121".toBigDecimal())))
+        val a = mutableListOf<WeatherSnapshot>()
+        val b = mutableListOf<WeatherSnapshot>()
+        val first = f.repository.observeCurrentPreview("a", f.source, a::add)
+        val shared = f.repository.observeCurrentPreview("b", f.places.get("b")!!.sources.single(), b::add)
+        val queued = f.repository.observeCurrentPreview("other", f.other) {}
+        val hidden = f.repository.observeCurrentPreview("hidden", f.places.get("hidden")!!.sources.single()) {}
+        assertEquals(listOf(WeatherBlock.CURRENT), f.jobs.map { it.block })
+        val (detail, _) = f.observe("other", WeatherBlock.DAILY)
+        assertEquals(listOf(WeatherBlock.CURRENT, WeatherBlock.DAILY), f.jobs.map { it.block })
+
+        f.repository.closeSubscriptions(listOf(queued, hidden))
+        f.jobs.first().current(23)
+        f.advance()
+        assertEquals(23.0, temperature(a))
+        assertEquals(23.0, temperature(b))
+        assertEquals(2, f.jobs.size)
+        f.repository.closeSubscriptions(listOf(first, shared, detail))
+
+        val cached = mutableListOf<WeatherSnapshot>()
+        val preview = f.repository.observeCurrentPreview("a", f.source, cached::add)
+        assertEquals(23.0, temperature(cached))
+        assertEquals(2, f.jobs.size)
+        f.repository.onNetworkLost()
+        assertEquals(WeatherNetworkStatus.OFFLINE, cached.last().network)
+        assertEquals(23.0, temperature(cached))
+        preview.close()
+    }
+
+    @Test fun previewKeepsCachedSummaryWhenBudgetBlocksRefresh() = Fixture().use { f ->
+        val updates = mutableListOf<WeatherSnapshot>()
+        f.repository.observeCurrentPreview("a", f.source, updates::add)
+        f.jobs.single().current(26)
+        f.advance()
+        f.advance(15 * 60)
+        val retryAt = f.instant.plusSeconds(3600)
+        f.jobs.last().fail(WeatherState.BUDGET, retryAt)
+        f.advance()
+        assertEquals(WeatherState.BUDGET, updates.last().state)
+        assertTrue(updates.last().stale)
+        assertEquals(26.0, temperature(updates))
+        f.advance(60)
+        assertEquals(2, f.jobs.size)
+    }
+
     @Test fun fiveConsumersShareRoundedCoordinatesAndTwoCitiesAndTypesRemainIsolated() = Fixture().use { f ->
         val observers = List(5) { f.observe(if (it == 0) "b" else "a", WeatherBlock.CURRENT) }
         assertEquals(1, f.jobs.size)

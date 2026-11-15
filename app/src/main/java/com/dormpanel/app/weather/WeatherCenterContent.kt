@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.view.View
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -65,11 +66,16 @@ internal class WeatherCenterContent(private val context: Context, var palette: P
         isAllCaps = false
         minHeight = dp(48)
         minimumWidth = dp(48)
-        setTextColor(if (selected) palette.accent else palette.text)
-        background = surface(if (selected) palette.accent else palette.surface, selected)
+        markSelected(this, selected)
         setPadding(dp(9), dp(4), dp(9), dp(4))
         setOnClickListener { action() }
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) }
+    }
+
+    fun markSelected(button: Button, selected: Boolean) {
+        button.isSelected = selected
+        button.setTextColor(if (selected) palette.accent else palette.text)
+        button.background = surface(if (selected) palette.accent else palette.surface, selected)
     }
 
     fun icon(sky: WeatherSky, size: Int) = WeatherIconView(context).apply {
@@ -155,6 +161,8 @@ internal class WeatherCenterContent(private val context: Context, var palette: P
 
     fun render(
         box: LinearLayout, block: WeatherBlock, snapshot: WeatherSnapshot?, hours: Int, zone: ZoneId,
+        hourlyMetric: HourlyMetric = HourlyMetric.TEMPERATURE,
+        onHourlyMetric: (HourlyMetric) -> Unit = {},
         show: (AlertDialog.Builder) -> Unit,
     ) {
         val data = snapshot?.data
@@ -171,17 +179,7 @@ internal class WeatherCenterContent(private val context: Context, var palette: P
         val now = Instant.now()
         when (data) {
             is WeatherData.Forecast -> when (block) {
-                WeatherBlock.HOURLY -> {
-                    val points = hourlyTrend(data.entries, zone, now, hours)
-                    val byTime = data.entries.associateBy { it.period.start }
-                    if (points.isEmpty()) box.addView(label("暂无未来时段"))
-                    else trend(box, points, "°C", 3600, now, oldScroll, false) { point ->
-                        val c = byTime[point.time]?.conditions
-                        slot(sky(c?.code, c?.description), listOfNotNull(
-                            c?.temperature.value("°C"), c?.precipitationProbability.value("%")?.let { "降水概率 $it" },
-                        ), point, show)
-                    }
-                }
+                WeatherBlock.HOURLY -> hourly(box, data.entries, zone, now, hours, oldScroll, hourlyMetric, onHourlyMetric, show)
                 WeatherBlock.DAILY -> daily(box, futureDays(data.entries, zone, now), zone, show)
                 WeatherBlock.TWICE_DAILY -> periods(box, data.entries, zone, show)
                 else -> Unit
@@ -201,57 +199,121 @@ internal class WeatherCenterContent(private val context: Context, var palette: P
                     periods(box, data.hourly, zone, show)
                 }
             }
-            else -> Unit
+            else -> if (block == WeatherBlock.HOURLY && snapshot?.state !in
+                setOf(null, WeatherState.LOADING, WeatherState.UNLOADED)) box.addView(label("暂无可用的逐小时预报"))
         }
         box.addView(metadata(snapshot))
     }
 
+    private fun hourly(
+        box: LinearLayout, entries: List<WeatherForecast>, zone: ZoneId, now: Instant, hours: Int,
+        scrollX: Int, preferred: HourlyMetric, onMetric: (HourlyMetric) -> Unit, show: (AlertDialog.Builder) -> Unit,
+    ) {
+        val points = hourlyTrend(entries, zone, now, hours)
+        if (points.isEmpty()) {
+            box.addView(label("暂无未来时段"))
+            return
+        }
+        val byTime = entries.asReversed().associateBy { it.period.start }
+        val readings = points.map { byTime[it.time]?.conditions }
+        val series = HourlyMetric.entries.associateWith { it.series(readings) }
+        val available = series.filterValues { it.scale != null }.keys
+        val initial = preferred.takeIf { it in available } ?: available.firstOrNull() ?: preferred
+        val buttons = row()
+        if (available.isEmpty()) box.addView(label("这些时段暂无可绘制的指标", subdued = true))
+        else box.addView(buttons)
+        val redraw = trend(box, points, initial.unit, 3600, now, scrollX, false, series.getValue(initial),
+            inspect = { point -> show(dialogBuilder().setTitle(point.label).setMessage(point.detail)) }) { point ->
+            val c = byTime[point.time]?.conditions
+            slot(sky(c?.code, c?.description), listOfNotNull(
+                HourlyMetric.TEMPERATURE.reading(c).value("°C"), HourlyMetric.RAIN_CHANCE.reading(c).value("%")?.let { "降水概率 $it" },
+            ), point, show)
+        }
+        val controls = linkedMapOf<HourlyMetric, Button>()
+        var selected = initial
+        available.forEach { metric ->
+            val control = button(metric.title, selected = metric == initial) {
+                if (selected != metric) {
+                    markSelected(controls.getValue(selected), false)
+                    selected = metric
+                    markSelected(controls.getValue(metric), true)
+                    redraw(series.getValue(metric))
+                    onMetric(metric)
+                }
+            }
+            controls[metric] = control
+            buttons.addView(control, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
+        }
+    }
+
     private fun trend(
         box: LinearLayout, points: List<WeatherTrendPoint>, unit: String, step: Long, now: Instant,
-        scrollX: Int, includeZero: Boolean, item: (WeatherTrendPoint) -> View,
-    ) {
-        if (points.isEmpty()) return
+        scrollX: Int, includeZero: Boolean, initial: WeatherTrendSeries? = null,
+        inspect: ((WeatherTrendPoint) -> Unit)? = null, item: (WeatherTrendPoint) -> View,
+    ): (WeatherTrendSeries) -> Unit {
+        if (points.isEmpty()) return {}
         val width = dp(112)
-        val scale = weatherScale(points.mapNotNull { it.value }, includeZero)
+        val default = initial ?: WeatherTrendSeries(points.map { it.value },
+            weatherScale(points.mapNotNull { it.value }, includeZero), unit)
         val selected = label("", 15f).apply { visibility = View.GONE }
-        val chart = WeatherTrendView(context, points, scale, unit, step, width, now, palette) {
+        val chart = WeatherTrendView(context, points, default, step, width, now, palette, inspect ?: {
             selected.visibility = View.VISIBLE
             selected.text = it.detail
+        })
+        val longStrip = points.size > 72
+        val tiles = FrameLayout(context).apply { if (longStrip) minimumHeight = dp(84) }
+        val mounted = mutableMapOf<Int, View>()
+        var mountedRange = IntRange.EMPTY
+        fun updateTiles(left: Int, viewportWidth: Int) {
+            val visible = chart.indicesNear(left, viewportWidth, overscan = width / 2)
+            if (longStrip && visible.first in mountedRange && visible.last in mountedRange) return
+            mountedRange = if (longStrip) chart.indicesNear(left, viewportWidth, overscan = width * 3) else points.indices
+            (mounted.keys - mountedRange).forEach { index -> mounted.remove(index)?.let(tiles::removeView) }
+            mountedRange.forEach { index ->
+                if (index in mounted) return@forEach
+                val cellWidth = chart.neighborDistance(index).toInt().coerceIn(1, width)
+                val cell = item(points[index])
+                tiles.addView(cell, FrameLayout.LayoutParams(cellWidth, -2).apply {
+                    leftMargin = (chart.position(index) - cellWidth / 2f).toInt()
+                })
+                mounted[index] = cell
+            }
         }
         val strip = column().apply {
             addView(chart, LinearLayout.LayoutParams(chart.chartWidth, dp(130)))
-            val tiles = row()
-            var edge = 0
-            points.forEach { point ->
-                val left = ((point.time.epochSecond - points.first().time.epochSecond) * width / step).toInt()
-                tiles.addView(item(point), LinearLayout.LayoutParams(width, -2).apply {
-                    leftMargin = (left - edge).coerceAtLeast(0)
-                })
-                edge = left + width
-            }
-            addView(tiles)
+            addView(tiles, LinearLayout.LayoutParams(chart.chartWidth, -2))
         }
         val viewport = HorizontalScrollView(context).apply {
             tag = "forecast_scroll"
-            addView(strip)
             isHorizontalScrollBarEnabled = true
+            addView(strip)
+            if (longStrip) {
+                setOnScrollChangeListener { _, x, _, _, _ -> updateTiles(x, this.width) }
+                addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateTiles(this.scrollX, this.width) }
+            } else updateTiles(0, chart.chartWidth)
             if (scrollX != 0) post { scrollTo(scrollX, 0) }
         }
-        val ticks = column().apply {
-            if (scale != null) {
-                setPadding(0, dp(12), 0, 0)
-                val middle = (scale.min + scale.max) / 2
-                listOf(scale.max, middle, scale.min).forEach {
-                    addView(label(it.value(unit).orEmpty(), 13f, subdued = true), LinearLayout.LayoutParams(-2, dp(38)))
-                }
+        val ticks = column().apply { setPadding(0, dp(12), 0, 0) }
+        val tickLabels = List(3) { label("", 13f, subdued = true) }
+        tickLabels.forEach { ticks.addView(it, LinearLayout.LayoutParams(-2, dp(38))) }
+        fun axes(series: WeatherTrendSeries) {
+            val scale = series.scale
+            ticks.visibility = if (scale == null) View.GONE else View.VISIBLE
+            if (scale != null) listOf(scale.max, (scale.min + scale.max) / 2, scale.min).forEachIndexed { index, value ->
+                tickLabels[index].text = value.value(series.unit)
             }
         }
+        axes(default)
         box.addView(row().apply {
             gravity = android.view.Gravity.TOP
             addView(ticks)
             addView(viewport, LinearLayout.LayoutParams(0, -2, 1f))
         })
-        box.addView(selected)
+        if (inspect == null) box.addView(selected)
+        return { next ->
+            axes(next)
+            chart.updateSeries(next)
+        }
     }
 
     private fun slot(
@@ -458,15 +520,39 @@ internal class WeatherCenterContent(private val context: Context, var palette: P
         return color?.code?.let { runCatching { Color.parseColor(it) }.getOrNull() } ?: palette.accent
     }
 
-    private fun astronomy(value: WeatherAstronomy, zone: ZoneId): List<String> {
+    fun renderAstronomy(box: LinearLayout, block: WeatherBlock, info: CenterAstronomy, zone: ZoneId) {
+        box.removeAllViews()
+        box.addView(label(blockTitle(block), 22f, bold = true))
+        box.addView(label(info.date.format(centerDate), subdued = true))
+        info.daily?.let {
+            box.addView(label(astronomy(it, zone, includeDate = false).joinToString("\n")))
+            box.addView(label("每日预报", subdued = true))
+            box.addView(metadata(info.forecastSnapshot))
+        }
+        info.supplement?.let { box.addView(label(astronomy(it, zone, includeDate = false).joinToString("\n"))) }
+        val supplemental = info.supplementSnapshot
+        val pending = supplemental == null || supplemental.state in setOf(WeatherState.LOADING, WeatherState.UNLOADED)
+        when {
+            info.waitingForDaily && supplemental == null -> box.addView(label("正在加载每日预报", subdued = true))
+            info.needsSupplement || supplemental != null -> {
+                box.addView(label("补充天文预报", subdued = true))
+                box.addView(metadata(supplemental))
+            }
+        }
+        if (info.missing.isNotEmpty() && !info.waitingForDaily && (!info.needsSupplement || !pending)) {
+            box.addView(label("暂无${info.missing.joinToString("、")}数据", subdued = true))
+        }
+    }
+
+    private fun astronomy(value: WeatherAstronomy, zone: ZoneId, includeDate: Boolean = true): List<String> {
         val labels = mapOf(AstronomicalEvent.SUNRISE to "日出", AstronomicalEvent.SUNSET to "日落",
             AstronomicalEvent.MOONRISE to "月升", AstronomicalEvent.MOONSET to "月落",
             AstronomicalEvent.CIVIL_DAWN to "民用晨光", AstronomicalEvent.CIVIL_DUSK to "民用暮光",
             AstronomicalEvent.SOLAR_NOON to "太阳中天", AstronomicalEvent.MOON_TRANSIT to "月亮中天")
-        return listOfNotNull(value.date?.format(centerDate)) + labels.mapNotNull { (event, title) ->
+        return listOfNotNull(value.date?.format(centerDate).takeIf { includeDate }) + labels.mapNotNull { (event, title) ->
             (value.events[event]?.atZone(zone)?.format(centerTime) ?: value.localEvents[event]?.format(centerTime))
                 ?.let { "$title  $it" }
-        } + listOfNotNull((value.phase ?: value.hourlyPhases.firstNotNullOfOrNull { it.name })?.let { "月相  $it" })
+        } + listOfNotNull(value.phaseName()?.let { "月相  $it" })
     }
 
     private fun message(title: String, value: String, show: (AlertDialog.Builder) -> Unit) =

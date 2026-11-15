@@ -23,6 +23,7 @@ class WeatherRepository internal constructor(
         val query: WeatherQuery,
         val automatic: Boolean,
         val parkEmptyHaForecast: Boolean,
+        val preview: Boolean,
         val listener: (WeatherSnapshot) -> Unit,
     ) : Subscription {
         var entry: Entry? = null
@@ -57,10 +58,7 @@ class WeatherRepository internal constructor(
             return WeatherRefreshResult(if (manualActive) WeatherRefreshStatus.STARTED else WeatherRefreshStatus.QUEUED)
         }
         override fun close() {
-            if (demands.remove(this)) {
-                entry = null
-                reconcile()
-            }
+            closeSubscriptions(listOf(this))
         }
         fun emit(value: WeatherSnapshot) {
             if (last != value) {
@@ -145,11 +143,22 @@ class WeatherRepository internal constructor(
 
     fun observe(placeId: String, source: WeatherSourceRef, query: WeatherQuery,
                 automatic: Boolean = query.block.core, listener: (WeatherSnapshot) -> Unit): Subscription =
-        observe(placeId, source, query, automatic, parkEmptyHaForecast = false, listener)
+        observe(placeId, source, query, automatic, parkEmptyHaForecast = false, preview = false, listener)
 
     internal fun observeHaCardForecast(
         placeId: String, source: WeatherSourceRef.HomeAssistant, block: WeatherBlock, listener: (WeatherSnapshot) -> Unit,
-    ): Subscription = observe(placeId, source, WeatherQuery(block), automatic = true, parkEmptyHaForecast = true, listener)
+    ): Subscription = observe(placeId, source, WeatherQuery(block), automatic = true, parkEmptyHaForecast = true, preview = false, listener)
+
+    internal fun observeCurrentPreview(
+        placeId: String, source: WeatherSourceRef, listener: (WeatherSnapshot) -> Unit,
+    ): Subscription = observe(placeId, source, WeatherQuery(WeatherBlock.CURRENT),
+        automatic = true, parkEmptyHaForecast = false, preview = true, listener)
+
+    internal fun closeSubscriptions(subscriptions: Collection<Subscription>) {
+        val removed = subscriptions.filterIsInstance<Demand>().filter(demands::remove)
+        removed.forEach { it.entry = null }
+        if (removed.isNotEmpty()) reconcile()
+    }
 
     internal fun recheckEmptyHaForecasts(
         placeId: String, source: WeatherSourceRef.HomeAssistant, blocks: Set<WeatherBlock>,
@@ -166,10 +175,10 @@ class WeatherRepository internal constructor(
 
     private fun observe(
         placeId: String, source: WeatherSourceRef, query: WeatherQuery, automatic: Boolean,
-        parkEmptyHaForecast: Boolean, listener: (WeatherSnapshot) -> Unit,
+        parkEmptyHaForecast: Boolean, preview: Boolean, listener: (WeatherSnapshot) -> Unit,
     ): Subscription {
         check(!closed)
-        return Demand(placeId, source, query, automatic, parkEmptyHaForecast, listener).also {
+        return Demand(placeId, source, query, automatic, parkEmptyHaForecast, preview, listener).also {
             demands += it
             reconcile()
         }
@@ -180,7 +189,9 @@ class WeatherRepository internal constructor(
         val place = places.get(placeId)?.takeIf { source in it.sources } ?: return null
         val instant = now()
         val plan = provider(source).plan(source, place.zone, WeatherQuery(WeatherBlock.CURRENT), instant)
-        if (plan.unavailable != null) return null
+        plan.unavailable?.let {
+            return WeatherSnapshot(source, place.zone, plan.query, it.state, error = it.message, network = networkFor(source))
+        }
         val entry = entries[plan.key] ?: return null
         return snapshot(entry, source, place.zone, plan.query, instant)
     }
@@ -348,7 +359,17 @@ class WeatherRepository internal constructor(
             if (at != null && at > instant && (next == null || at < next)) next = at
         }
         var httpSlots = 2 - active.keys.count { it.running && !it.plan.live }
-        val ordered = active.entries.sortedByDescending { it.key.plan.query.block.core }
+        // A shared entry inherits the priority of its foreground consumers. Reserve a slot for them.
+        val ordered = active.entries.sortedBy { (entry, consumers) ->
+            when {
+                consumers.all { it.preview } -> 2
+                entry.plan.query.block.core -> 0
+                else -> 1
+            }
+        }
+        var previewSlot = active.none { (entry, consumers) ->
+            entry.running && !entry.plan.live && consumers.all { it.preview }
+        }
         for ((entry, consumers) in ordered) {
             val eligible = consumers.filter { it in demands }
             val durable = eligible.any { !places.isTemporary(it.placeId) }
@@ -389,8 +410,12 @@ class WeatherRepository internal constructor(
                 )
             }
             if (foreground && connected && !entry.running && !entry.loadingDisk && (onDemand || auto) && (!permanent || entry.plan.live)) {
-                if (instant >= due && (entry.plan.live || httpSlots > 0)) {
-                    if (!entry.plan.live) httpSlots--
+                val previewOnly = eligible.all { it.preview }
+                if (instant >= due && (entry.plan.live || (httpSlots > 0 && (!previewOnly || previewSlot)))) {
+                    if (!entry.plan.live) {
+                        httpSlots--
+                        if (previewOnly) previewSlot = false
+                    }
                     eligible.forEach {
                         it.manualActive = it.requested
                         it.requested = false

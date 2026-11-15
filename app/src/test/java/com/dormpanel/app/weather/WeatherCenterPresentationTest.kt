@@ -84,6 +84,68 @@ class WeatherCenterPresentationTest {
         assertEquals(listOf("温度  0°C"), conditionMetrics(WeatherConditions(temperature = 0.0)))
     }
 
+    @Test fun hourlyMetricsExcludeInvalidReadingsAndKeepRealZero() {
+        val rows = listOf(WeatherConditions(temperature = -4.5, precipitationProbability = 18.0,
+            precipitation = .3, windSpeed = 7.0, windDirection = "北风"),
+            WeatherConditions(precipitationProbability = 105.0, precipitation = -.1, windSpeed = -1.0),
+            WeatherConditions(temperature = 0.0, precipitationProbability = 0.0, precipitation = 0.0, windSpeed = 0.0))
+        assertEquals(WeatherTrendSeries(listOf(-4.5, null, 0.0), WeatherScale(-5.0, 0.0), "°C"),
+            HourlyMetric.TEMPERATURE.series(rows))
+        assertEquals(WeatherTrendSeries(listOf(18.0, null, 0.0), WeatherScale(0.0, 100.0), "%"),
+            HourlyMetric.RAIN_CHANCE.series(rows))
+        assertEquals(WeatherTrendSeries(listOf(.3, null, 0.0), WeatherScale(0.0, .4), " mm", true),
+            HourlyMetric.RAIN_AMOUNT.series(rows))
+        assertEquals(WeatherTrendSeries(listOf(7.0, null, 0.0), WeatherScale(0.0, 7.0), " m/s"),
+            HourlyMetric.WIND.series(rows))
+        HourlyMetric.entries.forEach { assertNull(it.series(listOf(WeatherConditions())).scale) }
+    }
+
+    @Test fun skyWaitsForDailyAndOnlyRequestsMissingSupplement() {
+        val now = Instant.parse("2026-11-14T16:30:00Z")
+        val date = LocalDate.parse("2026-11-15")
+        val source = WeatherSourceRef.QWeatherCity("101200101")
+        val pending = WeatherSnapshot(source, shanghai, WeatherQuery(WeatherBlock.DAILY), WeatherState.LOADING)
+        val sun = mapOf(AstronomicalEvent.SUNRISE to date.atTime(6, 10), AstronomicalEvent.SUNSET to date.atTime(17, 15))
+        val astro = WeatherAstronomy(date, emptyMap(), "上弦月", emptyList(), sun)
+        fun daily(value: WeatherAstronomy) = pending.copy(state = WeatherState.FRESH, data = WeatherData.Forecast(
+            listOf(WeatherForecast(WeatherPeriod(date = date), WeatherConditions(), astronomy = value))))
+        assertTrue(centerAstronomy(WeatherBlock.SUN, pending, null, now, shanghai).waitingForDaily)
+        assertFalse(centerAstronomy(WeatherBlock.MOON, pending, null, now, shanghai).needsSupplement)
+        val solar = centerAstronomy(WeatherBlock.SUN, daily(astro), null, now, shanghai)
+        assertFalse(solar.needsSupplement)
+        assertEquals(sun, solar.daily?.localEvents)
+        val moon = centerAstronomy(WeatherBlock.MOON, daily(astro), null, now, shanghai)
+        assertFalse(moon.needsSupplement)
+        assertEquals("上弦月", moon.daily?.phase)
+        assertTrue(centerAstronomy(WeatherBlock.MOON, daily(astro.copy(phase = null)), null, now, shanghai).needsSupplement)
+    }
+
+    @Test fun skyPreservesDailyFieldsAndAttributionAcrossSupplementFailureAndSuccess() {
+        val now = Instant.parse("2026-11-14T16:30:00Z")
+        val date = LocalDate.parse("2026-11-15")
+        val source = WeatherSourceRef.QWeatherCity("101200101")
+        val sunrise = date.atTime(6, 10)
+        val dailyData = WeatherAstronomy(date, emptyMap(), null, emptyList(), mapOf(AstronomicalEvent.SUNRISE to sunrise))
+        val daily = WeatherSnapshot(source, shanghai, WeatherQuery(WeatherBlock.DAILY), WeatherState.FRESH,
+            WeatherData.Forecast(listOf(WeatherForecast(WeatherPeriod(date = date), WeatherConditions(), astronomy = dailyData))),
+            attribution = WeatherAttribution(sources = listOf("每日预报来源")))
+        val before = WeatherSnapshot(source, shanghai, WeatherQuery(WeatherBlock.SUN, date = date), WeatherState.UNSUPPORTED)
+        val failed = centerAstronomy(WeatherBlock.SUN, daily, before, now, shanghai)
+        assertEquals(sunrise, failed.daily?.localEvents?.get(AstronomicalEvent.SUNRISE))
+        assertEquals(listOf("日落"), failed.missing)
+        assertEquals(WeatherState.UNSUPPORTED, failed.supplementSnapshot?.state)
+        val data = dailyData.copy(localEvents = mapOf(AstronomicalEvent.SUNRISE to date.atTime(7, 0),
+            AstronomicalEvent.SUNSET to date.atTime(17, 0)))
+        val success = before.copy(state = WeatherState.FRESH, data = WeatherData.Astronomy(data),
+            attribution = WeatherAttribution(sources = listOf("天文预报来源")))
+        val combined = centerAstronomy(WeatherBlock.SUN, daily, success, now, shanghai)
+        assertTrue(combined.missing.isEmpty())
+        assertEquals(setOf(AstronomicalEvent.SUNSET), combined.supplement?.localEvents?.keys)
+        assertEquals(daily.attribution, combined.forecastSnapshot?.attribution)
+        assertEquals(success.attribution, combined.supplementSnapshot?.attribution)
+        assertNull(centerAstronomy(WeatherBlock.SUN, daily, success, now.plusSeconds(86400), shanghai).supplement)
+    }
+
     private fun forecast(time: String, temperature: Double?) =
         WeatherForecast(WeatherPeriod(start = Instant.parse(time)), WeatherConditions(temperature = temperature))
 }
