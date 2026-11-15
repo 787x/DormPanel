@@ -148,7 +148,7 @@ internal data class WeatherCacheRecord(val wire: JSONObject, val fetchedAt: Inst
 internal interface WeatherCache {
     fun read(group: String, key: String, done: (WeatherCacheRecord?) -> Unit)
     fun write(group: String, key: String, record: WeatherCacheRecord, done: (Boolean) -> Unit)
-    fun clear(groups: Set<String>?)
+    fun clear(groups: Set<String>?, done: (Boolean) -> Unit)
 }
 
 /** File operations are serialized on the supplied worker and callbacks return to the repository scheduler. */
@@ -198,11 +198,16 @@ internal class DiskWeatherCache(
         }
     }
 
-    override fun clear(groups: Set<String>?) {
+    override fun clear(groups: Set<String>?, done: (Boolean) -> Unit) {
         worker.execute {
-            val prefixes = groups?.map(::weatherDigest)?.toSet()
-            directory.listFiles().orEmpty().filter { prefixes == null || it.name.substringBefore('-') in prefixes }
-                .forEach { it.delete() }
+            val cleared = runCatching {
+                if (!directory.exists()) return@runCatching true
+                val files = checkNotNull(directory.listFiles())
+                val prefixes = groups?.map(::weatherDigest)?.toSet()
+                files.filter { prefixes == null || it.name.substringBefore('-') in prefixes }
+                    .map { it.delete() || !it.exists() }.all { it }
+            }.getOrDefault(false)
+            dispatch { done(cleared) }
         }
     }
 

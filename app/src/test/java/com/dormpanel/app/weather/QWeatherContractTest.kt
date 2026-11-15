@@ -183,6 +183,15 @@ class QWeatherContractTest {
                     404 to WeatherState.UNSUPPORTED, 500 to WeatherState.ERROR)) {
                     assertEquals(expected, (call(MockResponse().setResponseCode(code)) as WeatherResult.Failed).failure.state)
                 }
+                for (response in listOf(MockResponse().setResponseCode(400),
+                    MockResponse().setBody("""{"code":"400"}"""),
+                    MockResponse().setBody("""{"error":{"status":400,"type":"https://dev.qweather.com/docs/resource/error-code/#invalid-parameters"}}"""),
+                    MockResponse().setResponseCode(422))) {
+                    val invalid = (call(response) as WeatherResult.Failed).failure
+                    assertEquals(WeatherState.INVALID_REQUEST, invalid.state)
+                    assertTrue(invalid.blocksRetry)
+                }
+                assertFalse((call(MockResponse().setResponseCode(503)) as WeatherResult.Failed).failure.blocksRetry)
                 val rate = call(MockResponse().setResponseCode(429).addHeader("Retry-After", "123")) as WeatherResult.Failed
                 assertEquals(now.plusSeconds(123), rate.failure.retryAt)
                 assertNull((call(MockResponse().setResponseCode(204)) as WeatherResult.Data).parsed.data)

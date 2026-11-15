@@ -23,8 +23,11 @@ class WeatherRepositoryTest {
         val other = source("38.25")
         val provider = object : WeatherProvider {
             override fun plan(source: WeatherSourceRef, zone: ZoneId, query: WeatherQuery, now: Instant): WeatherPlan {
-                source as WeatherSourceRef.QWeather
-                val group = source.coordinates.path
+                val group = when (source) {
+                    is WeatherSourceRef.QWeather -> source.coordinates.path
+                    is WeatherSourceRef.HomeAssistant -> source.entityId
+                    is WeatherSourceRef.QWeatherCity -> source.locationId
+                }
                 val key = "$account:$group:${query.block}:${query.language}"
                 val parse = { wire: JSONObject, timeZone: ZoneId -> QWeatherParser.parse(wire, timeZone, query) }
                 return WeatherPlan(key, group, query, parse, { callback ->
@@ -65,13 +68,25 @@ class WeatherRepositoryTest {
 
     private class MemoryCache : WeatherCache {
         val values = mutableMapOf<Pair<String, String>, WeatherCacheRecord>()
-        override fun read(group: String, key: String, done: (WeatherCacheRecord?) -> Unit) = done(values[group to key])
+        var defer = false
+        val callbacks = mutableListOf<() -> Unit>()
+        private fun complete(action: () -> Unit) {
+            if (defer) callbacks += action else action()
+        }
+        override fun read(group: String, key: String, done: (WeatherCacheRecord?) -> Unit) {
+            val existing = values[group to key]
+            complete { done(existing) }
+        }
         var writable = true
         override fun write(group: String, key: String, record: WeatherCacheRecord, done: (Boolean) -> Unit) {
             if (writable) values[group to key] = record
-            done(writable)
+            val success = writable
+            complete { done(success) }
         }
-        override fun clear(groups: Set<String>?) { values.keys.removeAll { groups == null || it.first in groups } }
+        override fun clear(groups: Set<String>?, done: (Boolean) -> Unit) {
+            values.keys.removeAll { groups == null || it.first in groups }
+            complete { done(true) }
+        }
     }
 
     private class Job(val key: String, val block: WeatherBlock, val callback: (WeatherResult) -> Unit) {
@@ -364,6 +379,175 @@ class WeatherRepositoryTest {
         f.places.save(favorite.copy(name = "My renamed place"))
         val restored = WeatherPlaceStore(f.serializedPlaces) { true }.get(preview.id)
         assertEquals(favorite.copy(name = "My renamed place"), restored)
+    }
+
+    @Test fun clearingOfflineCacheKeepsFreshWeatherAndCooldownThenAllowsNewSave() = Fixture().use { f ->
+        val (watch, snapshots) = f.observe("a", WeatherBlock.CURRENT)
+        f.jobs.single().current(22)
+        f.advance()
+        val fetched = snapshots.last().fetchedAt
+        f.repository.clearOfflineCache()
+        assertEquals(22.0, temperature(snapshots)!!, 0.0)
+        assertEquals(fetched, snapshots.last().fetchedAt)
+        assertEquals(WeatherPersistence.SESSION_ONLY, snapshots.last().persistence)
+        assertTrue(f.cache.values.isEmpty())
+        assertEquals(WeatherRefreshStatus.BLOCKED, watch.refresh().status)
+        f.advance(600)
+        assertEquals(WeatherRefreshStatus.STARTED, watch.refresh().status)
+        f.jobs.last().current(23)
+        f.advance()
+        assertEquals(WeatherPersistence.SAVED, snapshots.last().persistence)
+    }
+
+    @Test fun clearingOnePlaceRetainsSharedAndUnrelatedOfflineRecords() = Fixture().use { f ->
+        f.observe("a", WeatherBlock.CURRENT)
+        val (_, shared) = f.observe("b", WeatherBlock.CURRENT)
+        val (_, other) = f.observe("other", WeatherBlock.CURRENT)
+        f.jobs[0].current(22)
+        f.jobs[1].current(31)
+        f.advance()
+        f.repository.clearOfflineCache("a") { assertEquals(WeatherCacheClearResult.SHARED_RETAINED, it) }
+        assertEquals(2, f.cache.values.size)
+        assertEquals(WeatherPersistence.SAVED, shared.last().persistence)
+        f.repository.clearOfflineCache("other")
+        assertEquals(1, f.cache.values.size)
+        assertEquals(31.0, temperature(other)!!, 0.0)
+        assertEquals(WeatherPersistence.SESSION_ONLY, other.last().persistence)
+    }
+
+    @Test fun clearingInvalidatesPendingReadsWritesAndNetworkPersistence() = Fixture().use { f ->
+        val (_, snapshot) = f.observe("a", WeatherBlock.CURRENT)
+        f.cache.defer = true
+        f.jobs.single().current(22)
+        f.advance()
+        assertEquals(WeatherPersistence.SAVING, snapshot.last().persistence)
+        f.repository.clearOfflineCache()
+        f.cache.callbacks.removeAt(0).invoke() // Write was acknowledged after the clear.
+        assertEquals(WeatherPersistence.SESSION_ONLY, snapshot.last().persistence)
+        f.advance(900)
+        val inFlight = f.jobs.last()
+        f.repository.clearOfflineCache()
+        inFlight.current(24)
+        f.advance()
+        assertEquals(24.0, temperature(snapshot)!!, 0.0)
+        assertEquals(WeatherPersistence.SESSION_ONLY, snapshot.last().persistence)
+        assertTrue(f.cache.values.isEmpty())
+
+        f.cache.defer = false
+        f.advance(900)
+        f.jobs.last().current(25)
+        f.advance()
+        assertEquals(WeatherPersistence.SAVED, snapshot.last().persistence)
+        f.repository.close()
+        f.cache.callbacks.clear()
+        f.cache.defer = true
+        f.repository = f.create()
+        val jobsBeforeRead = f.jobs.size
+        val (pendingWatch, pendingRead) = f.observe("a", WeatherBlock.CURRENT)
+        f.repository.clearOfflineCache()
+        assertEquals(jobsBeforeRead, f.jobs.size)
+        f.cache.callbacks.removeAt(0).invoke() // Pre-clear disk bytes arrive late.
+        assertEquals(jobsBeforeRead, f.jobs.size)
+        assertEquals(WeatherRefreshStatus.BLOCKED, pendingWatch.refresh().status)
+        assertNull(temperature(pendingRead))
+        assertEquals(WeatherPersistence.NONE, pendingRead.last().persistence)
+        f.repository.close()
+        f.cache.defer = false
+        f.repository = f.create()
+        val (_, restarted) = f.observe("a", WeatherBlock.CURRENT, automatic = false)
+        assertNull(temperature(restarted))
+    }
+
+    @Test fun badParametersAreTerminalForTheirRequestButDoNotPoisonOtherQueries() = Fixture().use { f ->
+        val (current, snapshots) = f.observe("a", WeatherBlock.CURRENT)
+        val (_, hourly) = f.observe("a", WeatherBlock.HOURLY)
+        f.jobs[0].current(22)
+        f.jobs[1].send("""{"hours":[{"forecastTime":"2026-11-15T15:00Z"}]}""")
+        f.advance()
+        f.advance(900)
+        assertEquals(WeatherBlock.CURRENT, f.jobs.last().block)
+        f.jobs.last().fail(WeatherState.INVALID_REQUEST)
+        f.advance()
+        val blockedKey = f.jobs.last().key
+        repeat(3) {
+            assertEquals(WeatherRefreshStatus.BLOCKED, current.refresh().status)
+            f.advance(900)
+        }
+        assertEquals(2, f.jobs.count { it.key == blockedKey })
+        assertEquals(WeatherState.INVALID_REQUEST, snapshots.last().state)
+        assertEquals(22.0, temperature(snapshots)!!, 0.0)
+        assertNotNull(hourly.last().data)
+        f.repository.observe("a", f.source, WeatherQuery(WeatherBlock.CURRENT, language = "en")) {}
+        assertTrue(f.jobs.any { it.block == WeatherBlock.CURRENT && it.key != blockedKey })
+    }
+
+    @Test fun temporaryServerFailureRetriesAfterConfiguredBackoff() = Fixture().use { f ->
+        val (_, snapshots) = f.observe("a", WeatherBlock.CURRENT)
+        f.jobs.single().fail(WeatherState.ERROR)
+        f.advance()
+        assertEquals(WeatherState.ERROR, snapshots.last().state)
+        f.repository.onNetworkAvailable()
+        f.advance(899)
+        assertEquals(1, f.jobs.size)
+        f.advance(1)
+        assertEquals(2, f.jobs.size)
+        f.jobs.last().current(24)
+        f.advance()
+        assertEquals(WeatherState.FRESH, snapshots.last().state)
+    }
+
+    @Test fun offlineIsIndependentOfFreshnessAndBlocksUnneededHttpUntilRecovery() = Fixture().use { f ->
+        val (watch, snapshots) = f.observe("a", WeatherBlock.CURRENT)
+        assertEquals(WeatherNetworkStatus.UNKNOWN, snapshots.last().network)
+        f.repository.onNetworkAvailable()
+        f.jobs.single().current(22)
+        f.advance()
+        f.repository.onNetworkLost()
+        assertEquals(WeatherState.FRESH, snapshots.last().state)
+        assertEquals(WeatherNetworkStatus.OFFLINE, snapshots.last().network)
+        assertEquals(22.0, temperature(snapshots)!!, 0.0)
+        val count = snapshots.size
+        f.repository.onNetworkLost()
+        assertEquals(count, snapshots.size)
+        assertEquals(WeatherRefreshStatus.BLOCKED, watch.refresh().status)
+        val (_, empty) = f.observe("other", WeatherBlock.CURRENT, automatic = false)
+        assertEquals(WeatherState.UNLOADED, empty.last().state)
+        assertEquals(WeatherNetworkStatus.OFFLINE, empty.last().network)
+        repeat(3) { f.repository.onNetworkAvailable() }
+        assertEquals(1, f.jobs.size)
+        assertEquals(WeatherNetworkStatus.ONLINE, snapshots.last().network)
+        f.repository.onNetworkLost()
+        f.advance(900)
+        assertEquals(WeatherState.STALE, snapshots.last().state)
+        assertEquals(WeatherNetworkStatus.OFFLINE, snapshots.last().network)
+        assertEquals(1, f.jobs.size)
+        f.repository.onNetworkUnconfirmed()
+        assertEquals(WeatherNetworkStatus.UNKNOWN, snapshots.last().network)
+        repeat(3) { f.repository.onNetworkAvailable() }
+        assertEquals(2, f.jobs.size)
+    }
+
+    @Test fun offlineDoesNotAffectHaLiveFeedAndCannotExtendAlertExpiry() = Fixture().use { f ->
+        val (alerts, alertSnapshots) = f.observe("a", WeatherBlock.ALERTS)
+        alerts.refresh()
+        f.jobs.last().send("""{"alerts":[{"id":"event","messageType":{"code":"alert"}}]}""")
+        f.advance()
+        f.live = true
+        val ha = WeatherSourceRef.HomeAssistant("weather.hall", "test")
+        f.places.save(WeatherPlace("ha", "HA", f.zone, listOf(ha)))
+        val (_, haSnapshots) = f.observe("ha", WeatherBlock.CURRENT, ha)
+        f.jobs.last().current(21)
+        f.advance()
+        val haEvents = haSnapshots.size
+        f.repository.onNetworkLost()
+        assertEquals(WeatherNetworkStatus.NOT_APPLICABLE, haSnapshots.last().network)
+        assertEquals(haEvents, haSnapshots.size)
+        assertEquals(WeatherState.FRESH, haSnapshots.last().state)
+        assertNotNull(alertSnapshots.last().data)
+        f.advance(600)
+        assertNull(alertSnapshots.last().data)
+        assertEquals(WeatherState.STALE, alertSnapshots.last().state)
+        assertEquals(WeatherNetworkStatus.OFFLINE, alertSnapshots.last().network)
     }
 
     @Test fun transientLookupFieldsDoNotEnterPlaceOrWeatherStorage() = Fixture().use { f ->

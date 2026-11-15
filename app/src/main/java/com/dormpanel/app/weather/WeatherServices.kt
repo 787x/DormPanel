@@ -38,10 +38,7 @@ internal class WeatherServices(
     }).build()
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val qw = QWeatherProvider(apiFactory?.invoke(http, now) ?: QWeatherApi(http, now, offline = {
-        runCatching {
-            val network = connectivity.activeNetwork
-            connectivity.getNetworkCapabilities(network)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true
-        }.getOrDefault(false)
+        defaultNetworkStatus() == WeatherNetworkStatus.OFFLINE
     }), { settings.config }, { settings.problem }, budget, scheduler::execute)
     private val publicLocations = PublicWeatherLocations(http, publicLocationUrl)
     private val home = HaWeatherProvider(ha, serverId, accountId)
@@ -49,34 +46,37 @@ internal class WeatherServices(
         DiskWeatherCache(File(context.noBackupFilesDir, "weather-v1"), worker, scheduler::execute), scheduler, now)
     private val diagnostics = linkedSetOf<() -> Unit>()
 
-    private var validatedNetwork: Network? = null
+    // Sample the current default network, so delayed events from the previous one cannot overwrite it.
+    private fun defaultNetworkStatus(): WeatherNetworkStatus = runCatching {
+        val active = connectivity.activeNetwork ?: return@runCatching WeatherNetworkStatus.OFFLINE
+        val validated = connectivity.getNetworkCapabilities(active)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        when {
+            connectivity.activeNetwork != active -> WeatherNetworkStatus.UNKNOWN
+            validated == true -> WeatherNetworkStatus.ONLINE
+            else -> WeatherNetworkStatus.UNKNOWN
+        }
+    }.getOrDefault(WeatherNetworkStatus.UNKNOWN)
+
+    private fun publishNetworkStatus() {
+        when (defaultNetworkStatus()) {
+            WeatherNetworkStatus.ONLINE -> repository.onNetworkAvailable()
+            WeatherNetworkStatus.OFFLINE -> repository.onNetworkLost()
+            else -> repository.onNetworkUnconfirmed()
+        }
+    }
+
     private val network = object : ConnectivityManager.NetworkCallback() {
-        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            val validated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-            scheduler.execute {
-                if (validated && network != validatedNetwork) {
-                    validatedNetwork = network
-                    repository.onNetworkAvailable()
-                } else if (!validated && network == validatedNetwork) {
-                    validatedNetwork = null
-                    repository.onNetworkLost()
-                }
-            }
-        }
-        override fun onLost(network: Network) {
-            scheduler.execute {
-                if (network == validatedNetwork) {
-                    validatedNetwork = null
-                    repository.onNetworkLost()
-                }
-            }
-        }
+        override fun onAvailable(network: Network) = scheduler.execute(::publishNetworkStatus)
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) =
+            scheduler.execute(::publishNetworkStatus)
+        override fun onLost(network: Network) = scheduler.execute(::publishNetworkStatus)
     }
     private val networkRegistered = runCatching { connectivity.registerDefaultNetworkCallback(network) }.isSuccess
 
     init {
         budget.initialize(settings.config?.id)
         repository.usePolicy(refreshPolicy)
+        if (networkRegistered) publishNetworkStatus()
     }
 
     fun setRefreshPolicy(policy: WeatherRefreshPolicy) {

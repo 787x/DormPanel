@@ -91,6 +91,42 @@ class WeatherAndroidTest {
         }
     }
 
+    @Test fun inspectorShowsNetworkChangesAndConfirmsOfflineCacheClear() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val id = UUID.randomUUID().toString()
+            val title = "离线状态测试地点"
+            scenario.onActivity { activity ->
+                val services = ViewModelProvider(activity)[DashboardViewModel::class.java].dataSource.weatherServices
+                check(services.settings.config == null) { "Use the isolated testbed without QWeather credentials" }
+                services.places.save(WeatherPlace(id, title, ZoneId.of("Asia/Shanghai"), listOf(
+                    WeatherSourceRef.QWeather(WeatherCoordinates("40.123".toBigDecimal(), "116.12".toBigDecimal())),
+                )))
+            }
+            try {
+                onView(withId(R.id.page_container)).perform(swipeDown())
+                onView(withText("天气服务与地点")).perform(click())
+                onView(withText("$title · Asia/Shanghai")).perform(scrollTo(), click())
+                onView(withText("检查天气数据")).perform(click())
+                scenario.onActivity { activity ->
+                    ViewModelProvider(activity)[DashboardViewModel::class.java].dataSource.weatherRepository.onNetworkLost()
+                }
+                onView(withText("设备离线，联网后可更新和风天气")).check(matches(isDisplayed()))
+                scenario.onActivity { activity ->
+                    ViewModelProvider(activity)[DashboardViewModel::class.java].dataSource.weatherRepository.onNetworkAvailable()
+                }
+                onView(withText("网络已连接")).check(matches(isDisplayed()))
+                onView(withText("清除此地点离线缓存")).perform(scrollTo(), click())
+                onView(withText("当前会话的天气仍可查看。其他地点共用的缓存会保留。")).check(matches(isDisplayed()))
+                onView(withText("清除离线缓存")).perform(click())
+                onView(withText("网络已连接")).check(matches(isDisplayed()))
+            } finally {
+                scenario.onActivity { activity ->
+                    ViewModelProvider(activity)[DashboardViewModel::class.java].dataSource.weatherRepository.places.delete(id)
+                }
+            }
+        }
+    }
+
     @Test fun androidKeystoreAndEd25519RoundTripAndCorruption() {
         val namespace = UUID.randomUUID().toString()
         val isolated = object : ContextWrapper(context) {
@@ -343,7 +379,7 @@ class WeatherAndroidTest {
             assertTrue(obstruction.delete())
             broken.write("q", "current", WeatherCacheRecord(JSONObject().put("sample", 8), moment)) { assertTrue(it) }
             broken.read("q", "current") { assertEquals(8, it?.wire?.getInt("sample")) }
-            cache().clear(setOf("q"))
+            cache().clear(setOf("q")) { assertTrue(it) }
             cache().read("q", "current") { assertNull(it) }
             WeatherPlaceStore(isolated).delete(place.id)
             assertNull(WeatherPlaceStore(isolated).get(place.id))

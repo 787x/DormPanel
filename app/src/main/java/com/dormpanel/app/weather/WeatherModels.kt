@@ -66,8 +66,12 @@ data class WeatherQuery(
 
 enum class WeatherPersistence { NONE, SESSION_ONLY, SAVING, SAVED, FAILED }
 
+enum class WeatherNetworkStatus { UNKNOWN, ONLINE, OFFLINE, NOT_APPLICABLE }
+
+enum class WeatherCacheClearResult { CLEARED, SHARED_RETAINED, FAILED }
+
 enum class WeatherState {
-    UNLOADED, LOADING, FRESH, STALE, EMPTY, UNSUPPORTED, UNCONFIGURED, UNAUTHORIZED, BUDGET, ERROR
+    UNLOADED, LOADING, FRESH, STALE, EMPTY, UNSUPPORTED, UNCONFIGURED, UNAUTHORIZED, INVALID_REQUEST, BUDGET, ERROR
 }
 
 data class WeatherCapabilities(val blocks: Map<WeatherBlock, WeatherState>)
@@ -95,6 +99,7 @@ data class WeatherSnapshot(
     val refreshing: Boolean = false,
     val persistence: WeatherPersistence = WeatherPersistence.NONE,
     val unchanged: Boolean = false,
+    val network: WeatherNetworkStatus = WeatherNetworkStatus.UNKNOWN,
 )
 
 data class WeatherPeriod(

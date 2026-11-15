@@ -63,7 +63,7 @@ internal class QWeatherApi(
                                 val source = it.body?.source() ?: throw IOException()
                                 if (source.request(MAX_BODY + 1)) throw IOException()
                                 val json = JSONObject(source.readUtf8())
-                                when (val code = json.text("code")?.toIntOrNull() ?: 200) {
+                                when (val code = responseCode(json)) {
                                     200 -> WeatherResult.Data(json, parse(json))
                                     204 -> WeatherResult.Data(json, parse(json))
                                     else -> failure(code, it.header("Retry-After"))
@@ -85,27 +85,40 @@ internal class QWeatherApi(
         return WeatherResult.Data(body, parse(body))
     }
 
+    private fun responseCode(json: JSONObject): Int {
+        val problem = json.optJSONObject("error")
+        return problem?.text("status")?.toIntOrNull()
+            ?: json.text("code")?.toIntOrNull()
+            ?: if (problem?.text("type")?.substringAfterLast('#') in parameterProblems) 400 else 200
+    }
+
     private fun failure(code: Int, retry: String?): WeatherResult.Failed {
         val state = when (code) {
             401, 402, 403 -> WeatherState.UNAUTHORIZED
-            404, 410 -> WeatherState.UNSUPPORTED
+            404, 405, 410 -> WeatherState.UNSUPPORTED
+            408, 425, 429 -> WeatherState.ERROR
+            in 400..499 -> WeatherState.INVALID_REQUEST
             else -> WeatherState.ERROR
         }
         val retryAt = if (code != 429) null else retry?.toLongOrNull()?.let { now().plusSeconds(it.coerceIn(0, 31_536_000)) }
             ?: retry?.let { runCatching { ZonedDateTime.parse(it, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant() }.getOrNull() }
             ?: now().plusSeconds(60)
         val message = when (code) {
-            400 -> "请求参数不被服务接受"
+            400, 422 -> "请求参数无效或不被服务接受，请检查地点或请求选项"
             401 -> "认证失败，请检查主机、凭据和设备时间"
             402, 403 -> "无权访问接口，请检查项目权限和订阅"
-            404, 410 -> "该接口或地点数据不可用"
+            404, 405, 410 -> "该接口或地点数据不可用"
             429 -> "和风请求频率受限"
-            else -> "天气服务请求失败"
+            else -> if (state == WeatherState.INVALID_REQUEST) "服务拒绝此请求，请检查请求配置" else "天气服务请求失败"
         }
         return WeatherResult.Failed(WeatherFailure(state, "$message（$code）", retryAt, statusCode = code))
     }
 
-    companion object { private const val MAX_BODY = 2L * 1024 * 1024 }
+    companion object {
+        private const val MAX_BODY = 2L * 1024 * 1024
+        private val parameterProblems = setOf("invalid-parameter", "invalid-parameters", "missing-parameter",
+            "missing-parameters", "no-such-location", "data-not-available")
+    }
 }
 
 internal class QWeatherProvider(
@@ -181,8 +194,12 @@ internal class QWeatherProvider(
     private val lookups = mutableMapOf<Pair<String, String>, CityLookup>()
     private val resolved = LinkedHashMap<Pair<String, String>, ResolvedCity>(16, 0.75f, true)
 
+    // Retain rejections across repository entry eviction and shared GeoAPI lookups.
+    private val invalidRequests = LinkedHashMap<Pair<String, QWeatherEndpoint>, WeatherFailure>(16, 0.75f, true)
+
     fun configurationChanged() {
         resolved.clear()
+        synchronized(invalidRequests) { invalidRequests.clear() }
     }
 
     private fun resolveAndFetch(
@@ -231,12 +248,20 @@ internal class QWeatherProvider(
     fun request(account: QWeatherConfig, endpoint: QWeatherEndpoint, core: Boolean,
                 parse: (JSONObject) -> ParsedWeather, explicitTest: Boolean = false,
                 callback: (WeatherResult) -> Unit): () -> Unit {
-        val denied = budget.acquire(account.id, core, explicitTest)
+        val key = account.id to endpoint
+        val invalid = synchronized(invalidRequests) { invalidRequests[key] }
+        val denied = invalid ?: budget.acquire(account.id, core, explicitTest)
         if (denied != null) {
             callback(WeatherResult.Failed(denied.copy(attempted = false)))
             return {}
         }
         return api.execute(account, endpoint, parse) { result ->
+            if (result is WeatherResult.Failed && result.failure.state == WeatherState.INVALID_REQUEST) {
+                synchronized(invalidRequests) {
+                    invalidRequests[key] = result.failure
+                    if (invalidRequests.size > 256) invalidRequests.remove(invalidRequests.keys.first())
+                }
+            }
             budget.record(account.id, result, explicitTest)
             callback(result)
         }

@@ -4,7 +4,10 @@ import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
 
-internal data class WeatherFailure(val state: WeatherState, val message: String, val retryAt: Instant? = null, val recoverOnNetwork: Boolean = false, val statusCode: Int? = null, val attempted: Boolean = true)
+internal data class WeatherFailure(val state: WeatherState, val message: String, val retryAt: Instant? = null, val recoverOnNetwork: Boolean = false, val statusCode: Int? = null, val attempted: Boolean = true) {
+    val blocksRetry get() = state == WeatherState.INVALID_REQUEST || state == WeatherState.UNAUTHORIZED ||
+        state == WeatherState.UNSUPPORTED
+}
 internal sealed interface WeatherResult {
     data class Data(val wire: JSONObject, val parsed: ParsedWeather, val zone: ZoneId? = null) : WeatherResult
     data class Failed(val failure: WeatherFailure) : WeatherResult

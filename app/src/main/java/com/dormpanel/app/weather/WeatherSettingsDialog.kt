@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import java.time.LocalDate
 import java.time.ZoneId
@@ -43,9 +44,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         layout.addView(row(button("和风服务配置") { service(::render) }, button("搜索城市或区县") { search() },
             button("添加地点") { edit(null) }))
         layout.addView(list)
-        layout.addView(button("清除全部天气缓存") {
-            confirm("清除全部天气缓存？") { repository.clearCache() }
-        })
+        layout.addView(button("清除全部离线缓存") { confirmOfflineClear(null) })
         render()
         val stop = places.observe(::render)
         dialog.setOnDismissListener { stop() }
@@ -186,13 +185,13 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
     private fun placeMenu(id: String) {
         val place = places.get(id) ?: return
         val temporary = places.isTemporary(id)
-        val actions = arrayOf("检查天气数据", if (temporary) "收藏此地点" else "编辑地点", "清除此地点天气缓存", "删除地点")
+        val actions = arrayOf("检查天气数据", if (temporary) "收藏此地点" else "编辑地点", "清除此地点离线缓存", "删除地点")
         AlertDialog.Builder(context).setTitle(place.name).setItems(actions) { _, index ->
             when (index) {
                 0 -> chooseSource(place)
                 1 -> if (temporary) favorite(id, place.sources.filterIsInstance<WeatherSourceRef.QWeather>().single().locationId)
                     else edit(place)
-                2 -> confirm("清除该地点使用的来源缓存？") { repository.clearCache(id) }
+                2 -> confirmOfflineClear(id)
                 3 -> confirm("删除地点「${place.name}」？") { places.delete(id) }
             }
         }.setNegativeButton("取消", null).show()
@@ -342,6 +341,8 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         var extra: WeatherRepository.Subscription? = null
         var extraQuery: WeatherQuery? = null
         val live = source is WeatherSourceRef.HomeAssistant
+        val network = label("")
+        if (!live) layout.addView(network)
         if (live) layout.addView(label("HA 状态和预报由服务器推送。查看预报会订阅 HA 已有数据。"))
         else layout.addView(button("刷新核心天气") {
             status.text = requests.filterKeys(WeatherBlock::core).map { (block, request) ->
@@ -367,12 +368,20 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         }))
         layout.addView(status)
         layout.addView(details)
-        layout.addView(button("清除此地点天气缓存") { repository.clearCache(place.id) })
+        layout.addView(button("清除此地点离线缓存") { confirmOfflineClear(place.id) })
         layout.addView(data)
         choices.forEach { block ->
             val result = label("").apply { autoLinkMask = Linkify.WEB_URLS; linksClickable = true }
             data.addView(result)
-            requests[block] = repository.observe(place.id, source, WeatherQuery(block)) { result.text = snapshotText(it) }
+            requests[block] = repository.observe(place.id, source, WeatherQuery(block)) { snapshot ->
+                result.text = snapshotText(snapshot)
+                if (block == WeatherBlock.CURRENT && !live) network.text = when (snapshot.network) {
+                    WeatherNetworkStatus.ONLINE -> "网络已连接"
+                    WeatherNetworkStatus.OFFLINE -> "设备离线，联网后可更新和风天气"
+                    WeatherNetworkStatus.UNKNOWN -> "网络可用性尚未确认"
+                    WeatherNetworkStatus.NOT_APPLICABLE -> ""
+                }
+            }
         }
         dialog.setOnDismissListener { extra?.close(); requests.values.forEach { it.close() } }
     }
@@ -388,7 +397,9 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
 
     private fun snapshotText(snapshot: WeatherSnapshot): String = buildString {
         append(blockName(snapshot.query.block)).append(" · ").append(stateName(snapshot.state))
-        if (snapshot.stale) append(" · 上次数据")
+        if (snapshot.stale || (snapshot.error != null && snapshot.data != null)) append(" · 上次数据")
+        if (snapshot.state == WeatherState.UNLOADED && snapshot.network == WeatherNetworkStatus.OFFLINE)
+            append(" · 离线期间无法获取，暂无数据")
         if (snapshot.unchanged && !snapshot.refreshing) append(" · 服务暂无新数据")
         if (snapshot.refreshing && snapshot.state != WeatherState.LOADING) append(" · 更新中")
         val dateFormat = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss z").withZone(snapshot.zone)
@@ -466,6 +477,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         WeatherState.UNAUTHORIZED -> "认证或权限失败"
         WeatherState.BUDGET -> "达到预算"
         WeatherState.ERROR -> "暂时失败"
+        WeatherState.INVALID_REQUEST -> "请求无效"
     }
 
     private fun attributionText(value: WeatherAttribution) =
@@ -479,6 +491,25 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
             isFillViewport = true
             addView(content.apply { setPadding(dp(20), dp(8), dp(20), dp(8)) })
         }).setNegativeButton("关闭", null).show().also { it.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) }
+
+    private fun confirmOfflineClear(placeId: String?) {
+        val scope = if (placeId == null) "全部" else "此地点的"
+        val shared = if (placeId == null) "" else "其他地点共用的缓存会保留。"
+        AlertDialog.Builder(context)
+            .setTitle("清除${scope}离线缓存？")
+            .setMessage("当前会话的天气仍可查看。$shared")
+            .setPositiveButton("清除离线缓存") { _, _ ->
+                repository.clearOfflineCache(placeId) {
+                    val message = when (it) {
+                        WeatherCacheClearResult.CLEARED -> "离线缓存已清除"
+                        WeatherCacheClearResult.SHARED_RETAINED -> "已处理，其他地点共用的离线缓存保留"
+                        WeatherCacheClearResult.FAILED -> "离线缓存未能完全清除，请重试"
+                    }
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("取消", null).show()
+    }
 
     private fun confirm(title: String, action: () -> Unit) = AlertDialog.Builder(context).setTitle(title)
         .setPositiveButton("确认") { _, _ -> action() }.setNegativeButton("取消", null).show()
