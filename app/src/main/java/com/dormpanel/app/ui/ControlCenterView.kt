@@ -163,6 +163,14 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         right.addView(modes)
         right.addView(opacityLabel)
         right.addView(opacity)
+        if (backend != null) right.addView(Button(context).apply {
+            text = "天气服务与地点"
+            minimumHeight = dp(52)
+            setOnClickListener {
+                onGestureClaimed()
+                com.dormpanel.app.weather.WeatherSettingsDialog(context, backend.weatherServices).show()
+            }
+        })
         right.addView(section("Home Assistant"))
         right.addView(haStatus)
         if (backend != null) right.addView(Button(context).apply {

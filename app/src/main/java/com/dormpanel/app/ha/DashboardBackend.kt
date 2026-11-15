@@ -36,6 +36,11 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     override fun activateEntity(id: String) = home.activateEntity(id)
     private val demoCatalog = SourceCardCatalog(demo, labels)
     var settings = preferences.read(); private set
+    private var weatherHaAccount: String? = null
+    internal val weatherServices = com.dormpanel.app.weather.WeatherServices(context, scheduler, ha,
+        { settings.baseUrl.takeIf { it.isNotEmpty() }?.let { com.dormpanel.app.weather.weatherDigest(it) }.orEmpty() },
+        { weatherHaAccount })
+    val weatherRepository get() = weatherServices.repository
     private var active: DashboardDataSource = demo
     private var activeCatalog: CardCatalog = demoCatalog
     private val listeners = linkedSetOf<(DashboardData) -> Unit>()
@@ -65,7 +70,11 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
         active = if (settings.mode == BackendMode.DEMO) demo else ha
         activeCatalog = if (settings.mode == BackendMode.DEMO) demoCatalog else ha.catalog
         home.activate(if (settings.mode == BackendMode.DEMO) demoHome else ha) {
-            ha.configure(settings, tokens.read())
+            val token = tokens.read()
+            weatherHaAccount = token?.takeIf { settings.mode == BackendMode.HOME_ASSISTANT && settings.baseUrl.isNotBlank() }
+                ?.let { com.dormpanel.app.weather.weatherDigest(settings.baseUrl + Char.MIN_VALUE + it) }
+            ha.configure(settings, token)
+            weatherRepository.onConfigurationChanged()
         }
         active.addListener(relay); activeCatalog.addListener(catalogRelay)
     }
@@ -75,5 +84,5 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     override fun setLightPower(id: String, on: Boolean) = active.setLightPower(id, on)
     override fun setBrightness(id: String, percent: Int) = active.setBrightness(id, percent)
     override fun setColorTemperature(id: String, kelvin: Int) = active.setColorTemperature(id, kelvin)
-    fun close() { home.close(); ha.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); http.dispatcher.executorService.shutdown() }
+    fun close() { weatherServices.close(); home.close(); ha.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); http.dispatcher.executorService.shutdown() }
 }

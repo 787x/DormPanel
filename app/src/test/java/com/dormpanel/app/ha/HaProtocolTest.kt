@@ -11,7 +11,7 @@ import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
 
 class HaProtocolTest {
-    private class Fixture(val reject: Boolean = false) : AutoCloseable {
+    private class Fixture(val reject: Boolean = false, val modernWeather: Boolean = false) : AutoCloseable {
         val server = MockWebServer()
         val scheduler = ManualScheduler()
         val http = haHttpClient()
@@ -49,6 +49,24 @@ class HaProtocolTest {
                     val message = JSONObject(text); received += message
                     if (message.optString("type") == "auth") {
                         webSocket.send(if (reject) """{"type":"auth_invalid","message":"Invalid token"}""" else """{"type":"auth_ok"}""")
+                        return
+                    }
+                    if (message.optString("type") == "weather/subscribe_forecast") {
+                        val id = message.getInt("id")
+                        webSocket.send(JSONObject().put("id", id).put("type", "result").put("success", modernWeather)
+                            .put("error", if (modernWeather) null else JSONObject().put("code", "unknown_command")).toString())
+                        if (modernWeather) {
+                            val type = message.getString("forecast_type")
+                            val temperature = when (message.getString("entity_id") to type) {
+                                "weather.home" to "daily" -> 75
+                                "weather.other" to "hourly" -> 12
+                                else -> 7
+                            }
+                            val entries = org.json.JSONArray().put(JSONObject().put("temperature", temperature)
+                                .put("datetime", "2026-09-20T00:00:00Z").put("condition", "sunny"))
+                            webSocket.send(JSONObject().put("id", id).put("type", "event")
+                                .put("event", JSONObject().put("type", type).put("forecast", entries)).toString())
+                        }
                         return
                     }
                     if (holdServices && message.optString("type") == "call_service") return
@@ -670,6 +688,46 @@ class HaProtocolTest {
             assertEquals(AppearanceState(ThemeMode.DARK, 0.6f), f.appearance.state)
         }
     }
+    @Test fun multipleWeatherFeedsShareSubscriptionsAndReconnectWithoutInterceptingStateEvents() {
+        Fixture(modernWeather = true).use { f ->
+            f.start()
+            f.until { f.source.connected }
+            f.awaitAppearanceIdle()
+            val home = mutableListOf<Int>()
+            val hourly = mutableListOf<Int>()
+            val twice = mutableListOf<Int>()
+            fun observe(entity: String, type: String, entries: MutableList<Int>) =
+                f.source.forecasts.observe(entity, type) { value ->
+                    value.forecast?.optJSONObject(0)?.let { entries += it.getInt("temperature") }
+                }
+            val consumers = List(5) { observe("weather.home", "daily", home) }
+            val stopHourly = observe("weather.other", "hourly", hourly)
+            val stopTwice = observe("weather.other", "twice_daily", twice)
+            f.until { hourly.isNotEmpty() && twice.isNotEmpty() }
+            assertEquals(List(5) { 75 }, home)
+            assertEquals(listOf(12), hourly)
+            assertEquals(listOf(7), twice)
+            fun subscriptions() = f.received.count { it.optString("type") == "weather/subscribe_forecast" }
+            assertEquals(3, subscriptions())
+            f.state("off")
+            f.until { f.source.store.entities["light.a"]?.value == "off" }
+            stopTwice()
+            f.until { f.received.any { it.optString("type") == "unsubscribe_events" } }
+            val twiceId = f.received.single { it.optString("forecast_type") == "twice_daily" }.getInt("id")
+            assertEquals(twiceId, f.received.last { it.optString("type") == "unsubscribe_events" }.getInt("subscription"))
+            assertTrue(f.services("get_forecasts").isEmpty())
+            f.peer.close(1000, "offline")
+            f.until { !f.source.connected }
+            f.enqueueSocket()
+            f.scheduler.advance(1000)
+            f.until { f.source.connected && hourly.size == 2 && home.size == 10 }
+            assertEquals(5, subscriptions())
+            assertEquals(listOf(7), twice)
+            consumers.forEach { it() }
+            stopHourly()
+        }
+    }
+
     @Test fun diagnosticsDoNotFollowRedirectsOrCreateState() {
         val server = MockWebServer()
         val other = MockWebServer()
