@@ -531,7 +531,8 @@ class CoreDashboardTest {
                     assertFalse((home to WeatherBlock.DAILY) in started)
                     assertEquals(started.toSet().size, started.size)
                 }
-                onView(allOf(withText(containsString("夜间")), isDescendantOfA(card("家")))).check { view, error ->
+                onView(allOf(withText(containsString("夜间")), isDescendantOfA(card("家")),
+                    withEffectiveVisibility(Visibility.VISIBLE))).check { view, error ->
                     if (error != null) throw error
                     val bounds = android.graphics.Rect()
                     assertTrue(view.getLocalVisibleRect(bounds))
