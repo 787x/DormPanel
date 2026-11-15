@@ -62,11 +62,22 @@ class MainActivity : AppCompatActivity() {
         }
         if (state.keepAwake) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        dashboardViewModel.dataSource.weatherRepository.setForeground(!state.blackout && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
         blackoutView.visibility = if (state.blackout) View.VISIBLE else View.GONE
     }
     private val appearanceListener: (AppearanceState) -> Unit = { state ->
         pageContainer.setBackgroundColor(PanelPalette.forMode(state.themeMode).background)
         for (index in 0 until pageContainer.childCount) applyPageAppearance(pageContainer.getChildAt(index), state)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        dashboardViewModel.dataSource.weatherRepository.setForeground(blackoutView.visibility != View.VISIBLE)
+    }
+
+    override fun onStop() {
+        dashboardViewModel.dataSource.weatherRepository.setForeground(false)
+        super.onStop()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

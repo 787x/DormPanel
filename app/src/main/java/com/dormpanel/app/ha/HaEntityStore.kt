@@ -10,9 +10,9 @@ import java.time.OffsetDateTime
 internal fun JSONArray.objects() = (0 until length()).mapNotNull { optJSONObject(it) }
 internal fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key, "")
 internal fun JSONObject.number(key: String): Double? = optDouble(key, Double.NaN).takeIf { it.isFinite() }
-data class HaEntity(val id: String, val value: String, val attributes: JSONObject) {
+data class HaEntity(val id: String, val value: String, val attributes: JSONObject, val updatedAt: String? = null) {
     val usable get() = value != "unknown" && value != "unavailable"
-    companion object { fun parse(json: JSONObject) = HaEntity(json.getString("entity_id"), json.optString("state"), json.optJSONObject("attributes") ?: JSONObject()) }
+    companion object { fun parse(json: JSONObject) = HaEntity(json.getString("entity_id"), json.optString("state"), json.optJSONObject("attributes") ?: JSONObject(), json.text("last_updated").ifBlank { null }) }
 }
 data class HaMetadata(val id: String, val device: String, val name: String, val area: String, val disabled: Boolean, val category: String = "")
 data class SensorGroup(val id: String, val name: String, val temperature: String?, val humidity: String?)

@@ -42,11 +42,12 @@ class HaWebSocketClient(
     private var endpoint: HaEndpoint? = null
     private var token = ""
     private var running = false
+    private val subscriptions = mutableMapOf<Int, (JSONObject) -> Unit>()
     private val pending = mutableMapOf<Int, Pair<() -> Unit, (JSONObject) -> Unit>>()
     fun start(endpoint: HaEndpoint, token: String) { stop(); this.endpoint = endpoint; this.token = token; running = true; attempt = 0; connect() }
     fun stop() {
         running = false; generation++; retry?.invoke(); retry = null; watchdog?.invoke(); watchdog = null
-        pending.values.forEach { it.first() }; pending.clear(); socket?.cancel(); socket = null; token = ""
+        pending.values.forEach { it.first() }; pending.clear(); subscriptions.clear(); socket?.cancel(); socket = null; token = ""
     }
     fun synchronized() { attempt = 0; watchdog?.invoke(); watchdog = null; onStatus(HaStatus(HaConnectionState.CONNECTED)) }
     private fun connect() {
@@ -63,7 +64,11 @@ class HaWebSocketClient(
                         "auth_invalid" -> { stop(); onStatus(HaStatus(HaConnectionState.AUTH_ERROR, "Authentication rejected; re-enter credentials.")) }
                         "auth_ok" -> { onStatus(HaStatus(HaConnectionState.SYNCING)); onReady() }
                         "result" -> pending.remove(message.optInt("id"))?.let { it.first(); it.second(message) }
-                        "event" -> onEvent(message.getJSONObject("event"))
+                        "event" -> message.optJSONObject("event")?.let { event ->
+                            val callback = subscriptions[message.optInt("id")]
+                            if (callback != null) callback(event)
+                            else if (event.has("event_type")) onEvent(event)
+                        }
                     }
                 } catch (_: Exception) { disconnected(epoch, "Invalid HA protocol response.") }
             } }
@@ -75,21 +80,37 @@ class HaWebSocketClient(
     private fun disconnected(epoch: Int, detail: String) {
         if (epoch != generation || !running) return
         generation++; socket?.cancel(); socket = null; watchdog?.invoke(); watchdog = null
-        pending.values.forEach { it.first() }; pending.clear()
+        pending.values.forEach { it.first() }; pending.clear(); subscriptions.clear()
         onStatus(HaStatus(HaConnectionState.RECONNECTING, detail))
         retry = scheduler.after(reconnectDelay(attempt++)) { retry = null; connect() }
     }
     fun resyncFailed() { disconnected(generation, "Unable to synchronize HA state; retrying.") }
     fun request(message: JSONObject, callback: (JSONObject) -> Unit = {}): Boolean {
-        val current = socket ?: return false
-        if (pending.size >= 128) return false
+        return send(message, callback) != null
+    }
+    fun subscribe(message: JSONObject, onResult: (JSONObject) -> Unit, onEvent: (JSONObject) -> Unit): (() -> Unit)? {
+        val epoch = generation
+        val id = send(message) { result -> onResult(result) } ?: return null
+        subscriptions[id] = onEvent
+        return {
+            if (epoch == generation && subscriptions.remove(id) != null) {
+                pending.remove(id)?.first?.invoke()
+                // Unsubscription must still reach HA when normal requests fill the pending queue.
+                socket?.send(JSONObject().put("type", "unsubscribe_events").put("subscription", id)
+                    .put("id", ++nextId).toString())
+            }
+        }
+    }
+    private fun send(message: JSONObject, callback: (JSONObject) -> Unit): Int? {
+        val current = socket ?: return null
+        if (pending.size >= 128) return null
         val id = ++nextId
         val cancel = scheduler.after(15000) {
             pending.remove(id)?.second?.invoke(JSONObject().put("success", false).put("error", JSONObject().put("code", "timeout")))
         }
         pending[id] = cancel to callback
-        if (!current.send(message.put("id", id).toString())) { pending.remove(id); cancel(); return false }
-        return true
+        if (!current.send(message.put("id", id).toString())) { pending.remove(id); cancel(); return null }
+        return id
     }
     fun service(domain: String, service: String, entity: String, data: JSONObject = JSONObject(), response: Boolean = false, callback: (JSONObject) -> Unit = {}) =
         request(JSONObject().put("type", "call_service").put("domain", domain).put("service", service)

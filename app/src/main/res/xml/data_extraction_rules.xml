@@ -1,11 +1,13 @@
 <data-extraction-rules>
     <cloud-backup>
+        <exclude domain="sharedpref" path="weather_service.xml" />
         <exclude domain="sharedpref" path="ha_credentials.xml" />
         <exclude domain="sharedpref" path="ha_relay_identity.xml" />
         <exclude domain="sharedpref" path="webdav_credentials.xml" />
         <exclude domain="sharedpref" path="pending_install.xml" />
     </cloud-backup>
     <device-transfer>
+        <exclude domain="sharedpref" path="weather_service.xml" />
         <exclude domain="sharedpref" path="ha_credentials.xml" />
         <exclude domain="sharedpref" path="ha_relay_identity.xml" />
         <exclude domain="sharedpref" path="webdav_credentials.xml" />

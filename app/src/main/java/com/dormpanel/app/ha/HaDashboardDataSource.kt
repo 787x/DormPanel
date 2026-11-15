@@ -50,7 +50,12 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private var initialized = false
     private val registryPending = mutableSetOf<String>()
     private val registryDirty = mutableSetOf<String>()
-    private var forecastTimer: (() -> Unit)? = null
+    private var legacyForecast: (() -> Unit)? = null
+    private val weatherListeners = linkedSetOf<(String) -> Unit>()
+    internal fun observeWeather(listener: (String) -> Unit): () -> Unit {
+        weatherListeners += listener
+        return { weatherListeners -= listener }
+    }
     private var weatherId = ""
     private val bufferedEvents = mutableListOf<JSONObject>()
     // One timer per light: brightness and Kelvin are sent in one coherent payload.
@@ -76,6 +81,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
             JSONObject().put("value", value))
     }
     private val socket = HaWebSocketClient(http, scheduler, ::statusChanged, ::initialize, ::event)
+    internal val forecasts = HaForecastSubscriptions(socket, scheduler)
     val connected get() = status.state == HaConnectionState.CONNECTED
     val relayChannel: HaRelayChannel = object : HaRelayChannel {
         override val origin get() = settings.baseUrl
@@ -90,7 +96,8 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     fun removeStatusListener(listener: (HaStatus) -> Unit) { statusListeners -= listener }
     private fun statusChanged(value: HaStatus) {
         status = value
-        if (!connected) { initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); deviceCommands.clear(); pendingLights.clear(); forecastTimer?.invoke(); forecastTimer = null }
+        if (!connected) { initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); deviceCommands.clear(); pendingLights.clear(); legacyForecast?.invoke(); legacyForecast = null }
+        forecasts.connection(connected)
         publish(rebuild = true); statusListeners.toList().forEach { it(value) }
     }
     fun configure(value: HaConnectionSettings, token: String?) {
@@ -103,7 +110,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         runCatching { HaEndpoint.parse(value.baseUrl) }.onSuccess { socket.start(it, token) }
             .onFailure { statusChanged(HaStatus(HaConnectionState.ERROR, "Invalid HA base URL.")) }
     }
-    fun stop() { socket.stop(); commands.clear(); deviceCommands.clear(); pendingLights.clear(); forecastTimer?.invoke(); forecastTimer = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
+    fun stop() { socket.stop(); forecasts.connection(false); commands.clear(); deviceCommands.clear(); pendingLights.clear(); legacyForecast?.invoke(); legacyForecast = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
     private fun initialize() {
         bufferedEvents.clear()
         socket.request(JSONObject().put("type", "subscribe_events").put("event_type", "state_changed")) { subscription ->
@@ -193,6 +200,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                 val old = store.entities[id]
                 store.event(data)
                 val next = store.entities[id]
+                if (id.startsWith("weather.")) weatherListeners.toList().forEach { it(id) }
                 if (id.startsWith("light.")) store.lightStates(true)["ha:$id"]?.let(memory::observe)
                 fun topology(entity: HaEntity?) = entity?.let { listOf(it.attributes.text("friendly_name"), it.attributes.text("device_class"), it.attributes.optJSONArray("supported_color_modes")?.toString(), it.attributes.text("min_color_temp_kelvin"), it.attributes.text("max_color_temp_kelvin")) }
                 val topologyChanged = topology(old) != topology(next)
@@ -210,15 +218,19 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         if (next != weatherId) { weatherId = next; store.forecast = emptyList() }
     }
     private fun fetchForecast() {
-        forecastTimer?.invoke()
+        legacyForecast?.invoke()
+        legacyForecast = null
         if (!connected || weatherId.isEmpty()) return
         val entity = weatherId
         val features = store.entities[entity]?.attributes?.optInt("supported_features") ?: 0
         val type = when { features and 1 != 0 -> "daily"; features and 2 != 0 -> "hourly"; features and 4 != 0 -> "twice_daily"; else -> null }
-        if (type != null) socket.service("weather", "get_forecasts", entity, JSONObject().put("type", type), true) { result ->
-            if (connected && entity == weatherId && result.optBoolean("success")) { store.forecast = HaEntityStore.forecast(result.optJSONObject("result"), entity); publish(homeRelevant = false) }
+        if (type != null) legacyForecast = forecasts.observe(entity, type) { result ->
+            if (connected && entity == weatherId && result.forecast != null) {
+                val payload = JSONObject().put(entity, JSONObject().put("forecast", result.forecast))
+                store.forecast = HaEntityStore.forecast(JSONObject().put("response", payload), entity)
+                publish(homeRelevant = false)
+            }
         }
-        forecastTimer = scheduler.after(3600000) { fetchForecast() }
     }
     private fun publish(rebuild: Boolean = false, homeRelevant: Boolean = true) {
         val raw = projector.dashboard(store, connected, weatherId)
