@@ -88,7 +88,9 @@ internal fun WeatherSnapshot?.today(now: Instant): WeatherForecast? {
 internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeToday: Boolean = true): List<WeatherLine> {
     val snapshot = this ?: return emptyList()
     val today = now.atZone(zone).toLocalDate()
+    val homeAssistant = source is WeatherSourceRef.HomeAssistant
     return entries().asSequence().mapNotNull { item ->
+        if (homeAssistant && item.period.haForecastEnd(query.block, zone)?.isAfter(now) != true) return@mapNotNull null
         val date = item.localDate(zone)
         val local = item.period.start?.atZone(zone)?.toLocalDateTime() ?: item.period.localTime
         val label = when (query.block) {
@@ -98,7 +100,7 @@ internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeTod
                 local?.format(hourFormat) ?: return@mapNotNull null
             }
             WeatherBlock.DAILY, WeatherBlock.TWICE_DAILY -> {
-                if (date == null || date < today || (!includeToday && date == today)) return@mapNotNull null
+                if (date == null || (!homeAssistant && date < today) || (!includeToday && date == today)) return@mapNotNull null
                 val part = when (item.period.isDaytime) { true -> " 白天"; false -> " 夜间"; null -> "" }
                 dateLabel(date) + if (query.block == WeatherBlock.TWICE_DAILY) part else ""
             }

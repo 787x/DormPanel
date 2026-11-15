@@ -58,6 +58,43 @@ class WeatherCardPresentationTest {
         assertEquals("湿度 0%", WeatherConditions(humidity = 0.0).metric(WeatherCardMetric.HUMIDITY))
     }
 
+    @Test fun haForecastTimesRespectExplicitEndsAndDaylightSaving() {
+        val newYork = ZoneId.of("America/New_York")
+        fun time(value: String) = Instant.parse(value)
+        fun item(start: String, temperature: Double, end: String? = null, day: Boolean? = null) =
+            WeatherForecast(WeatherPeriod(start = time(start), end = end?.let(::time), isDaytime = day),
+                WeatherConditions(temperature = temperature))
+
+        val daily = item("2026-11-01T04:00:00Z", 16.0)
+        assertEquals(time("2026-11-02T05:00:00Z"), daily.period.haForecastEnd(WeatherBlock.DAILY, newYork))
+        val night = item("2026-10-31T22:00:00Z", 7.0, day = false)
+        val springNight = item("2026-03-07T23:00:00Z", 8.0, day = false)
+        assertEquals(time("2026-11-01T11:00:00Z"), night.period.haForecastEnd(WeatherBlock.TWICE_DAILY, newYork))
+        assertEquals(time("2026-03-08T10:00:00Z"), springNight.period.haForecastEnd(WeatherBlock.TWICE_DAILY, newYork))
+
+        val ha = WeatherSourceRef.HomeAssistant("weather.home", "server")
+        val split = WeatherSnapshot(ha, newYork, WeatherQuery(WeatherBlock.TWICE_DAILY), WeatherState.FRESH,
+            WeatherData.Forecast(listOf(night, night.copy(period = night.period.copy(isDaytime = null)))))
+        assertEquals("10月31日 夜间", split.forecastLines(time("2026-11-01T07:00:00Z"), 3).single().label)
+        assertTrue(split.forecastLines(time("2026-11-01T11:00:00Z"), 3).isEmpty())
+
+        val earlyHandover = HaWeatherParser.parse(org.json.JSONObject("""{"forecast":[
+            {"datetime":"2026-10-31T22:00:00Z","is_daytime":false},
+            {"datetime":"2026-11-01T10:00:00Z","is_daytime":true}]
+        }"""), newYork, WeatherBlock.TWICE_DAILY).data
+        val handover = split.copy(data = earlyHandover)
+        assertEquals(listOf("11月1日 白天"), handover.forecastLines(time("2026-11-01T10:00:00Z"), 3).map { it.label })
+
+        val firstHour = item("2026-11-01T05:00:00Z", 6.0)
+        val secondHour = item("2026-11-01T06:00:00Z", 7.0, "2026-11-01T06:30:00Z")
+        val ambiguous = firstHour.copy(period = WeatherPeriod(localTime = java.time.LocalDateTime.parse("2026-11-01T01:30:00")))
+        val invalidEnd = firstHour.copy(period = firstHour.period.copy(end = time("2026-11-01T04:00:00Z")))
+        val hourly = split.copy(query = WeatherQuery(WeatherBlock.HOURLY),
+            data = WeatherData.Forecast(listOf(firstHour, secondHour, ambiguous, invalidEnd)))
+        assertEquals("7°", hourly.forecastLines(time("2026-11-01T06:00:00Z"), 10).single().temperature)
+        assertTrue(hourly.forecastLines(time("2026-11-01T06:30:00Z"), 10).isEmpty())
+    }
+
     @Test fun knownAndUnknownConditionsAndConnectionStatesAreDistinct() {
         assertEquals(WeatherSymbol.HAZE, sky("502").symbol)
         assertEquals(WeatherSymbol.FOG, sky("500").symbol)

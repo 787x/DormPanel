@@ -162,6 +162,142 @@ class WeatherRepositoryTest {
         }
     }
 
+    @Test fun emptyDailyWithOnlyPastCachedPeriodsFallsBackAndProbesOnceForBothCards() = Fixture().use { f ->
+        val (config, first) = f.bindHaCard()
+        val second = f.haCard(config)
+        f.jobs.single().send(haFeatures(7))
+        f.advance()
+        val daily = f.jobs.last()
+        daily.send(haForecast("2026-11-15T10:00:00Z"))
+        f.advance()
+        assertEquals(WeatherBlock.DAILY, first.forecast?.query?.block)
+
+        // Tokyo midnight has passed when the response arrives, before the scheduled tick runs.
+        f.instant = Instant.parse("2026-11-15T15:00:00Z")
+        daily.send(HA_EMPTY_FORECAST)
+        f.advance()
+        assertTrue(daily.cancelled)
+        val twice = f.jobs.last()
+        assertEquals(WeatherBlock.TWICE_DAILY, twice.block)
+        twice.send(HA_FORECAST)
+        f.advance()
+        assertEquals(WeatherBlock.TWICE_DAILY, first.forecast?.query?.block)
+        assertEquals(WeatherBlock.TWICE_DAILY, second.forecast?.query?.block)
+        f.advance(899)
+        assertEquals(1, f.jobs.count { it.block == WeatherBlock.DAILY })
+        f.advance(1)
+        val probe = f.jobs.last()
+        assertEquals(2, f.jobs.count { it.block == WeatherBlock.DAILY })
+        probe.send(HA_FORECAST)
+        f.advance()
+        assertEquals(WeatherBlock.DAILY, first.forecast?.query?.block)
+        assertEquals(WeatherBlock.DAILY, second.forecast?.query?.block)
+        assertTrue(twice.cancelled)
+        first.close()
+        assertFalse(probe.cancelled)
+        second.close()
+    }
+
+    @Test fun emptyDailyKeepsRemainingDaysAndFallsBackAtLastLocalMidnightWithoutEvents() = Fixture().use { f ->
+        val (_, feed) = f.bindHaCard()
+        f.jobs.single().send(haFeatures(3))
+        f.advance()
+        val daily = f.jobs.last()
+        daily.send(haForecast("2026-11-14T10:00:00Z", "2026-11-15T10:00:00Z", "2026-11-16T10:00:00Z"))
+        f.advance()
+        val fetched = feed.forecast?.fetchedAt
+        assertEquals(2, (feed.forecast?.data as WeatherData.Forecast).entries.size)
+        daily.send(HA_EMPTY_FORECAST)
+        f.advance()
+        assertFalse(daily.cancelled)
+        assertEquals(WeatherState.EMPTY, feed.forecast?.state)
+        assertEquals(fetched, feed.forecast?.fetchedAt)
+
+        f.advance(60)
+        assertEquals(1, (feed.forecast?.data as WeatherData.Forecast).entries.size)
+        assertTrue(feed.forecast?.stale == true)
+        assertEquals(2, f.jobs.size)
+        f.advance(86_399)
+        assertEquals(WeatherBlock.DAILY, feed.forecast?.query?.block)
+        f.advance(1)
+        assertTrue(daily.cancelled)
+        val hourly = f.jobs.single { it.block == WeatherBlock.HOURLY }
+        hourly.send(haForecast("2026-11-16T15:00:00Z"))
+        f.advance()
+        assertEquals(WeatherBlock.HOURLY, feed.forecast?.query?.block)
+        feed.close()
+    }
+
+    @Test fun emptyDailyRetainsSharedStreamWhileAnotherPlacesDayIsStillValid() = Fixture().use { f ->
+        val (config, east) = f.bindHaCard()
+        val westZone = ZoneId.of("America/Los_Angeles")
+        f.places.save(WeatherPlace("west", "West", westZone, listOf(config.source)))
+        val west = f.haCard(config.copy(placeId = "west"))
+        f.jobs.single().send(haFeatures(3))
+        f.advance()
+        val daily = f.jobs.single { it.block == WeatherBlock.DAILY }
+        daily.send(haForecast("2026-11-15T10:00:00Z"))
+        f.advance()
+        daily.send(HA_EMPTY_FORECAST)
+        f.advance()
+        f.advance(60)
+        val hourly = f.jobs.single { it.block == WeatherBlock.HOURLY }
+        hourly.send(HA_FORECAST)
+        f.advance()
+        assertEquals(WeatherBlock.HOURLY, east.forecast?.query?.block)
+        assertEquals(WeatherBlock.DAILY, west.forecast?.query?.block)
+        assertEquals(WeatherState.EMPTY, west.forecast?.state)
+        assertFalse(daily.cancelled)
+
+        f.advance(900)
+        assertEquals(1, f.jobs.count { it.block == WeatherBlock.DAILY })
+        daily.send(HA_FORECAST)
+        f.advance()
+        assertEquals(WeatherBlock.DAILY, east.forecast?.query?.block)
+        assertEquals(WeatherBlock.DAILY, west.forecast?.query?.block)
+        assertTrue(hourly.cancelled)
+        east.close()
+        assertFalse(daily.cancelled)
+        west.close()
+        assertTrue(daily.cancelled)
+    }
+
+    @Test fun invalidForecastResponseRetainsUsableCacheAndExpiredResponseCannotReplaceFallback() = Fixture().use { f ->
+        val (_, feed) = f.bindHaCard()
+        f.jobs.single().send(haFeatures(3))
+        f.advance()
+        val daily = f.jobs.last()
+        daily.send(haForecast("2026-11-15T10:00:00Z"))
+        f.advance()
+        daily.send(haForecast("invalid"))
+        f.advance()
+        assertEquals(WeatherState.EMPTY, feed.forecast?.state)
+        assertEquals(1, (feed.forecast?.data as WeatherData.Forecast).entries.size)
+        f.advance(60)
+        val hourly = f.jobs.single { it.block == WeatherBlock.HOURLY }
+        hourly.send(HA_FORECAST)
+        f.advance()
+        f.advance(840)
+        val probe = f.jobs.last()
+        assertEquals(WeatherBlock.DAILY, probe.block)
+        probe.send(haForecast("2026-11-15T10:00:00Z"))
+        f.advance()
+        assertEquals(WeatherBlock.HOURLY, feed.forecast?.query?.block)
+        assertTrue(probe.cancelled)
+        assertFalse(hourly.cancelled)
+        f.repository.clearOfflineCache()
+        f.places.delete("review")
+        assertTrue(hourly.cancelled)
+        f.advance(3600)
+        assertEquals(2, f.jobs.count { it.block == WeatherBlock.DAILY })
+        feed.close()
+    }
+
+    private fun haForecast(vararg times: String): String =
+        """{"attrs":{"temperature_unit":"°C"},"forecast":[${times.joinToString {
+            """{"datetime":"$it","temperature":17,"is_daytime":false}"""
+        }}]}"""
+
     @Test fun emptyDailyRecoversOnSharedTimerWithoutCurrentUpdates() = Fixture().use { f ->
         val (config, first) = f.bindHaCard()
         val current = f.jobs.single()
@@ -370,7 +506,7 @@ class WeatherRepositoryTest {
     private companion object {
         const val HA_EMPTY_FORECAST = """{"forecast":[]}"""
         const val HA_FORECAST = """{"attrs":{"temperature_unit":"°C"},"forecast":[
-            {"datetime":"2026-11-15T15:00:00Z","temperature":17,"is_daytime":false}
+            {"datetime":"2026-11-16T15:00:00Z","temperature":17,"is_daytime":false}
         ]}"""
     }
 

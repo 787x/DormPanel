@@ -89,17 +89,36 @@ internal object HaWeatherParser {
         val data = if (block == WeatherBlock.CURRENT) {
             WeatherData.Current(conditions(attrs, attrs, wire.text("state")))
         } else {
-            wire.objects("forecast").map {
+            val entries = wire.objects("forecast").map {
                 val time = it.time("datetime")
                 val conditions = conditions(it, attrs, it.text("condition"))
                 WeatherForecast(WeatherPeriod(time, date = if (block != WeatherBlock.HOURLY) time?.atZone(zone)?.toLocalDate() else null,
                     isDaytime = it.opt("is_daytime") as? Boolean), if (block != WeatherBlock.DAILY) conditions else
                     conditions.copy(maxTemperature = conditions.temperature))
-            }.takeIf { it.isNotEmpty() }?.let(WeatherData::Forecast)
+            }
+            val periods = if (block == WeatherBlock.TWICE_DAILY) endAtNextPhase(entries, zone) else entries
+            periods.takeIf { it.isNotEmpty() }?.let(WeatherData::Forecast)
         }
         return ParsedWeather(data, WeatherAttribution(sources = listOfNotNull("Home Assistant", attrs.text("attribution"))),
             wire.time("time"), haForecastFeatures = if (block == WeatherBlock.CURRENT)
                 attrs.optInt("supported_features", -1).takeIf { it >= 0 } else null)
+    }
+
+    private fun endAtNextPhase(entries: List<WeatherForecast>, zone: ZoneId): List<WeatherForecast> {
+        val ends = entries.asSequence().map { it.period }
+            .filter { it.start != null && it.isDaytime != null }
+            .sortedBy { it.start }.zipWithNext().mapNotNull { (period, next) ->
+                val nominalEnd = period.haForecastEnd(WeatherBlock.TWICE_DAILY, zone)
+                val start = checkNotNull(period.start)
+                val nextStart = checkNotNull(next.start)
+                if (period.isDaytime != next.isDaytime && nominalEnd != null && nextStart > start && nextStart < nominalEnd)
+                    start to nextStart else null
+            }.toMap()
+        if (ends.isEmpty()) return entries
+        return entries.map { item ->
+            val end = ends[item.period.start]
+            if (end == null) item else item.copy(period = item.period.copy(end = end))
+        }
     }
 
     internal fun conditions(row: JSONObject, attrs: JSONObject, code: String?): WeatherConditions {
