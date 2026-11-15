@@ -18,6 +18,14 @@ import com.dormpanel.app.dashboard.DashboardViewModel
 import com.dormpanel.app.dashboard.card.DashboardCardView
 import com.dormpanel.app.dashboard.card.ClockCardView
 import com.dormpanel.app.dashboard.card.ClockTiming
+import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
+import com.dormpanel.app.dashboard.card.WeatherDetailDialog
+import com.dormpanel.app.dashboard.card.coreCardRegistry
+import com.dormpanel.app.dashboard.model.PlacedCard
+import com.dormpanel.app.dashboard.ui.DashboardGridView
+import com.dormpanel.app.weather.*
+import java.time.Instant
+import java.time.ZoneId
 import com.dormpanel.app.dashboard.model.CardSize
 import org.junit.Before
 import org.junit.After
@@ -255,7 +263,7 @@ class CoreDashboardTest {
                 assertFalse(views.first().contentDescription.contains("LOCAL TIME"))
                 val sensor = views.first { it.contentDescription.contains("Room climate") }
                 assertTrue(sensor.contentDescription.contains("54%"))
-                assertFalse(views.first { it.contentDescription.contains("Partly cloudy") }.contentDescription.contains("Tomorrow"))
+                assertFalse(views.first { it.contentDescription.contains("多云") }.contentDescription.contains("Tomorrow"))
                 originals.forEach { holder.resize(it.id, it.size) }
                 assertTrue(views.first().contentDescription.contains("LOCAL TIME"))
             }
@@ -270,7 +278,7 @@ class CoreDashboardTest {
             onView(withId(R.id.dashboard_edit)).perform(ViewActions.click())
             listOf(
                 Triple("Clock & date", "LOCAL TIME", "seed-clock"),
-                Triple("Weather", "Partly cloudy", "seed-weather"),
+                Triple("Weather", "多云", "seed-weather"),
                 Triple("Room climate", "Room climate", "seed-sensor"),
                 Triple("Light", "Desk light", "seed-light"),
             ).forEach { (providerName, contentName, id) ->
@@ -295,6 +303,292 @@ class CoreDashboardTest {
                 original.forEach { model(activity).stateHolder.resize(it.id, it.size) }
                 original.forEach { model(activity).stateHolder.move(it.id, it.column, it.row) }
             }
+        }
+    }
+
+    @Test fun weatherPickerAndDetailRebindOnlySelectedCardAndRestoreLayout() {
+        val district = com.dormpanel.app.weather.WeatherSourceRef.QWeatherCity("101200101")
+        val shanghai = com.dormpanel.app.weather.WeatherSourceRef.QWeatherCity("101020100")
+        val home = com.dormpanel.app.weather.WeatherSourceRef.HomeAssistant("weather.home", "test-server")
+        val zone = java.time.ZoneId.of("Asia/Shanghai")
+        val prefix = "pr79-" + java.util.UUID.randomUUID()
+        val city = com.dormpanel.app.weather.WeatherPlace("$prefix-wuhan", "测试武汉", zone, listOf(district, home))
+        val destination = com.dormpanel.app.weather.WeatherPlace("$prefix-shanghai", "测试上海", zone, listOf(shanghai))
+        val legacy = com.dormpanel.app.dashboard.card.WeatherCardConfiguration.Default
+        val bound = com.dormpanel.app.dashboard.card.WeatherCardConfiguration.Bound(city.id, district, "测试武汉宿舍")
+        var saved = emptyList<com.dormpanel.app.dashboard.model.PlacedCard>()
+
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                waitForCards(scenario)
+                scenario.onActivity {
+                    val vm = model(it)
+                    val places = vm.dataSource.weatherRepository.places
+                    places.save(city)
+                    places.save(destination)
+                    vm.stateHolder.state.cards.filter { card -> card.id != "seed-weather" }.forEach { card ->
+                        vm.stateHolder.delete(card.id)
+                    }
+                }
+                onView(card("Demo 天气")).perform(ViewActions.click())
+                onView(withText("24°C  多云")).check(matches(isDisplayed()))
+                onView(withText("关闭")).perform(ViewActions.click())
+                onView(withId(R.id.dashboard_grid)).perform(GeneralClickAction(Tap.LONG, { view ->
+                    val position = IntArray(2).also(view::getLocationOnScreen)
+                    floatArrayOf(position[0] + view.width * .25f, position[1] + view.height * .80f)
+                }, Press.FINGER, 0, 0))
+                onView(withId(R.id.dashboard_add)).perform(ViewActions.click())
+                onView(withContentDescription("Add Weather")).perform(ViewActions.click())
+                onView(withText("取消")).perform(ViewActions.click())
+                scenario.onActivity { assertEquals(1, model(it).stateHolder.state.cards.size) }
+                onView(withContentDescription("Add Weather")).perform(ViewActions.click())
+                onView(withText("测试武汉   ·   Asia/Shanghai")).perform(ViewActions.click())
+                onView(withText(containsString("weather.home"))).check(matches(isDisplayed()))
+                onView(withText(containsString("101200101"))).perform(ViewActions.click())
+                onView(withContentDescription("卡片名称")).perform(ViewActions.replaceText("测试武汉宿舍"), ViewActions.closeSoftKeyboard())
+                onView(withText("确认")).perform(ViewActions.click())
+                var rowDelta = 0f
+                var weatherDragLabel = ""
+                scenario.onActivity { activity ->
+                    val grid = activity.findViewById<View>(R.id.dashboard_grid)
+                    val gap = 10 * activity.resources.displayMetrics.density
+                    rowDelta = 3 * ((grid.height + gap) / 6)
+                    weatherDragLabel = activity.getString(R.string.dashboard_drag_card)
+                    val weather = descendants(grid).filterIsInstance<DashboardCardView>().first { it.contentDescription.contains("测试武汉") }
+                    assertFalse(weather.isClickable)
+                    assertFalse(weather.isLongClickable)
+                }
+                onView(allOf(withContentDescription(weatherDragLabel), withParent(hasDescendant(card("测试武汉")))))
+                    .perform(GeneralSwipeAction(Swipe.SLOW, GeneralLocation.CENTER, { view ->
+                        val center = GeneralLocation.CENTER.calculateCoordinates(view)
+                        floatArrayOf(center[0], center[1] + rowDelta)
+                    }, Press.FINGER))
+                onView(withId(R.id.dashboard_done)).perform(ViewActions.click())
+                scenario.onActivity {
+                    saved = model(it).stateHolder.state.cards
+                    assertEquals(legacy, com.dormpanel.app.dashboard.card.WeatherCardConfiguration.decode(saved.first().configurationJson))
+                    assertEquals(bound.encode(), saved.last().configurationJson)
+                    assertEquals(3, saved.last().row)
+                }
+                repeat(2) {
+                    onView(card("测试武汉")).perform(ViewActions.longClick())
+                    onView(withText("测试武汉")).check(matches(isDisplayed()))
+                    onView(withText("关闭")).perform(ViewActions.click())
+                    onView(withId(R.id.dashboard_edit)).check(matches(isDisplayed()))
+                }
+                onView(allOf(withContentDescription("和风天气官网"), isDescendantOfA(card("测试武汉"))))
+                    .perform(ViewActions.longClick())
+                captureReview("pr79-detail")
+                onView(withText("切换天气")).perform(ViewActions.click())
+                onView(withText("测试上海   ·   Asia/Shanghai")).perform(ViewActions.click())
+                onView(withText(containsString("101020100"))).perform(ViewActions.click())
+                onView(withText("取消")).perform(ViewActions.click())
+                scenario.onActivity { assertEquals(saved, model(it).stateHolder.state.cards) }
+                onView(withText("切换天气")).perform(ViewActions.click())
+                onView(withText("测试上海   ·   Asia/Shanghai")).perform(ViewActions.click())
+                onView(withText(containsString("101020100"))).perform(ViewActions.click())
+                onView(withContentDescription("卡片名称")).check(matches(withText("")))
+                lateinit var complete: (Result<Unit>) -> Unit
+                scenario.onActivity { dashboardPersistence.interceptNextSave = { complete = it } }
+                onView(withText("确认")).perform(ViewActions.click())
+                onView(withText("正在保存卡片设置…")).check(matches(isDisplayed()))
+                scenario.onActivity { complete(Result.failure(IllegalStateException("test disk failure"))) }
+                onView(withText(containsString("卡片设置未保存"))).check(matches(isDisplayed()))
+                onView(withText("重试保存")).perform(ViewActions.click())
+                onView(withText("测试上海")).check(matches(isDisplayed()))
+                onView(withText("卡片显示设置")).perform(ViewActions.click())
+                onView(withContentDescription("卡片名称")).perform(ViewActions.replaceText("测试上海阳台"), ViewActions.closeSoftKeyboard())
+                onView(withText("风速")).perform(ViewActions.click())
+                onView(withText("保存")).perform(ViewActions.click())
+                onView(withText("卡片显示设置")).perform(ViewActions.click())
+                onView(withContentDescription("卡片名称")).check(matches(withText("测试上海阳台")))
+                onView(withContentDescription("卡片名称")).perform(ViewActions.replaceText(""), ViewActions.closeSoftKeyboard())
+                onView(withText("取消")).perform(ViewActions.click())
+                onView(withText("关闭")).perform(ViewActions.click())
+                onView(card("测试上海阳台")).check(matches(isDisplayed()))
+                onView(card("测试上海阳台")).perform(ViewActions.longClick())
+                onView(withText("卡片显示设置")).perform(ViewActions.click())
+                onView(withContentDescription("卡片名称")).perform(ViewActions.replaceText(""), ViewActions.closeSoftKeyboard())
+                onView(withText("保存")).perform(ViewActions.click())
+                onView(withText("关闭")).perform(ViewActions.click())
+                val newJson = bound.select(destination.id, shanghai)
+                    .copy(metric = com.dormpanel.app.dashboard.card.WeatherCardMetric.WIND).encode()
+                saved = listOf(saved.first(), saved.last().copy(configurationJson = newJson))
+                scenario.onActivity { assertEquals(saved, model(it).stateHolder.state.cards) }
+            }
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                waitForCards(scenario)
+                scenario.onActivity {
+                    val vm = model(it)
+                    assertEquals(saved.associateBy { it.id }, vm.stateHolder.state.cards.associateBy { it.id })
+                    vm.dataSource.weatherRepository.places.delete(destination.id)
+                }
+                onView(card("地点或来源已失效")).check(matches(isDisplayed()))
+                onView(card("地点或来源已失效")).perform(ViewActions.longClick())
+                onView(withText("地点或来源已失效，请重新选择")).check(matches(isDisplayed()))
+                onView(withText("关闭")).perform(ViewActions.click())
+            }
+        } finally {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val places = com.dormpanel.app.weather.WeatherPlaceStore(context)
+            places.delete(city.id)
+            places.delete(destination.id)
+        }
+    }
+
+    @Test fun fourWeatherCardsRenderIndependentFakeSourcesAndReleaseOnDetach() {
+        val wuhan = WeatherSourceRef.QWeatherCity("101200101")
+        val beijing = WeatherSourceRef.QWeatherCity("101010100")
+        val home = WeatherSourceRef.HomeAssistant("weather.home", "fake-ha")
+        val zone = ZoneId.of("Asia/Shanghai")
+        val values = mapOf(wuhan to 23, beijing to 8, home to 19)
+        val places = WeatherPlaceStore("[]") { true }
+        listOf(WeatherPlace("wuhan", "武汉", zone, listOf(wuhan)),
+            WeatherPlace("beijing", "北京", zone, listOf(beijing)),
+            WeatherPlace("home", "家", zone, listOf(home))).forEach(places::save)
+
+        val started = mutableListOf<Pair<WeatherSourceRef, WeatherBlock>>()
+        val stopped = mutableListOf<Pair<WeatherSourceRef, WeatherBlock>>()
+        val provider = object : WeatherProvider {
+            override fun plan(source: WeatherSourceRef, zone: ZoneId, query: WeatherQuery, now: Instant): WeatherPlan {
+                val temp = values.getValue(source).toDouble()
+                val code = when (source) { home -> "lightning-rainy"; wuhan -> "100"; else -> "500" }
+                val current = WeatherConditions(code, temperature = temp, feelsLike = temp - 2)
+                val forecast = List(4) { day ->
+                    WeatherForecast(WeatherPeriod(date = now.atZone(zone).toLocalDate().plusDays(day.toLong())),
+                        WeatherConditions(code, minTemperature = temp - 3, maxTemperature = temp + 3))
+                }
+                val parsed = when (query.block) {
+                    WeatherBlock.DAILY -> ParsedWeather(WeatherData.Forecast(forecast))
+                    WeatherBlock.TWICE_DAILY -> ParsedWeather(WeatherData.Forecast(listOf(
+                        WeatherForecast(WeatherPeriod(start = now, isDaytime = false), current)
+                    )))
+                    WeatherBlock.AIR_CURRENT -> QWeatherParser.parse(org.json.JSONObject("""
+                        {"refer":{"sources":["空气站 A","空气站 B"]},
+                            "metadata":{"attributions":["https://developer.qweather.com/attribution.html"]},
+                            "indexes":[{"code":"cn-mee","aqi":39,"category":"优"}]}
+                    """.trimIndent()), zone, query)
+                    WeatherBlock.HOURLY -> ParsedWeather(WeatherData.Forecast(List(6) { hour ->
+                        WeatherForecast(WeatherPeriod(start = now.plusSeconds(3600L * hour)),
+                            current.copy(precipitationProbability = 42.0))
+                    }))
+                    WeatherBlock.ALERTS -> QWeatherParser.parse(org.json.JSONObject("""
+                        {"refer":{"sources":["预警源 A","预警源 B"]},"alerts":[{"id":"pr79-demo","messageType":{"code":"alert"},
+                            "headline":"大风预警","description":"请关好门窗"}]}
+                    """.trimIndent()), zone, query)
+                    else -> ParsedWeather(WeatherData.Current(current), haForecastFeatures = if (source == home) 4 else null)
+                }
+                return WeatherPlan("$source/${query.block}", source.toString(), query, { _, _ -> parsed }, { emit ->
+                    val key = source to query.block
+                    started += key
+                    if (query.block == WeatherBlock.AIR_CURRENT && started.count { it == key } > 1) {
+                        emit(WeatherResult.Failed(WeatherFailure(WeatherState.UNAUTHORIZED, "测试 AQI 权限")))
+                    } else {
+                        emit(WeatherResult.Data(org.json.JSONObject(), parsed, zone))
+                    }
+                    val cancel: () -> Unit = { stopped += key }
+                    cancel
+                }, live = true)
+            }
+        }
+        val cache = object : WeatherCache {
+            override fun read(group: String, key: String, done: (WeatherCacheRecord?) -> Unit) = done(null)
+            override fun write(group: String, key: String, record: WeatherCacheRecord, done: (Boolean) -> Unit) = done(true)
+            override fun clear(groups: Set<String>?, done: (Boolean) -> Unit) = done(true)
+        }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCards(scenario)
+            lateinit var grid: DashboardGridView
+            lateinit var repository: WeatherRepository
+            scenario.onActivity { activity ->
+                val vm = model(activity)
+                repository = WeatherRepository(places, { provider }, cache,
+                    com.dormpanel.app.ha.MainHaScheduler(), Instant::now)
+                val registry = coreCardRegistry(vm.dataSource, vm.appearance, repository)
+                grid = DashboardGridView(activity).apply {
+                    setBackgroundColor(Color.BLACK)
+                    bind(vm.stateHolder, registry, {}, {}, onOperationRejected = { fail(it) })
+                }
+                val cards = listOf(
+                    PlacedCard("a", "weather", 0, 0, CardSize(4, 3), WeatherCardConfiguration.Bound("wuhan", wuhan).encode()),
+                    PlacedCard("b", "weather", 4, 0, CardSize(2, 3), WeatherCardConfiguration.Bound("beijing", beijing).encode()),
+                    PlacedCard("c", "weather", 6, 0, CardSize(2, 2), WeatherCardConfiguration.Bound("home", home).encode()),
+                    PlacedCard("d", "weather", 0, 3, CardSize(2, 1), WeatherCardConfiguration.Bound("wuhan", wuhan, "武汉副卡").encode()),
+                )
+                activity.addContentView(grid, android.widget.FrameLayout.LayoutParams(-1, -1).apply { setMargins(48, 56, 48, 56) })
+                grid.submitCards(cards)
+            }
+            var detail: WeatherDetailDialog? = null
+            try {
+                scenario.onActivity {
+                    val views = descendants(grid).filterIsInstance<DashboardCardView>().associateBy { view -> view.tag }
+                    assertTrue(views.getValue("a").contentDescription.contains("23°C"))
+                    assertTrue(views.getValue("b").contentDescription.contains("8°C"))
+                    assertTrue(views.getValue("c").contentDescription.contains("19°C"))
+                    assertTrue(views.getValue("d").contentDescription.contains("23°C"))
+                    assertEquals(6, started.size)
+                    assertTrue((home to WeatherBlock.TWICE_DAILY) in started)
+                    assertFalse((home to WeatherBlock.DAILY) in started)
+                    assertEquals(started.toSet().size, started.size)
+                }
+                onView(allOf(withText(containsString("夜间")), isDescendantOfA(card("家")),
+                    withEffectiveVisibility(Visibility.VISIBLE))).check { view, error ->
+                    if (error != null) throw error
+                    val bounds = android.graphics.Rect()
+                    assertTrue(view.getLocalVisibleRect(bounds))
+                    assertEquals(view.height, bounds.height())
+                    assertTrue((view as TextView).text.contains("19°  雷暴"))
+                }
+                onView(allOf(withText("和风天气"), isDescendantOfA(card("武汉副卡")))).check(matches(isDisplayed()))
+                onView(allOf(withText("HA"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
+                val instrumentation = InstrumentationRegistry.getInstrumentation()
+                val filter = android.content.IntentFilter(android.content.Intent.ACTION_VIEW).apply {
+                    addDataScheme("https")
+                    addDataAuthority("www.qweather.com", null)
+                }
+                val monitor = instrumentation.addMonitor(filter, null, true)
+                try {
+                    onView(allOf(withContentDescription("和风天气官网"), isDescendantOfA(card("武汉副卡"))))
+                        .perform(ViewActions.click())
+                    assertEquals(1, monitor.hits)
+                } finally {
+                    instrumentation.removeMonitor(monitor)
+                }
+                captureReview("pr79-four-fake-sources")
+                repeat(2) { iteration ->
+                    scenario.onActivity { activity ->
+                        val vm = model(activity)
+                        detail = WeatherDetailDialog(activity, vm.appearance, vm.dataSource, repository,
+                            WeatherCardConfiguration.Bound("wuhan", wuhan), changeBinding = {}, more = {}).also { it.show() }
+                    }
+                    onView(withText("23°C  晴")).check(matches(isDisplayed()))
+                    onView(withText(containsString("降水 42%"))).check(matches(isDisplayed()))
+                    onView(withText(containsString("大风预警"))).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
+                    onView(withText("和风天气官网")).check(matches(isDisplayed()))
+                    onView(withText(containsString("预警源 A\n预警源 B"))).check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
+                    onView(withText(containsString("空气站 A\n空气站 B"))).check { view, error ->
+                        if (error != null) throw error
+                        val text = (view as TextView).text as android.text.Spanned
+                        assertTrue(text.getSpans(0, text.length, android.text.style.URLSpan::class.java)
+                            .any { it.url == "https://developer.qweather.com/attribution.html" })
+                    }
+                    if (iteration == 1) onView(withText(containsString("测试 AQI 权限")))
+                        .check(matches(withEffectiveVisibility(Visibility.VISIBLE)))
+                    if (iteration == 0) captureReview("pr79-detail-fake")
+                    onView(withText("关闭")).perform(ViewActions.click())
+                    scenario.onActivity {
+                        assertEquals(iteration + 1, stopped.count { key -> key == (wuhan to WeatherBlock.HOURLY) })
+                        assertEquals(0, stopped.count { key -> key == (wuhan to WeatherBlock.CURRENT) })
+                    }
+                }
+            } finally {
+                scenario.onActivity {
+                    detail?.dismiss()
+                    (grid.parent as ViewGroup).removeView(grid)
+                    repository.close()
+                }
+            }
+            assertEquals(started.toSet(), stopped.toSet())
         }
     }
 

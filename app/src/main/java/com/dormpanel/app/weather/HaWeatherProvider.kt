@@ -7,6 +7,13 @@ import java.time.Instant
 import java.time.ZoneId
 import kotlin.math.pow
 
+internal fun WeatherBlock.haForecastFeature(): Int? = when (this) {
+    WeatherBlock.DAILY -> 1
+    WeatherBlock.HOURLY -> 2
+    WeatherBlock.TWICE_DAILY -> 4
+    else -> null
+}
+
 internal class HaWeatherProvider(
     private val ha: HaDashboardDataSource,
     private val serverId: () -> String,
@@ -14,12 +21,7 @@ internal class HaWeatherProvider(
 ) : WeatherProvider {
     override fun plan(source: WeatherSourceRef, zone: ZoneId, query: WeatherQuery, now: Instant): WeatherPlan {
         require(source is WeatherSourceRef.HomeAssistant)
-        val forecast = when (query.block) {
-            WeatherBlock.DAILY -> "daily" to 1
-            WeatherBlock.HOURLY -> "hourly" to 2
-            WeatherBlock.TWICE_DAILY -> "twice_daily" to 4
-            else -> null
-        }
+        val forecast = query.block.haForecastFeature()
         val account = accountId()
         val unavailable = when {
             forecast == null && query.block != WeatherBlock.CURRENT ->
@@ -33,7 +35,8 @@ internal class HaWeatherProvider(
         return WeatherPlan("$group:$account:${query.block}", group, query, parse, { emit ->
             var stopForecast: (() -> Unit)? = null
             var lastCurrent: String? = null
-            fun fail(state: WeatherState, message: String) = emit(WeatherResult.Failed(WeatherFailure(state, message)))
+            fun fail(state: WeatherState, message: String, offline: Boolean = false) =
+                emit(WeatherResult.Failed(WeatherFailure(state, message, offline = offline)))
             fun update() {
                 if (accountId() != account || serverId() != source.serverId) return
                 val entity = ha.store.entities[source.entityId]?.takeIf(ha.store::enabled)
@@ -43,7 +46,8 @@ internal class HaWeatherProvider(
                     lastCurrent = null
                     val authError = ha.status.state == HaConnectionState.AUTH_ERROR
                     fail(if (authError) WeatherState.UNAUTHORIZED else WeatherState.ERROR,
-                        if (authError) "HA 认证失败，请检查凭据" else "HA 连接或天气实体暂不可用")
+                        if (authError) "HA 认证失败，请检查凭据" else "HA 连接或天气实体暂不可用",
+                        offline = !ha.connected && !authError)
                     return
                 }
                 fun send(wire: JSONObject) = emit(WeatherResult.Data(wire, parse(wire, zone), zone))
@@ -55,13 +59,12 @@ internal class HaWeatherProvider(
                         lastCurrent = identity
                         send(value)
                     }
-                } else if (entity.attributes.has("supported_features") &&
-                    entity.attributes.optInt("supported_features") and forecast.second == 0) {
+                } else if (entity.attributes.optInt("supported_features", -1) and forecast == 0) {
                     stopForecast?.invoke()
                     stopForecast = null
                     fail(WeatherState.UNSUPPORTED, "此 HA 实体不支持此预报类型")
                 } else if (stopForecast == null) {
-                    stopForecast = ha.forecasts.observe(source.entityId, forecast.first) { result ->
+                    stopForecast = ha.forecasts.observe(source.entityId, query.block.name.lowercase(java.util.Locale.ROOT)) { result ->
                         if (result.forecast != null) send(wire().put("forecast", result.forecast))
                         else fail(WeatherState.ERROR, "HA 天气预报暂不可用")
                     }
@@ -86,19 +89,39 @@ internal object HaWeatherParser {
         val data = if (block == WeatherBlock.CURRENT) {
             WeatherData.Current(conditions(attrs, attrs, wire.text("state")))
         } else {
-            wire.objects("forecast").map {
+            val entries = wire.objects("forecast").map {
                 val time = it.time("datetime")
                 val conditions = conditions(it, attrs, it.text("condition"))
                 WeatherForecast(WeatherPeriod(time, date = if (block != WeatherBlock.HOURLY) time?.atZone(zone)?.toLocalDate() else null,
-                    isDaytime = it.opt("is_daytime") as? Boolean), if (block == WeatherBlock.HOURLY) conditions else
+                    isDaytime = it.opt("is_daytime") as? Boolean), if (block != WeatherBlock.DAILY) conditions else
                     conditions.copy(maxTemperature = conditions.temperature))
-            }.takeIf { it.isNotEmpty() }?.let(WeatherData::Forecast)
+            }
+            val periods = if (block == WeatherBlock.TWICE_DAILY) endAtNextPhase(entries, zone) else entries
+            periods.takeIf { it.isNotEmpty() }?.let(WeatherData::Forecast)
         }
         return ParsedWeather(data, WeatherAttribution(sources = listOfNotNull("Home Assistant", attrs.text("attribution"))),
-            wire.time("time"))
+            wire.time("time"), haForecastFeatures = if (block == WeatherBlock.CURRENT)
+                attrs.optInt("supported_features", -1).takeIf { it >= 0 } else null)
     }
 
-    private fun conditions(row: JSONObject, attrs: JSONObject, code: String?): WeatherConditions {
+    private fun endAtNextPhase(entries: List<WeatherForecast>, zone: ZoneId): List<WeatherForecast> {
+        val ends = entries.asSequence().map { it.period }
+            .filter { it.start != null && it.isDaytime != null }
+            .sortedBy { it.start }.zipWithNext().mapNotNull { (period, next) ->
+                val nominalEnd = period.haForecastEnd(WeatherBlock.TWICE_DAILY, zone)
+                val start = checkNotNull(period.start)
+                val nextStart = checkNotNull(next.start)
+                if (period.isDaytime != next.isDaytime && nominalEnd != null && nextStart > start && nextStart < nominalEnd)
+                    start to nextStart else null
+            }.toMap()
+        if (ends.isEmpty()) return entries
+        return entries.map { item ->
+            val end = ends[item.period.start]
+            if (end == null) item else item.copy(period = item.period.copy(end = end))
+        }
+    }
+
+    internal fun conditions(row: JSONObject, attrs: JSONObject, code: String?): WeatherConditions {
         fun quantity(key: String, unit: String, conversions: Map<String, Double>): Double? =
             row.number(key)?.let { value -> conversions[attrs.text(unit)]?.times(value)?.takeIf(Double::isFinite) }
         fun temperature(key: String) = row.number(key)?.let {

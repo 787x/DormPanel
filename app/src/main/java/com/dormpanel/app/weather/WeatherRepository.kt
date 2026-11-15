@@ -22,6 +22,7 @@ class WeatherRepository internal constructor(
         val source: WeatherSourceRef,
         val query: WeatherQuery,
         val automatic: Boolean,
+        val parkEmptyHaForecast: Boolean,
         val listener: (WeatherSnapshot) -> Unit,
     ) : Subscription {
         var entry: Entry? = null
@@ -69,7 +70,7 @@ class WeatherRepository internal constructor(
         }
     }
 
-    private class Entry(val plan: WeatherPlan) {
+    private class Entry(val plan: WeatherPlan, val isHaForecast: Boolean) {
         var diskLoaded = false
         var loadingDisk = false
         var record: WeatherCacheRecord? = null
@@ -86,6 +87,8 @@ class WeatherRepository internal constructor(
         var cancel: (() -> Unit)? = null
         var generation = 0
         var cacheRevision = 0
+        var haForecastRetryAt: Instant? = null
+        var haForecastProbeUntil: Instant? = null
         var retryCount = 0
     }
 
@@ -141,9 +144,32 @@ class WeatherRepository internal constructor(
     private val stopPlaces = places.observe(::reconcile)
 
     fun observe(placeId: String, source: WeatherSourceRef, query: WeatherQuery,
-                automatic: Boolean = query.block.core, listener: (WeatherSnapshot) -> Unit): Subscription {
+                automatic: Boolean = query.block.core, listener: (WeatherSnapshot) -> Unit): Subscription =
+        observe(placeId, source, query, automatic, parkEmptyHaForecast = false, listener)
+
+    internal fun observeHaCardForecast(
+        placeId: String, source: WeatherSourceRef.HomeAssistant, block: WeatherBlock, listener: (WeatherSnapshot) -> Unit,
+    ): Subscription = observe(placeId, source, WeatherQuery(block), automatic = true, parkEmptyHaForecast = true, listener)
+
+    internal fun recheckEmptyHaForecasts(
+        placeId: String, source: WeatherSourceRef.HomeAssistant, blocks: Set<WeatherBlock>,
+    ) {
+        val place = places.get(placeId)?.takeIf { source in it.sources } ?: return
+        val instant = now()
+        val ha = provider(source)
+        blocks.forEach { block ->
+            val key = ha.plan(source, place.zone, WeatherQuery(block), instant).key
+            entries[key]?.takeIf { it.haForecastRetryAt != null && !it.running }?.haForecastRetryAt = instant
+        }
+        reconcile()
+    }
+
+    private fun observe(
+        placeId: String, source: WeatherSourceRef, query: WeatherQuery, automatic: Boolean,
+        parkEmptyHaForecast: Boolean, listener: (WeatherSnapshot) -> Unit,
+    ): Subscription {
         check(!closed)
-        return Demand(placeId, source, query, automatic, listener).also {
+        return Demand(placeId, source, query, automatic, parkEmptyHaForecast, listener).also {
             demands += it
             reconcile()
         }
@@ -246,6 +272,7 @@ class WeatherRepository internal constructor(
         entry.cancel = null
         entry.running = false
         entry.inFlight = false
+        entry.haForecastProbeUntil = null
         demands.filter { it.entry == entry }.forEach { it.manualActive = false }
         entry.loadingDisk = false
     }
@@ -283,7 +310,10 @@ class WeatherRepository internal constructor(
             }
             demand.zone = place.zone
             val plan = provider(demand.source).plan(demand.source, place.zone, demand.query, instant)
-            val entry = entries.getOrPut(plan.key) { Entry(plan) }
+            val entry = entries.getOrPut(plan.key) {
+                Entry(plan, plan.live && demand.source is WeatherSourceRef.HomeAssistant &&
+                    plan.query.block.haForecastFeature() != null)
+            }
             if (demand.entry != entry) {
                 demand.manualActive = false
                 demand.requested = false
@@ -322,7 +352,24 @@ class WeatherRepository internal constructor(
             val auto = eligible.any { it.automatic } && entry.plan.query.block != WeatherBlock.HISTORY
             val permanent = entry.failure?.blocksRetry == true
             val connected = entry.plan.live || network != WeatherNetworkStatus.OFFLINE
+            val haWindows = if (entry.isHaForecast) eligible.mapNotNull { it.zone }.distinct()
+                .associateWith { haForecastWindow(entry, it, instant) } else emptyMap()
+            val hasUsableHaForecast = haWindows.values.any { it?.data != null }
+            if (entry.isHaForecast && entry.haForecastRetryAt == null && entry.running && !entry.inFlight &&
+                entry.failure == null && haWindows.values.any { it != null } && !hasUsableHaForecast) {
+                entry.haForecastRetryAt = instant.plusSeconds(HA_FORECAST_RETRY_SECONDS)
+            }
+            val haRetry = entry.haForecastRetryAt?.takeIf {
+                !hasUsableHaForecast && eligible.all { it.parkEmptyHaForecast }
+            }
+            val probingUntil = entry.haForecastProbeUntil
+            if (haRetry == null) entry.haForecastProbeUntil = null
+            else if (entry.running) {
+                if (probingUntil == null || instant >= probingUntil) stop(entry)
+                else wake(probingUntil)
+            }
             val due = when {
+                haRetry != null -> haRetry
                 entry.plan.live -> Instant.EPOCH
                 entry.recoveredAt != null -> retryAt(entry)
                 onDemand -> maxOf(entry.lastAttempt.plusSeconds(minimumSeconds(entry)), retryAt(entry))
@@ -338,8 +385,13 @@ class WeatherRepository internal constructor(
                         it.manualActive = it.requested
                         it.requested = false
                     }
+                    if (haRetry != null) {
+                        entry.haForecastRetryAt = instant.plusSeconds(HA_FORECAST_RETRY_SECONDS)
+                        entry.haForecastProbeUntil = instant.plusSeconds(HA_FORECAST_PROBE_SECONDS)
+                        wake(entry.haForecastProbeUntil)
+                    }
                     start(entry, instant)
-                } else wake(due)
+                } else if (due != Instant.MAX) wake(due)
             } else if (entry.running) eligible.filter { it.requested }.forEach {
                 it.manualActive = true
                 it.requested = false
@@ -349,7 +401,9 @@ class WeatherRepository internal constructor(
                 if (demand !in demands || closed) continue
                 val zone = checkNotNull(demand.zone)
                 val query = checkNotNull(demand.boundQuery)
-                val snapshot = snapshot(entry, demand.source, zone, query, instant)
+                val haWindow = haWindows[zone]
+                wake(haWindow?.nextEnd)
+                val snapshot = snapshot(entry, demand.source, zone, query, instant, haWindow)
                 demand.emit(snapshot)
                 if (query.date != null || query.block in setOf(WeatherBlock.DAILY, WeatherBlock.AIR_DAILY, WeatherBlock.INDICES))
                     wake(instant.atZone(zone).toLocalDate().plusDays(1).atStartOfDay(zone).toInstant())
@@ -411,7 +465,10 @@ class WeatherRepository internal constructor(
                 }
                 val received = now()
                 entry.unchanged = false
-                when (result) {
+                entry.haForecastProbeUntil = null
+                val accepted = if (entry.isHaForecast) acceptHaForecast(entry, result, received) else result
+                if (entry.isHaForecast) updateHaForecastRetry(entry, accepted, received)
+                when (val result = accepted) {
                     is WeatherResult.Data -> {
                         entry.failure = null
                         entry.retryCount = 0
@@ -446,6 +503,56 @@ class WeatherRepository internal constructor(
         }
     }
 
+    private fun acceptHaForecast(entry: Entry, result: WeatherResult, received: Instant): WeatherResult {
+        if (result !is WeatherResult.Data || result.parsed.data == null) return result
+        val zones = demands.mapNotNull { demand -> demand.zone?.takeIf { demand.entry === entry } }.distinct()
+        if (zones.any { zone ->
+                val parsed = if (zone == result.zone) result.parsed
+                    else runCatching { entry.plan.parse(result.wire, zone) }.getOrNull()
+                (parsed?.data as? WeatherData.Forecast)?.entries?.any {
+                    it.period.haForecastEnd(entry.plan.query.block, zone)?.isAfter(received) == true
+                } == true
+            }) return result
+        // A payload containing only expired or undated rows is an empty result.
+        return result.copy(parsed = result.parsed.copy(data = null))
+    }
+
+    private fun updateHaForecastRetry(entry: Entry, result: WeatherResult, received: Instant) {
+        fun retry() { entry.haForecastRetryAt = received.plusSeconds(HA_FORECAST_RETRY_SECONDS) }
+        when (result) {
+            is WeatherResult.Data -> if (result.parsed.data == null) retry() else entry.haForecastRetryAt = null
+            is WeatherResult.Failed -> when {
+                result.failure.state == WeatherState.EMPTY -> retry()
+                entry.haForecastRetryAt == null -> Unit
+                result.failure.state in setOf(WeatherState.UNSUPPORTED, WeatherState.UNCONFIGURED, WeatherState.UNAUTHORIZED) ->
+                    entry.haForecastRetryAt = Instant.MAX
+                else -> retry()
+            }
+        }
+    }
+
+    private fun parsed(entry: Entry, zone: ZoneId) = entry.record?.let { record ->
+        entry.parsed.getOrPut(zone) {
+            runCatching { entry.plan.parse(record.wire, zone) }.getOrElse { ParsedWeather(null) }
+        }
+    }
+
+    private data class HaForecastWindow(val data: WeatherData.Forecast?, val nextEnd: Instant?)
+
+    private fun haForecastWindow(entry: Entry, zone: ZoneId, instant: Instant): HaForecastWindow? {
+        val forecast = parsed(entry, zone)?.data as? WeatherData.Forecast ?: return null
+        var nextEnd: Instant? = null
+        val remaining = forecast.entries.filter {
+            val end = it.period.haForecastEnd(entry.plan.query.block, zone)
+            if (end == null || end <= instant) false
+            else {
+                if (nextEnd?.let { previous -> end < previous } != false) nextEnd = end
+                true
+            }
+        }
+        return HaForecastWindow(remaining.takeIf { it.isNotEmpty() }?.let(WeatherData::Forecast), nextEnd)
+    }
+
     private fun save(entry: Entry, record: WeatherCacheRecord) {
         entry.persistence = WeatherPersistence.SAVING
         val revision = entry.cacheRevision
@@ -466,26 +573,29 @@ class WeatherRepository internal constructor(
         return minOf(expiresAt, nextDay)
     }
     private fun snapshot(entry: Entry, source: WeatherSourceRef, zone: ZoneId,
-                         query: WeatherQuery, instant: Instant): WeatherSnapshot {
+                         query: WeatherQuery, instant: Instant,
+                         haWindow: HaForecastWindow? = if (entry.isHaForecast) haForecastWindow(entry, zone, instant) else null,
+    ): WeatherSnapshot {
         val record = entry.record
-        val parsed = record?.let { entry.parsed.getOrPut(zone) {
-            runCatching { entry.plan.parse(it.wire, zone) }.getOrElse { ParsedWeather(null) }
-        } }
+        val parsed = parsed(entry, zone)
         val expiresAt = expiry(entry, zone)
         val stale = expiresAt != null && instant >= expiresAt
-        var data = parsed?.data
+        var data = if (haWindow != null) haWindow.data else parsed?.data
         if (data is WeatherData.Alerts) {
             data = if (stale || entry.failure != null) null else activeAlerts(data, instant)
         }
         val state = entry.failure?.state ?: when {
             entry.inFlight || entry.loadingDisk -> WeatherState.LOADING
             record == null -> WeatherState.UNLOADED
+            haWindow != null && data == null -> WeatherState.EMPTY
             stale -> WeatherState.STALE
             data == null -> WeatherState.EMPTY
             else -> WeatherState.FRESH
         }
         return WeatherSnapshot(source, zone, query, state, data, record?.fetchedAt, parsed?.dataAt, expiresAt, stale,
-            parsed?.attribution ?: WeatherAttribution(), entry.failure?.message, parsed?.tag, entry.inFlight, entry.persistence, entry.unchanged, networkFor(source))
+            parsed?.attribution ?: WeatherAttribution(), entry.failure?.message, parsed?.tag, entry.inFlight, entry.persistence, entry.unchanged,
+            if (entry.failure?.offline == true) WeatherNetworkStatus.OFFLINE else networkFor(source), entry.failure?.statusCode,
+            parsed?.haForecastFeatures, haForecastRecovering = entry.haForecastRetryAt != null && data == null)
     }
 
     private fun activeAlerts(data: WeatherData.Alerts, instant: Instant): WeatherData.Alerts {
@@ -507,5 +617,10 @@ class WeatherRepository internal constructor(
         demands.clear()
         entries.values.forEach(::stop)
         entries.clear()
+    }
+
+    private companion object {
+        const val HA_FORECAST_RETRY_SECONDS = 15 * 60L
+        const val HA_FORECAST_PROBE_SECONDS = 90L
     }
 }

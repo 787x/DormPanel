@@ -1,6 +1,12 @@
 package com.dormpanel.app.dashboard
 
 import com.dormpanel.app.dashboard.card.coreCardRegistry
+import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
+import com.dormpanel.app.dashboard.layout.LayoutFailureReason
+import com.dormpanel.app.weather.WeatherPlace
+import com.dormpanel.app.weather.WeatherPlaceStore
+import com.dormpanel.app.weather.WeatherSourceRef
+import java.time.ZoneId
 import com.dormpanel.app.appearance.*
 import com.dormpanel.app.data.FakeDashboardDataSource
 import com.dormpanel.app.dashboard.layout.LayoutMutationResult
@@ -9,6 +15,7 @@ import com.dormpanel.app.dashboard.persistence.DashboardStore
 import com.dormpanel.app.dashboard.persistence.StoredDashboard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class DashboardStateHolderTest {
@@ -103,6 +110,79 @@ class DashboardStateHolderTest {
         assertEquals(holder.state.cards, store.savedSnapshots.last())
     }
 
+    @Test fun `configuration writes are scoped to one card and unauthorized bindings are rejected`() {
+        val places = WeatherPlaceStore("[]") { true }
+        val source = WeatherSourceRef.QWeatherCity("101010100")
+        val place = WeatherPlace("beijing", "北京", ZoneId.of("Asia/Shanghai"), listOf(source))
+        places.save(place)
+        places.addLookup(place.copy(id = "preview"))
+        val store = DelayedStore()
+        val holder = DashboardStateHolder(registry(), store, places)
+        store.loaded(Result.success(StoredDashboard(false, 0, emptyList())))
+        val initial = holder.state.cards
+        val binding = WeatherCardConfiguration.Bound(place.id, source)
+        fun failure(cardId: String, config: String) =
+            (holder.updateConfiguration(cardId, config) as LayoutMutationResult.Failure).reason
+        assertEquals(LayoutFailureReason.CARD_NOT_FOUND, failure("missing", binding.encode()))
+        assertEquals(LayoutFailureReason.INVALID_CONFIGURATION, failure("seed-clock", binding.encode()))
+        assertEquals(LayoutFailureReason.INVALID_CONFIGURATION, failure("seed-weather", """{"version":2}"""))
+        assertEquals(LayoutFailureReason.INVALID_CONFIGURATION, failure("seed-weather", binding.copy(placeId = "preview").encode()))
+        assertEquals(LayoutFailureReason.INVALID_CONFIGURATION,
+            failure("seed-weather", binding.copy(source = WeatherSourceRef.QWeatherCity("101020100")).encode()))
+        assertEquals(initial, holder.state.cards)
+        assertEquals(1, store.saves)
+
+        assertTrue(holder.updateConfiguration("seed-weather", binding.encode()) is LayoutMutationResult.Success)
+        assertEquals(initial.map { if (it.id == "seed-weather") it.copy(configurationJson = binding.encode()) else it }, holder.state.cards)
+        assertEquals(2, store.saves)
+        store.saved(Result.failure(IllegalStateException("disk full")))
+        assertTrue(holder.state.storageError)
+        assertTrue(holder.updateConfiguration("seed-weather", binding.encode()) is LayoutMutationResult.Success)
+        assertEquals(3, store.saves)
+    }
+
+    @Test fun `configuration acknowledgements follow the submitted card revisions and retry latest layout`() {
+        val places = WeatherPlaceStore("[]") { true }
+        val source = WeatherSourceRef.QWeatherCity("101010100")
+        places.save(WeatherPlace("city", "北京", ZoneId.of("Asia/Shanghai"), listOf(source)))
+        val store = DelayedStore()
+        val holder = DashboardStateHolder(registry(), store, places)
+        val left = com.dormpanel.app.dashboard.model.PlacedCard("left", "weather", 0, 0, CardSize(2, 1))
+        val right = left.copy(id = "right", column = 2)
+        store.loaded(Result.success(StoredDashboard(true, 1, listOf(left, right))))
+        val state = WeatherCardConfiguration.Bound("city", source)
+        val initiating = state.copy(displayName = "第一次").encode()
+        val latest = state.copy(displayName = "第二次").encode()
+        val neighbor = state.copy(displayName = "另一张").encode()
+        val failed = Result.failure<Unit>(IllegalStateException("disk full"))
+
+        holder.updateConfiguration(left.id, initiating)
+        assertEquals(ConfigurationSaveState.SAVING, holder.state.configurationSaves[left.id])
+        val firstAck = store.saved
+        holder.updateConfiguration(left.id, latest)
+        val secondAck = store.saved
+        firstAck(Result.success(Unit))
+        assertEquals(ConfigurationSaveState.SAVING, holder.state.configurationSaves[left.id])
+        holder.updateConfiguration(right.id, neighbor)
+        val combinedAck = store.saved
+        secondAck(failed)
+        assertFalse(holder.state.storageError)
+        assertEquals(mapOf(left.id to ConfigurationSaveState.SAVING, right.id to ConfigurationSaveState.SAVING),
+            holder.state.configurationSaves)
+        combinedAck(failed)
+        assertEquals(mapOf(left.id to ConfigurationSaveState.FAILED, right.id to ConfigurationSaveState.FAILED),
+            holder.state.configurationSaves)
+        holder.move(right.id, 4, 0)
+        store.saved(failed)
+        holder.updateConfiguration(left.id, latest)
+        assertEquals(listOf(left.copy(configurationJson = latest), right.copy(column = 4, configurationJson = neighbor)),
+            store.lastSnapshot)
+        store.saved(Result.success(Unit))
+        assertTrue(holder.state.configurationSaves.isEmpty())
+        assertFalse(holder.state.storageError)
+        assertEquals(store.lastSnapshot, holder.state.cards)
+    }
+
     private fun registry() = coreCardRegistry(FakeDashboardDataSource(), AppearanceController(object : AppearanceStore {
         override fun read() = AppearanceState()
         override fun write(state: AppearanceState) = Unit
@@ -127,7 +207,12 @@ class DashboardStateHolderTest {
         var closes = 0
         val repairs = mutableListOf<List<com.dormpanel.app.dashboard.persistence.QuarantinedCard>>()
         override fun load(callback: (Result<StoredDashboard>) -> Unit) { loaded = callback }
-        override fun save(cards: List<com.dormpanel.app.dashboard.model.PlacedCard>, callback: (Result<Unit>) -> Unit) { saves++; saved = callback }
+        var lastSnapshot = emptyList<com.dormpanel.app.dashboard.model.PlacedCard>()
+        override fun save(cards: List<com.dormpanel.app.dashboard.model.PlacedCard>, callback: (Result<Unit>) -> Unit) {
+            saves++
+            saved = callback
+            lastSnapshot = cards
+        }
         override fun saveRepair(cards: List<com.dormpanel.app.dashboard.model.PlacedCard>, quarantine: List<com.dormpanel.app.dashboard.persistence.QuarantinedCard>, callback: (Result<Unit>) -> Unit) {
             repairs += quarantine
             save(cards, callback)

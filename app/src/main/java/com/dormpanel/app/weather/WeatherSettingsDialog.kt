@@ -27,6 +27,13 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
     private val repository get() = weather.repository
     private val places get() = weather.places
 
+    private val dialogs = linkedSetOf<AlertDialog>()
+
+    fun dismiss() {
+        dialogs.toList().asReversed().forEach(AlertDialog::dismiss)
+        dialogs.clear()
+    }
+
     fun show() {
         val layout = column()
         val list = column()
@@ -47,7 +54,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         layout.addView(button("清除全部离线缓存") { confirmOfflineClear(null) })
         render()
         val stop = places.observe(::render)
-        dialog.setOnDismissListener { stop() }
+        dialog.onDismiss { stop() }
     }
 
     private fun service(updated: () -> Unit) {
@@ -119,7 +126,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         layout.addView(stats)
         layout.addView(button("刷新周期设置") { refreshSettings(::renderStats) })
         renderStats()
-        dialog.setOnDismissListener { stopTest?.invoke(); secret.text.clear() }
+        dialog.onDismiss { stopTest?.invoke(); secret.text.clear() }
     }
 
     private fun refreshSettings(updated: () -> Unit) {
@@ -194,7 +201,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
                 2 -> confirmOfflineClear(id)
                 3 -> confirm("删除地点「${place.name}」？") { places.delete(id) }
             }
-        }.setNegativeButton("取消", null).show()
+        }.setNegativeButton("取消", null).showOwned()
     }
 
     private fun search() {
@@ -220,7 +227,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         }))
         layout.addView(status)
         layout.addView(results)
-        dialog.setOnDismissListener { stop?.invoke() }
+        dialog.onDismiss { stop?.invoke() }
     }
 
     private fun selectCity(city: WeatherServices.City) {
@@ -269,7 +276,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
             dialog.dismiss()
             edit(null, previewId)
         }))
-        dialog.setOnDismissListener { cancel?.invoke() }
+        dialog.onDismiss { cancel?.invoke() }
     }
 
     private fun edit(place: WeatherPlace?, previewId: String? = null) {
@@ -323,7 +330,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         if (place.sources.size == 1) inspect(place, place.sources.single())
         else AlertDialog.Builder(context).setTitle("选择天气来源")
             .setItems(place.sources.map(::sourceName).toTypedArray()) { _, index -> inspect(place, place.sources[index]) }
-            .setNegativeButton("取消", null).show()
+            .setNegativeButton("取消", null).showOwned()
     }
 
     private fun inspect(place: WeatherPlace, source: WeatherSourceRef) {
@@ -383,7 +390,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
                 }
             }
         }
-        dialog.setOnDismissListener { extra?.close(); requests.values.forEach { it.close() } }
+        dialog.onDismiss { extra?.close(); requests.values.forEach { it.close() } }
     }
 
     private fun refreshText(result: WeatherRefreshResult, zone: ZoneId): String = when (result.status) {
@@ -490,7 +497,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         .setView(ScrollView(context).apply {
             isFillViewport = true
             addView(content.apply { setPadding(dp(20), dp(8), dp(20), dp(8)) })
-        }).setNegativeButton("关闭", null).show().also { it.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) }
+        }).setNegativeButton("关闭", null).showOwned().also { it.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) }
 
     private fun confirmOfflineClear(placeId: String?) {
         val scope = if (placeId == null) "全部" else "此地点的"
@@ -508,11 +515,23 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 }
             }
-            .setNegativeButton("取消", null).show()
+            .setNegativeButton("取消", null).showOwned()
     }
 
     private fun confirm(title: String, action: () -> Unit) = AlertDialog.Builder(context).setTitle(title)
-        .setPositiveButton("确认") { _, _ -> action() }.setNegativeButton("取消", null).show()
+        .setPositiveButton("确认") { _, _ -> action() }.setNegativeButton("取消", null).showOwned()
+
+    private fun AlertDialog.Builder.showOwned() = show().also {
+        dialogs += it
+        it.onDismiss {}
+    }
+
+    private fun AlertDialog.onDismiss(cleanup: () -> Unit) {
+        setOnDismissListener {
+            dialogs -= this
+            cleanup()
+        }
+    }
 
     private fun column() = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private fun row(vararg views: View) = LinearLayout(context).apply {

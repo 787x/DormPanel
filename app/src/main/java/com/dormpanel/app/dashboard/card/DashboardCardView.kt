@@ -24,6 +24,7 @@ abstract class DashboardCardView(context: Context, protected val appearance: App
     init { orientation = VERTICAL; gravity = Gravity.CENTER_VERTICAL; setPadding(20.dp, 12.dp, 20.dp, 12.dp) }
 
     fun bind(card: PlacedCard, scope: CardInteractionScope) {
+        val previous = if (isBound) this.card else null
         this.card = card
         tag = card.id
         interactions = scope
@@ -31,9 +32,11 @@ abstract class DashboardCardView(context: Context, protected val appearance: App
         setOnLongClickListener(if (scope.enabled) OnLongClickListener { scope.claimGesture(); secondaryAction(); true } else null)
         isClickable = scope.enabled
         isLongClickable = scope.enabled
+        onBound(previous)
         render()
         applyAppearance(appearance.state)
     }
+    protected open fun onBound(previous: PlacedCard?) = Unit
     protected open fun primaryAction() = Unit
     protected open fun secondaryAction() = Unit
     protected abstract fun render()

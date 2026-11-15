@@ -66,6 +66,7 @@ class HaEntityStore {
     private fun topology(entity: HaEntity?) = entity?.let { listOf(it.id, it.attributes.text("friendly_name"), it.attributes.text("device_class")) }
     var registryKnown = false
     var forecast = emptyList<WeatherForecast>()
+    var forecastType = "daily"
     fun snapshot(array: JSONArray) { invalidateDiscovery(); entities.clear(); array.objects().map(HaEntity::parse).forEach { entities[it.id] = it } }
     fun event(data: JSONObject) {
         val id = data.getString("entity_id")
@@ -127,17 +128,28 @@ class HaEntityStore {
         }
         val weather = entities[weatherId]?.takeIf { enabled(it) }
         val a = weather?.attributes ?: JSONObject()
-        val temperature = a.number("temperature")?.roundToInt() ?: 0
-        return DashboardData(WeatherState(weather?.value.orEmpty(), temperature, a.optInt("humidity"), forecast.firstOrNull()?.low ?: temperature,
-            forecast.firstOrNull()?.high ?: temperature, forecast,
-            if (weather == null || a.number("temperature") == null) Availability.UNAVAILABLE else availability(weather), a.text("temperature_unit")), sensors, lights)
+        val temperature = a.number("temperature")?.roundToInt()
+        val updatedAt = weather?.updatedAt?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+        val today = java.time.LocalDate.now()
+        val daily = forecast.takeIf { forecastType == "daily" }?.firstOrNull {
+            java.time.Instant.ofEpochMilli(it.timeEpochMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate() == today
+        }
+        val conditions = weather?.let {
+            com.dormpanel.app.weather.HaWeatherParser.conditions(a, a, it.value)
+        }
+        return DashboardData(WeatherState(weather?.value.orEmpty(), temperature,
+            a.number("humidity")?.takeIf { it in 0.0..100.0 }?.roundToInt(), daily?.low, daily?.high, forecast,
+            weather?.let(::availability) ?: Availability.UNAVAILABLE, a.text("temperature_unit"),
+            weather?.let(::name), updatedAt, forecastType, weather?.id, conditions), sensors, lights)
     }
     companion object {
-        fun forecast(result: JSONObject?, entity: String): List<WeatherForecast> = result?.optJSONObject("response")?.optJSONObject(entity)
+        fun forecast(result: JSONObject?, entity: String, type: String = "daily"): List<WeatherForecast> = result?.optJSONObject("response")?.optJSONObject(entity)
             ?.optJSONArray("forecast")?.objects().orEmpty().mapNotNull { item -> runCatching {
-                val high = item.number("temperature") ?: return@mapNotNull null
+                val temperature = item.number("temperature")?.roundToInt()
                 WeatherForecast(OffsetDateTime.parse(item.getString("datetime")).toInstant().toEpochMilli(), item.text("condition"),
-                    (item.number("templow") ?: high).roundToInt(), high.roundToInt())
+                    item.number("templow")?.roundToInt().takeIf { type == "daily" }, temperature.takeIf { type == "daily" },
+                    temperature.takeIf { type != "daily" }, item.opt("is_daytime") as? Boolean,
+                    item.number("precipitation_probability")?.takeIf { it in 0.0..100.0 })
             }.getOrNull() }
     }
 }

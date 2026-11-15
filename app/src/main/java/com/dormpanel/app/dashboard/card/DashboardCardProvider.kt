@@ -20,11 +20,21 @@ data class CardDisplayMetadata(
 
 class CardInteractionScope(
     val enabled: Boolean,
+    private val navigateWeather: (WeatherCardNavigation) -> Unit,
     private val onGestureClaimed: () -> Unit,
 ) {
+    constructor(enabled: Boolean, onGestureClaimed: () -> Unit) : this(enabled, {}, onGestureClaimed)
+
     /** Call when a delayed interaction such as long press takes ownership of the stream. */
     fun claimGesture() {
         if (enabled) onGestureClaimed()
+    }
+
+    internal fun openWeather(action: WeatherCardNavigation) {
+        if (enabled) {
+            claimGesture()
+            navigateWeather(action)
+        }
     }
 
     /** Marks controls such as sliders as owning their stream from ACTION_DOWN. */

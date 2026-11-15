@@ -14,7 +14,11 @@ import androidx.constraintlayout.widget.ConstraintLayout
 import com.dormpanel.app.R
 import com.dormpanel.app.dashboard.DashboardStateHolder
 import com.dormpanel.app.dashboard.DashboardUiState
-import com.dormpanel.app.dashboard.card.DashboardCardRegistry
+import com.dormpanel.app.dashboard.ConfigurationSaveState
+import com.dormpanel.app.dashboard.card.*
+import com.dormpanel.app.dashboard.catalog.CardAddCandidate
+import com.dormpanel.app.dashboard.layout.LayoutFailureReason
+import com.dormpanel.app.weather.WeatherSettingsDialog
 import com.dormpanel.app.dashboard.layout.LayoutMutationResult
 import com.dormpanel.app.ui.PageInteraction
 
@@ -33,6 +37,15 @@ class DashboardPageView @JvmOverloads constructor(
         }
     }
     private var picker: CardPickerDialog? = null
+    private var weatherPicker: WeatherSourcePicker? = null
+    private data class WeatherSave(
+        val picker: WeatherSourcePicker,
+        val action: WeatherCardNavigation,
+        val configuration: String,
+    )
+    private var weatherSave: WeatherSave? = null
+    private var weatherDetail: WeatherDetailDialog? = null
+    private var weatherSettings: WeatherSettingsDialog? = null
     private lateinit var gridView: DashboardGridView
     private lateinit var editToolbar: View
     private lateinit var addButton: Button
@@ -45,6 +58,7 @@ class DashboardPageView @JvmOverloads constructor(
     private var bound = false
     private var gestureClaimed = false
     private val stateListener: (DashboardUiState) -> Unit = ::render
+    private var renderedCards: List<com.dormpanel.app.dashboard.model.PlacedCard>? = null
 
     override fun onFinishInflate() {
         super.onFinishInflate()
@@ -70,6 +84,7 @@ class DashboardPageView @JvmOverloads constructor(
         appearance: AppearanceController,
         backend: com.dormpanel.app.ha.DashboardBackend? = null,
     ) {
+        renderedCards = null
         this.backend = backend
         this.stateHolder = stateHolder
         this.catalog = catalog
@@ -83,6 +98,7 @@ class DashboardPageView @JvmOverloads constructor(
             registry = registry,
             onEnterEditMode = ::enterEditMode,
             onGestureClaimed = this.onGestureClaimed,
+            onWeatherAction = ::openWeather,
             onOperationRejected = {
                 Toast.makeText(context, R.string.dashboard_operation_rejected, Toast.LENGTH_SHORT).show()
             },
@@ -105,6 +121,10 @@ class DashboardPageView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         backend?.ha?.removeStatusListener(haListener)
         picker?.dismiss(); picker = null
+        weatherSettings?.dismiss(); weatherSettings = null
+        weatherSave = null
+        weatherPicker?.dismiss(); weatherPicker = null
+        weatherDetail?.dismiss(); weatherDetail = null
         if (bound) stateHolder.removeListener(stateListener)
         super.onDetachedFromWindow()
     }
@@ -128,19 +148,48 @@ class DashboardPageView @JvmOverloads constructor(
     }
 
     private fun render(state: DashboardUiState) {
-        gridView.submitCards(state.cards)
-        message.visibility = if (!state.loaded || state.storageError) VISIBLE else GONE
+        if (renderedCards != state.cards) {
+            renderedCards = state.cards
+            gridView.submitCards(state.cards)
+        }
+        val storageError = state.storageError || ConfigurationSaveState.FAILED in state.configurationSaves.values
+        message.visibility = if (!state.loaded || storageError) VISIBLE else GONE
         message.setText(
             when {
                 !state.loaded -> R.string.dashboard_loading
-                state.storageError -> R.string.dashboard_storage_error
+                storageError -> R.string.dashboard_storage_error
                 else -> R.string.dashboard_loading
             },
         )
+        resolveWeatherSave(state)
+    }
+
+    private fun resolveWeatherSave(state: DashboardUiState) {
+        val pending = weatherSave ?: return
+        val card = state.cards.firstOrNull { it.id == pending.action.cardId }
+        if (card?.configurationJson != pending.configuration) {
+            weatherSave = null
+            pending.picker.showRejected()
+            return
+        }
+        when (state.configurationSaves[card.id]) {
+            ConfigurationSaveState.SAVING -> Unit
+            ConfigurationSaveState.FAILED -> {
+                weatherSave = null
+                pending.picker.showSaveState(inProgress = false, failed = true)
+            }
+            null -> {
+                weatherSave = null
+                val updated = WeatherCardConfiguration.decode(pending.configuration) as? WeatherCardConfiguration.Bound
+                pending.picker.dismiss()
+                openWeather(pending.action.copy(placeId = updated?.placeId, source = updated?.source))
+            }
+        }
     }
 
     private fun enterEditMode() {
         if (editing) return
+        weatherDetail?.dismiss(); weatherDetail = null
         editing = true
         editToolbar.visibility = VISIBLE
         editButton.visibility = GONE
@@ -161,12 +210,101 @@ class DashboardPageView @JvmOverloads constructor(
     private fun showAddCardDialog() {
         picker?.dismiss()
         picker = CardPickerDialog(context, catalog, appearance) { candidate ->
-            val result = stateHolder.add(candidate)
-            if (result is LayoutMutationResult.Failure) {
-                Toast.makeText(context, R.string.dashboard_no_space, Toast.LENGTH_SHORT).show()
+            if (candidate.providerType == "weather" && backend != null) {
+                selectWeather(WeatherCardConfiguration.Default) { weather, config ->
+                    if (addCard(candidate.copy(configurationJson = config))) {
+                        weather.dismiss()
+                        picker?.dismiss()
+                    } else weather.showRejected()
+                }
                 false
-            } else true
+            } else addCard(candidate)
         }.also { it.show() }
+    }
+
+    private fun addCard(candidate: CardAddCandidate): Boolean {
+        val result = stateHolder.add(candidate)
+        if (result !is LayoutMutationResult.Failure) return true
+        val message = if (result.reason == LayoutFailureReason.NO_SPACE) R.string.dashboard_no_space
+            else R.string.dashboard_operation_rejected
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        return false
+    }
+
+    private fun openWeather(action: WeatherCardNavigation) {
+        if (editing || !isAttachedToWindow) return
+        val backend = backend ?: return
+        val card = stateHolder.state.cards.firstOrNull { it.id == action.cardId && it.providerType == "weather" } ?: return
+        val configuration = WeatherCardConfiguration.decode(card.configurationJson)
+        val binding = configuration as? WeatherCardConfiguration.Bound
+        if (action.placeId != binding?.placeId || action.source != binding?.source) return
+        weatherDetail?.dismiss()
+        // The WEATHER_CENTER destination currently uses the expanded detail panel.
+        val more: (() -> Unit)? = if (action.destination == WeatherCardNavigation.Destination.QUICK_DETAIL) {
+            { openWeather(action.copy(destination = WeatherCardNavigation.Destination.WEATHER_CENTER)) }
+        } else null
+        weatherDetail = WeatherDetailDialog(context, appearance, backend, backend.weatherRepository, configuration,
+            changeBinding = { editWeather(action, configuration, card.configurationJson) },
+            more = more,
+            editDisplay = binding?.takeIf { it.canSave(backend.weatherRepository.places) }?.let {
+                { editWeather(action, configuration, card.configurationJson, editDisplay = true) }
+            },
+        ).also { dialog ->
+            dialog.setOnDismissListener { if (weatherDetail === dialog) weatherDetail = null }
+            dialog.show()
+        }
+    }
+
+    private fun editWeather(
+        action: WeatherCardNavigation,
+        initial: WeatherCardConfiguration,
+        initialJson: String,
+        editDisplay: Boolean = false,
+    ) {
+        val detail = weatherDetail
+        selectWeather(initial, editDisplay, onDismissed = {
+            val latest = stateHolder.state.cards.firstOrNull { it.id == action.cardId }
+            if (latest?.configurationJson != initialJson && weatherDetail === detail) detail?.dismiss()
+        }) { dialog, config ->
+            dialog.showSaveState(inProgress = true)
+            weatherSave = WeatherSave(dialog, action, config)
+            if (stateHolder.updateConfiguration(action.cardId, config) is LayoutMutationResult.Failure) {
+                weatherSave = null
+                dialog.showRejected()
+            } else resolveWeatherSave(stateHolder.state)
+        }
+    }
+
+    private fun selectWeather(
+        initial: WeatherCardConfiguration,
+        editDisplay: Boolean = false,
+        onDismissed: () -> Unit = {},
+        confirm: (WeatherSourcePicker, String) -> Unit,
+    ) {
+        val backend = backend ?: return
+        weatherPicker?.dismiss()
+        weatherPicker = WeatherSourcePicker(context, appearance, backend.weatherRepository,
+            haName = { source -> backend.weatherServices.haSources().firstOrNull { it.first == source }?.second },
+            initial = initial,
+            openSettings = {
+                weatherSettings?.dismiss()
+                weatherSettings = WeatherSettingsDialog(context, backend.weatherServices).also { it.show() }
+            },
+            editDisplay = editDisplay,
+            confirm = { dialog, configuration ->
+                when (configuration) {
+                    WeatherCardConfiguration.Default -> confirm(dialog, "{}")
+                    is WeatherCardConfiguration.Bound -> confirm(dialog, configuration.encode())
+                    WeatherCardConfiguration.Invalid -> dialog.showRejected()
+                }
+            }).also { dialog ->
+                dialog.setOnDismissListener {
+                    if (weatherPicker === dialog) weatherPicker = null
+                    if (weatherSave?.picker === dialog) weatherSave = null
+                    onDismissed()
+                }
+                dialog.show()
+            }
     }
 
     /** Future sliders/scrolling controls opt in by setting tag_claims_page_gesture=true. */

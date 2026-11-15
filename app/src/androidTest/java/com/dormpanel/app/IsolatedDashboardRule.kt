@@ -14,6 +14,7 @@ class IsolatedDashboardRule : ExternalResource() {
     private lateinit var scheduleDatabase: com.dormpanel.app.schedule.ScheduleDatabase
     private lateinit var productivityDatabase: com.dormpanel.app.productivity.ProductivityDatabase
     private lateinit var database: DashboardDatabase
+    var interceptNextSave: (((Result<Unit>) -> Unit) -> Unit)? = null
     private val executors = mutableListOf<ExecutorService>()
     override fun before() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -37,7 +38,14 @@ class IsolatedDashboardRule : ExternalResource() {
         DashboardStores.overrideFactory = {
             val executor = Executors.newSingleThreadExecutor()
             executors += executor
-            RoomDashboardStore(database, executor)
+            val store = RoomDashboardStore(database, executor)
+            object : DashboardStore by store {
+                override fun save(cards: List<com.dormpanel.app.dashboard.model.PlacedCard>, callback: (Result<Unit>) -> Unit) {
+                    val intercept = interceptNextSave
+                    interceptNextSave = null
+                    if (intercept == null) store.save(cards, callback) else intercept(callback)
+                }
+            }
         }
     }
     override fun after() {

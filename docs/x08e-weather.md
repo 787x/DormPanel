@@ -73,8 +73,20 @@
 
 HA 当前天气从现有实体存储读取，并跟随原连接的状态事件。同一实体和预报类型共享 `weather/subscribe_forecast`，订阅失败或无初始事件时回退 `weather.get_forecasts`。原版天气卡片保留 Preferred weather 及原全局投影，与新消费者共享同类型的 HA 预报订阅。和风配置及数据与 HA/Demo 后端模式独立。[HA 天气实体](https://developers.home-assistant.io/docs/core/entity/weather/) · [HA 预报订阅实现](https://github.com/home-assistant/core/blob/dev/homeassistant/components/weather/websocket_api.py)
 
-## PR2 / PR3 接入
+## 桌面天气卡片
+
+进入桌面编辑后，选择「添加卡片 → 天气」，从已保存的地点和来源中选择并确认。同一地点可以使用多个来源，同一来源也可以添加到多张卡片。地点尚未保存时，可通过选择器中的「天气服务与地点」收藏地点或关联 HA 天气实体。选择「默认天气」会继续显示 HA Preferred weather 或 Demo。
+
+短按或长按天气卡片可查看详情。长按面板提供「切换天气」「刷新天气」和进入展开详情的「查看天气」。切换只更新当前卡片的配置，保留位置和尺寸。选择器等待 Room 回执。保存失败时保留修改并提供「重试保存」。同一地点换来源沿用卡片别名，换地点时默认使用新地点名称。长按详情中的「卡片显示设置」可设置或清除别名，并选择自动、体感温度、湿度或风速。移除地点或来源后，卡片提示绑定已失效，可从详情重新选择。显式卡片继续使用其绑定的来源，即使 HA Preferred weather 已更改。
+
+卡片配置存放于原 Dashboard Room 的 `configurationJson`，沿用 `weather` 类型和卡片 ID。空对象表示默认天气。版本 1 保存 `version`、`placeId`、`source`，以及可选的 `displayName`、`metric`。来源引用沿用地点存储中的 `qw`、`qw-city` 和 `ha` 表示，写入时验证来源归属及地点是否已保存。
+
+显式卡片按尺寸订阅实时天气及一种预报。和风卡片使用每日预报并在卡片上提供官网链接。HA 卡片根据实体声明和预报状态优先使用每日预报，其次使用昼夜或逐小时预报。HA 预报按地点当地日期或预报时段筛选当前及未来条目。每日预报在当地午夜结束。小时预报缺少显式结束时间时按一小时计算，昼夜预报按当地时钟推算 12 小时，若下一昼夜时段更早开始，则采用该交接时间。空响应保留仍有效的旧条目并标记为空响应，最后一个可用时段结束时切换至可用的次级预报。卡片共用 Repository 的探测计划，常规探测间隔至少 15 分钟，单次最多 90 秒，恢复数据后自动切回。明确不支持的类型在能力变化或连接恢复后重新评估。详情额外订阅逐小时预报，HA 详情还接收可用的昼夜预报，和风详情还接收空气质量与预警。详情关闭时释放这些需求。和风详情提供官网链接，分别完整展示实时天气、预报、AQI 和预警响应中的归因，并将其中的网页地址显示为可点击链接。[和风天气注明来源](https://dev.qweather.com/docs/terms/attribution/)同一查询的卡片与详情共用刷新和缓存。日期和时间按所绑定地点的时区显示，默认天气以设备时区显示。天气图标和中文状态使用上游状态码，并为未知代码保留通用图标。[和风天气图标代码](https://icons.qweather.com/en/icons/) · [HA 天气状态](https://developers.home-assistant.io/docs/core/entity/weather/)
+
+## Repository 接入
 
 从 `DashboardBackend.weatherRepository` 获取同一个 Repository。通过 `places.places`、`places.get(id)`、`places.observe` 读取地点配置。卡片可保存地点 ID 与明确的 `WeatherSourceRef`，以便不同卡片独立选择来源。切换绑定时关闭旧订阅，并用新地点和来源调用 `observe`。地点或绑定移除会通知当前观察者。
 
 向 `observe(placeId, source, WeatherQuery(...), automatic, listener)` 传入所需数据块。默认只自动刷新核心块。长按详情或天气中心可以在可见时订阅专项数据，或对和风订阅调用 `refresh()`。返回值区分开始、合并、排队和限制原因，有明确限期时带最早请求时间。最终结果由快照监听器给出。快照的 `persistence` 字段独立标记离线保存状态，`network` 字段提供独立于数据新鲜度的和风网络状态。HA 页面直接订阅服务器已有数据。使用 `capabilities` 读默认请求范围的已知状态，使用各 `WeatherSnapshot` 显示请求特定范围的状态、数据、来源、上游时间、获取时间及过期时间。预警模型将当前有效、即将生效和撤销消息分别暴露。消费者应在界面移除、卡片换绑或详情关闭时调用 `close()`。这些 API 在主线程调用，网络与磁盘工作由内部执行器负责。
+
+点击动作通过 `WeatherCardNavigation` 向 Dashboard 页面传递卡片 ID、地点 ID 和 `WeatherSourceRef`。默认天气没有显式地点及来源参数。`QUICK_DETAIL` 打开快捷详情，`WEATHER_CENTER` 当前打开包含更多预报条目的详情。后续天气中心可在 Dashboard 页面接管 `WEATHER_CENTER` 目的地。

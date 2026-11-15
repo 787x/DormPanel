@@ -3,13 +3,21 @@ package com.dormpanel.app.data
 enum class Availability { AVAILABLE, UNAVAILABLE, STALE }
 
 /** Forecast timestamps and typed values can map directly from a future weather service. */
-data class WeatherForecast(val timeEpochMillis: Long, val condition: String, val low: Int, val high: Int)
+data class WeatherForecast(
+    val timeEpochMillis: Long, val condition: String, val low: Int?, val high: Int?,
+    val forecastTemperature: Int? = null, val isDaytime: Boolean? = null, val rainProbability: Double? = null,
+)
 
 data class WeatherState(
-    val condition: String, val temperature: Int, val humidity: Int,
-    val low: Int, val high: Int, val forecast: List<WeatherForecast>,
+    val condition: String, val temperature: Int?, val humidity: Int?,
+    val low: Int?, val high: Int?, val forecast: List<WeatherForecast>,
     val availability: Availability = Availability.AVAILABLE,
     val temperatureUnit: String = "°C",
+    val name: String? = null,
+    val updatedAt: java.time.Instant? = null,
+    val forecastType: String = "daily",
+    val entityId: String? = null,
+    val conditions: com.dormpanel.app.weather.WeatherConditions? = null,
 )
 
 data class SensorState(
@@ -68,7 +76,7 @@ class FakeDashboardDataSource : DashboardDataSource {
             WeatherForecast(1790035200000L, "Clear", 20, 26),
             WeatherForecast(1790121600000L, "Cloudy", 19, 25),
             WeatherForecast(1790208000000L, "Light rain", 18, 23),
-        )),
+        ), name = "Demo 天气"),
         listOf(
             SensorState("room", "Room climate", 23.6, 54),
             SensorState("desk", "Desk climate", 24.1, 51, Availability.STALE),
