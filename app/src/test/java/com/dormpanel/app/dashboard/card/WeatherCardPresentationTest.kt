@@ -107,6 +107,23 @@ class WeatherCardPresentationTest {
         assertEquals("认证或权限失败", weatherStatus(model.copy(state = WeatherState.UNAUTHORIZED)))
     }
 
+    @Test fun classicWeatherUsesEnglishConditionsWithSharedForecastDates() {
+        val date = instant.atZone(zone).toLocalDate().plusDays(1)
+        val forecast = snapshot(WeatherBlock.DAILY,
+            WeatherForecast(WeatherPeriod(date = date), WeatherConditions(code = "104", description = "阴")))
+        val modern = forecast.forecastLines(instant, 1, forCard = true).single()
+        val classic = forecast.forecastLines(instant, 1, forCard = true, classic = true).single()
+        assertEquals("明天", modern.label)
+        assertEquals("阴", modern.sky.description)
+        assertEquals(modern.label, classic.label)
+        assertEquals("Cloudy", classic.sky.description)
+        assertEquals("Sunny", sky("100", "晴", classic = true).description)
+        assertEquals("Partly cloudy", sky("partlycloudy", classic = true).description)
+        assertEquals("Light rain", sky("Light rain", classic = true).description)
+        assertEquals("Clear", sky("Clear", classic = true).description)
+        assertEquals("Heavy rain turning to sleet", sky("rainy", "Heavy rain turning to sleet", classic = true).description)
+    }
+
     @Test fun cardRangesKeepUnitsMissingSidesAndDecimals() {
         assertEquals("18–27°C", cardRange(18, 27, "°C"))
         assertEquals("-123.5–105.2°F", cardRange(-123.5, 105.2, "°F"))

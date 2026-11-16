@@ -21,6 +21,7 @@ import java.time.ZoneId
 
 internal data class WeatherCardReadings(
     val title: String,
+    val displayName: String?,
     val credit: String,
     val qweather: Boolean,
     val temperature: String,
@@ -39,6 +40,7 @@ internal abstract class BaseWeatherCardView(
     source: DashboardDataSource,
     repository: WeatherRepository?,
     private val clock: () -> Instant,
+    private val classic: Boolean = false,
 ) : DashboardCardView(context, appearance) {
     protected abstract val forecastColumns: Int
     protected abstract fun renderReadings(readings: WeatherCardReadings, metric: (WeatherCardMetric) -> String?)
@@ -98,7 +100,7 @@ internal abstract class BaseWeatherCardView(
         val today = prediction.today(now)?.conditions
         val binding = configuration as? WeatherCardConfiguration.Bound
         val invalid = configuration == WeatherCardConfiguration.Invalid || (binding != null && feed.invalid)
-        val weather = sky(conditions?.code ?: validLegacy?.condition, conditions?.description)
+        val weather = sky(conditions?.code ?: validLegacy?.condition, conditions?.description, classic = classic)
         val title = binding?.displayName ?: feed.place?.name ?: legacy?.name ?: "天气"
         val qweather = binding != null && binding.source !is WeatherSourceRef.HomeAssistant
         val credit = when {
@@ -136,8 +138,9 @@ internal abstract class BaseWeatherCardView(
         val slots = forecastColumns
         val lines = when {
             slots == 0 -> emptyList()
-            validLegacy != null -> validLegacy.lines(now, slots, forCard = true, zone = zone, includeToday = false)
-            else -> prediction.forecastLines(now, slots, includeToday = prediction?.query?.block != WeatherBlock.DAILY, forCard = true)
+            validLegacy != null -> validLegacy.lines(now, slots, forCard = true, zone = zone, includeToday = false, classic = classic)
+            else -> prediction.forecastLines(now, slots, includeToday = prediction?.query?.block != WeatherBlock.DAILY,
+                forCard = true, classic = classic)
         }
         if (card.size.rowSpan >= 2 && !invalid && binding?.source is WeatherSourceRef.HomeAssistant &&
             prediction == null && snapshot?.haForecastFeatures == 0) {
@@ -148,7 +151,7 @@ internal abstract class BaseWeatherCardView(
         } else if (slots > 0 && prediction?.state == WeatherState.FRESH && lines.isEmpty()) {
             status = "${status}  ·  暂无后续预报"
         }
-        renderReadings(WeatherCardReadings(title, credit, qweather, temperature, condition,
+        renderReadings(WeatherCardReadings(title, binding?.displayName, credit, qweather, temperature, condition,
             weather.symbol, range, status, binding?.metric, lines), ::metric)
 
         removeCallbacks(midnight)

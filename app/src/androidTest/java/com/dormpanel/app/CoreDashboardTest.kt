@@ -578,11 +578,11 @@ class CoreDashboardTest {
                     val views = descendants(grid).filterIsInstance<DashboardCardView>().associateBy { view -> view.tag }
                     assertTrue(views.getValue("a").contentDescription.contains("23°C"))
                     val missingReading = views.getValue("b").contentDescription.toString()
-                    assertTrue(missingReading.contains("北京, —, 雾, 最高 11°C"))
+                    assertTrue(missingReading.contains("Weather, 北京, —, Fog, 最高 11°C"))
                     assertFalse(missingReading.contains("湿度"))
                     assertTrue(views.getValue("c").contentDescription.contains("19°C"))
                     assertTrue(views.getValue("d").contentDescription.contains("23°C"))
-                    assertTrue(views.getValue("e").contentDescription.contains("夜间 19°C 雷暴"))
+                    assertTrue(views.getValue("e").contentDescription.contains("夜间 19°C Thunderstorm"))
                     assertEquals(6, started.size)
                     assertTrue((home to WeatherBlock.TWICE_DAILY) in started)
                     assertFalse((home to WeatherBlock.DAILY) in started)
@@ -975,7 +975,8 @@ class CoreDashboardTest {
                     val sample = demo.state.weather.copy(
                         name = "很长的地点名称用于验证天气卡片在最窄尺寸下仍然显示来源和状态",
                         temperature = -123, low = -123, high = 105, temperatureUnit = "°F",
-                        conditions = WeatherConditions(code = "rainy", description = "持续性暴雨转雨夹雪",
+                        conditions = WeatherConditions(code = "rainy",
+                            description = if (classic) "Heavy rain turning to sleet" else "持续性暴雨转雨夹雪",
                             temperature = (-123.5 - 32) / 1.8, sourceTemperatureUnit = "°F",
                             humidity = 95.0, feelsLike = -82.0, windSpeed = 123.4),
                         availability = com.dormpanel.app.data.Availability.STALE,
@@ -1022,6 +1023,7 @@ class CoreDashboardTest {
                                 val condition = text.single { it.text == sample.conditions?.description }
                                 val horizontal = size.rowSpan == 1 || size.columnSpan >= 3
                                 assertEquals("$size current orientation", horizontal, condition.left > temperature.left)
+                                assertEquals(size.rowSpan >= 2, text.any { it.text == "Weather" })
                                 assertEquals(size.rowSpan >= 2, text.any { it.text == "-123–105°F  ·  湿度 95%" })
                                 val columns = if (size.rowSpan == 3 && size.columnSpan >= 3) size.columnSpan - 1 else 0
                                 assertEquals(columns, text.count { it.text == "-123–105°F" })

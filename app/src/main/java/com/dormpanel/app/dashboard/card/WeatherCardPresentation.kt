@@ -14,7 +14,7 @@ internal data class WeatherSky(val symbol: WeatherSymbol, val description: Strin
 internal data class WeatherLine(val label: String, val sky: WeatherSky, val temperature: String?, val rain: String?,
     val secondaryDate: String? = null)
 
-internal fun sky(code: String?, description: String? = null, daytime: Boolean? = null): WeatherSky {
+internal fun sky(code: String?, description: String? = null, daytime: Boolean? = null, classic: Boolean = false): WeatherSky {
     val night = daytime == false
     val partly = if (night) WeatherSymbol.PARTLY_NIGHT else WeatherSymbol.PARTLY
     val value = when (code?.lowercase(Locale.ROOT)) {
@@ -35,7 +35,40 @@ internal fun sky(code: String?, description: String? = null, daytime: Boolean? =
         "windy", "windy-variant" -> WeatherSky(WeatherSymbol.WIND, "有风")
         else -> WeatherSky(WeatherSymbol.UNKNOWN, if (code.isNullOrBlank()) "天气未知" else "未知天气")
     }
-    return value.copy(description = description?.takeIf { it.isNotBlank() } ?: value.description)
+    val text = if (classic) classicCondition(code, description, value.symbol)
+        else description?.takeIf { it.isNotBlank() } ?: value.description
+    return value.copy(description = text)
+}
+
+private fun classicCondition(code: String?, description: String?, symbol: WeatherSymbol): String {
+    // Preserve English descriptions from the provider and the historical Demo text.
+    fun String.isEnglishText() = any { it in 'a'..'z' || it in 'A'..'Z' } && all { it.code < 128 }
+    description?.takeIf { it.isEnglishText() }?.let { return it }
+    code?.takeIf { it.firstOrNull()?.isUpperCase() == true && it.isEnglishText() }?.let { return it }
+    return when (code?.lowercase(Locale.ROOT)) {
+        "100", "sunny" -> "Sunny"
+        "clear" -> "Clear"
+        "305", "light rain" -> "Light rain"
+        "306" -> "Moderate rain"
+        "307", "pouring" -> "Heavy rain"
+        "313" -> "Freezing rain"
+        "hail" -> "Hail"
+        "404", "405", "406", "456", "457", "snowy-rainy" -> "Sleet"
+        "503", "504", "507", "508" -> "Dust"
+        else -> when (symbol) {
+            WeatherSymbol.SUN -> "Sunny"
+            WeatherSymbol.MOON -> "Clear night"
+            WeatherSymbol.PARTLY, WeatherSymbol.PARTLY_NIGHT -> "Partly cloudy"
+            WeatherSymbol.CLOUD -> "Cloudy"
+            WeatherSymbol.RAIN -> "Rain"
+            WeatherSymbol.SNOW -> "Snow"
+            WeatherSymbol.STORM -> "Thunderstorm"
+            WeatherSymbol.FOG -> "Fog"
+            WeatherSymbol.HAZE -> "Haze"
+            WeatherSymbol.WIND -> "Windy"
+            else -> "Unknown"
+        }
+    }
 }
 
 internal fun weatherSourceName(source: WeatherSourceRef) = when (source) {
@@ -87,7 +120,7 @@ internal fun WeatherSnapshot?.today(now: Instant): WeatherForecast? {
 }
 
 internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeToday: Boolean = true,
-    forCard: Boolean = false): List<WeatherLine> {
+    forCard: Boolean = false, classic: Boolean = false): List<WeatherLine> {
     val snapshot = this ?: return emptyList()
     val today = now.atZone(zone).toLocalDate()
     val homeAssistant = source is WeatherSourceRef.HomeAssistant
@@ -117,7 +150,7 @@ internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeTod
             if (query.block == WeatherBlock.DAILY) item.conditions.cardRange() else conditions.cardTemperature()
         } else if (query.block == WeatherBlock.DAILY) range(item.conditions.minTemperature, item.conditions.maxTemperature, "°")
         else conditions.temperature.value("°")
-        WeatherLine(label, sky(conditions.code, conditions.description, daytime), temperature,
+        WeatherLine(label, sky(conditions.code, conditions.description, daytime, classic), temperature,
             conditions.precipitationProbability.value("%")?.let { "降水 $it" },
             date?.takeIf { forCard && query.block == WeatherBlock.DAILY }?.let(::dateLabel))
     }.take(limit).toList()
@@ -180,7 +213,7 @@ internal fun WeatherConditions.metric(metric: WeatherCardMetric, temperatureUnit
 }
 
 internal fun LegacyWeather.lines(now: Instant, limit: Int, forCard: Boolean = false,
-    zone: ZoneId = ZoneId.systemDefault(), includeToday: Boolean = true): List<WeatherLine> {
+    zone: ZoneId = ZoneId.systemDefault(), includeToday: Boolean = true, classic: Boolean = false): List<WeatherLine> {
     val today = now.atZone(zone).toLocalDate()
     return forecast.asSequence().mapNotNull {
         val start = Instant.ofEpochMilli(it.timeEpochMillis)
@@ -200,7 +233,7 @@ internal fun LegacyWeather.lines(now: Instant, limit: Int, forCard: Boolean = fa
             }
         }
         if (!forCard && entityId != null && date < today) return@mapNotNull null
-        WeatherLine(label, sky(it.condition, daytime = it.isDaytime),
+        WeatherLine(label, sky(it.condition, daytime = it.isDaytime, classic = classic),
             when {
                 forecastType != "daily" -> it.forecastTemperature.value(temperatureUnit)
                 forCard -> cardRange(it.low, it.high, temperatureUnit)

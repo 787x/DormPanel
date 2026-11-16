@@ -17,7 +17,7 @@ internal class ClassicWeatherCardView(
     source: DashboardDataSource,
     repository: WeatherRepository? = null,
     clock: () -> Instant = Instant::now,
-) : BaseWeatherCardView(context, appearance, source, repository, clock) {
+) : BaseWeatherCardView(context, appearance, source, repository, clock, classic = true) {
     private val heading = classicLabel(DashboardTypography.MINOR, true).apply {
         minimumWidthTextSp = 14f
         ellipsize = TextUtils.TruncateAt.END
@@ -49,7 +49,7 @@ internal class ClassicWeatherCardView(
 
     override fun renderReadings(readings: WeatherCardReadings, metric: (WeatherCardMetric) -> String?) {
         val presentation = classicWeatherPresentation(card.size)
-        heading.text = readings.title
+        heading.text = readings.displayName ?: "Weather"
         heading.show(presentation.summary)
         val orientation = if (presentation.horizontal) HORIZONTAL else VERTICAL
         if (current.orientation != orientation) current.orientation = orientation
@@ -68,7 +68,7 @@ internal class ClassicWeatherCardView(
         bindAttribution(attribution, readings)
         status.text = readings.status.takeUnless { it == "最新" }.orEmpty()
         metadata.show(status.text.isNotEmpty() || attribution.visibility == VISIBLE)
-        describe(heading.text, temperature.text, condition.text,
+        describe(heading.text, readings.title.takeUnless { it == heading.text }.orEmpty(), temperature.text, condition.text,
             if (summary.visibility == VISIBLE) summary.text else "",
             status.text, forecastDescription(readings.forecast))
     }
