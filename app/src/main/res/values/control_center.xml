@@ -1,0 +1,35 @@
+<resources>
+    <string name="control_center_display">Display</string>
+    <string name="control_center_audio">Audio</string>
+    <string name="control_center_appearance">Appearance</string>
+    <string name="control_center_theme">Theme</string>
+    <string name="control_center_system_brightness">System brightness</string>
+    <string name="control_center_system_brightness_value">System brightness · %1$d%%</string>
+    <string name="control_center_read_only">Read only</string>
+    <string name="control_center_auto">Auto brightness</string>
+    <string name="control_center_auto_description">Automatic system brightness</string>
+    <string name="control_center_follow">Follow system</string>
+    <string name="control_center_grant">Grant access</string>
+    <string name="control_center_grant_description">Allow system brightness control</string>
+    <string name="control_center_grant_failed">System brightness access is unavailable on this device.</string>
+    <string name="control_center_brightness">DormPanel brightness</string>
+    <string name="control_center_brightness_value">DormPanel brightness · %1$d%%</string>
+    <string name="control_center_volume">Media volume</string>
+    <string name="control_center_volume_value">Media volume · %1$d%%</string>
+    <string name="control_center_awake">Keep screen awake</string>
+    <string name="control_center_blackout">Blackout screen</string>
+    <string name="control_center_mute">Mute</string>
+    <string name="control_center_unmute">Unmute</string>
+    <string name="control_center_mute_unavailable">Mute unavailable</string>
+    <string name="control_center_home">Home</string>
+    <string name="control_center_home_description">Return to DormPanel home</string>
+    <string name="control_center_not_configured">Not configured</string>
+    <string name="control_center_configured">Configured</string>
+    <string name="control_center_connecting">Connecting</string>
+    <string name="control_center_syncing">Syncing</string>
+    <string name="control_center_connected">Connected</string>
+    <string name="control_center_reconnecting">Reconnecting</string>
+    <string name="control_center_auth_error">Authentication error</string>
+    <string name="control_center_connection_error">Connection error</string>
+    <string name="return_home_up_here">Swipe up here to return home</string>
+</resources>

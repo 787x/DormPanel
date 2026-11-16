@@ -201,15 +201,15 @@ class CoreDashboardTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             waitForCards(scenario)
             navigate(swipe(.5f, .2f, .5f, .8f))
-            onView(withText("Light")).perform(ViewActions.click())
-            onView(withContentDescription("Card surface opacity")).perform(swipe(.9f, .5f, .05f, .5f))
-            onView(withText("Control Center")).check(matches(isDisplayed()))
+            onView(withText(R.string.theme_light)).perform(ViewActions.click())
+            onView(withContentDescription(R.string.card_opacity)).perform(swipe(.9f, .5f, .05f, .5f))
+            onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
             scenario.onActivity {
                 assertEquals(ThemeMode.LIGHT, model(it).appearance.state.themeMode)
                 assertTrue(model(it).appearance.state.cardSurfaceOpacity < .15f)
                 assertEquals(model(it).appearance.state, PreferencesAppearanceStore(it).read())
             }
-            navigate(swipe(.5f, .8f, .5f, .2f))
+            onView(withContentDescription(R.string.control_center_home_description)).perform(ViewActions.click())
             onView(card("Desk light")).check(matches(isDisplayed()))
             scenario.onActivity {
                 val root = it.findViewById<ViewGroup>(R.id.page_container)

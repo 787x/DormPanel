@@ -11,6 +11,10 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.GeneralLocation
+import androidx.test.espresso.action.GeneralSwipeAction
+import androidx.test.espresso.action.Press
+import androidx.test.espresso.action.Swipe
 import androidx.test.espresso.action.ViewActions.swipeDown
 import androidx.test.espresso.action.ViewActions.swipeLeft
 import androidx.test.espresso.action.ViewActions.swipeRight
@@ -166,23 +170,31 @@ class DeviceControlAndroidTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val prefs = context.getSharedPreferences("device_controls", Context.MODE_PRIVATE)
         val originalBrightness = if (prefs.contains("brightness")) prefs.getInt("brightness", 50) else null
+        val originalFollow = if (prefs.contains("follow_system")) prefs.getBoolean("follow_system", true) else null
         val originalAudible = if (prefs.contains("last_audible_volume")) prefs.getInt("last_audible_volume", 6) else null
         val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val originalVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val originalMuted = audio.isStreamMute(AudioManager.STREAM_MUSIC)
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 onView(withId(R.id.page_container)).perform(swipeDown())
-                onView(withText("Control Center")).check(matches(isDisplayed()))
-                onView(withText("Automatic system brightness")).check(matches(isDisplayed()))
-                onView(withText("Follow system")).check(matches(isDisplayed()))
-                onView(withContentDescription("System brightness")).check(matches(isDisplayed()))
-                onView(withContentDescription("DormPanel brightness")).check(matches(isDisplayed()))
-                onView(withText("Allow system brightness control")).check(matches(isDisplayed()))
+                onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_auto_description)).check(matches(isDisplayed()))
+                onView(withText(R.string.control_center_follow)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_system_brightness)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_brightness)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_grant_description)).check(matches(isDisplayed()))
                 scenario.onActivity { ViewModelProvider(it)[DashboardViewModel::class.java].deviceControls.setFollowSystem(false) }
-                onView(withContentDescription("DormPanel brightness")).perform(swipeRight())
-                onView(withText("Control Center")).check(matches(isDisplayed()))
-                onView(withContentDescription("Media volume")).perform(swipeLeft())
-                onView(withText("Control Center")).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_brightness)).perform(
+                    swipeRight(),
+                    GeneralSwipeAction(Swipe.FAST, GeneralLocation.CENTER,
+                        { view -> GeneralLocation.CENTER.calculateCoordinates(view).apply {
+                            this[1] -= 160 * view.resources.displayMetrics.density
+                        } }, Press.FINGER),
+                )
+                onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_volume)).perform(swipeLeft())
+                onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
                 scenario.onActivity {
                     audio.setStreamVolume(AudioManager.STREAM_MUSIC, 8, 0)
                 }
@@ -196,6 +208,10 @@ class DeviceControlAndroidTest {
             }
         } finally {
             audio.setStreamVolume(AudioManager.STREAM_MUSIC, originalVolume, 0)
+            audio.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                if (originalMuted) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE, 0)
+            if (originalFollow == null) prefs.edit().remove("follow_system").commit()
+            else prefs.edit().putBoolean("follow_system", originalFollow).commit()
             if (originalBrightness == null) prefs.edit().remove("brightness").commit()
             else prefs.edit().putInt("brightness", originalBrightness).commit()
             if (originalAudible == null) prefs.edit().remove("last_audible_volume").commit()

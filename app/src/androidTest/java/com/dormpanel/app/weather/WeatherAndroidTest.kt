@@ -41,7 +41,7 @@ class WeatherAndroidTest {
     @Test fun weatherEntryIsReachableFromControlCenter() {
         ActivityScenario.launch(MainActivity::class.java).use {
             onView(withId(R.id.page_container)).perform(swipeDown())
-            onView(withText("天气服务与地点")).perform(click())
+            onView(withContentDescription("天气服务与地点")).perform(click())
             onView(withText("搜索城市或区县")).check(matches(isDisplayed()))
             onView(withText("和风服务配置")).perform(click())
             onView(withText("测试已保存凭据")).check(matches(isDisplayed()))
@@ -85,7 +85,7 @@ class WeatherAndroidTest {
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             onView(withId(R.id.page_container)).perform(swipeDown())
-            onView(withText("天气服务与地点")).perform(click())
+            onView(withContentDescription("天气服务与地点")).perform(click())
             onView(withText("和风服务配置")).perform(click())
             input("专属 API Host", "abc.qweatherapi.com")
             edit("专属 API Host") {
@@ -161,7 +161,7 @@ class WeatherAndroidTest {
             }
             try {
                 onView(withId(R.id.page_container)).perform(swipeDown())
-                onView(withText("天气服务与地点")).perform(click())
+                onView(withContentDescription("天气服务与地点")).perform(click())
                 onView(withText("和风服务配置")).perform(click())
                 onView(withText("刷新周期设置")).perform(scrollTo(), click())
                 onView(withContentDescription("和风刷新模式")).perform(click())
@@ -202,7 +202,7 @@ class WeatherAndroidTest {
             }
             try {
                 onView(withId(R.id.page_container)).perform(swipeDown())
-                onView(withText("天气服务与地点")).perform(click())
+                onView(withContentDescription("天气服务与地点")).perform(click())
                 onView(withText("$title · Asia/Shanghai")).perform(scrollTo(), click())
                 onView(withText("检查天气数据")).perform(click())
                 scenario.onActivity { activity ->
