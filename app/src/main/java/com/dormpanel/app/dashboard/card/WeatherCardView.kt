@@ -1,45 +1,27 @@
 package com.dormpanel.app.dashboard.card
 
 import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Paint
 import android.util.TypedValue
 import android.view.Gravity
-import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.AppearanceState
 import com.dormpanel.app.appearance.PanelPalette
-import com.dormpanel.app.dashboard.model.PlacedCard
-import com.dormpanel.app.data.Availability
 import com.dormpanel.app.data.DashboardDataSource
-import com.dormpanel.app.weather.WeatherBlock
 import com.dormpanel.app.weather.WeatherRepository
-import com.dormpanel.app.weather.WeatherSourceRef
-import com.dormpanel.app.weather.WeatherState
 import java.time.Instant
-import java.time.ZoneId
 import kotlin.math.roundToInt
 
 @SuppressLint("ViewConstructor")
-class WeatherCardView internal constructor(
+internal class WeatherCardView(
     context: Context,
     appearance: AppearanceController,
     source: DashboardDataSource,
     repository: WeatherRepository? = null,
-    private val clock: () -> Instant = Instant::now,
-) : DashboardCardView(context, appearance) {
-    private val feed = WeatherCardFeed(source, repository, ::refresh)
-    private var configuration: WeatherCardConfiguration = WeatherCardConfiguration.Default
-    private var requested = false
-    private val midnight = Runnable { refresh() }
-    private val clockChanges = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) { refresh() }
-    }
+    clock: () -> Instant = Instant::now,
+) : BaseWeatherCardView(context, appearance, source, repository, clock) {
     private val heading = text(19f).apply {
         gravity = Gravity.START or Gravity.CENTER_VERTICAL
         minimumWidthTextSp = 17f
@@ -80,105 +62,22 @@ class WeatherCardView internal constructor(
         addView(forecast)
         addView(status)
     }
-    override fun onBound(previous: PlacedCard?) {
-        val configurationChanged = previous?.configurationJson != card.configurationJson
-        if (configurationChanged) configuration = WeatherCardConfiguration.decode(card.configurationJson)
-        if (isAttachedToWindow && (configurationChanged || interactions.enabled || !requested)) bindFeed()
-    }
+    override val forecastColumns get() = weatherPresentation(card.size).forecastColumns
 
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        ContextCompat.registerReceiver(context, clockChanges, IntentFilter().apply {
-            addAction(Intent.ACTION_TIME_CHANGED)
-            addAction(Intent.ACTION_TIMEZONE_CHANGED)
-            addAction(Intent.ACTION_SCREEN_ON)
-        }, ContextCompat.RECEIVER_NOT_EXPORTED)
-        if (isBound) { bindFeed(); refresh() }
-    }
+    override fun renderReadings(readings: WeatherCardReadings, metric: (WeatherCardMetric) -> String?) {
+        heading.text = readings.title
+        bindAttribution(attribution, readings)
+        temperature.text = readings.temperature
+        condition.text = readings.condition
+        icon.symbol = readings.symbol
+        status.text = readings.status
+        todayRange.setReading(readings.range)
 
-    override fun onDetachedFromWindow() {
-        context.unregisterReceiver(clockChanges)
-        removeCallbacks(midnight)
-        feed.close()
-        requested = false
-        super.onDetachedFromWindow()
-    }
-
-    private fun bindFeed() {
-        requested = true
-        feed.bind(configuration, setOf(WeatherBlock.CURRENT), compactForecast = card.size.rowSpan >= 2)
-    }
-
-    override fun primaryAction() = open(WeatherCardNavigation.Destination.WEATHER_CENTER)
-    override fun secondaryAction() = open(WeatherCardNavigation.Destination.QUICK_DETAIL)
-
-    private fun open(destination: WeatherCardNavigation.Destination) {
-        val binding = configuration as? WeatherCardConfiguration.Bound
-        interactions.openWeather(WeatherCardNavigation(card.id, binding?.placeId, binding?.source, destination))
-    }
-
-    override fun render() {
-        val presentation = weatherPresentation(card.size)
-        val now = clock()
-        val legacy = feed.legacy
-        val validLegacy = legacy?.takeIf { it.availability != Availability.UNAVAILABLE }
-        val snapshot = feed[WeatherBlock.CURRENT]
-        val conditions = snapshot.conditions() ?: validLegacy?.conditions
-        val prediction = feed.forecast
-        val zone = prediction?.zone ?: snapshot?.zone ?: feed.place?.zone ?: ZoneId.systemDefault()
-        val today = prediction.today(now)?.conditions
-        val binding = configuration as? WeatherCardConfiguration.Bound
-        val invalid = configuration == WeatherCardConfiguration.Invalid || (binding != null && feed.invalid)
-        val weather = sky(conditions?.code ?: validLegacy?.condition, conditions?.description)
-        heading.text = binding?.displayName ?: feed.place?.name ?: legacy?.name ?: "天气"
-        val qweather = binding != null && binding.source !is WeatherSourceRef.HomeAssistant
-        attribution.text = when {
-            qweather -> "和风天气"
-            binding != null -> "HA"
-            else -> ""
-        }
-        attribution.show(attribution.text.isNotEmpty())
-        val link = qweather && interactions.enabled
-        attribution.setOnClickListener(if (link) OnClickListener { attribution.openWeatherLink(QWEATHER_WEBSITE) } else null)
-        attribution.setOnLongClickListener(if (link) OnLongClickListener { performLongClick() } else null)
-        attribution.isLongClickable = link
-        attribution.isClickable = link
-        attribution.isFocusable = link
-        attribution.paintFlags = if (qweather) attribution.paintFlags or Paint.UNDERLINE_TEXT_FLAG
-            else attribution.paintFlags and Paint.UNDERLINE_TEXT_FLAG.inv()
-        attribution.contentDescription = if (qweather) "和风天气官网" else "Home Assistant"
-        temperature.text = conditions?.cardTemperature()
-            ?: validLegacy?.temperature.value(validLegacy?.temperatureUnit.orEmpty()) ?: "—"
-        condition.text = if (invalid) "请重新选择" else weather.description
-        icon.symbol = weather.symbol
-        status.text = when {
-            invalid -> "地点或来源已失效"
-            legacy != null -> legacy.status()
-            else -> weatherStatus(snapshot)
-        }
-        val unit = validLegacy?.temperatureUnit ?: conditions?.sourceTemperatureUnit ?: "°C"
-        val localDate = now.atZone(zone).toLocalDate()
-        val legacyToday = validLegacy?.takeIf { it.forecastType == "daily" }?.forecast?.firstOrNull {
-            Instant.ofEpochMilli(it.timeEpochMillis).atZone(zone).toLocalDate() == localDate
-        }
-        val providedRange = validLegacy?.takeIf { it.entityId == null || it.forecast.isEmpty() }
-        todayRange.setReading(when {
-            today != null -> today.cardRange()
-            legacyToday != null -> cardRange(legacyToday.low, legacyToday.high, unit)
-            else -> cardRange(providedRange?.low, providedRange?.high, unit) ?: conditions?.cardRange()
-        })
-
-        val preferred = binding?.metric ?: WeatherCardMetric.FEELS_LIKE
+        val preferred = readings.preferredMetric ?: WeatherCardMetric.FEELS_LIKE
         val details = (listOf(preferred, WeatherCardMetric.HUMIDITY, WeatherCardMetric.FEELS_LIKE) + WeatherCardMetric.entries)
             .distinct()
-            .mapNotNull { choice ->
-                when (choice) {
-                    WeatherCardMetric.HUMIDITY -> conditions?.metric(choice)
-                        ?: validLegacy?.humidity.value("%")?.let { "湿度 $it" }
-                    WeatherCardMetric.WIND -> conditions?.takeIf { it.windSpeed != null }?.metric(choice)
-                    else -> conditions?.metric(choice, unit)
-                }
-            }.take(if (preferred == WeatherCardMetric.WIND) 3 else 2)
+            .mapNotNull(metric)
+            .take(if (preferred == WeatherCardMetric.WIND) 3 else 2)
         metricLabels.forEachIndexed { index, view ->
             val value = details.getOrNull(index).orEmpty()
             if (view.text != value) {
@@ -187,31 +86,11 @@ class WeatherCardView internal constructor(
             }
         }
 
-        val slots = presentation.forecastColumns
-        val lines = when {
-            slots == 0 -> emptyList()
-            validLegacy != null -> validLegacy.lines(now, slots, forCard = true, zone = zone, includeToday = false)
-            else -> prediction.forecastLines(now, slots, includeToday = prediction?.query?.block != WeatherBlock.DAILY, forCard = true)
-        }
+        val lines = readings.forecast
         forecast.show(lines.isNotEmpty())
-        if (presentation.summary && !invalid && binding?.source is WeatherSourceRef.HomeAssistant &&
-            prediction == null && snapshot?.haForecastFeatures == 0) {
-            status.text = "${status.text}  ·  不支持预报"
-        } else if (presentation.summary && prediction != null && prediction.state != WeatherState.FRESH &&
-            (prediction.state != snapshot?.state || snapshot.data != null)) {
-            status.text = "${status.text}  ·  预报${weatherStatus(prediction)}"
-        } else if (presentation.summary && prediction?.state == WeatherState.FRESH && lines.isEmpty()) {
-            status.text = "${status.text}  ·  暂无后续预报"
-        }
         forecastCells.forEachIndexed { index, cell -> cell.bind(lines.getOrNull(index)) }
         describe(heading.text, temperature.text, condition.text, todayRange.text,
-            metricLabels.joinToString(" ") { it.text }, status.text,
-            lines.joinToString("；") { listOfNotNull(it.label, it.temperature, it.sky.description).joinToString(" ") })
-
-        removeCallbacks(midnight)
-        if (isAttachedToWindow && (prediction.entries().isNotEmpty() || !validLegacy?.forecast.isNullOrEmpty())) {
-            postDelayed(midnight, (nextWeatherMidnight(now, zone).toEpochMilli() - now.toEpochMilli()).coerceAtLeast(1))
-        }
+            metricLabels.joinToString(" ") { it.text }, status.text, forecastDescription(lines))
     }
 
     override fun applyAppearance(state: AppearanceState) {

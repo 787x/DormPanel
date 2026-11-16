@@ -57,6 +57,8 @@
     <string name="card_clock_description">Local device time and date</string>
     <string name="card_weather">Weather</string>
     <string name="card_weather_description">Sample weather and forecast</string>
+    <string name="card_weather_classic">Classic weather</string>
+    <string name="card_weather_classic_description">Temperature, humidity and text forecast</string>
     <string name="card_sensor">Room climate</string>
     <string name="card_sensor_description">Temperature and humidity sensor</string>
     <string name="card_light">Light</string>

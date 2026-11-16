@@ -37,6 +37,15 @@ fun weatherPresentation(size: CardSize) = WeatherPresentation(
     },
 )
 
+internal data class ClassicWeatherPresentation(val horizontal: Boolean, val temperatureSp: Float, val summary: Boolean, val forecastColumns: Int)
+
+internal fun classicWeatherPresentation(size: CardSize) = ClassicWeatherPresentation(
+    horizontal = size.rowSpan == 1 || size.columnSpan >= 3,
+    temperatureSp = if (size.rowSpan == 1) 36f else 72f,
+    summary = size.rowSpan >= 2,
+    forecastColumns = if (size.rowSpan >= 3 && size.columnSpan >= 3) size.columnSpan - 1 else 0,
+)
+
 data class SensorPresentation(val sideBySide: Boolean, val valueSp: Float, val valueLabels: Boolean, val status: Boolean)
 fun sensorPresentation(size: CardSize) = SensorPresentation(
     sideBySide = size.rowSpan == 1 || size.columnSpan >= 3,

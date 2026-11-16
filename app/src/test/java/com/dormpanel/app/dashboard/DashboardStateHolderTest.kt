@@ -148,7 +148,7 @@ class DashboardStateHolderTest {
         val store = DelayedStore()
         val holder = DashboardStateHolder(registry(), store, places)
         val left = com.dormpanel.app.dashboard.model.PlacedCard("left", "weather", 0, 0, CardSize(2, 1))
-        val right = left.copy(id = "right", column = 2)
+        val right = left.copy(id = "right", providerType = "weather_classic", column = 2)
         store.loaded(Result.success(StoredDashboard(true, 1, listOf(left, right))))
         val state = WeatherCardConfiguration.Bound("city", source)
         val initiating = state.copy(displayName = "第一次").encode()

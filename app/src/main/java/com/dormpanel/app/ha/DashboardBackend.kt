@@ -25,7 +25,8 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     private val tokens = HaTokenStore(context)
     val relayIdentity = HaRelayIdentityStore(context)
     var relayStatus: String = "Waiting for Home Assistant"
-    val ha = HaDashboardDataSource(scheduler, http, appearance, memory = LightControlMemory(PreferencesLightMemoryStore(context)))
+    val ha = HaDashboardDataSource(scheduler, http, appearance, memory = LightControlMemory(PreferencesLightMemoryStore(context)),
+        weatherCards = labels.weatherCandidates())
     private val demo = FakeDashboardDataSource()
     private val demoHome = DemoHomeSource(demo)
     val homeSelection = HomeSelection()

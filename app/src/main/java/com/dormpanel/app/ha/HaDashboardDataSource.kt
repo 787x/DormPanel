@@ -10,6 +10,8 @@ import org.json.JSONObject
 class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClient, private val appearance: AppearanceController,
     private val projector: HaProjector = DefaultHaProjector,
     private val memory: LightControlMemory = LightControlMemory(),
+    private val weatherCards: List<CardAddCandidate> =
+        weatherCandidates("Weather", "Preferred HA weather", "Classic weather", "Temperature and text forecast"),
 ) : DashboardDataSource, HomeControlSource {
     val store = HaEntityStore()
     var settings = HaConnectionSettings(); private set
@@ -251,7 +253,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private fun rebuildCatalog(data: DashboardData) {
         val next = buildList {
             add(CardAddCandidate("clock", CardCategory.INFORMATION, "clock", "Clock", "Local time", "{}"))
-            add(CardAddCandidate("weather", CardCategory.INFORMATION, "weather", "Weather", "Preferred HA weather", "{}"))
+            addAll(weatherCards)
             data.lights.values.forEach { add(CardAddCandidate(it.id, CardCategory.HOME, "light", it.name, "Home Assistant light", entityConfiguration("lightId", it.id))) }
             data.sensors.values.forEach { add(CardAddCandidate(it.id, CardCategory.HOME, "sensor", it.name, "Home Assistant climate", entityConfiguration("sensorId", it.id))) }
         }

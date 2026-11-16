@@ -4,9 +4,18 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
+import com.dormpanel.app.dashboard.model.CardSize
+import com.dormpanel.app.dashboard.model.PlacedCard
+import com.dormpanel.app.weather.WeatherSourceRef
+import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -125,5 +134,40 @@ class DashboardDaoTest {
 
         assertEquals(1L, dao.getState()?.revision)
         assertEquals(emptyList<DashboardCardEntity>(), dao.getCards())
+    }
+
+    @Test fun mixedWeatherLayoutSurvivesDiskDatabaseReopen() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "weather-layout-${UUID.randomUUID()}.db"
+        val config = WeatherCardConfiguration.Bound("city", WeatherSourceRef.QWeatherCity("101010100")).encode()
+        val cards = listOf(
+            PlacedCard("seed-weather", "weather", 4, 0, CardSize(4, 3)),
+            PlacedCard("classic", "weather_classic", 1, 3, CardSize(3, 3), config),
+        )
+        fun withStore(run: (RoomDashboardStore) -> Unit) {
+            val db = Room.databaseBuilder(context, DashboardDatabase::class.java, name).build()
+            val executor = Executors.newSingleThreadExecutor()
+            val store = RoomDashboardStore(db, executor)
+            try {
+                run(store)
+            } finally {
+                store.close()
+                try { assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS)) } finally { db.close() }
+            }
+        }
+        try {
+            withStore { store ->
+                val saved = CompletableFuture<Result<Unit>>()
+                store.save(cards) { saved.complete(it) }
+                saved.get(10, TimeUnit.SECONDS).getOrThrow()
+            }
+            withStore { store ->
+                val restored = CompletableFuture<Result<StoredDashboard>>()
+                store.load { restored.complete(it) }
+                val snapshot = restored.get(10, TimeUnit.SECONDS).getOrThrow()
+                assertEquals(cards.associateBy { it.id }, snapshot.cards.associateBy { it.id })
+                assertEquals(emptyList<QuarantinedCard>(), snapshot.quarantine)
+            }
+        } finally { context.deleteDatabase(name) }
     }
 }
