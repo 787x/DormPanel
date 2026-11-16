@@ -492,7 +492,7 @@ class CoreDashboardTest {
             override fun plan(source: WeatherSourceRef, zone: ZoneId, query: WeatherQuery, now: Instant): WeatherPlan {
                 val temp = values.getValue(source).toDouble()
                 val code = when (source) { home -> "lightning-rainy"; wuhan -> "100"; else -> "500" }
-                val current = WeatherConditions(code, temperature = temp, feelsLike = temp - 2)
+                val current = WeatherConditions(code, temperature = temp, feelsLike = temp - 2, humidity = 62.0)
                 val forecast = List(4) { day ->
                     WeatherForecast(WeatherPeriod(date = now.atZone(zone).toLocalDate().plusDays(day.toLong())),
                         WeatherConditions(code, minTemperature = temp - 3, maxTemperature = temp + 3))
@@ -584,6 +584,8 @@ class CoreDashboardTest {
                 }
                 onView(allOf(withText("和风天气"), isDescendantOfA(card("武汉副卡")))).check(matches(isDisplayed()))
                 onView(allOf(withText("HA"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
+                onView(allOf(withText("体感 17°C"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
+                onView(allOf(withText("湿度 62%"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
                 val instrumentation = InstrumentationRegistry.getInstrumentation()
                 val filter = android.content.IntentFilter(android.content.Intent.ACTION_VIEW).apply {
                     addDataScheme("https")
@@ -981,6 +983,10 @@ class CoreDashboardTest {
                             }
                             assertTrue(text.any { it.text == "-123–105°F" })
                             assertTrue(text.any { it.text == "离线 · 已过期" })
+                            if (size.rowSpan >= 2 && (size.columnSpan >= 3 || size.rowSpan == 3)) {
+                                assertTrue("$scale $size missing feels-like", text.any { it.text.startsWith("体感 ") })
+                                assertTrue("$scale $size missing humidity", text.any { it.text == "湿度 95%" })
+                            }
                             val forecastIcons = shown.filterIsInstance<com.dormpanel.app.dashboard.card.WeatherIconView>()
                             assertEquals(if (size.rowSpan > 1) 2 else 1, forecastIcons.size)
                             assertTrue(forecastIcons.all { it.width >= 20 && it.height >= 20 })

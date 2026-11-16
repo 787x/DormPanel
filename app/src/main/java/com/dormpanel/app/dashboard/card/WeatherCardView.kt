@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Paint
+import android.util.TypedValue
 import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -55,7 +56,8 @@ class WeatherCardView internal constructor(
     private val summary = row()
     private val todayRange = text(30f)
     private val metrics = row()
-    private val metricLabels = List(2) { text(25f, secondary = true) }
+    private val metricLabels = List(3) { text(25f, secondary = true) }
+    private val metricPaint = Paint()
     private val forecast = row()
     private val forecastCells = List(3) { ForecastCell() }
     private var measuredPolicy: LayoutKey? = null
@@ -167,7 +169,8 @@ class WeatherCardView internal constructor(
         })
 
         val preferred = binding?.metric ?: WeatherCardMetric.FEELS_LIKE
-        val details = (listOf(preferred, WeatherCardMetric.HUMIDITY) + WeatherCardMetric.entries).distinct()
+        val details = (listOf(preferred, WeatherCardMetric.HUMIDITY, WeatherCardMetric.FEELS_LIKE) + WeatherCardMetric.entries)
+            .distinct()
             .mapNotNull { choice ->
                 when (choice) {
                     WeatherCardMetric.HUMIDITY -> conditions?.metric(choice)
@@ -175,15 +178,14 @@ class WeatherCardView internal constructor(
                     WeatherCardMetric.WIND -> conditions?.takeIf { it.windSpeed != null }?.metric(choice)
                     else -> conditions?.metric(choice, unit)
                 }
+            }.take(if (preferred == WeatherCardMetric.WIND) 3 else 2)
+        metricLabels.forEachIndexed { index, view ->
+            val value = details.getOrNull(index).orEmpty()
+            if (view.text != value) {
+                view.text = value
+                requestLayout()
             }
-        val metricCount = when {
-            presentation.summary && (card.size.columnSpan >= 3 || card.size.rowSpan == 3) -> 2
-            presentation.summary || (card.size.columnSpan >= 3 && todayRange.text.isEmpty()) -> 1
-            else -> 0
         }
-        metricLabels.forEachIndexed { index, view -> view.setReading(details.getOrNull(index)?.takeIf { index < metricCount }) }
-        metrics.show(metricLabels.any { it.visibility == VISIBLE })
-        summary.show(todayRange.visibility == VISIBLE || metrics.visibility == VISIBLE)
 
         val slots = presentation.forecastColumns
         val lines = when {
@@ -226,9 +228,14 @@ class WeatherCardView internal constructor(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         if (isBound) {
-            val key = LayoutKey(MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.getSize(heightMeasureSpec),
+            val width = MeasureSpec.getSize(widthMeasureSpec)
+            val metricCount = visibleMetricCount(width)
+            metricLabels.forEachIndexed { index, label -> label.show(index < metricCount) }
+            metrics.show(metricCount > 0)
+            summary.show(todayRange.visibility == VISIBLE || metricCount > 0)
+            val key = LayoutKey(width, MeasureSpec.getSize(heightMeasureSpec),
                 resources.configuration.fontScale, resources.displayMetrics.density, card.size.columnSpan, card.size.rowSpan,
-                todayRange.visibility == VISIBLE, metricLabels.count { it.visibility == VISIBLE },
+                todayRange.visibility == VISIBLE, metricCount,
                 forecastCells.count { it.root.visibility == VISIBLE })
             if (measuredPolicy != key) {
                 measuredPolicy = key
@@ -236,6 +243,29 @@ class WeatherCardView internal constructor(
             }
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
+    private fun visibleMetricCount(width: Int): Int {
+        val count = metricLabels.count { it.text.isNotEmpty() }
+        if (count == 0) return 0
+        val hasRange = todayRange.visibility == VISIBLE
+        if (card.size.rowSpan == 1) return if (card.size.columnSpan >= 3 && !hasRange) 1 else 0
+
+        val rangeShares = if (hasRange && !weatherPresentation(card.size).stackedCurrent) 1 else 0
+        val available = width - 28.dp
+        val minimumPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 15f, resources.displayMetrics)
+        fun fits(label: TextView, slot: Int): Boolean {
+            metricPaint.set(label.paint)
+            metricPaint.textSize = minimumPx
+            val margin = if (label === todayRange) 0 else 6.dp
+            return metricPaint.measureText(label.text.toString()) + margin + 3 <= slot
+        }
+        for (visible in count downTo 2) {
+            val slot = available / (visible + rangeShares)
+            if ((rangeShares == 0 || fits(todayRange, slot)) &&
+                (0 until visible).all { fits(metricLabels[it], slot) }) return visible
+        }
+        return 1
     }
 
     private fun applyLayout(key: LayoutKey) {
@@ -264,8 +294,8 @@ class WeatherCardView internal constructor(
             LayoutParams.MATCH_PARENT).apply { marginEnd = 8.dp }
 
         summary.orientation = if (stacked) VERTICAL else HORIZONTAL
-        todayRange.layoutParams = weighted(!stacked, if (card.size.columnSpan == 3) 1.05f else 1f)
-        metrics.layoutParams = weighted(!stacked, if (!stacked && key.metrics > 1) 1.7f else 1f)
+        todayRange.layoutParams = weighted(!stacked, 1f)
+        metrics.layoutParams = weighted(!stacked, if (stacked) 1f else key.metrics.coerceAtLeast(1).toFloat())
         todayRange.maximumTextSp = when { compact -> 22f; tall -> 36f; else -> 30f }
         metricLabels.forEach { it.maximumTextSp = if (tall) 28f else 24f }
 
