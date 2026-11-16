@@ -11,6 +11,8 @@ import androidx.appcompat.app.AlertDialog
 import com.dormpanel.app.ha.BackendMode
 import com.dormpanel.app.ha.DashboardBackend
 import com.dormpanel.app.ha.HaEndpoint
+import com.dormpanel.app.ha.HaTokenRequired
+import com.dormpanel.app.ha.requireHaToken
 import com.dormpanel.app.schedule.WebDavClient
 import com.dormpanel.app.schedule.WebDavCredentials
 import com.dormpanel.app.schedule.WebDavSettings
@@ -30,10 +32,10 @@ internal class SettingsPortal(
     private val dav: WebDavSettings,
     private val sync: WebDavSyncController,
     localAddress: () -> String? = LanAddress::deviceAddress,
+    private val weather: WeatherServices = backend.weatherServices,
 ) {
     private val main = Handler(Looper.getMainLooper())
     private val phone = PhoneEntryUi(context, localAddress)
-    private val weather get() = backend.weatherServices
     private var review: AlertDialog? = null
     private var davConfirmation: AlertDialog? = null
     private var result: AlertDialog? = null
@@ -55,11 +57,10 @@ internal class SettingsPortal(
         val session = Session()
         val template = context.assets.open("settings-portal.html").bufferedReader().use { it.readText() }
         phone.start({ nonce, remaining ->
-            template.replace("{{NONCE}}", nonce).replace("{{MODEL}}",
-                session.model.toString().replace("<", "\\u003c"))
-                .replace("{{REMAINING}}", remaining.toString())
-        }, session::post) { values ->
-            if (values["_action"] == "cancel") toast("已取消扫码配置")
+            template.replace("{{NONCE}}", nonce).replace("{{REMAINING}}", remaining.toString())
+                .replace("{{MODEL}}", session.model.toString().replace("<", "\\u003c"))
+        }, session::post, onClosed = session::close) { values ->
+            if (values["_action"] == "cancel") toast("已关闭扫码会话，已确认的保存仍然有效")
             else session.plan?.let { review(it, onSaved) }
         }
     }
@@ -72,24 +73,44 @@ internal class SettingsPortal(
             done(try { apply(); null } catch (_: Exception) { "未能保存，请检查当前配置或存储后重试" })
         }
 
+    private data class PortalWeather(val config: QWeatherConfig?, val pendingKey: QWeatherSigningKey?, val public: JSONObject)
+    private data class WeatherStep(val revision: Int = 0, val kind: String = "", val state: String = "ready", val message: String = "")
+    private val credentialFields = setOf("qw_host", "qw_auth", "qw_kid", "qw_iss", "qw_sub", "qw_key", "qw_api")
+
     private inner class Session {
+        private val sessionGeneration = generation
+        private var stepDialog: AlertDialog? = null
+        private var stopTest: (() -> Unit)? = null
+        @Volatile private var step = WeatherStep()
+        private fun active() = sessionGeneration == generation && phone.isActive()
+
+        fun close() {
+            stepDialog?.dismiss()
+            stepDialog = null
+            stopTest?.invoke()
+            stopTest = null
+        }
+
         private val ha = backend.settings
         private val hasToken = backend.hasToken()
-        private val tokenStamp = weatherDigest(backend.testToken(""))
+        private val tokenStamp = backend.tokenStamp()
         private val oldAccount = dav.account()
         private val davPublic = dav.publicAccount()
-        private val qw = weather.settings.config
-        private val pendingKey = weather.settings.pendingKey
-        private val jwt = qw?.auth as? QWeatherAuth.Jwt
         private val refresh = weather.refreshPolicy
         private val limit = weather.budget.stats().limit
+        @Volatile private var snapshot = captureWeather()
         private val savedPlaces = weather.places.places.filterNot { weather.places.isTemporary(it.id) }.associateBy { it.id }
         private val cityIds = mutableSetOf<String>()
         private var searches = 0
         @Volatile var plan: List<Change>? = null
             private set
 
-        val model = JSONObject()
+        val model: JSONObject get() {
+            val status = stateJson()
+            return JSONObject(publicModel.toString()).put("qw", status.getJSONObject("qw")).put("step", status.getJSONObject("step"))
+        }
+
+        private val publicModel = JSONObject()
             .put("ha", JSONObject().put("url", ha.baseUrl.takeIf(String::isNotBlank)
                 ?.let { runCatching { HaEndpoint.parse(it).base }.getOrNull() }.orEmpty())
                 .put("configured", hasToken && ha.baseUrl.isNotEmpty())
@@ -97,15 +118,6 @@ internal class SettingsPortal(
                 .put("weather", ha.weatherEntity))
             .put("dav", JSONObject().put("url", runCatching { WebDavClient().url(davPublic.first).toString() }.getOrDefault(""))
                 .put("username", davPublic.second).put("configured", oldAccount != null))
-            .put("qw", JSONObject().put("host", weather.settings.host).put("status", weather.credentialStatus)
-                .put("auth", if (qw?.auth is QWeatherAuth.ApiKey) "api" else "jwt")
-                .put("budget", limit).put("mode", refresh.mode.name)
-                .put("modes", JSONObject(WeatherRefreshMode.entries.associate { it.name to it.title }))
-                .put("kid", jwt?.kid.orEmpty()).put("iss", jwt?.issuer.orEmpty()).put("sub", jwt?.subject.orEmpty())
-                .put("keys", JSONArray(listOfNotNull(
-                    jwt?.key?.let { publicKey("active", "当前凭据密钥", it) },
-                    pendingKey?.let { publicKey("pending", "待注册的新密钥", it) })))
-                .put("guide", QWEATHER_CREDENTIAL_GUIDE))
             .put("places", JSONArray(savedPlaces.values.map { place ->
                 val source = place.sources.filterIsInstance<WeatherSourceRef.QWeather>().firstOrNull()
                 JSONObject().put("id", place.id).put("name", place.name).put("zone", place.zone.id)
@@ -121,29 +133,135 @@ internal class SettingsPortal(
                     })
             }))
 
-        private fun publicKey(id: String, title: String, key: QWeatherSigningKey) = JSONObject()
-            .put("id", id).put("title", title).put("pem", key.publicPem).put("fingerprint", key.fingerprint)
+        private fun captureWeather(): PortalWeather {
+            val qw = weather.settings.config
+            val pendingKey = weather.settings.pendingKey
+            val jwt = qw?.auth as? QWeatherAuth.Jwt
+            val public = JSONObject().put("host", weather.settings.host).put("status", weather.credentialStatus)
+                .put("auth", if (qw?.auth is QWeatherAuth.ApiKey) "api" else "jwt")
+                .put("budget", limit).put("mode", refresh.mode.name)
+                .put("modes", JSONObject(WeatherRefreshMode.entries.associate { it.name to it.title }))
+                .put("kid", jwt?.kid.orEmpty()).put("iss", jwt?.issuer.orEmpty()).put("sub", jwt?.subject.orEmpty())
+                .put("keys", JSONArray(listOfNotNull(
+                    jwt?.key?.let { publicKey("active", "当前凭据密钥", it) },
+                    pendingKey?.let { publicKey("pending", "待注册的新密钥", it) })))
+                .put("guide", QWEATHER_CREDENTIAL_GUIDE)
+                .put("configured", qw != null)
+            return PortalWeather(qw, pendingKey, public)
+        }
+
+        private fun stateJson(): JSONObject {
+            val current = step
+            return JSONObject().put("qw", snapshot.public)
+                .put("step", JSONObject().put("revision", current.revision).put("kind", current.kind)
+                    .put("state", current.state).put("message", current.message))
+        }
+
+        private fun status() = SettingsEntryReply(200, stateJson().toString())
+
+        private fun beginStep(values: Map<String, String>, kind: String): SettingsEntryReply {
+            val current = step
+            validateRevision(values)
+            val generate = kind == "generate_key"
+            if (generate) {
+                expect(values.keys == setOf("_action", "_revision"), "", "生成请求格式无效")
+                expect(snapshot.pendingKey == null, "qw_key", "已有待注册密钥。更换待注册密钥请在 X08E 的和风服务配置中操作。")
+            } else {
+                expect(values.keys == credentialFields + setOf("_action", "_revision"), "", "和风凭据表单格式无效")
+            }
+            val previous = snapshot
+            val change = if (generate) null else prepare(values).single()
+            step = WeatherStep(current.revision, kind, "pending", "请在 X08E 上核对并确认")
+            main.post {
+                if (!active()) return@post
+                fun complete(state: String, message: String) {
+                    if (!active()) return
+                    snapshot = captureWeather()
+                    step = WeatherStep(current.revision + 1, kind, state, message)
+                }
+                fun cancel() = complete("cancelled", "已在 X08E 取消，可修改后重试")
+                fun generateKey() {
+                    if (!active()) return
+                    try {
+                        check(weather.settings.config === previous.config && weather.settings.pendingKey == null)
+                        weather.settings.generateKey()
+                        complete("success", "已生成待注册密钥。请复制公钥并到和风控制台创建 JWT 凭据。")
+                    } catch (_: Exception) {
+                        complete("failed", "无法生成待注册密钥，请检查设备上的天气设置")
+                    }
+                }
+                fun save(test: Boolean) {
+                    if (!active()) return
+                    checkNotNull(change).apply { error ->
+                        if (error != null) {
+                            complete("failed", error)
+                        } else if (test) {
+                            snapshot = captureWeather()
+                            step = WeatherStep(current.revision, kind, "testing", "凭据已保存，正在测试连接")
+                            stopTest = try {
+                                weather.test { message -> complete("success", "凭据已保存。$message") }
+                            } catch (_: Exception) {
+                                complete("success", "凭据已保存。连接测试无法启动，可在 X08E 重试。")
+                                null
+                            }
+                        } else complete("success", "凭据已保存，尚未测试。可继续搜索天气地点。")
+                    }
+                }
+                val dialog = AlertDialog.Builder(context)
+                    .setTitle(if (generate) "生成和风待注册密钥？" else "保存和风天气凭据？")
+                    .setMessage(change?.description ?: "手机请求生成 Ed25519 密钥。私钥保留在 X08E，门户会显示公钥。当前已启用的 JWT 凭据继续使用原密钥。")
+                    .setNegativeButton("取消") { _, _ -> cancel() }
+                    .setOnCancelListener { cancel() }
+                    .setPositiveButton(if (generate) "确认生成" else "保存并测试") { _, _ ->
+                        if (generate) generateKey() else save(test = true)
+                    }
+                if (!generate) dialog.setNeutralButton("仅保存") { _, _ -> save(test = false) }
+                stepDialog = dialog.create().also {
+                    it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    it.setOnDismissListener { _ -> if (stepDialog === it) stepDialog = null }
+                    it.show()
+                }
+            }
+            return status()
+        }
+
+        private fun validateRevision(values: Map<String, String>) {
+            expect(step.state !in setOf("pending", "testing"), "", "请先完成 X08E 上正在处理的请求")
+            expect(values["_revision"] == step.revision.toString(), "", "配置状态已变化，请先检查设备进度")
+        }
+
+        private fun publicKey(slot: String, title: String, key: QWeatherSigningKey) = JSONObject()
+            .put("id", key.spkiSha256).put("slot", slot).put("title", title).put("pem", key.publicPem).put("spkiSha256", key.spkiSha256).put("qWeatherPemSha256", key.qWeatherPemSha256)
 
         fun post(values: Map<String, String>): SettingsEntryReply = try {
             when (values["_action"]) {
                 "cancel" -> {
                     expect(values.keys == setOf("_action"), "", "取消请求格式无效")
-                    response("已取消，X08E 未保存此次填写内容。", terminal = true)
+                    response("已关闭扫码会话。此前已在 X08E 确认的保存仍然有效。", terminal = true)
                 }
+                "status" -> {
+                    expect(values.keys == setOf("_action"), "", "状态请求格式无效")
+                    status()
+                }
+                "generate_key", "save_weather" -> beginStep(values, values.getValue("_action"))
                 "search" -> search(values)
                 "submit" -> {
+                    validateRevision(values)
                     plan = prepare(values)
                     response("已发送待确认配置。请在 X08E 上核对并确认保存。", terminal = true)
                 }
                 else -> throw SettingsEntryError("", "操作无效")
             }
         } catch (error: SettingsEntryError) {
-            SettingsEntryReply(422, JSONObject().put("field", error.field).put("message", error.message).toString())
+            val details = if (values["_action"] == "search") stateJson() else JSONObject()
+            SettingsEntryReply(422, details.put("field", error.field).put("message", error.message).toString())
         }
 
         private fun search(values: Map<String, String>): SettingsEntryReply {
             val query = values["query"].orEmpty().trim()
             expect(values.keys == setOf("_action", "query") && query.length in 1..100, "query", "请输入 1–100 字的城市或区县名称")
+            expect(step.state !in setOf("pending", "testing"), "query", "请先完成 X08E 上正在处理的请求")
+            expect(snapshot.config != null, "query", "请先在和风分区保存凭据并在 X08E 确认，也可以用自有坐标添加地点")
             expect(searches < 12, "query", "本次会话的地点搜索次数已用完")
             searches++
             val latch = CountDownLatch(1)
@@ -151,7 +269,12 @@ internal class SettingsPortal(
             var error: String? = null
             var stop: (() -> Unit)? = null
             val start = Runnable {
+                if (!active()) {
+                    latch.countDown()
+                    return@Runnable
+                }
                 stop = weather.search(query) { cities, failure ->
+                    snapshot = captureWeather()
                     payload = cities.take(20)
                     error = failure
                     latch.countDown()
@@ -160,7 +283,7 @@ internal class SettingsPortal(
             main.post(start)
             try {
                 if (!latch.await(12, TimeUnit.SECONDS)) return response("搜索超时，请重试。", code = 504)
-                error?.let { return response(it, code = 422) }
+                error?.let { throw SettingsEntryError("query", it) }
                 val cities = payload.mapNotNull { city ->
                     val id = city.locationId?.takeIf { it.matches(Regex("[0-9]{9}")) } ?: return@mapNotNull null
                     cityIds += id
@@ -168,7 +291,7 @@ internal class SettingsPortal(
                 }
                 val first = payload.firstOrNull()?.attribution
                 val credit = first?.let { (it.sources + it.statements + it.licenses + listOfNotNull(it.link)).distinct().joinToString(" · ") }
-                return SettingsEntryReply(200, JSONObject().put("cities", JSONArray(cities))
+                return SettingsEntryReply(200, stateJson().put("cities", JSONArray(cities))
                     .put("credit", credit.orEmpty()).toString())
             } finally {
                 main.removeCallbacks(start)
@@ -180,10 +303,10 @@ internal class SettingsPortal(
             val groups = listOf(
                 listOf("ha_url", "ha_token", "ha_mode", "ha_weather"),
                 listOf("dav_url", "dav_username", "dav_password"),
-                listOf("qw_host", "qw_auth", "qw_kid", "qw_iss", "qw_sub", "qw_key", "qw_api"),
+                credentialFields,
                 listOf("mode", "budget"), listOf("places"),
             )
-            expect(values.keys.all { it == "_action" || groups.any { group -> it in group } }, "", "提交包含未知字段")
+            expect(values.keys.all { it in setOf("_action", "_revision") || groups.any { group -> it in group } }, "", "提交包含未知字段")
             fun includes(index: Int): Boolean {
                 val group = groups[index]
                 if (group.none(values::containsKey)) return false
@@ -195,6 +318,10 @@ internal class SettingsPortal(
                 expect(value.length <= max, name, "输入超出长度限制")
                 return value
             }
+            val weatherAtSubmission = snapshot
+            val qw = weatherAtSubmission.config
+            val pendingKey = weatherAtSubmission.pendingKey
+            val jwt = qw?.auth as? QWeatherAuth.Jwt
             return buildList {
                 if (includes(0)) {
                     val raw = field("ha_url", 2048)
@@ -208,12 +335,17 @@ internal class SettingsPortal(
                             BackendMode.HOME_ASSISTANT
                         else BackendMode.valueOf(selected)
                     }
-                    expect(mode != BackendMode.HOME_ASSISTANT || hasToken || token.isNotEmpty(), "ha_token", "请输入长期访问令牌")
+                    val currentUrl = runCatching { HaEndpoint.parse(ha.baseUrl).base }.getOrDefault("")
+                    try {
+                        requireHaToken(url, currentUrl, hasToken, token, required = mode == BackendMode.HOME_ASSISTANT)
+                    } catch (error: HaTokenRequired) {
+                        throw SettingsEntryError("ha_token", error.message.orEmpty())
+                    }
                     val entity = field("ha_weather", 255)
                     expect(entity.isEmpty() || entity.matches(Regex("weather\\.[a-z0-9_]+")), "ha_weather", "请输入 weather. 开头的实体 ID")
                     val candidate = ha.copy(mode = mode, baseUrl = url, weatherEntity = entity)
                     add(immediate("Home Assistant", "$url · ${if (mode == BackendMode.HOME_ASSISTANT) "连接 HA" else "演示模式"}\n令牌${if (token.isEmpty()) "保留原设置" else "已填写"} · 天气实体 ${entity.ifEmpty { "自动选择" }}") {
-                        check(backend.settings == ha && weatherDigest(backend.testToken("")) == tokenStamp)
+                        check(backend.settings == ha && backend.tokenStamp() == tokenStamp)
                         backend.save(candidate, token)
                     })
                 }
@@ -246,19 +378,16 @@ internal class SettingsPortal(
                             fun id(name: String) = field(name, 64).also {
                                 expect(it.matches(Regex("[A-Za-z0-9]{1,64}")), name, "请输入由字母和数字组成的标识")
                             }
-                            val key = when (field("qw_key", 8)) {
-                                "active" -> jwt?.key
-                                "pending" -> pendingKey
-                                else -> null
-                            }
-                            expect(key != null, "qw_key", "请先在 X08E 生成密钥或保存导入的私钥，再重新扫码")
+                            val keyId = field("qw_key", 64)
+                            val key = listOfNotNull(jwt?.key, pendingKey).firstOrNull { it.spkiSha256 == keyId }
+                            expect(key != null, "qw_key", "请申请生成密钥并在 X08E 确认，或在设备上导入旧私钥")
                             expect(api.isEmpty(), "qw_api", "JWT 模式不能提交 API Key")
                             QWeatherAuth.Jwt(id("qw_kid"), id("qw_iss"), id("qw_sub"), checkNotNull(key))
                         }
                         else -> throw SettingsEntryError("qw_auth", "请选择有效的认证方式")
                     }
                     val detail = if (auth is QWeatherAuth.Jwt)
-                        "JWT · kid ${auth.kid} · iss ${auth.issuer} · sub ${auth.subject}\n公钥 SHA-256 ${auth.key.fingerprint}"
+                        "JWT · kid ${auth.kid} · iss ${auth.issuer} · sub ${auth.subject}\n和风公钥文本 SHA-256 ${auth.key.qWeatherPemSha256}"
                     else "API Key ${if (api.isEmpty()) "保留原设置" else "已填写"}"
                     add(immediate("和风天气凭据", "$host\n$detail") {
                         check(weather.settings.config === qw && weather.settings.pendingKey === pendingKey)

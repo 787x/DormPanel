@@ -23,7 +23,19 @@ class HaTokenStore(context: Context) {
         }
     }
     fun read(): String? = prefs.getString("payload", null)?.let(cipher::decrypt)
-    fun write(token: String) { prefs.edit().putString("payload", cipher.encrypt(token)).apply() }
+    // Legacy credentials have no explicit binding. The backend adopts them for its existing URL.
+    internal fun readFor(endpoint: String): String? {
+        val bound = prefs.getString("endpoint", null)
+        if (endpoint.isBlank() || (bound != null && bound != endpoint)) return null
+        val token = read()?.takeIf(String::isNotBlank) ?: return null
+        if (bound == null && !prefs.edit().putString("endpoint", endpoint).commit()) return null
+        return token
+    }
+    fun write(token: String, endpoint: String? = null) {
+        check(prefs.edit().putString("payload", cipher.encrypt(token)).putString("endpoint", endpoint).commit()) {
+            "无法保存 HA 访问令牌"
+        }
+    }
     fun clear() {
         prefs.edit().clear().apply()
         runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias) }

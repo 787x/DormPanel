@@ -25,10 +25,22 @@ data class HaEndpoint(val base: String) {
             val url = value.toHttpUrl()
             require(url.username.isEmpty() && url.password.isEmpty() && url.query == null && url.fragment == null) { "Use a base URL without credentials, query or fragment" }
             var path = url.encodedPath.trimEnd('/')
-            for (suffix in listOf("/api/websocket", "/api/config", "/api")) if (path.endsWith(suffix)) { path = path.removeSuffix(suffix); break }
+            val suffixes = listOf("/api/websocket", "/api/config", "/api")
+            for (suffix in suffixes) if (path.endsWith(suffix)) { path = path.removeSuffix(suffix).trimEnd('/'); break }
+            require(suffixes.none(path::endsWith)) { "Enter an unambiguous Home Assistant base URL" }
             return HaEndpoint(url.newBuilder().encodedPath(path.ifEmpty { "/" }).build().toString().trimEnd('/'))
         }
     }
+}
+
+internal class HaTokenRequired(message: String) : IllegalArgumentException(message)
+
+internal fun requireHaToken(endpoint: String, savedEndpoint: String, hasToken: Boolean,
+                            entered: String, required: Boolean) {
+    if (entered.isNotBlank()) return
+    if (hasToken && endpoint != savedEndpoint)
+        throw HaTokenRequired("服务器地址已改变，请重新输入该服务器的访问令牌")
+    if (required && !hasToken) throw HaTokenRequired("请输入该服务器的访问令牌")
 }
 
 fun reconnectDelay(attempt: Int): Long = listOf(1000L, 2000L, 5000L, 10000L, 30000L)[attempt.coerceIn(0, 4)]

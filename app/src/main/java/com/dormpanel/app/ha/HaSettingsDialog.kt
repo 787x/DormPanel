@@ -97,10 +97,12 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
             test.setOnClickListener {
                 try {
                     val endpoint = HaEndpoint.parse(url.text.toString())
-                    val access = backend.testToken(token.text.toString())
-                    require(access.isNotBlank()) { "Enter an access token." }
+                    val access = backend.testToken(endpoint, token.text.toString())
                     call?.cancel(); diagnostic.text = context.getString(R.string.ha_testing)
                     call = backend.rest.test(endpoint, access) { if (!dismissed) diagnostic.text = it }
+                } catch (e: HaTokenRequired) {
+                    token.error = e.message
+                    diagnostic.text = e.message
                 } catch (_: Exception) { diagnostic.text = context.getString(R.string.ha_invalid) }
             }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -116,6 +118,9 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
                         keepAwake.selectedItem.toString(), startAfterBoot.selectedItem.toString()), token.text.toString())
                     backend.relayIdentity.setDisplayName(relayName.text.toString())
                     token.text.clear(); diagnostic.text = context.getString(R.string.ha_saved)
+                } catch (e: HaTokenRequired) {
+                    token.error = e.message
+                    diagnostic.text = e.message
                 } catch (_: Exception) { diagnostic.text = context.getString(R.string.ha_save_failed) }
             }
         }

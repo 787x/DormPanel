@@ -30,6 +30,7 @@ internal class TemporarySettingsEntryServer private constructor(
 ) : AutoCloseable {
     val url = "http://$address:${listener.localPort}/$token/"
     val port: Int get() = listener.localPort
+    fun isActive() = !closed.get() && now() < expiresAt
     private val closed = AtomicBoolean(false)
     private val submitting = AtomicBoolean(false)
     private val clients = Collections.synchronizedSet(mutableSetOf<Socket>())

@@ -70,7 +70,12 @@ internal class QWeatherSigningKey private constructor(private val privateKey: Ed
     // RFC 8410 SubjectPublicKeyInfo with absent parameters and a 32-byte Ed25519 public key.
     private val spki get() = Base64.getDecoder().decode("MCowBQYDK2VwAyEA") + privateKey.abyte
     val publicPem get() = "-----BEGIN PUBLIC KEY-----\n${Base64.getEncoder().encodeToString(spki)}\n-----END PUBLIC KEY-----\n"
-    val fingerprint get() = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(spki))
+    val spkiSha256 get() = sha256(spki)
+    // QWeather documents trimming the uploaded PEM text before hashing it. Export uses LF.
+    val qWeatherPemSha256 get() = sha256(publicPem.trim().toByteArray(Charsets.UTF_8))
+
+    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes)
+        .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
     fun encode(): String = Base64.getEncoder().encodeToString(privateKey.encoded)
     fun sign(input: ByteArray): ByteArray = EdDSAEngine(MessageDigest.getInstance("SHA-512")).run {

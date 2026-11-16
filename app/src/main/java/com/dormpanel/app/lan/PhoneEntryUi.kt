@@ -20,12 +20,14 @@ internal class PhoneEntryUi(private val context: Context, private val localAddre
     private val main = Handler(Looper.getMainLooper())
     private var session: TemporarySettingsEntryServer? = null
     private var qrDialog: AlertDialog? = null
+    private var onClosed: (() -> Unit)? = null
     private val owner = context as? LifecycleOwner
     private val lifecycle = object : DefaultLifecycleObserver {
         override fun onStop(owner: LifecycleOwner) = close()
     }
 
     fun start(page: (String, Long) -> String, onPost: (Map<String, String>) -> SettingsEntryReply,
+              onClosed: () -> Unit = {},
               onFinished: (Map<String, String>) -> Unit) {
         close()
         val address = localAddress()
@@ -53,6 +55,7 @@ internal class PhoneEntryUi(private val context: Context, private val localAddre
             return
         }
         session = started
+        this.onClosed = onClosed
         owner?.lifecycle?.addObserver(lifecycle)
 
         fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
@@ -67,7 +70,7 @@ internal class PhoneEntryUi(private val context: Context, private val localAddre
             addView(TextView(context).apply { text = "用手机扫码或在浏览器打开"; textSize = 22f })
             addView(TextView(context).apply { text = started.url; textSize = 17f; setTextIsSelectable(true) })
             addView(TextView(context).apply {
-                text = "仅在可信局域网使用。HTTP 会明文传输凭据。\n\n会话 10 分钟后关闭。手机发送后，请在 X08E 上核对并确认保存。"
+                text = "仅在可信局域网使用。HTTP 会明文传输凭据。\n\n会话 10 分钟后关闭。手机发起密钥生成或配置时，请在 X08E 上核对并确认。"
                 textSize = 17f
             })
         }
@@ -91,6 +94,8 @@ internal class PhoneEntryUi(private val context: Context, private val localAddre
         }, "settings-entry-qr").apply { isDaemon = true; start() }
     }
 
+    fun isActive() = session?.isActive() == true
+
     fun close() {
         owner?.lifecycle?.removeObserver(lifecycle)
         val active = session
@@ -99,6 +104,9 @@ internal class PhoneEntryUi(private val context: Context, private val localAddre
         val dialog = qrDialog
         qrDialog = null
         dialog?.dismiss()
+        val closed = onClosed
+        onClosed = null
+        closed?.invoke()
     }
 
     private fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()

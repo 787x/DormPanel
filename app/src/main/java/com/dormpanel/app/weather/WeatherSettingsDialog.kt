@@ -207,7 +207,9 @@ internal class WeatherSettingsDialog(
 
     private fun showPublicKey(key: QWeatherSigningKey) {
         val layout = column()
-        layout.addView(label("SHA-256（SPKI）\n${key.fingerprint}"))
+        layout.addView(label("和风公钥文本 SHA-256（PEM 去除首尾空白，内部为 LF）\n${key.qWeatherPemSha256}")
+            .apply { setTextIsSelectable(true) })
+        layout.addView(label("SPKI DER SHA-256\n${key.spkiSha256}").apply { setTextIsSelectable(true) })
         layout.addView(label(key.publicPem).apply { setTextIsSelectable(true) })
         layout.addView(button("复制完整公钥") {
             context.getSystemService(ClipboardManager::class.java)

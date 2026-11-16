@@ -32,8 +32,10 @@ internal class WeatherServices(
         if (settings.config == null) return settings.problem
         val stats = budget.stats()
         return when {
-            stats.lastError != null -> "最近请求失败，请检查凭据或测试连接 · ${stats.lastError}"
-            stats.lastSuccess != null -> "认证成功，最近请求 ${stats.lastSuccess}"
+            stats.lastRequestState == WeatherState.FRESH.name -> "已可用，最近成功请求 ${stats.lastSuccess}"
+            stats.lastRequestState == WeatherState.UNAUTHORIZED.name -> "认证失败或权限不足 · ${stats.lastError}"
+            stats.lastError != null -> "最近请求失败 · ${stats.lastError}"
+            stats.lastSuccess != null -> "已可用，最近成功请求 ${stats.lastSuccess}"
             else -> "凭据已保存，尚未测试"
         }
     }

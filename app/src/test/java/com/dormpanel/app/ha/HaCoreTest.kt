@@ -8,6 +8,26 @@ import org.junit.Test
 import javax.crypto.KeyGenerator
 
 class HaCoreTest {
+    @Test fun blankTokenOnlyReusesTheNormalizedBoundEndpoint() {
+        val saved = HaEndpoint.parse("http://ha.example/panel").base
+        for (equivalent in listOf("ha.example/panel/", "WS://HA.EXAMPLE:80/panel/api/websocket",
+            "http://ha.example/panel/api/config", "http://ha.example/panel//api/websocket")) {
+            requireHaToken(HaEndpoint.parse(equivalent).base, saved, true, "", required = true)
+        }
+        for (different in listOf("http://other.example/panel", "https://ha.example/panel",
+            "http://ha.example:8123/panel", "http://ha.example/other")) {
+            val endpoint = HaEndpoint.parse(different).base
+            for (required in listOf(true, false)) {
+                assertThrows(HaTokenRequired::class.java) {
+                    requireHaToken(endpoint, saved, true, " ", required)
+                }
+            }
+            requireHaToken(endpoint, saved, true, "new-fixture", required = true)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            HaEndpoint.parse("http://ha.example/panel/api/api/websocket")
+        }
+    }
     @Test fun endpoints() {
         assertEquals("http://home.local:8123", HaEndpoint.parse(" home.local:8123/api/ ").base)
         assertEquals("ws://home.local:8123/api/websocket", HaEndpoint.parse("http://home.local:8123/").websocket)

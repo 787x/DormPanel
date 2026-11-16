@@ -241,19 +241,19 @@ class WeatherAndroidTest {
             val pem = Base64.getEncoder().encodeToString(hex("302e020100300506032b657004220420$seed"))
             settings.save("test.qweatherapi.com", QWeatherAuth.Jwt("kid", "issuer", "subject", pem))
             assertFalse(prefs.getString("payload", "")!!.contains(pem))
-            val initial = settings.activeKey!!.fingerprint
+            val initial = settings.activeKey!!.spkiSha256
             val export = settings.activeKey!!.publicPem.lineSequence().elementAt(1)
             assertArrayEquals(hex("302a300506032b6570032100$public"), Base64.getDecoder().decode(export))
             settings.generateKey()
             val restored = QWeatherSettings(isolated, namespace)
-            assertEquals(initial, restored.activeKey!!.fingerprint)
+            assertEquals(initial, restored.activeKey!!.spkiSha256)
             val pending = restored.pendingKey!!
-            assertNotEquals(initial, pending.fingerprint)
+            assertNotEquals(initial, pending.spkiSha256)
             assertFalse(prefs.getString("pending_key", "")!!.contains(pending.encode()))
             restored.save("test.qweatherapi.com", QWeatherAuth.Jwt("newkid", "issuer", "subject", pending))
             val activated = QWeatherSettings(isolated, namespace)
             assertNull(activated.pendingKey)
-            assertEquals(pending.fingerprint, activated.activeKey!!.fingerprint)
+            assertEquals(pending.spkiSha256, activated.activeKey!!.spkiSha256)
             settings.save("test.qweatherapi.com", QWeatherAuth.Jwt("kid", "issuer", "subject", pem))
 
             val saved = QWeatherSettings(isolated, namespace).config!!

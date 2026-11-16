@@ -60,9 +60,12 @@ class HaAndroidTest {
         val saved = preferences.read()
         val tokenPrefs = context.getSharedPreferences("ha_credentials", Context.MODE_PRIVATE)
         val savedPayload = tokenPrefs.getString("payload", null)
+        val savedBinding = tokenPrefs.getString("endpoint", null)
         val appearancePrefs = com.dormpanel.app.appearance.PreferencesAppearanceStore(context)
         val savedAppearance = appearancePrefs.read()
         val server = MockWebServer()
+        val other = MockWebServer()
+        other.start()
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send("""{"type":"auth_required"}""") }
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -111,10 +114,44 @@ class HaAndroidTest {
                     HaSettingsDialog(it, backend.get()).show()
                 }
                 onView(withText("Home Assistant")).check(matches(isDisplayed()))
+                val urlField = onView(withContentDescription("Home Assistant base URL"))
+                urlField.perform(replaceText(other.url("/proxy").toString()), closeSoftKeyboard())
+                onView(withText("Test Connection")).perform(scrollTo(), click())
+                onView(withText("服务器地址已改变，请重新输入该服务器的访问令牌")).check(matches(isDisplayed()))
+                onView(withText("Save / Reconnect")).perform(click())
+                assertEquals(0, other.requestCount)
+                scenario.onActivity {
+                    val value = backend.get()
+                    assertTrue(value.ha.connected)
+                    assertEquals(HaEndpoint.parse(server.url("/").toString()).base, value.settings.baseUrl)
+                    assertEquals("instrumentation-token", HaTokenStore(context).read())
+                    try {
+                        value.save(value.settings.copy(mode = BackendMode.DEMO, baseUrl = other.url("/proxy").toString()), "")
+                        fail("DEMO accepted reuse at another endpoint")
+                    } catch (_: HaTokenRequired) {}
+                    assertEquals(BackendMode.HOME_ASSISTANT, value.settings.mode)
+                }
+
+                other.enqueue(MockResponse().setBody("{}"))
+                onView(withContentDescription("Access token (blank keeps saved token)"))
+                    .perform(scrollTo(), replaceText("replacement-token"), closeSoftKeyboard())
+                onView(withText("Test Connection")).perform(scrollTo(), click())
+                val diagnostic = other.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)
+                assertNotNull(diagnostic)
+                assertEquals("/proxy/api/config", diagnostic!!.path)
+                assertEquals("Bearer replacement-token", diagnostic.getHeader("Authorization"))
                 onView(withText("Close")).perform(click())
+                scenario.onActivity {
+                    val value = backend.get()
+                    value.save(value.settings.copy(mode = BackendMode.DEMO, baseUrl = other.url("/proxy").toString()), "replacement-token")
+                    assertEquals("replacement-token", HaTokenStore(context).read())
+                    assertNull(HaTokenStore(context).readFor(HaEndpoint.parse(server.url("/").toString()).base))
+                    assertEquals("replacement-token", value.testToken(HaEndpoint.parse(other.url("/proxy/api/config").toString()), ""))
+                }
+
             }
         } finally {
-            server.close(); preferences.write(saved); tokenPrefs.edit().putString("payload", savedPayload).commit(); appearancePrefs.write(savedAppearance)
+            other.close(); server.close(); preferences.write(saved); tokenPrefs.edit().putString("payload", savedPayload).putString("endpoint", savedBinding).commit(); appearancePrefs.write(savedAppearance)
         }
     }
 }
