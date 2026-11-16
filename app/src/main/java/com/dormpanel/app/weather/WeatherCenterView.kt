@@ -17,6 +17,7 @@ import com.dormpanel.app.data.DashboardData
 import com.dormpanel.app.ha.BackendMode
 import com.dormpanel.app.ha.DashboardBackend
 import com.dormpanel.app.ui.PageInteraction
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -28,6 +29,7 @@ internal class WeatherCenterView(
     initial: WeatherCenterSelection,
     private val back: () -> Unit,
     private val repository: WeatherRepository = backend.weatherRepository,
+    private val now: () -> Instant = Instant::now,
 ) : LinearLayout(context), PageInteraction, AppearanceAware {
     private enum class Section(val title: String) {
         FORECAST("天气预报"), RAIN("分钟降雨"), AIR("空气质量"), INDICES("生活指数"), SKY("日月天文"), HISTORY("历史天气"),
@@ -430,6 +432,7 @@ internal class WeatherCenterView(
     }
 
     private fun subscribe() {
+        removeCallbacks(astronomyMidnight)
         if (!active || !isAttachedToWindow) return
         if (selection.legacy) {
             if (!listeningLegacy) {
@@ -442,6 +445,11 @@ internal class WeatherCenterView(
         val source = selection.source ?: return
         val token = generation
         val desired = queries()
+        if (section == Section.SKY) {
+            val instant = now()
+            val midnight = instant.atZone(zone).toLocalDate().plusDays(1).atStartOfDay(zone).toInstant()
+            postDelayed(astronomyMidnight, Duration.between(instant, midnight).toMillis().coerceAtLeast(1))
+        }
         repository.closeSubscriptions((stops.keys - desired.toSet()).mapNotNull { query ->
             snapshots.remove(query)
             stops.remove(query)
@@ -484,6 +492,7 @@ internal class WeatherCenterView(
 
     private fun release(clear: Boolean = true, includePreviews: Boolean = true) {
         generation++
+        removeCallbacks(astronomyMidnight)
         cityScroll.removeCallbacks(updatePreviews)
         cityScroll.removeCallbacks(trimPreviews)
         val closing = stops.values.toList() + if (includePreviews) previews.values.toList() else emptyList()
@@ -545,7 +554,7 @@ internal class WeatherCenterView(
             return
         }
         if (block in astronomyBlocks) {
-            ui.renderAstronomy(box, block, centerAstronomy(block, daily, snapshot, Instant.now(), zone), zone)
+            ui.renderAstronomy(box, block, centerAstronomy(block, daily, snapshot, now(), zone), zone)
             return
         }
         ui.render(box, block, snapshot, range, zone, hourlyMetric, { hourlyMetric = it }) { builder ->
@@ -555,8 +564,15 @@ internal class WeatherCenterView(
     }
 
     private val astronomyBlocks = listOf(WeatherBlock.SUN, WeatherBlock.MOON)
+    // A stale Daily snapshot can stay identical across midnight while offline.
+    private val astronomyMidnight = Runnable {
+        if (active && isAttachedToWindow && section == Section.SKY) {
+            renderBlock(WeatherBlock.DAILY, daily)
+            subscribe()
+        }
+    }
     private fun needsAstronomy(block: WeatherBlock): Boolean {
-        val info = centerAstronomy(block, daily, null, Instant.now(), zone)
+        val info = centerAstronomy(block, daily, null, now(), zone)
         // Once started, a supplement stays useful while the daily request is retrying.
         return info.needsSupplement || (info.waitingForDaily && WeatherQuery(block) in stops)
     }

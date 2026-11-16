@@ -189,7 +189,9 @@ class WeatherCenterPresentationTest {
         assertEquals(daily.attribution, combined.forecastSnapshot?.attribution)
         assertEquals(moon.attribution, combined.supplementSnapshot?.attribution)
         for (bad in listOf(moon.copy(state = WeatherState.EMPTY, data = null), moon.copy(state = WeatherState.ERROR, data = null),
-            moon.copy(stale = true), moon.copy(source = WeatherSourceRef.QWeatherCity("101010100")),
+            moon.copy(source = WeatherSourceRef.QWeatherCity("101010100")),
+            moon.copy(zone = ZoneId.of("Asia/Tokyo")),
+            moon.copy(query = moon.query.copy(date = null), data = WeatherData.Astronomy(supplemental.copy(date = null))),
             moon.copy(query = moon.query.copy(date = date.minusDays(1))))) {
             val result = read(bad)
             assertEquals(known, result.daily)
@@ -202,8 +204,66 @@ class WeatherCenterPresentationTest {
         assertFalse(early.needsSupplement)
         assertNotNull(early.supplement)
         val expiredForecast = centerAstronomy(WeatherBlock.MOON, daily.copy(stale = true), moon, now, shanghai)
-        assertNull(expiredForecast.daily)
-        assertEquals(supplemental, expiredForecast.supplement)
+        assertEquals(known, expiredForecast.daily)
+        assertEquals(setOf(set), expiredForecast.supplement?.localEvents?.keys)
+        assertTrue(expiredForecast.forecastSnapshot!!.stale)
+        assertFalse(expiredForecast.supplementSnapshot!!.stale)
+
+        val expiredSupplement = read(moon.copy(expiresAt = now, network = WeatherNetworkStatus.OFFLINE))
+        assertEquals(known, expiredSupplement.daily)
+        assertEquals(setOf(set), expiredSupplement.supplement?.localEvents?.keys)
+        assertEquals(WeatherState.STALE, expiredSupplement.supplementSnapshot?.state)
+        assertEquals(moon.attribution, expiredSupplement.supplementSnapshot?.attribution)
+        assertFalse(expiredSupplement.forecastSnapshot!!.stale)
+    }
+
+    @Test fun dailyAstronomyRetainsSameDayCacheDuringOfflineRefreshAndFailure() {
+        val date = LocalDate.parse("2026-11-15")
+        val now = date.atTime(18, 0).atZone(shanghai).toInstant()
+        val sunrise = AstronomicalEvent.SUNRISE
+        val sunset = AstronomicalEvent.SUNSET
+        val data = WeatherAstronomy(date, mapOf(sunrise to date.atTime(6, 5).atZone(shanghai).toInstant(),
+            sunset to date.atTime(17, 55).atZone(shanghai).toInstant()), null, emptyList())
+        val daily = WeatherSnapshot(WeatherSourceRef.QWeatherCity("101200101"), shanghai, WeatherQuery(WeatherBlock.DAILY),
+            WeatherState.FRESH, WeatherData.Forecast(listOf(WeatherForecast(WeatherPeriod(date = date), WeatherConditions(), astronomy = data))),
+            fetchedAt = now.minusSeconds(3600), attribution = WeatherAttribution(sources = listOf("每日来源")))
+        val inputs = listOf(daily, daily.copy(stale = true, state = WeatherState.STALE, network = WeatherNetworkStatus.OFFLINE),
+            daily.copy(stale = true, state = WeatherState.LOADING, refreshing = true),
+            daily.copy(stale = true, state = WeatherState.ERROR, error = "更新失败"))
+        inputs.forEach { snapshot ->
+            val result = centerAstronomy(WeatherBlock.SUN, snapshot, null, now, shanghai)
+            assertEquals(data, result.daily)
+            assertEquals(snapshot, result.forecastSnapshot)
+            assertFalse(result.needsSupplement)
+            assertTrue(result.missing.isEmpty())
+        }
+    }
+
+    @Test fun astronomySelectsTheLocalForecastDateAndAllowsEventsAcrossMidnight() {
+        val date = LocalDate.parse("2026-11-15")
+        val now = Instant.parse("2026-11-15T16:10:00Z")
+        val tokyo = ZoneId.of("Asia/Tokyo")
+        val utc = ZoneId.of("UTC")
+        val source = WeatherSourceRef.QWeatherCity("101200101")
+        val old = WeatherAstronomy(date, emptyMap(), "昨日月相", emptyList())
+        val current = WeatherAstronomy(date.plusDays(1), mapOf(
+            AstronomicalEvent.MOONRISE to Instant.parse("2026-11-15T14:40:00Z")), "今日月相", emptyList())
+        val rows = listOf(old, current).map {
+            WeatherForecast(WeatherPeriod(date = it.date), WeatherConditions(), astronomy = it)
+        }
+        val daily = WeatherSnapshot(source, tokyo, WeatherQuery(WeatherBlock.DAILY), WeatherState.STALE,
+            WeatherData.Forecast(rows), stale = true)
+        val tokyoToday = centerAstronomy(WeatherBlock.MOON, daily, null, now, tokyo)
+        assertEquals(date.plusDays(1), tokyoToday.date)
+        assertEquals(current, tokyoToday.daily)
+        assertEquals(date, current.events.getValue(AstronomicalEvent.MOONRISE).atZone(tokyo).toLocalDate())
+        assertEquals(old, centerAstronomy(WeatherBlock.MOON, daily.copy(zone = utc), null, now, utc).daily)
+        assertNull(centerAstronomy(WeatherBlock.MOON, daily, null, now, utc).daily)
+        assertNull(centerAstronomy(WeatherBlock.MOON, daily.copy(data = WeatherData.Forecast(rows.take(1))),
+            null, now, tokyo).daily)
+        val undated = rows.last().copy(period = WeatherPeriod(), astronomy = current.copy(date = null))
+        assertNull(centerAstronomy(WeatherBlock.MOON, daily.copy(data = WeatherData.Forecast(listOf(undated))),
+            null, now, tokyo).daily)
     }
 
     private fun forecast(time: String, temperature: Double?) =

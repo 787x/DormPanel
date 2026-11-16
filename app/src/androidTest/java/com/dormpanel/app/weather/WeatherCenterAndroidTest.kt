@@ -117,6 +117,96 @@ class WeatherCenterAndroidTest {
         }
     }
 
+    @Test fun offlineAstronomyShowsSameDayCacheAndUpdatesAtLocalMidnight() {
+        val zone = ZoneId.of("Asia/Shanghai")
+        val today = java.time.LocalDate.of(2026, 11, 15)
+        val tomorrow = today.plusDays(1)
+        val midnight = tomorrow.atStartOfDay(zone).toInstant()
+        val source = WeatherSourceRef.QWeatherCity("101200101")
+        val places = WeatherPlaceStore("[]") { true }
+        places.save(WeatherPlace("wuhan", "武汉", zone, listOf(source)))
+        val rise = AstronomicalEvent.MOONRISE
+        val set = AstronomicalEvent.MOONSET
+        val forecast = WeatherData.Forecast(listOf(
+            WeatherForecast(WeatherPeriod(date = today), WeatherConditions(), astronomy =
+                WeatherAstronomy(today, emptyMap(), "当晚月相", emptyList(), mapOf(rise to today.atTime(17, 10)))),
+            WeatherForecast(WeatherPeriod(date = tomorrow), WeatherConditions(), astronomy =
+                WeatherAstronomy(tomorrow, emptyMap(), "次日月相", emptyList(),
+                    mapOf(rise to tomorrow.atTime(18, 10), set to tomorrow.atTime(7, 10)))),
+        ))
+        val moon = WeatherData.Astronomy(WeatherAstronomy(today, emptyMap(), null, emptyList(),
+            mapOf(set to tomorrow.atTime(6, 5))))
+        var starts = 0
+        val provider = object : WeatherProvider {
+            override fun plan(source: WeatherSourceRef, zone: ZoneId, query: WeatherQuery, now: Instant): WeatherPlan {
+                val dated = if (query.block == WeatherBlock.MOON) query.copy(date = now.atZone(zone).toLocalDate()) else query
+                val key = when {
+                    dated.block == WeatherBlock.DAILY -> "daily"
+                    dated.block == WeatherBlock.MOON && dated.date == today -> "moon"
+                    else -> dated.toString()
+                }
+                return WeatherPlan(key, "wuhan", dated, { _, _ ->
+                    ParsedWeather(when (key) { "daily" -> forecast; "moon" -> moon; else -> null },
+                        WeatherAttribution(sources = listOf(if (key == "moon") "月亮缓存来源" else "每日缓存来源")))
+                }, {
+                    starts++
+                    {}
+                })
+            }
+        }
+        val cache = object : WeatherCache {
+            override fun read(group: String, key: String, done: (WeatherCacheRecord?) -> Unit) =
+                done(when (key) {
+                    "daily" -> WeatherCacheRecord(JSONObject(), midnight.minusSeconds(3 * 3600))
+                    "moon" -> WeatherCacheRecord(JSONObject(), midnight.minusSeconds(25 * 3600))
+                    else -> null
+                })
+            override fun write(group: String, key: String, record: WeatherCacheRecord, done: (Boolean) -> Unit) = done(true)
+            override fun clear(groups: Set<String>?, done: (Boolean) -> Unit) = done(true)
+        }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var view: WeatherCenterView
+            lateinit var repository: WeatherRepository
+            var boundaryAt: Long? = null
+            fun now(): Instant = boundaryAt?.let { midnight.plusMillis(android.os.SystemClock.elapsedRealtime() - it) }
+                ?: midnight.minusSeconds(60)
+            scenario.onActivity { activity ->
+                val vm = ViewModelProvider(activity)[DashboardViewModel::class.java]
+                repository = WeatherRepository(places, { provider }, cache, MainHaScheduler(), ::now).apply { onNetworkLost() }
+                view = WeatherCenterView(activity, vm.dataSource, vm.appearance, WeatherCenterSelection("wuhan", source),
+                    {}, repository, ::now)
+                activity.findViewById<FrameLayout>(R.id.page_container).apply {
+                    removeAllViews()
+                    addView(view, FrameLayout.LayoutParams(-1, -1))
+                }
+            }
+            try {
+                scenario.onActivity { boundaryAt = android.os.SystemClock.elapsedRealtime() + 7000 }
+                onView(withText("日月天文")).perform(scrollTo(), click())
+                onView(withText(containsString("当晚月相"))).perform(scrollTo()).check(matches(isDisplayed()))
+                onView(withText("月落  06:05")).perform(scrollTo()).check(matches(isDisplayed()))
+                onView(withText("月亮缓存来源")).perform(scrollTo()).check(matches(isDisplayed()))
+                onView(allOf(withText(containsString("离线 · 已过期")), hasSibling(withText("月亮缓存来源"))))
+                    .perform(scrollTo()).check(matches(isDisplayed()))
+                val after = onView(withText(containsString("次日月相")))
+                val deadline = android.os.SystemClock.elapsedRealtime() + 8500
+                while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                    if (runCatching { after.check(matches(withEffectiveVisibility(Visibility.VISIBLE))) }.isSuccess) break
+                    android.os.SystemClock.sleep(150)
+                }
+                after.perform(scrollTo()).check(matches(isDisplayed()))
+                onView(withText(containsString("当晚月相"))).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                onView(withText("月落  06:05")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                assertEquals(0, starts)
+            } finally {
+                scenario.onActivity {
+                    (view.parent as? ViewGroup)?.removeView(view)
+                    repository.close()
+                }
+            }
+        }
+    }
+
     @Test fun fakeWeatherRendersForecastAndOnlyOpensSpecialtyDemandOnSelection() {
         val places = WeatherPlaceStore("[]") { true }
         val zone = ZoneId.of("Asia/Shanghai")

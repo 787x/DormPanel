@@ -198,25 +198,34 @@ internal fun centerAstronomy(
             hourlyPhases = hourlyPhases.takeIf { moon && exclude?.phaseName() == null }.orEmpty())
             .takeIf { it.events.isNotEmpty() || it.localEvents.isNotEmpty() || it.phaseName() != null }
     }
-    fun WeatherSnapshot.isCurrent() = !stale && expiresAt?.let { now < it } != false
-    val currentDaily = daily?.takeIf { it.isCurrent() }
-    val forecast = currentDaily.today(now)?.astronomy?.part()
+    fun WeatherSnapshot.withFreshness(): WeatherSnapshot {
+        if (stale || state == WeatherState.STALE || expiresAt?.let { now >= it } == true) {
+            return copy(stale = true, state = if (state == WeatherState.FRESH) WeatherState.STALE else state)
+        }
+        return this
+    }
+    val dailySnapshot = daily?.takeIf { it.zone == zone && it.query.block == WeatherBlock.DAILY }?.withFreshness()
+    val today = dailySnapshot.today(now)
+    val forecast = today?.astronomy?.part()
     fun WeatherAstronomy?.has(event: AstronomicalEvent) = this != null && (event in events || event in localEvents)
-    val waiting = daily == null || (daily.state in setOf(WeatherState.UNLOADED, WeatherState.LOADING) &&
-        currentDaily?.data == null && daily.network != WeatherNetworkStatus.OFFLINE)
+    val waiting = dailySnapshot == null || (dailySnapshot.state in setOf(WeatherState.UNLOADED, WeatherState.LOADING) &&
+        today == null && dailySnapshot.network != WeatherNetworkStatus.OFFLINE)
     val events = if (moon) listOf(AstronomicalEvent.MOONRISE to "月升", AstronomicalEvent.MOONSET to "月落")
         else listOf(AstronomicalEvent.SUNRISE to "日出", AstronomicalEvent.SUNSET to "日落")
     fun missing(additional: WeatherAstronomy?) =
         events.filterNot { forecast.has(it.first) || additional.has(it.first) }.map { it.second } +
             listOfNotNull("月相".takeIf { moon && forecast?.phaseName() == null && additional?.phaseName() == null })
     val needs = missing(null).isNotEmpty()
+    val supplementData = (supplement?.data as? WeatherData.Astronomy)?.value
     val currentSupplement = supplement?.takeIf {
         needs && it.query.block == block && (it.query.date == null || it.query.date == date) &&
+            (supplementData?.date == null || supplementData.date == date) &&
             (daily == null || it.source == daily.source) && it.zone == zone
-    }
-    val usableSupplement = currentSupplement?.takeIf { it.isCurrent() }
-    val additional = (usableSupplement?.data as? WeatherData.Astronomy)?.value?.part(forecast)
-    return CenterAstronomy(date, forecast, daily, additional, currentSupplement, waiting, needs && !waiting, missing(additional))
+    }?.withFreshness()
+    val additional = supplementData?.takeIf {
+        currentSupplement != null && (it.date == date || currentSupplement.query.date == date)
+    }?.part(forecast)
+    return CenterAstronomy(date, forecast, dailySnapshot, additional, currentSupplement, waiting, needs && !waiting, missing(additional))
 }
 
 internal fun WeatherAstronomy.phaseName(): String? =

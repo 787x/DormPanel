@@ -524,10 +524,10 @@ internal class WeatherCenterContent(private val context: Context, var palette: P
         box.removeAllViews()
         box.addView(label(blockTitle(block), 22f, bold = true))
         box.addView(label(info.date.format(centerDate), subdued = true))
-        info.daily?.let {
-            box.addView(label(astronomy(it, zone, includeDate = false).joinToString("\n")))
+        info.daily?.let { box.addView(label(astronomy(it, zone, includeDate = false).joinToString("\n"))) }
+        info.forecastSnapshot?.let {
             box.addView(label("每日预报", subdued = true))
-            box.addView(metadata(info.forecastSnapshot))
+            box.addView(metadata(it))
         }
         info.supplement?.let { box.addView(label(astronomy(it, zone, includeDate = false).joinToString("\n"))) }
         val supplemental = info.supplementSnapshot
