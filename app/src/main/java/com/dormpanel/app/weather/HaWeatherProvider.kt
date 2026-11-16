@@ -130,8 +130,9 @@ internal object HaWeatherParser {
     internal fun conditions(row: JSONObject, attrs: JSONObject, code: String?): WeatherConditions {
         fun quantity(key: String, unit: String, conversions: Map<String, Double>): Double? =
             row.number(key)?.let { value -> conversions[attrs.text(unit)]?.times(value)?.takeIf(Double::isFinite) }
+        val temperatureUnit = attrs.text("temperature_unit")
         fun temperature(key: String) = row.number(key)?.let {
-            when (attrs.text("temperature_unit")) {
+            when (temperatureUnit) {
                 "°C" -> it
                 "°F" -> (it - 32) * (5.0 / 9)
                 "K" -> it - 273.15
@@ -153,6 +154,7 @@ internal object HaWeatherParser {
             cloudCover = percent("cloud_coverage"), uvIndex = row.number("uv_index"),
             precipitation = quantity("precipitation", "precipitation_unit", precipitationUnits),
             precipitationProbability = percent("precipitation_probability"), ozone = row.number("ozone"),
+            sourceTemperatureUnit = temperatureUnit?.takeIf { it == "°F" || it == "K" },
         )
     }
 

@@ -11,21 +11,27 @@ class FittingValueView(context: Context) : AppCompatTextView(context) {
     private val measuringMetrics = android.graphics.Paint.FontMetrics()
     var maximumTextSp = DashboardTypography.CLOCK
         set(value) { field = value; requestLayout() }
+    /** A heading can prefer ellipsis over further width-based shrinking. */
+    var minimumWidthTextSp = 0f
+        set(value) { field = value; requestLayout() }
 
-    init { maxLines = 1; includeFontPadding = false }
+    init { setSingleLine(true); includeFontPadding = false }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val maximum = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, maximumTextSp, resources.displayMetrics)
         val width = if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED) Float.MAX_VALUE
-            else (MeasureSpec.getSize(widthMeasureSpec) - compoundPaddingLeft - compoundPaddingRight).coerceAtLeast(1).toFloat()
+            else (MeasureSpec.getSize(widthMeasureSpec) - compoundPaddingLeft - compoundPaddingRight - 2).coerceAtLeast(1).toFloat()
         val height = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) Float.MAX_VALUE
-            else (MeasureSpec.getSize(heightMeasureSpec) - compoundPaddingTop - compoundPaddingBottom).coerceAtLeast(1).toFloat()
+            else (MeasureSpec.getSize(heightMeasureSpec) - compoundPaddingTop - compoundPaddingBottom - 2).coerceAtLeast(1).toFloat()
         measuringPaint.set(paint)
         measuringPaint.textSize = maximum
         val textWidth = measuringPaint.measureText(text.toString()).coerceAtLeast(1f)
         measuringPaint.getFontMetrics(measuringMetrics)
+        // Leave room for TextView's integer glyph advances and line metrics.
         val textHeight = (measuringMetrics.descent - measuringMetrics.ascent).coerceAtLeast(1f)
-        val fitted = maximum * minOf(1f, width / textWidth, height / textHeight)
+        val minimumWidthSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, minimumWidthTextSp, resources.displayMetrics)
+        val fitted = minOf(maximum, (maximum * width / textWidth).coerceAtLeast(minimumWidthSize),
+            maximum * height / textHeight)
         setTextSize(TypedValue.COMPLEX_UNIT_PX, fitted)
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }

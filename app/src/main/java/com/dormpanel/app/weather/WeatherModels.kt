@@ -139,6 +139,8 @@ data class WeatherConditions(
     val precipitationIntensity: Double? = null,
     val precipitationType: String? = null,
     val ozone: Double? = null,
+    /** Original HA display unit; quantities above remain normalized to °C. */
+    val sourceTemperatureUnit: String? = null,
 )
 
 data class WeatherForecast(

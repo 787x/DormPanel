@@ -71,11 +71,15 @@ interface DashboardDataSource {
 }
 
 class FakeDashboardDataSource : DashboardDataSource {
+    private val initialDay = java.time.LocalDate.now()
+    private fun demoForecastTime(daysFromToday: Long) =
+        initialDay.plusDays(daysFromToday).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+
     override var state = DashboardData(
         WeatherState("Partly cloudy", 24, 58, 19, 27, listOf(
-            WeatherForecast(1790035200000L, "Clear", 20, 26),
-            WeatherForecast(1790121600000L, "Cloudy", 19, 25),
-            WeatherForecast(1790208000000L, "Light rain", 18, 23),
+            WeatherForecast(demoForecastTime(1), "Clear", 20, 26),
+            WeatherForecast(demoForecastTime(2), "Cloudy", 19, 25),
+            WeatherForecast(demoForecastTime(3), "Light rain", 18, 23),
         ), name = "Demo 天气"),
         listOf(
             SensorState("room", "Room climate", 23.6, 54),
