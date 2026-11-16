@@ -21,7 +21,6 @@ import java.time.ZoneId
 
 internal data class WeatherCardReadings(
     val title: String,
-    val displayName: String?,
     val credit: String,
     val qweather: Boolean,
     val temperature: String,
@@ -38,7 +37,7 @@ internal abstract class BaseWeatherCardView(
     context: Context,
     appearance: AppearanceController,
     source: DashboardDataSource,
-    repository: WeatherRepository?,
+    private val repository: WeatherRepository?,
     private val clock: () -> Instant,
     private val classic: Boolean = false,
 ) : DashboardCardView(context, appearance) {
@@ -47,6 +46,7 @@ internal abstract class BaseWeatherCardView(
 
     private val feed = WeatherCardFeed(source, repository, ::refresh)
     private var configuration: WeatherCardConfiguration = WeatherCardConfiguration.Default
+    private var lastClassicPlaceName: String? = null
     private var requested = false
     private val midnight = Runnable { refresh() }
     private val clockChanges = object : BroadcastReceiver() {
@@ -54,7 +54,13 @@ internal abstract class BaseWeatherCardView(
     }
     override fun onBound(previous: PlacedCard?) {
         val configurationChanged = previous?.configurationJson != card.configurationJson
-        if (configurationChanged) configuration = WeatherCardConfiguration.decode(card.configurationJson)
+        if (configurationChanged) {
+            val next = WeatherCardConfiguration.decode(card.configurationJson)
+            if ((configuration as? WeatherCardConfiguration.Bound)?.placeId != (next as? WeatherCardConfiguration.Bound)?.placeId) {
+                lastClassicPlaceName = null
+            }
+            configuration = next
+        }
         if (isAttachedToWindow && (configurationChanged || interactions.enabled || !requested)) bindFeed()
     }
 
@@ -100,8 +106,12 @@ internal abstract class BaseWeatherCardView(
         val today = prediction.today(now)?.conditions
         val binding = configuration as? WeatherCardConfiguration.Bound
         val invalid = configuration == WeatherCardConfiguration.Invalid || (binding != null && feed.invalid)
-        val weather = sky(conditions?.code ?: validLegacy?.condition, conditions?.description, classic = classic)
-        val title = binding?.displayName ?: feed.place?.name ?: legacy?.name ?: "天气"
+        val description = conditions?.description ?: if (classic) legacyConditionText(validLegacy?.condition) else null
+        val weather = sky(conditions?.code ?: validLegacy?.condition, description, classic = classic)
+        val title = if (classic) {
+            binding?.savedPlace(repository?.places)?.name?.let { lastClassicPlaceName = it }
+            binding?.displayName ?: lastClassicPlaceName ?: "Weather"
+        } else binding?.displayName ?: feed.place?.name ?: legacy?.name ?: "天气"
         val qweather = binding != null && binding.source !is WeatherSourceRef.HomeAssistant
         val credit = when {
             qweather -> "和风天气"
@@ -151,7 +161,7 @@ internal abstract class BaseWeatherCardView(
         } else if (slots > 0 && prediction?.state == WeatherState.FRESH && lines.isEmpty()) {
             status = "${status}  ·  暂无后续预报"
         }
-        renderReadings(WeatherCardReadings(title, binding?.displayName, credit, qweather, temperature, condition,
+        renderReadings(WeatherCardReadings(title, credit, qweather, temperature, condition,
             weather.symbol, range, status, binding?.metric, lines), ::metric)
 
         removeCallbacks(midnight)

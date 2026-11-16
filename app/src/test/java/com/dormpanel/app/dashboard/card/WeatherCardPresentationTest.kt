@@ -116,12 +116,64 @@ class WeatherCardPresentationTest {
         assertEquals("明天", modern.label)
         assertEquals("阴", modern.sky.description)
         assertEquals(modern.label, classic.label)
-        assertEquals("Cloudy", classic.sky.description)
+        assertEquals("Overcast", classic.sky.description)
         assertEquals("Sunny", sky("100", "晴", classic = true).description)
         assertEquals("Partly cloudy", sky("partlycloudy", classic = true).description)
         assertEquals("Light rain", sky("Light rain", classic = true).description)
         assertEquals("Clear", sky("Clear", classic = true).description)
         assertEquals("Heavy rain turning to sleet", sky("rainy", "Heavy rain turning to sleet", classic = true).description)
+    }
+
+    @Test fun classicConditionsPreserveIntensityNightAndCompoundWeather() {
+        mapOf("101" to "Cloudy", "102" to "Few clouds", "103" to "Partly cloudy",
+            "150" to "Clear night", "305" to "Light rain", "306" to "Moderate rain",
+            "307" to "Heavy rain", "304" to "Thundershowers with hail", "313" to "Freezing rain",
+            "402" to "Heavy snow", "404" to "Sleet", "406" to "Rain and snow showers",
+            "500" to "Mist", "501" to "Fog").forEach { (code, expected) ->
+            assertEquals(code, expected, sky(code, classic = true).description)
+        }
+        mapOf("clear-night" to "Clear night", "cloudy" to "Cloudy", "fog" to "Fog", "hail" to "Hail",
+            "lightning" to "Thunderstorm", "lightning-rainy" to "Thunderstorm with rain", "partlycloudy" to "Partly cloudy",
+            "pouring" to "Heavy rain", "rainy" to "Rain", "snowy" to "Snow", "snowy-rainy" to "Rain and snow",
+            "sunny" to "Sunny", "windy" to "Windy", "windy-variant" to "Windy and cloudy",
+            "exceptional" to "Exceptional weather").forEach { (code, expected) ->
+            assertEquals(code, expected, sky(code, classic = true).description)
+        }
+        assertEquals("Clear night", sky("150", "晴", classic = true).description)
+        assertEquals("Clear night", sky("sunny", daytime = false, classic = true).description)
+        assertEquals("Clear night", sky("sunny", "晴", daytime = false, classic = true).description)
+        assertEquals("雷暴", sky("lightning-rainy").description)
+        assertEquals("雨", sky("307").description)
+    }
+
+    @Test fun classicConditionsPreferMeaningfulSourceTextToConflictingCodes() {
+        assertEquals("Heavy rain turning to sleet", sky("305", "Heavy rain turning to sleet", classic = true).description)
+        assertEquals("Heavy rain", sky("305", "大雨", classic = true).description)
+        assertEquals("Sleet", sky(null, "雨夹雪", classic = true).description)
+        assertEquals("Thundershowers with hail", sky("unknown", "雷阵雨伴冰雹", classic = true).description)
+        assertEquals("局部阵雨", sky("unknown", "局部阵雨", classic = true).description)
+        assertEquals("夜间强雷雨伴大风", sky("302", "夜间强雷雨伴大风", classic = true).description)
+        assertEquals("雨转冰粒", sky(null, "雨转冰粒", classic = true).description)
+        assertEquals("Light rain", sky("305", "未知", classic = true).description)
+        assertEquals("Unknown", sky("unknown", " ", classic = true).description)
+    }
+
+    @Test fun classicForecastsUseSameDescriptionRulesAcrossBlocksAndLegacyData() {
+        val date = instant.atZone(zone).toLocalDate().plusDays(1)
+        val forecast = WeatherForecast(WeatherPeriod(start = instant.plusSeconds(3600), date = date),
+            WeatherConditions(description = "夜间强雷雨伴大风"),
+            day = WeatherForecast(WeatherPeriod(date = date), WeatherConditions(code = "302")))
+        val currentText = sky(null, forecast.conditions.description, classic = true).description
+        listOf(WeatherBlock.DAILY, WeatherBlock.HOURLY, WeatherBlock.TWICE_DAILY).forEach { block ->
+            val lines = snapshot(block, forecast).forecastLines(instant, 1, forCard = true, classic = true)
+            assertEquals(block.name, currentText, lines.single().sky.description)
+        }
+        assertEquals("雷暴", snapshot(WeatherBlock.DAILY, forecast).forecastLines(instant, 1, forCard = true).single().sky.description)
+        val legacy = com.dormpanel.app.data.FakeDashboardDataSource().state.weather.copy(
+            forecast = listOf(com.dormpanel.app.data.WeatherForecast(date.atStartOfDay(zone).toInstant().toEpochMilli(),
+                "局部阵雨", 17, 24)),
+        )
+        assertEquals("局部阵雨", legacy.lines(instant, 1, forCard = true, zone = zone, classic = true).single().sky.description)
     }
 
     @Test fun cardRangesKeepUnitsMissingSidesAndDecimals() {

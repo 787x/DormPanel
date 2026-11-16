@@ -508,7 +508,8 @@ class CoreDashboardTest {
                     else WeatherConditions(code, temperature = temp, feelsLike = temp - 2, humidity = 62.0)
                 val forecast = List(4) { day ->
                     WeatherForecast(WeatherPeriod(date = now.atZone(zone).toLocalDate().plusDays(day.toLong())),
-                        WeatherConditions(code, minTemperature = (temp - 3).takeUnless { source == beijing }, maxTemperature = temp + 3))
+                        WeatherConditions(if (source == wuhan && day > 0) "304" else code,
+                            minTemperature = (temp - 3).takeUnless { source == beijing }, maxTemperature = temp + 3))
                 }
                 val parsed = when (query.block) {
                     WeatherBlock.DAILY -> ParsedWeather(WeatherData.Forecast(forecast))
@@ -566,7 +567,7 @@ class CoreDashboardTest {
                     PlacedCard("a", "weather", 0, 0, CardSize(4, 3), WeatherCardConfiguration.Bound("wuhan", wuhan).encode()),
                     PlacedCard("b", "weather_classic", 4, 0, CardSize(2, 3), WeatherCardConfiguration.Bound("beijing", beijing).encode()),
                     PlacedCard("c", "weather", 6, 0, CardSize(2, 2), WeatherCardConfiguration.Bound("home", home).encode()),
-                    PlacedCard("d", "weather_classic", 0, 3, CardSize(2, 1), WeatherCardConfiguration.Bound("wuhan", wuhan, "武汉副卡").encode()),
+                    PlacedCard("d", "weather_classic", 0, 3, CardSize(4, 3), WeatherCardConfiguration.Bound("wuhan", wuhan).encode()),
                     PlacedCard("e", "weather_classic", 4, 3, CardSize(3, 3), WeatherCardConfiguration.Bound("home", home, "HA 经典").encode()),
                 )
                 activity.addContentView(grid, android.widget.FrameLayout.LayoutParams(-1, -1).apply { setMargins(48, 56, 48, 56) })
@@ -578,11 +579,23 @@ class CoreDashboardTest {
                     val views = descendants(grid).filterIsInstance<DashboardCardView>().associateBy { view -> view.tag }
                     assertTrue(views.getValue("a").contentDescription.contains("23°C"))
                     val missingReading = views.getValue("b").contentDescription.toString()
-                    assertTrue(missingReading.contains("Weather, 北京, —, Fog, 最高 11°C"))
+                    assertTrue(missingReading.contains("北京, —, Mist, 最高 11°C"))
                     assertFalse(missingReading.contains("湿度"))
                     assertTrue(views.getValue("c").contentDescription.contains("19°C"))
                     assertTrue(views.getValue("d").contentDescription.contains("23°C"))
-                    assertTrue(views.getValue("e").contentDescription.contains("夜间 19°C Thunderstorm"))
+                    assertTrue(views.getValue("e").contentDescription.contains("夜间 19°C Thunderstorm with rain"))
+                    for ((cardId, title) in mapOf("b" to "北京", "d" to "武汉", "e" to "HA 经典")) {
+                        val cardView = views.getValue(cardId)
+                        val labels = descendants(cardView).filterIsInstance<TextView>().filter { it.isShown }.toList()
+                        assertTrue(labels.any { it.text.toString() == title })
+                        val longCondition = when (cardId) {
+                            "d" -> "Thundershowers with hail"
+                            "e" -> "Thunderstorm with rain"
+                            else -> continue
+                        }
+                        val condition = labels.first { it.text.toString() == longCondition }
+                        assertTrue(condition.layout.getLineWidth(0) <= condition.width + 1)
+                    }
                     assertEquals(6, started.size)
                     assertTrue((home to WeatherBlock.TWICE_DAILY) in started)
                     assertFalse((home to WeatherBlock.DAILY) in started)
@@ -600,7 +613,7 @@ class CoreDashboardTest {
                     assertTrue(descendants(forecast).filterIsInstance<com.dormpanel.app.dashboard.card.WeatherIconView>()
                         .any { it.symbol == com.dormpanel.app.dashboard.card.WeatherSymbol.STORM && it.isShown })
                 }
-                onView(allOf(withText("和风天气"), isDescendantOfA(card("武汉副卡")))).check(matches(isDisplayed()))
+                onView(allOf(withText("和风天气"), isDescendantOfA(card("武汉, 23°C, Sunny")))).check(matches(isDisplayed()))
                 onView(allOf(withText("HA"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
                 onView(allOf(withText("体感 17°C"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
                 onView(allOf(withText("湿度 62%"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
@@ -611,7 +624,7 @@ class CoreDashboardTest {
                 }
                 val monitor = instrumentation.addMonitor(filter, null, true)
                 try {
-                    onView(allOf(withContentDescription("和风天气官网"), isDescendantOfA(card("武汉副卡"))))
+                    onView(allOf(withContentDescription("和风天气官网"), isDescendantOfA(card("武汉, 23°C, Sunny"))))
                         .perform(ViewActions.click())
                     assertEquals(1, monitor.hits)
                 } finally {
@@ -645,6 +658,13 @@ class CoreDashboardTest {
                     }
                 }
                 scenario.onActivity {
+                    val original = checkNotNull(places.get("beijing"))
+                    places.save(original.copy(name = "北京城区", sources = listOf(wuhan)))
+                    val cardView = descendants(grid).filterIsInstance<DashboardCardView>().single { it.tag == "b" }
+                    assertTrue(cardView.contentDescription.startsWith("北京城区,"))
+                    assertTrue(cardView.contentDescription.contains("地点或来源已失效"))
+                    places.delete("beijing")
+                    assertTrue(cardView.contentDescription.startsWith("北京城区,"))
                     val rebound = cards.map { if (it.id == "b") it.copy(configurationJson = cards.first().configurationJson) else it }
                     grid.submitCards(rebound)
                     assertTrue((beijing to WeatherBlock.CURRENT) in stopped)
