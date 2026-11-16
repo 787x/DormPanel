@@ -23,11 +23,13 @@ internal fun qWeatherHost(input: String): String {
 internal sealed interface QWeatherAuth {
     fun header(now: Instant): Pair<String, String>
     fun encode(): JSONObject
+    fun sameCredentials(other: QWeatherAuth): Boolean
 
     class ApiKey(private val secret: String) : QWeatherAuth {
         init { require(secret.matches(Regex("[A-Za-z0-9_-]{1,256}"))) { "API Key 格式不正确" } }
         override fun header(now: Instant) = "X-QW-Api-Key" to secret
         override fun encode() = JSONObject().put("key", secret)
+        override fun sameCredentials(other: QWeatherAuth) = other is ApiKey && secret == other.secret
     }
 
     class Jwt(val kid: String, val issuer: String, val subject: String, val key: QWeatherSigningKey) : QWeatherAuth {
@@ -58,6 +60,8 @@ internal sealed interface QWeatherAuth {
         }
 
         override fun encode() = JSONObject().put("kid", kid).put("iss", issuer).put("sub", subject).put("private", key.encode())
+        override fun sameCredentials(other: QWeatherAuth) = other is Jwt && kid == other.kid &&
+            issuer == other.issuer && subject == other.subject && key.sameKey(other.key)
     }
 
     companion object {
@@ -78,6 +82,7 @@ internal class QWeatherSigningKey private constructor(private val privateKey: Ed
         .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
     fun encode(): String = Base64.getEncoder().encodeToString(privateKey.encoded)
+    fun sameKey(other: QWeatherSigningKey): Boolean = MessageDigest.isEqual(privateKey.seed, other.privateKey.seed)
     fun sign(input: ByteArray): ByteArray = EdDSAEngine(MessageDigest.getInstance("SHA-512")).run {
         initSign(privateKey)
         update(input)

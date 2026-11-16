@@ -67,14 +67,32 @@ internal class SettingsPortal(
 
     private fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 
-    private class Change(val title: String, val description: String, val apply: ((String?) -> Unit) -> Unit)
+    private sealed class ChangeOutcome(val message: String) {
+        class Applied(message: String) : ChangeOutcome(message)
+        class Failed(message: String) : ChangeOutcome(message)
+    }
+
+    private class Change(val title: String, val description: String, val apply: ((ChangeOutcome) -> Unit) -> Unit)
+
+    private fun outcome(error: String?) =
+        if (error == null) ChangeOutcome.Applied("已保存") else ChangeOutcome.Failed(error)
+
     private fun immediate(title: String, description: String, apply: () -> Unit) =
+        immediateResult(title, description) { apply(); "已保存" }
+
+    private fun immediateResult(title: String, description: String, apply: () -> String) =
         Change(title, description) { done ->
-            done(try { apply(); null } catch (_: Exception) { "未能保存，请检查当前配置或存储后重试" })
+            val result = try { ChangeOutcome.Applied(apply()) } catch (_: Exception) {
+                ChangeOutcome.Failed("未能保存，请检查当前配置或存储后重试")
+            }
+            done(result)
         }
 
     private data class PortalWeather(val config: QWeatherConfig?, val pendingKey: QWeatherSigningKey?, val public: JSONObject)
-    private data class WeatherStep(val revision: Int = 0, val kind: String = "", val state: String = "ready", val message: String = "")
+    private data class WeatherStep(
+        val revision: Int = 0, val kind: String = "", val state: String = "ready", val message: String = "",
+        val saveApplied: Boolean = false,
+    )
     private val credentialFields = setOf("qw_host", "qw_auth", "qw_kid", "qw_iss", "qw_sub", "qw_key", "qw_api")
 
     private inner class Session {
@@ -154,7 +172,7 @@ internal class SettingsPortal(
             val current = step
             return JSONObject().put("qw", snapshot.public)
                 .put("step", JSONObject().put("revision", current.revision).put("kind", current.kind)
-                    .put("state", current.state).put("message", current.message))
+                    .put("state", current.state).put("message", current.message).put("saveApplied", current.saveApplied))
         }
 
         private fun status() = SettingsEntryReply(200, stateJson().toString())
@@ -174,10 +192,11 @@ internal class SettingsPortal(
             step = WeatherStep(current.revision, kind, "pending", "请在 X08E 上核对并确认")
             main.post {
                 if (!active()) return@post
-                fun complete(state: String, message: String) {
+                fun complete(state: String, message: String, saveApplied: Boolean = false) {
                     if (!active()) return
                     snapshot = captureWeather()
-                    step = WeatherStep(current.revision + 1, kind, state, message)
+                    step = WeatherStep(current.revision + 1, kind, state, message, saveApplied)
+                    if (!generate) toast(message)
                 }
                 fun cancel() = complete("cancelled", "已在 X08E 取消，可修改后重试")
                 fun generateKey() {
@@ -192,19 +211,30 @@ internal class SettingsPortal(
                 }
                 fun save(test: Boolean) {
                     if (!active()) return
-                    checkNotNull(change).apply { error ->
-                        if (error != null) {
-                            complete("failed", error)
-                        } else if (test) {
-                            snapshot = captureWeather()
-                            step = WeatherStep(current.revision, kind, "testing", "凭据已保存，正在测试连接")
-                            stopTest = try {
-                                weather.test { message -> complete("success", "凭据已保存。$message") }
-                            } catch (_: Exception) {
-                                complete("success", "凭据已保存。连接测试无法启动，可在 X08E 重试。")
-                                null
+                    checkNotNull(change).apply { saved ->
+                        if (saved is ChangeOutcome.Failed) {
+                            complete("save_failed", "凭据保存失败。${saved.message}")
+                            return@apply
+                        }
+                        val prefix = saved.message
+                        if (!test) {
+                            complete("saved_unverified", "$prefix。此次未验证连接。", saveApplied = true)
+                            return@apply
+                        }
+                        snapshot = captureWeather()
+                        step = WeatherStep(current.revision, kind, "testing", "$prefix，正在测试连接", saveApplied = true)
+                        stopTest = weather.test { verification ->
+                            val (state, message) = when (verification) {
+                                WeatherConnectionTest.Verified -> "saved_verified" to verification.message
+                                WeatherConnectionTest.NoWeather -> "saved_no_weather" to
+                                    "连接尚未验证。${verification.message}，可在 X08E 重新测试。"
+                                is WeatherConnectionTest.Failed -> "saved_test_failed" to
+                                    "连接测试失败。${verification.message}。可修改配置后重新测试。"
+                                is WeatherConnectionTest.NotRun -> "saved_test_not_run" to "测试未执行。${verification.message}"
+                                WeatherConnectionTest.Cancelled -> "saved_test_cancelled" to verification.message
                             }
-                        } else complete("success", "凭据已保存，尚未测试。可继续搜索天气地点。")
+                            complete(state, "$prefix。$message", saveApplied = true)
+                        }
                     }
                 }
                 val dialog = AlertDialog.Builder(context)
@@ -360,8 +390,8 @@ internal class SettingsPortal(
                             WebDavCredentials.inheritedCertificate(oldAccount, url, username))
                     }
                     add(Change("WebDAV", "$url · $username\n密码${if (password.isEmpty()) "保留原设置" else "已填写"}") { done ->
-                        if (dav.publicAccount() != davPublic) done("账号已变化，请重新填写")
-                        else davConfirmation = saveImportAccount(context, dav, sync, oldAccount, candidate, done)?.also { dialog ->
+                        if (dav.publicAccount() != davPublic) done(outcome("账号已变化，请重新填写"))
+                        else davConfirmation = saveImportAccount(context, dav, sync, oldAccount, candidate) { done(outcome(it)) }?.also { dialog ->
                             dialog.setOnDismissListener { if (davConfirmation === dialog) davConfirmation = null }
                         }
                     })
@@ -389,9 +419,9 @@ internal class SettingsPortal(
                     val detail = if (auth is QWeatherAuth.Jwt)
                         "JWT · kid ${auth.kid} · iss ${auth.issuer} · sub ${auth.subject}\n和风公钥文本 SHA-256 ${auth.key.qWeatherPemSha256}"
                     else "API Key ${if (api.isEmpty()) "保留原设置" else "已填写"}"
-                    add(immediate("和风天气凭据", "$host\n$detail") {
+                    add(immediateResult("和风天气凭据", "$host\n$detail") {
                         check(weather.settings.config === qw && weather.settings.pendingKey === pendingKey)
-                        weather.configure(host, auth)
+                        if (weather.configure(host, auth)) "凭据已保存" else "凭据未变化"
                     })
                 }
                 if (includes(3)) {
@@ -442,7 +472,7 @@ internal class SettingsPortal(
                     expect(id.isEmpty() && city in cityIds && lat.isEmpty() && lon.isEmpty() && locationId.isEmpty(),
                         "places", "请通过搜索选择要收藏的公开地点")
                     Change("收藏 $name", "${zone.id} · 核对和风公开地点 $city 后收藏") { done ->
-                        weather.favorite(null, city, name, zone) { _, error -> done(error) }
+                        weather.favorite(null, city, name, zone) { _, error -> done(outcome(error)) }
                     }
                 } else {
                     val sources = previous?.sources.orEmpty()
@@ -511,12 +541,12 @@ internal class SettingsPortal(
             }
             rows[index] = "处理中…"
             render()
-            val done: (String?) -> Unit = { error ->
-                rows[index] = if (error == null) "已保存" else "未保存 · $error"
+            val done: (ChangeOutcome) -> Unit = { saved ->
+                rows[index] = if (saved is ChangeOutcome.Failed) "未保存 · ${saved.message}" else saved.message
                 render()
                 main.post { next(index + 1) }
             }
-            try { changes[index].apply(done) } catch (_: Exception) { done("操作失败，请在设备设置中检查") }
+            try { changes[index].apply(done) } catch (_: Exception) { done(outcome("操作失败，请在设备设置中检查")) }
         }
         next(0)
     }

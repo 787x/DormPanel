@@ -250,11 +250,17 @@ class WeatherAndroidTest {
             val pending = restored.pendingKey!!
             assertNotEquals(initial, pending.spkiSha256)
             assertFalse(prefs.getString("pending_key", "")!!.contains(pending.encode()))
+            val unchanged = restored.config!!
+            val ciphertext = prefs.getString("payload", null)
+            restored.save("HTTPS://TEST.QWEATHERAPI.COM", QWeatherAuth.Jwt("kid", "issuer", "subject", pem))
+            assertSame(unchanged, restored.config)
+            assertEquals(ciphertext, prefs.getString("payload", null))
+            assertSame(pending, restored.pendingKey)
             restored.save("test.qweatherapi.com", QWeatherAuth.Jwt("newkid", "issuer", "subject", pending))
             val activated = QWeatherSettings(isolated, namespace)
             assertNull(activated.pendingKey)
             assertEquals(pending.spkiSha256, activated.activeKey!!.spkiSha256)
-            settings.save("test.qweatherapi.com", QWeatherAuth.Jwt("kid", "issuer", "subject", pem))
+            activated.save("test.qweatherapi.com", QWeatherAuth.Jwt("kid", "issuer", "subject", pem))
 
             val saved = QWeatherSettings(isolated, namespace).config!!
             val parts = saved.auth.header(Instant.parse("2026-11-15T00:00:00Z")).second.removePrefix("Bearer ").split(".")
@@ -273,6 +279,134 @@ class WeatherAndroidTest {
         } finally {
             settings.clear()
             context.deleteSharedPreferences("$namespace-weather_service")
+        }
+    }
+
+    @Test fun repeatedCredentialsPreserveRejectionsBackoffAndTestLimits() {
+        val namespace = "weather-resave-" + UUID.randomUUID()
+        val failSave = java.util.concurrent.atomic.AtomicBoolean()
+        val isolated = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val prefs = super.getSharedPreferences("$namespace-$name", mode)
+                if (name != "weather_service") return prefs
+                return object : SharedPreferences by prefs {
+                    override fun edit(): SharedPreferences.Editor {
+                        val editor = prefs.edit()
+                        return object : SharedPreferences.Editor by editor {
+                            override fun putString(key: String?, value: String?): SharedPreferences.Editor {
+                                editor.putString(key, value)
+                                return this
+                            }
+                            override fun commit() = !failSave.get() && editor.commit()
+                        }
+                    }
+                }
+            }
+            override fun getNoBackupFilesDir() = File(context.cacheDir, namespace)
+        }
+        val server = okhttp3.mockwebserver.MockWebServer()
+        server.start()
+        val mockBase = server.url("/")
+        val clock = java.util.concurrent.atomic.AtomicReference(Instant.parse("2026-11-16T00:00:00Z"))
+        val settings = QWeatherSettings(isolated, namespace)
+        val scheduler = com.dormpanel.app.ha.MainHaScheduler()
+        val client = okhttp3.OkHttpClient()
+        val appearance = com.dormpanel.app.appearance.AppearanceController(
+            com.dormpanel.app.appearance.PreferencesAppearanceStore(isolated))
+        val ha = com.dormpanel.app.ha.HaDashboardDataSource(scheduler, client, appearance)
+        val weather = WeatherServices(isolated, scheduler, ha, { "" }, { null }, now = clock::get, settings = settings,
+            apiFactory = { http, now -> QWeatherApi(http, now) { _, endpoint ->
+                mockBase.newBuilder().addPathSegments(endpoint.path).build()
+            } })
+        val results = java.util.concurrent.LinkedBlockingQueue<WeatherConnectionTest>()
+        val searches = java.util.concurrent.LinkedBlockingQueue<String>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        fun test(response: okhttp3.mockwebserver.MockResponse? = null): WeatherConnectionTest {
+            response?.let(server::enqueue)
+            instrumentation.runOnMainSync { weather.test { results.add(it) } }
+            return requireNotNull(results.poll(5, java.util.concurrent.TimeUnit.SECONDS))
+        }
+        fun searchError(): String {
+            instrumentation.runOnMainSync { weather.search("北京") { _, error -> searches.add(error.orEmpty()) } }
+            return requireNotNull(searches.poll(5, java.util.concurrent.TimeUnit.SECONDS))
+        }
+        fun resave(host: String, key: String, changed: Boolean) {
+            instrumentation.runOnMainSync { assertEquals(changed, weather.configure(host, QWeatherAuth.ApiKey(key))) }
+        }
+        fun advance(seconds: Long) { clock.updateAndGet { it.plusSeconds(seconds) } }
+        val host = "test.qweatherapi.com"
+        try {
+            resave(host, "first-key", true)
+            val firstId = settings.config!!.id
+            val rejected = test(okhttp3.mockwebserver.MockResponse().setResponseCode(401)) as WeatherConnectionTest.Failed
+            assertEquals(401, rejected.failure.statusCode)
+            resave("HTTPS://TEST.QWEATHERAPI.COM", "first-key", false)
+            assertEquals(firstId, settings.config!!.id)
+            assertTrue(searchError().contains("认证已拒绝"))
+            assertTrue(test() is WeatherConnectionTest.NotRun)
+            assertEquals(1, server.requestCount)
+
+            resave(host, "second-key", true)
+            val secondId = settings.config!!.id
+            assertNotEquals(firstId, secondId)
+            val limited = test(okhttp3.mockwebserver.MockResponse().setResponseCode(429).addHeader("Retry-After", 30))
+            assertEquals(429, (limited as WeatherConnectionTest.Failed).failure.statusCode)
+            val firstRetryAt = clock.get().plusSeconds(60)
+            resave(host, "second-key", false)
+            assertEquals(secondId, settings.config!!.id)
+            assertTrue(searchError().contains("频率受限"))
+            advance(11)
+            val blocked = test() as WeatherConnectionTest.NotRun
+            assertTrue(blocked.message.contains("频率受限"))
+            val reopened = QWeatherSettings(isolated, namespace)
+            val restoredBudget = QWeatherBudget(isolated.getSharedPreferences("weather_budget", Context.MODE_PRIVATE), clock::get)
+            restoredBudget.initialize(reopened.config!!.id)
+            assertEquals(firstRetryAt, restoredBudget.restriction(secondId, true)?.retryAt)
+            assertEquals(2, restoredBudget.stats().requests)
+            assertEquals(2, server.requestCount)
+            advance(50)
+            assertTrue(test(okhttp3.mockwebserver.MockResponse().setResponseCode(429)) is WeatherConnectionTest.Failed)
+            assertEquals(clock.get().plusSeconds(120), weather.budget.restriction(secondId, true)?.retryAt)
+
+            advance(121)
+            assertSame(WeatherConnectionTest.NoWeather, test(okhttp3.mockwebserver.MockResponse().setResponseCode(204)))
+            assertFalse(weather.credentialStatus.contains("已可用"))
+            advance(11)
+            val offline = test(okhttp3.mockwebserver.MockResponse()
+                .setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST))
+            assertTrue(offline is WeatherConnectionTest.Failed && offline.message.contains("连接失败或超时"))
+            advance(11)
+            instrumentation.runOnMainSync { weather.budget.setLimit(5) }
+            assertTrue((test() as WeatherConnectionTest.NotRun).message.contains("月请求上限"))
+            assertEquals(5, server.requestCount)
+
+            failSave.set(true)
+            instrumentation.runOnMainSync {
+                assertThrows(IllegalStateException::class.java) { weather.configure(host, QWeatherAuth.ApiKey("failed-key")) }
+                assertEquals(secondId, settings.config!!.id)
+            }
+            failSave.set(false)
+            resave("changed.qweatherapi.com", "second-key", true)
+            assertNotEquals(secondId, settings.config!!.id)
+            instrumentation.runOnMainSync { weather.budget.setLimit(30) }
+            repeat(5) { assertNotNull(server.takeRequest(3, java.util.concurrent.TimeUnit.SECONDS)) }
+            server.enqueue(okhttp3.mockwebserver.MockResponse()
+                .setBody("""{"temperature":{"value":22.5,"unit":"°C"}}""")
+                .setBodyDelay(400, java.util.concurrent.TimeUnit.MILLISECONDS))
+            lateinit var cancel: () -> Unit
+            instrumentation.runOnMainSync { cancel = weather.test { results.add(it) } }
+            assertNotNull(server.takeRequest(3, java.util.concurrent.TimeUnit.SECONDS))
+            instrumentation.runOnMainSync { cancel() }
+            assertSame(WeatherConnectionTest.Cancelled, results.poll(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertNull(results.poll(700, java.util.concurrent.TimeUnit.MILLISECONDS))
+        } finally {
+            instrumentation.runOnMainSync { weather.close(); ha.stop() }
+            settings.clear()
+            server.close()
+            client.dispatcher.executorService.shutdown()
+            listOf("weather_service", "weather_places", "weather_budget", "weather_refresh", "appearance").forEach {
+                context.deleteSharedPreferences("$namespace-$it")
+            }
         }
     }
 
@@ -342,7 +476,7 @@ class WeatherAndroidTest {
             assertEquals("重名区", geo.requestUrl!!.queryParameter("location"))
             assertNull(geo.requestUrl!!.queryParameter("key"))
             instrumentation.runOnMainSync {
-                services.test { responses.add(it) }
+                services.test { responses.add(it.message) }
             }
             assertTrue(next().contains("月请求上限"))
             assertEquals(2, services.budget.stats().requests)

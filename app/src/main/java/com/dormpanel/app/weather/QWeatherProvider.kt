@@ -40,7 +40,8 @@ internal class QWeatherApi(
             val (name, value) = config.auth.header(now())
             Request.Builder().url(requestUrl(config, endpoint)).header(name, value).build()
         } catch (_: Exception) {
-            callback(WeatherResult.Failed(WeatherFailure(WeatherState.UNAUTHORIZED, "无法生成认证请求，请重新配置凭据")))
+            callback(WeatherResult.Failed(WeatherFailure(WeatherState.UNAUTHORIZED,
+                "无法生成认证请求，请重新配置凭据", attempted = false)))
             return {}
         }
         val call = client.newCall(request)

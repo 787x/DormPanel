@@ -160,92 +160,104 @@ class SettingsPhoneEntryAndroidTest {
         val savedPayload = tokenPrefs.getString("payload", null)
         val savedBinding = tokenPrefs.getString("endpoint", null)
         val dav = WebDavSettings(context)
-        val weatherPrefs = context.getSharedPreferences("weather_service", Context.MODE_PRIVATE)
-        require(weatherPrefs.all.isEmpty()) { "Use the isolated X08E testbed with no weather credentials" }
+        val namespace = "portal-sections-" + java.util.UUID.randomUUID()
+        val isolated = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int) =
+                super.getSharedPreferences("$namespace-$name", mode)
+            override fun getNoBackupFilesDir() = java.io.File(context.cacheDir, namespace)
+        }
+        val settings = QWeatherSettings(isolated, namespace)
         haStore.write(HaConnectionSettings(baseUrl = "http://old-ha.invalid", themeEntity = "input_select.keep"))
         tokens.write("saved-ha-fixture")
         dav.saveAccount(WebDavAccount("https://dav.invalid/old/", "fixture", "saved-dav-fixture"))
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 lateinit var portal: SettingsPortal
-                lateinit var backend: DashboardBackend
+                lateinit var weather: WeatherServices
                 scenario.onActivity { activity ->
                     val model = ViewModelProvider(activity)[DashboardViewModel::class.java]
-                    backend = model.dataSource
-                    backend.weatherServices.configure("mock.qweatherapi.com", QWeatherAuth.ApiKey("saved-api-fixture"))
-                    backend.weatherServices.settings.generateKey()
-                    portal = SettingsPortal(activity, backend, dav, model.webDav, localAddress = { "127.0.0.1" })
+                    val backend = model.dataSource
+                    weather = WeatherServices(isolated, MainHaScheduler(), backend.ha, { "" }, { null }, settings = settings)
+                    weather.configure("mock.qweatherapi.com", QWeatherAuth.ApiKey("saved-api-fixture"))
+                    settings.generateKey()
+                    portal = SettingsPortal(activity, backend, dav, model.webDav,
+                        localAddress = { "127.0.0.1" }, weather = weather)
                     portal.show()
                 }
-                val url = qrUrl()
-                val html = request(url)
-                for (label in listOf("DormPanel 配置门户", "Home Assistant", "WebDAV", "和风天气", "天气地点", "BEGIN PUBLIC KEY")) {
-                    assertTrue("Missing portal label $label", html.contains(label))
-                }
-                assertFalse(html.contains("saved-ha-fixture") || html.contains("saved-dav-fixture") || html.contains("saved-api-fixture"))
-                assertFalse(html.contains("PRIVATE KEY"))
-                lateinit var pendingId: String
-                scenario.onActivity {
-                    pendingId = backend.weatherServices.settings.pendingKey!!.spkiSha256
-                    assertFalse(html.contains(backend.weatherServices.settings.pendingKey!!.encode()))
-                }
-                val ha = "_action=submit&_revision=0&ha_url=${encoded("ws://OLD-HA.invalid:80/api/websocket")}&ha_token=&ha_mode=DEMO&ha_weather=weather.home"
-                val changed = ha.replace(encoded("ws://OLD-HA.invalid:80/api/websocket"), encoded("http://new-ha.invalid:8123"))
-                val rejected = request(url, changed)
-                assertTrue(rejected.startsWith("HTTP/1.1 422"))
-                assertTrue(rejected.contains("ha_token") && rejected.contains("服务器地址已改变"))
-                assertTrue(request(url, "$ha&unexpected=x").startsWith("HTTP/1.1 422"))
-                assertTrue(request(url, ha).startsWith("HTTP/1.1 200"))
-                onView(withText("待保存配置")).check(matches(isDisplayed()))
-                assertEquals("http://old-ha.invalid", haStore.read().baseUrl)
-                onView(withText("取消")).perform(click())
-                assertEquals("http://old-ha.invalid", haStore.read().baseUrl)
-                assertTrue(runCatching { request(url, ha) }.isFailure)
+                try {
+                    val url = qrUrl()
+                    val html = request(url)
+                    for (label in listOf("DormPanel 配置门户", "Home Assistant", "WebDAV", "和风天气", "天气地点", "BEGIN PUBLIC KEY")) {
+                        assertTrue("Missing portal label $label", html.contains(label))
+                    }
+                    assertFalse(html.contains("saved-ha-fixture") || html.contains("saved-dav-fixture") || html.contains("saved-api-fixture"))
+                    assertFalse(html.contains("PRIVATE KEY"))
+                    lateinit var pendingId: String
+                    scenario.onActivity {
+                        pendingId = settings.pendingKey!!.spkiSha256
+                        assertFalse(html.contains(settings.pendingKey!!.encode()))
+                    }
+                    val ha = "_action=submit&_revision=0&ha_url=${encoded("ws://OLD-HA.invalid:80/api/websocket")}&ha_token=&ha_mode=DEMO&ha_weather=weather.home"
+                    val changed = ha.replace(encoded("ws://OLD-HA.invalid:80/api/websocket"), encoded("http://new-ha.invalid:8123"))
+                    val rejected = request(url, changed)
+                    assertTrue(rejected.startsWith("HTTP/1.1 422"))
+                    assertTrue(rejected.contains("ha_token") && rejected.contains("服务器地址已改变"))
+                    assertTrue(request(url, "$ha&unexpected=x").startsWith("HTTP/1.1 422"))
+                    assertTrue(request(url, ha).startsWith("HTTP/1.1 200"))
+                    onView(withText("待保存配置")).check(matches(isDisplayed()))
+                    assertEquals("http://old-ha.invalid", haStore.read().baseUrl)
+                    onView(withText("取消")).perform(click())
+                    assertEquals("http://old-ha.invalid", haStore.read().baseUrl)
+                    assertTrue(runCatching { request(url, ha) }.isFailure)
 
-                scenario.onActivity { portal.show() }
-                assertTrue(request(qrUrl(), ha).startsWith("HTTP/1.1 200"))
-                onView(withText("确认应用")).perform(click())
-                onView(withText("Home Assistant · 已保存")).check(matches(isDisplayed()))
-                onView(withText("关闭")).perform(click())
-                assertEquals("http://old-ha.invalid", haStore.read().baseUrl)
-                assertEquals("weather.home", haStore.read().weatherEntity)
-                assertEquals("input_select.keep", haStore.read().themeEntity)
-                assertEquals("saved-ha-fixture", tokens.read())
-                assertEquals("https://dav.invalid/old/", dav.account()!!.baseUrl)
+                    scenario.onActivity { portal.show() }
+                    assertTrue(request(qrUrl(), ha).startsWith("HTTP/1.1 200"))
+                    onView(withText("确认应用")).perform(click())
+                    onView(withText("Home Assistant · 已保存")).check(matches(isDisplayed()))
+                    onView(withText("关闭")).perform(click())
+                    assertEquals("http://old-ha.invalid", haStore.read().baseUrl)
+                    assertEquals("weather.home", haStore.read().weatherEntity)
+                    assertEquals("input_select.keep", haStore.read().themeEntity)
+                    assertEquals("saved-ha-fixture", tokens.read())
+                    assertEquals("https://dav.invalid/old/", dav.account()!!.baseUrl)
 
-                scenario.onActivity { portal.show() }
-                val webdav = "_action=submit&_revision=0&dav_url=${encoded("https://dav.invalid/new/")}&dav_username=fixture&dav_password="
-                assertTrue(request(qrUrl(), webdav).startsWith("HTTP/1.1 200"))
-                assertEquals("https://dav.invalid/old/", dav.account()!!.baseUrl)
-                onView(withText("确认应用")).perform(click())
-                onView(withText("WebDAV · 已保存")).check(matches(isDisplayed()))
-                onView(withText("关闭")).perform(click())
-                assertEquals("https://dav.invalid/new/", dav.account()!!.baseUrl)
-                assertEquals("saved-dav-fixture", dav.account()!!.password)
+                    scenario.onActivity { portal.show() }
+                    val webdav = "_action=submit&_revision=0&dav_url=${encoded("https://dav.invalid/new/")}&dav_username=fixture&dav_password="
+                    assertTrue(request(qrUrl(), webdav).startsWith("HTTP/1.1 200"))
+                    assertEquals("https://dav.invalid/old/", dav.account()!!.baseUrl)
+                    onView(withText("确认应用")).perform(click())
+                    onView(withText("WebDAV · 已保存")).check(matches(isDisplayed()))
+                    onView(withText("关闭")).perform(click())
+                    assertEquals("https://dav.invalid/new/", dav.account()!!.baseUrl)
+                    assertEquals("saved-dav-fixture", dav.account()!!.password)
 
-                scenario.onActivity { portal.show() }
-                val place = """[{"id":"","name":"扫码地点","zone":"Asia/Shanghai","lat":"39.92","lon":"116.41","locationId":"","city":""}]"""
-                val auth = "_action=submit&_revision=0&qw_host=mock.qweatherapi.com&qw_auth=jwt&qw_kid=testkid&qw_iss=testissuer&qw_sub=testproject&qw_key=$pendingId&qw_api="
-                assertTrue(request(qrUrl(), "$auth&places=${encoded(place)}").startsWith("HTTP/1.1 200"))
-                scenario.onActivity {
-                    assertTrue(backend.weatherServices.settings.config?.auth is QWeatherAuth.ApiKey)
-                    assertFalse(backend.weatherRepository.places.places.any { it.name == "扫码地点" })
+                    scenario.onActivity { portal.show() }
+                    val place = """[{"id":"","name":"扫码地点","zone":"Asia/Shanghai","lat":"39.92","lon":"116.41","locationId":"","city":""}]"""
+                    val auth = "_action=submit&_revision=0&qw_host=mock.qweatherapi.com&qw_auth=jwt&qw_kid=testkid&qw_iss=testissuer&qw_sub=testproject&qw_key=$pendingId&qw_api="
+                    assertTrue(request(qrUrl(), "$auth&places=${encoded(place)}").startsWith("HTTP/1.1 200"))
+                    scenario.onActivity {
+                        assertTrue(settings.config?.auth is QWeatherAuth.ApiKey)
+                        assertFalse(weather.places.places.any { it.name == "扫码地点" })
+                    }
+                    onView(withText("确认应用")).perform(click())
+                    onView(withText(org.hamcrest.Matchers.containsString("添加 扫码地点 · 已保存"))).check(matches(isDisplayed()))
+                    onView(withText("关闭")).perform(click())
+                    scenario.onActivity {
+                        assertTrue(settings.config?.auth is QWeatherAuth.Jwt)
+                        assertNull(settings.pendingKey)
+                        val places = weather.places
+                        places.delete(places.places.single { it.name == "扫码地点" }.id)
+                    }
+                    assertEquals("saved-ha-fixture", tokens.read())
+                    assertEquals("saved-dav-fixture", dav.account()!!.password)
+                } finally {
+                    scenario.onActivity { portal.close(); weather.close() }
                 }
-                onView(withText("确认应用")).perform(click())
-                onView(withText(org.hamcrest.Matchers.containsString("添加 扫码地点 · 已保存"))).check(matches(isDisplayed()))
-                onView(withText("关闭")).perform(click())
-                scenario.onActivity {
-                    assertTrue(backend.weatherServices.settings.config?.auth is QWeatherAuth.Jwt)
-                    assertNull(backend.weatherServices.settings.pendingKey)
-                    val places = backend.weatherRepository.places
-                    places.delete(places.places.single { it.name == "扫码地点" }.id)
-                    backend.weatherServices.clearCredentials()
-                    portal.close()
-                }
-                assertEquals("saved-ha-fixture", tokens.read())
-                assertEquals("saved-dav-fixture", dav.account()!!.password)
             }
         } finally {
+            settings.clear()
+            listOf("weather_service", "weather_budget", "weather_places", "weather_refresh")
+                .forEach { context.deleteSharedPreferences("$namespace-$it") }
             haStore.write(savedHa)
             tokenPrefs.edit().putString("payload", savedPayload).putString("endpoint", savedBinding).commit()
         }
@@ -262,6 +274,7 @@ class SettingsPhoneEntryAndroidTest {
         server.start()
         val mockBase = server.url("/")
         val settings = QWeatherSettings(isolated, namespace)
+        val clock = AtomicReference(java.time.Instant.parse("2026-11-16T00:00:00Z"))
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 lateinit var portal: SettingsPortal
@@ -270,7 +283,7 @@ class SettingsPhoneEntryAndroidTest {
                     val model = ViewModelProvider(activity)[DashboardViewModel::class.java]
                     val backend = model.dataSource
                     weather = WeatherServices(isolated, MainHaScheduler(), backend.ha, { "" }, { null },
-                        settings = settings, apiFactory = { http, clock ->
+                        now = clock::get, settings = settings, apiFactory = { http, clock ->
                             QWeatherApi(http, clock) { _, endpoint -> mockBase.newBuilder().addPathSegments(endpoint.path).build() }
                         }, publicLocationUrl = mockBase.newBuilder().addPathSegment("directory").build())
                     portal = SettingsPortal(activity, backend, model.webDav.settings, model.webDav,
@@ -311,6 +324,9 @@ class SettingsPhoneEntryAndroidTest {
                         Thread.sleep(80)
                     } while (android.os.SystemClock.uptimeMillis() < deadline)
                     assertTrue(status.contains("认证成功") && status.contains("已可用"))
+                    fun step(response: String) = org.json.JSONObject(response.substringAfter("\r\n\r\n")).getJSONObject("step")
+                    assertEquals("saved_verified", step(status).getString("state"))
+                    assertTrue(step(status).getBoolean("saveApplied"))
                     assertEquals(pending.spkiSha256, settings.activeKey!!.spkiSha256)
                     assertNull(settings.pendingKey)
                     val testRequest = server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)!!
@@ -326,16 +342,54 @@ class SettingsPhoneEntryAndroidTest {
                     assertTrue(request(url, search).contains("认证已拒绝"))
                     scenario.onActivity { assertEquals(4, weather.budget.stats().requests) }
 
-                    assertTrue(request(url, "_action=generate_key&_revision=2").contains("pending"))
+                    val saved = settings.config!!
+                    val duplicate = configure.replace("_revision=1", "_revision=2")
+                    assertTrue(request(url, duplicate).contains("pending"))
+                    onView(withText("仅保存")).perform(click())
+                    val savedOnly = step(request(url, "_action=status"))
+                    assertEquals("saved_unverified", savedOnly.getString("state"))
+                    assertTrue(savedOnly.getString("message").contains("凭据未变化"))
+                    assertSame(saved, settings.config)
+                    assertTrue(request(url, search).contains("认证已拒绝"))
+                    assertEquals(4, server.requestCount)
+
+                    clock.updateAndGet { it.plusSeconds(11) }
+                    server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(403))
+                    assertTrue(request(url, configure.replace("_revision=1", "_revision=3")).contains("pending"))
+                    onView(withText("保存并测试")).perform(click())
+                    fun awaitStep(expected: String): org.json.JSONObject {
+                        val until = android.os.SystemClock.uptimeMillis() + 6000
+                        var state: org.json.JSONObject
+                        do {
+                            state = step(request(url, "_action=status"))
+                            if (state.getString("state") == expected) return state
+                            Thread.sleep(50)
+                        } while (android.os.SystemClock.uptimeMillis() < until)
+                        fail("Expected portal step $expected, got ${state.getString("state")}")
+                        return state
+                    }
+                    val denied = awaitStep("saved_test_failed")
+                    assertTrue(denied.getBoolean("saveApplied"))
+                    assertTrue(denied.getString("message").contains("无权访问接口"))
+                    assertFalse(denied.getString("message").contains("认证成功"))
+                    assertSame(saved, settings.config)
+
+                    assertTrue(request(url, configure.replace("_revision=1", "_revision=4")).contains("pending"))
+                    onView(withText("保存并测试")).perform(click())
+                    val blocked = awaitStep("saved_test_not_run")
+                    assertTrue(blocked.getString("message").contains("10 秒"))
+                    assertEquals(5, server.requestCount)
+
+                    assertTrue(request(url, "_action=generate_key&_revision=5").contains("pending"))
                     onView(withText("取消")).perform(click())
                     assertTrue(request(url, "_action=status").contains("已在 X08E 取消"))
                     assertEquals(pending.spkiSha256, settings.activeKey!!.spkiSha256)
                     assertNull(settings.pendingKey)
-                    assertTrue(request(url, "_action=generate_key&_revision=2").startsWith("HTTP/1.1 422"))
+                    assertTrue(request(url, "_action=generate_key&_revision=5").startsWith("HTTP/1.1 422"))
 
                     server.enqueue(okhttp3.mockwebserver.MockResponse().setBody("China-City-List fixture\nLocation_ID,Name\n101010100,Beijing\n"))
                     val place = """[{"id":"","name":"首次设置收藏","zone":"Asia/Shanghai","lat":"","lon":"","locationId":"","city":"101010100"}]"""
-                    assertTrue(request(url, "_action=submit&_revision=3&places=${encoded(place)}").startsWith("HTTP/1.1 200"))
+                    assertTrue(request(url, "_action=submit&_revision=6&places=${encoded(place)}").startsWith("HTTP/1.1 200"))
                     onView(withText("确认应用")).perform(click())
                     onView(withText("收藏 首次设置收藏 · 已保存")).check(matches(isDisplayed()))
                     scenario.onActivity {

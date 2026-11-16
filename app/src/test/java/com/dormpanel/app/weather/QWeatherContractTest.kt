@@ -219,6 +219,21 @@ class QWeatherContractTest {
         assertEquals(key.qWeatherPemSha256, restored.qWeatherPemSha256)
     }
 
+    @Test fun credentialEqualityUsesKeyMaterialAndAllJwtIdentifiers() {
+        val key = QWeatherSigningKey.generate()
+        val jwt = QWeatherAuth.Jwt("kid", "issuer", "project", key)
+        val reimported = QWeatherSigningKey.read(key.encode())
+        jwt.header(now)
+        assertTrue(jwt.sameCredentials(QWeatherAuth.Jwt("kid", "issuer", "project", reimported)))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.Jwt("other", "issuer", "project", reimported)))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.Jwt("kid", "other", "project", reimported)))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.Jwt("kid", "issuer", "other", reimported)))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.Jwt("kid", "issuer", "project", QWeatherSigningKey.generate())))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.ApiKey("fixture")))
+        assertTrue(QWeatherAuth.ApiKey("fixture").sameCredentials(QWeatherAuth.ApiKey("fixture")))
+        assertFalse(QWeatherAuth.ApiKey("fixture").sameCredentials(QWeatherAuth.ApiKey("other")))
+    }
+
     @Test fun generatedPemVerifiesProviderJwtAndSurvivesPkcs8Reload() {
         val key = QWeatherSigningKey.generate()
         val pem = key.publicPem.lines()

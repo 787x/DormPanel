@@ -153,9 +153,9 @@ internal class WeatherSettingsDialog(
                     else requireNotNull(keys.getOrNull(keyChoice.selectedItemPosition)) { "请生成密钥或导入私钥" })
                 val save = {
                     action(status) {
-                        weather.configure(validatedHost, auth)
+                        val changed = weather.configure(validatedHost, auth)
                         secret.text.clear()
-                        status.text = weather.credentialStatus
+                        status.text = if (changed) weather.credentialStatus else "凭据未变化。当前状态：${weather.credentialStatus}"
                         renderKeys()
                         renderStats()
                         updated()
@@ -167,7 +167,7 @@ internal class WeatherSettingsDialog(
         }, button("测试已保存凭据") {
             stopTest?.invoke()
             status.text = "正在请求实时天气…"
-            stopTest = weather.test { status.text = it; renderStats() }
+            stopTest = weather.test { status.text = it.message; renderStats() }
         }, button("清除凭据") {
             confirm("清除和风凭据？", "将删除已保存的认证凭据及待注册密钥。") {
                 action(status) {

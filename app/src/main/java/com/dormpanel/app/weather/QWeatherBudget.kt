@@ -84,7 +84,8 @@ internal class QWeatherBudget(private val prefs: SharedPreferences, private val 
                     throttles = 0
                     editor.remove("throttleAccount").remove("throttleUntil")
                 }
-                editor.putLong("success", now().toEpochMilli()).putString("lastRequestState", WeatherState.FRESH.name)
+                val state = if (explicitTest && result.parsed.data !is WeatherData.Current) WeatherState.EMPTY else WeatherState.FRESH
+                editor.putLong("success", now().toEpochMilli()).putString("lastRequestState", state.name)
             }
             is WeatherResult.Failed -> {
                 val error = result.failure

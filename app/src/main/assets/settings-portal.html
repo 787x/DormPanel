@@ -104,6 +104,7 @@ footer{margin-top:1rem}.actions{align-items:center}.queue li{margin:.35rem 0}.qu
 </section>
 <section id="places" hidden>
 <h2>天气地点</h2>
+<fieldset id="place_fields" style="border:0;margin:0;padding:0;min-width:0" aria-label="编辑天气地点">
 <label>选择已保存地点或新建<select id="place_select"><option value="">添加新地点</option></select></label>
 <p id="source" class="muted"></p>
 <details id="city_search"><summary>搜索城市或区县</summary>
@@ -125,14 +126,22 @@ footer{margin-top:1rem}.actions{align-items:center}.queue li{margin:.35rem 0}.qu
 <div class="actions"><button type="button" id="queue">加入待确认地点</button>
 <button type="button" id="discard_place" hidden>放弃当前地点草稿</button></div>
 <ul id="queue_list" class="queue"></ul>
+</fieldset>
 </section>
 <footer>
 <p id="weather_progress" role="status" hidden></p>
 <button type="button" id="refresh_status">检查设备进度</button>
-<p id="draft_notice" class="muted" hidden>当前地点草稿保留在本页，最终提交只发送已加入列表的地点。
+<p id="draft_notice" class="muted" hidden>当前地点尚未加入待确认列表。
 <button type="button" data-open-tab="places">继续编辑地点</button></p>
 <p id="feedback" role="status" aria-live="polite">发送后请在 X08E 上核对并确认保存。</p>
 <div class="actions"><button type="button" class="primary" id="submit">发送待确认配置</button><button type="button" id="cancel">取消会话</button></div>
+<div id="draft_confirmation" class="notice" role="group" aria-labelledby="draft_question" hidden>
+<p id="draft_question">当前地点草稿尚未加入列表。可以返回编辑，或放弃这份草稿并发送已选配置和已入队地点。</p>
+<div class="actions">
+<button type="button" id="continue_place">返回编辑地点</button>
+<button type="button" id="submit_without_draft">放弃草稿并发送</button>
+</div>
+</div>
 </footer>
 </main>
 <script type="application/json" id="model">{{MODEL}}</script>
@@ -277,8 +286,14 @@ function setPlaceDirty(dirty) {
   placeDirty = dirty;
   $("draft_notice").hidden = !dirty;
   $("discard_place").hidden = !dirty;
+  if (!dirty) $("draft_confirmation").hidden = true;
 }
 $("discard_place").onclick = loadPlace;
+$("continue_place").onclick = () => {
+  $("draft_confirmation").hidden = true;
+  openTab("places");
+  $("place_name").focus();
+};
 for (const key of placeFields) $("place_" + key).oninput = () => { setPlaceDirty(true); };
 $("candidate").onchange = () => {
   const city = Boolean($("candidate").value);
@@ -330,6 +345,8 @@ function renderState() {
 function end(title,message) {
   ended = true;
   clearTimeout(stepPoll);
+  $("draft_notice").hidden = true;
+  $("draft_confirmation").hidden = true;
   $("state").textContent = title;
   $("feedback").textContent = message;
   for (const id of secrets) $(id).value = "";
@@ -399,6 +416,7 @@ async function request(fields) {
 function renderControls() {
   const waiting = awaitingDevice();
   $("submit").disabled = busy || waiting;
+  $("submit_without_draft").disabled = busy || waiting;
   $("search").disabled = busy || waiting || !weatherState.configured;
   $("generate_key").disabled = busy || waiting;
   $("save_weather").disabled = busy || waiting;
@@ -418,7 +436,7 @@ function applyStatus(data) {
   }
   if (changed && step.kind === "save_weather" && weatherSubmittedHere) {
     weatherSubmittedHere = false;
-    if (step.state === "success") {
+    if (step.saveApplied) {
       populate("qw_", weatherState, ["host","auth","kid","iss","sub"]);
       $("qw_api").value = "";
       $("include_qw").checked = false;
@@ -469,7 +487,8 @@ $("search").onclick = async () => {
   $("search_status").textContent = (data.cities.length ? "选择城市后，自行填写收藏名称和时区。" :
     "未找到可收藏候选，可用自行获得的坐标添加。") + " " + data.credit;
 };
-$("submit").onclick = async () => {
+async function submitFinal(discardDraft = false) {
+  if (busy || ended || awaitingDevice()) return;
   const fields = {_action:"submit",_revision:step.revision};
   for (const [scope, ids] of Object.entries(groups)) if ($(scope).checked) {
     for (const id of ids) fields[id] = $(id).value;
@@ -477,10 +496,23 @@ $("submit").onclick = async () => {
   if (fields.qw_auth === "jwt") fields.qw_api = "";
   if (pendingPlaces.length) fields.places = JSON.stringify(pendingPlaces);
   if (Object.keys(fields).length === 2) { $("feedback").textContent = "请选择要发送的分区或加入待确认地点。"; return; }
+  if (placeDirty && !discardDraft) {
+    $("draft_confirmation").hidden = false;
+    $("continue_place").focus();
+    return;
+  }
+  if (placeDirty) loadPlace();
   $("feedback").textContent = "正在发送…";
-  const data = await request(fields);
-  if (data) end("等待 X08E 确认", data.message + (placeDirty ? " 未加入列表的地点草稿保留在本页。" : ""));
-};
+  $("place_fields").disabled = true;
+  try {
+    const data = await request(fields);
+    if (data) end("等待 X08E 确认", data.message);
+  } finally {
+    $("place_fields").disabled = false;
+  }
+}
+$("submit").onclick = () => submitFinal();
+$("submit_without_draft").onclick = () => submitFinal(true);
 $("cancel").onclick = async () => {
   const data = await request({_action:"cancel"});
   if (data) end("已取消",data.message);
