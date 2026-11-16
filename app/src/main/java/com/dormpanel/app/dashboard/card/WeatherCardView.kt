@@ -190,7 +190,7 @@ class WeatherCardView internal constructor(
         val slots = presentation.forecastColumns
         val lines = when {
             slots == 0 -> emptyList()
-            validLegacy != null -> validLegacy.lines(now, slots, forCard = true, zone = zone)
+            validLegacy != null -> validLegacy.lines(now, slots, forCard = true, zone = zone, includeToday = false)
             else -> prediction.forecastLines(now, slots, includeToday = prediction?.query?.block != WeatherBlock.DAILY, forCard = true)
         }
         forecast.show(lines.isNotEmpty())

@@ -172,8 +172,41 @@ class WeatherCardPresentationTest {
             condition = "partlycloudy", isDaytime = false, forecastTemperature = 31)
         val legacyNight = ha.copy(forecastType = "twice_daily", forecast = listOf(night))
         val nextDay = date.plusDays(1).atStartOfDay(zone).toInstant()
-        assertEquals(WeatherSymbol.PARTLY_NIGHT, legacyNight.lines(nextDay, 1, forCard = true, zone = zone).single().sky.symbol)
-        assertTrue(legacyNight.lines(nextDay.plusSeconds(12 * 3600), 1, forCard = true, zone = zone).isEmpty())
+        val nightLine = legacyNight.lines(nextDay, 1, forCard = true, zone = zone, includeToday = false).single()
+        assertEquals(WeatherSymbol.PARTLY_NIGHT, nightLine.sky.symbol)
+        assertEquals("11月18日 夜间", nightLine.label)
+        assertTrue(legacyNight.lines(nextDay.plusSeconds(12 * 3600), 1, forCard = true, zone = zone, includeToday = false).isEmpty())
+
+        val hourly = legacyNight.copy(forecastType = "hourly", forecast = listOf(night.copy(timeEpochMillis = nextDay.toEpochMilli())))
+        assertEquals("00:00", hourly.lines(nextDay, 1, forCard = true, zone = zone, includeToday = false).single().label)
+        assertTrue(hourly.lines(nextDay.plusSeconds(3600), 1, forCard = true, zone = zone, includeToday = false).isEmpty())
+    }
+
+    @Test fun legacyDailyCardSkipsTodayAndUsesActualDatesAcrossLocalMidnight() {
+        val newYork = ZoneId.of("America/New_York")
+        val date = LocalDate.of(2026, 10, 31)
+        val midnight = date.plusDays(1).atStartOfDay(newYork).toInstant()
+        val beforeMidnight = midnight.minusSeconds(1)
+        val days = (-1L..3L).map { offset ->
+            val start = date.plusDays(offset).atStartOfDay(newYork).toInstant()
+            com.dormpanel.app.data.WeatherForecast(start.toEpochMilli(), "sunny", 18, 27)
+        }
+        val demo = com.dormpanel.app.data.WeatherState("sunny", 22, 60, 18, 27, days)
+        for (source in listOf(demo, demo.copy(entityId = "weather.home"))) {
+            fun cardLines(now: Instant, forecast: List<com.dormpanel.app.data.WeatherForecast> = days) =
+                source.copy(forecast = forecast).lines(now, 3, forCard = true, zone = newYork, includeToday = false)
+
+            val before = cardLines(beforeMidnight)
+            assertEquals(listOf("明天", "周一", "周二"), before.map { it.label })
+            assertEquals(listOf("11月1日", "11月2日", "11月3日"), before.map { it.secondaryDate })
+            assertEquals(listOf("明天", "周二"), cardLines(midnight).map { it.label })
+            assertEquals(listOf("周一", "周二"), cardLines(beforeMidnight, days.filterIndexed { index, _ -> index != 2 }).map { it.label })
+            assertTrue(cardLines(beforeMidnight, listOf(days[1])).isEmpty())
+
+            val details = source.copy(forecast = listOf(days[1])).lines(beforeMidnight, 1, zone = newYork).single()
+            assertEquals("10月31日", details.label)
+            assertEquals("低 18°C / 高 27°C", details.temperature)
+        }
     }
 
     private fun snapshot(block: WeatherBlock, vararg forecasts: WeatherForecast) =

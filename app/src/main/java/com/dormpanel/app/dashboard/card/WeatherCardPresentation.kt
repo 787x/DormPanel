@@ -180,12 +180,13 @@ internal fun WeatherConditions.metric(metric: WeatherCardMetric, temperatureUnit
 }
 
 internal fun LegacyWeather.lines(now: Instant, limit: Int, forCard: Boolean = false,
-    zone: ZoneId = ZoneId.systemDefault()): List<WeatherLine> {
+    zone: ZoneId = ZoneId.systemDefault(), includeToday: Boolean = true): List<WeatherLine> {
     val today = now.atZone(zone).toLocalDate()
     return forecast.asSequence().mapNotNull {
         val start = Instant.ofEpochMilli(it.timeEpochMillis)
         val local = start.atZone(zone)
         val date = local.toLocalDate()
+        if (!includeToday && forecastType == "daily" && date == today) return@mapNotNull null
         val label = when (forecastType) {
             "hourly" -> if (start.plusSeconds(3600) <= now) return@mapNotNull null else local.format(hourFormat)
             "twice_daily" -> {
