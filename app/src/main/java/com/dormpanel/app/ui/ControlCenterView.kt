@@ -71,6 +71,7 @@ class ControlCenterView(
         gravity = Gravity.CENTER
         minHeight = dp(44)
     }
+    private val contentScroll = ScrollView(context).apply { id = R.id.control_center_scroll }
     private var returnSwipe = false
 
     private val brightnessLabel = label(size = 18f)
@@ -86,6 +87,7 @@ class ControlCenterView(
     private val brightness = slider(context.getString(R.string.control_center_brightness)).apply { min = 1 }
     private val volume = slider(context.getString(R.string.control_center_volume))
     private val opacity = slider(context.getString(R.string.card_opacity))
+    private val sliders = listOf(systemBrightness, brightness, volume, opacity)
     private val keepAwake = toggle(context.getString(R.string.control_center_awake))
     private val mute = action(context.getString(R.string.control_center_mute)) { device.toggleMute() }
     private val haStatus = secondaryLabel()
@@ -204,7 +206,7 @@ class ControlCenterView(
             arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
             intArrayOf(palette.secondary, palette.accent),
         )
-        for (slider in listOf(systemBrightness, brightness, volume, opacity)) {
+        for (slider in sliders) {
             slider.progressTintList = sliderColors
             slider.thumbTintList = sliderColors
         }
@@ -272,10 +274,8 @@ class ControlCenterView(
             orientation = HORIZONTAL
             setPadding(0, 0, 0, dp(12))
         }
-        addView(ScrollView(context).apply {
-            id = R.id.control_center_scroll
-            addView(columns, android.widget.FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-        }, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        contentScroll.addView(columns, android.widget.FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        addView(contentScroll, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         val left = column()
         val right = column()
         columns.addView(left, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(24) })
@@ -365,12 +365,22 @@ class ControlCenterView(
         device.removeListener(deviceListener)
         super.onDetachedFromWindow()
     }
-    // The fixed footer is the swipe surface. The scroll viewport owns all content touches.
+    private fun contentOverflows(): Boolean =
+        contentScroll.canScrollVertically(1) || contentScroll.canScrollVertically(-1)
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        val hint = context.getString(if (contentOverflows()) R.string.return_home_up_here else R.string.return_home_up)
+        if (returnSwipeArea.text != hint) returnSwipeArea.text = hint
+    }
+
     override fun shouldObservePageSwipe(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             val bounds = Rect()
-            returnSwipe = returnSwipeArea.getGlobalVisibleRect(bounds) &&
+            fun hits(view: View): Boolean = view.getGlobalVisibleRect(bounds) &&
                 bounds.contains(event.rawX.toInt(), event.rawY.toInt())
+            // A scrollable viewport owns the stream even when it starts at either scroll boundary.
+            returnSwipe = if (contentOverflows()) hits(returnSwipeArea) else sliders.none(::hits)
         }
         val observe = returnSwipe
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {

@@ -41,6 +41,7 @@
     <string name="theme_dark">深色</string>
     <string name="card_opacity">卡片不透明度</string>
     <string name="card_opacity_value">卡片不透明度 · %1$d%%</string>
-    <string name="return_home_up">从这里上滑返回首页</string>
+    <string name="return_home_up">上滑返回首页</string>
     <string name="ha_settings">Home Assistant 设置</string>
+    <string name="return_home_up_here">从这里上滑返回首页</string>
 </resources>

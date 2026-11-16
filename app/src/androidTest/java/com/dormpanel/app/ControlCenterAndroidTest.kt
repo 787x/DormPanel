@@ -138,14 +138,20 @@ class ControlCenterAndroidTest {
                     assertSame(viewport, it.findViewById<ScrollView>(R.id.control_center_scroll))
                     assertEquals(savedOffset, viewport.scrollY)
                 }
-                scenario.recreate()
-                onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
-                val footer = onView(withText(R.string.return_home_up))
-                footer.perform(GeneralSwipeAction(Swipe.FAST,
-                    { view -> point(view, .50f, .5f) },
-                    { view -> point(view, .50f, .5f).apply { this[1] -= 160 } },
-                    Press.FINGER))
+                onView(withText(R.string.return_home_up_here)).perform(swipeUpFrom(.50f, .50f))
                 onView(withText(R.string.control_center_title)).check(doesNotExist())
+
+                for ((x, y) in listOf(.25f to .88f, .75f to .47f)) {
+                    openControlCenter()
+                    scenario.recreate()
+                    scenario.onActivity {
+                        val viewport = it.findViewById<ScrollView>(R.id.control_center_scroll)
+                        assertFalse(viewport.canScrollVertically(1))
+                    }
+                    onView(withText(R.string.return_home_up)).check(matches(isDisplayed()))
+                    scroll.perform(swipeUpFrom(x, y))
+                    onView(withText(R.string.control_center_title)).check(doesNotExist())
+                }
             }
         } finally {
             store.write(previous)
@@ -307,6 +313,11 @@ class ControlCenterAndroidTest {
             assertTrue(heading.centerY() in action.top until action.bottom)
         }
     }
+
+    private fun swipeUpFrom(fractionX: Float, fractionY: Float) = GeneralSwipeAction(Swipe.FAST,
+        { view -> point(view, fractionX, fractionY) },
+        { view -> point(view, fractionX, fractionY).apply { this[1] -= 160 * view.resources.displayMetrics.density } },
+        Press.FINGER)
 
     private fun point(view: View, fractionX: Float, fractionY: Float): FloatArray {
         val position = IntArray(2)

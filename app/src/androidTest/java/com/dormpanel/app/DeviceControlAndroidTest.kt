@@ -11,6 +11,10 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.GeneralLocation
+import androidx.test.espresso.action.GeneralSwipeAction
+import androidx.test.espresso.action.Press
+import androidx.test.espresso.action.Swipe
 import androidx.test.espresso.action.ViewActions.swipeDown
 import androidx.test.espresso.action.ViewActions.swipeLeft
 import androidx.test.espresso.action.ViewActions.swipeRight
@@ -181,7 +185,13 @@ class DeviceControlAndroidTest {
                 onView(withContentDescription(R.string.control_center_brightness)).check(matches(isDisplayed()))
                 onView(withContentDescription(R.string.control_center_grant_description)).check(matches(isDisplayed()))
                 scenario.onActivity { ViewModelProvider(it)[DashboardViewModel::class.java].deviceControls.setFollowSystem(false) }
-                onView(withContentDescription(R.string.control_center_brightness)).perform(swipeRight())
+                onView(withContentDescription(R.string.control_center_brightness)).perform(
+                    swipeRight(),
+                    GeneralSwipeAction(Swipe.FAST, GeneralLocation.CENTER,
+                        { view -> GeneralLocation.CENTER.calculateCoordinates(view).apply {
+                            this[1] -= 160 * view.resources.displayMetrics.density
+                        } }, Press.FINGER),
+                )
                 onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
                 onView(withContentDescription(R.string.control_center_volume)).perform(swipeLeft())
                 onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))

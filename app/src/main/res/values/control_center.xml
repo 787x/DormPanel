@@ -31,4 +31,5 @@
     <string name="control_center_reconnecting">Reconnecting</string>
     <string name="control_center_auth_error">Authentication error</string>
     <string name="control_center_connection_error">Connection error</string>
+    <string name="return_home_up_here">Swipe up here to return home</string>
 </resources>
