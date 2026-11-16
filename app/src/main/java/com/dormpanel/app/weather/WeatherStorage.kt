@@ -34,28 +34,55 @@ internal class QWeatherSettings(context: Context, private val alias: String = "D
     }
     var config: QWeatherConfig? = load()
         private set
+    var pendingKey: QWeatherSigningKey? = runCatching {
+        prefs.getString("pending_key", null)?.let(cipher::decrypt)?.let(QWeatherSigningKey::read)
+    }.getOrNull()
+        private set
+    val activeKey get() = (config?.auth as? QWeatherAuth.Jwt)?.key
+    val keyUnavailable get() = prefs.contains("pending_key") && pendingKey == null
     val hasPayload get() = prefs.contains("payload")
-    val host get() = prefs.getString("host", "").orEmpty()
+    val host get() = config?.host ?: prefs.getString("host", "").orEmpty()
     val problem get() = if (hasPayload) "无法解密天气凭据，请重新配置" else "请先配置和风天气"
+
+    fun apiKeyFor(host: String, entered: String): QWeatherAuth.ApiKey =
+        if (entered.isNotEmpty()) QWeatherAuth.ApiKey(entered)
+        else requireNotNull(config?.takeIf { it.host == host }?.auth as? QWeatherAuth.ApiKey) {
+            "请输入此 API Host 的 API Key"
+        }
 
     private fun load() = runCatching {
         val json = JSONObject(cipher.decrypt(checkNotNull(prefs.getString("payload", null))) ?: return null)
         QWeatherConfig(json.getString("id"), json.getString("host"), QWeatherAuth.decode(json))
     }.getOrNull()
 
-    fun save(host: String, auth: QWeatherAuth) {
+    fun generateKey() {
+        val next = QWeatherSigningKey.generate()
+        val encrypted = cipher.encrypt(next.encode())
+        check(prefs.edit().putString("pending_key", encrypted).commit()) { "无法保存待注册密钥" }
+        pendingKey = next
+    }
+
+    /** Returns false for the same persisted credentials, without replacing active or pending keys. */
+    fun save(host: String, auth: QWeatherAuth): Boolean {
         val validated = qWeatherHost(host)
+        if (config?.let { it.host == validated && it.auth.sameCredentials(auth) } == true) return false
         val next = QWeatherConfig(UUID.randomUUID().toString(), validated, auth)
         val payload = runCatching {
             cipher.encrypt(auth.encode().put("host", next.host).put("id", next.id).toString())
         }.getOrElse { error("无法安全保存凭据，请检查 Android Keystore") }
-        check(prefs.edit().putString("host", next.host).putString("payload", payload).commit()) { "无法保存天气设置" }
+        val editor = prefs.edit().putString("host", next.host).putString("payload", payload)
+        val usingPending = auth is QWeatherAuth.Jwt && pendingKey?.let(auth.key::sameKey) == true
+        if (usingPending) editor.remove("pending_key")
+        check(editor.commit()) { "无法保存天气设置" }
+        if (usingPending) pendingKey = null
         config = next
+        return true
     }
 
     fun clear() {
-        check(prefs.edit().remove("payload").commit()) { "无法清除天气凭据" }
+        check(prefs.edit().remove("payload").remove("pending_key").remove("host").commit()) { "无法清除天气凭据" }
         config = null
+        pendingKey = null
         runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias) }
     }
 }

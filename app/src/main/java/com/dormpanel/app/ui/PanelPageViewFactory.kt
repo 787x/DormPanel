@@ -34,17 +34,22 @@ class PanelPageViewFactory(
     private val webDavSync: com.dormpanel.app.schedule.WebDavSyncController? = null,
     private val scheduleViewport: com.dormpanel.app.schedule.ScheduleViewport = com.dormpanel.app.schedule.ScheduleViewport(),
 ) {
+    private val portal = if (webDavSettings != null && webDavSync != null)
+        com.dormpanel.app.lan.SettingsPortal(inflater.context, backend, webDavSettings, webDavSync) else null
+    private val openPortal: (() -> Unit)? = portal?.let { shared -> { shared.show() } }
+    private val closePortal: () -> Unit = { portal?.close() }
+
     internal var openWeather: (com.dormpanel.app.weather.WeatherCenterSelection) -> Unit = {}
     internal var weatherSelection = com.dormpanel.app.weather.WeatherCenterSelection(legacy = true)
     internal var backFromWeather: () -> Unit = {}
 
     fun create(page: PanelPage, parent: ViewGroup): View {
         if (page == PanelPage.WEATHER) return com.dormpanel.app.weather.WeatherCenterView(inflater.context, backend, appearance,
-            weatherSelection, backFromWeather)
+            weatherSelection, backFromWeather, openPortal = openPortal, closePortal = closePortal)
         if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, receiveTimetable, manageTimetables, scheduleViewport)
         if (page == PanelPage.APPS) return com.dormpanel.app.apps.AppsPageView(inflater.context, apps, apps.icons, appearance, onReturnHome, installApk)
-        if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed)
-        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, deviceControls, onPageGestureClaimed, backend, startupPolicy, webDavSettings, webDavSync).apply {
+        if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed, openPortal, closePortal)
+        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, deviceControls, onPageGestureClaimed, backend, startupPolicy, webDavSettings, webDavSync, portal?.let { it::show }, closePortal).apply {
             setWeatherCenterAction { openWeather(com.dormpanel.app.weather.WeatherCenterSelection()) }
         }
         if (page == PanelPage.HOME) {

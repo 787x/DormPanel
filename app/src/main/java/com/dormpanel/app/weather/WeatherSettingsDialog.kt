@@ -1,10 +1,15 @@
 package com.dormpanel.app.weather
 
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.text.InputType
 import android.text.util.Linkify
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.AdapterView
 import android.text.TextWatcher
@@ -27,6 +32,7 @@ internal class WeatherSettingsDialog(
     private val context: Context,
     private val weather: WeatherServices,
     private val onPlaceSelected: ((WeatherPlace) -> Unit)? = null,
+    private val openPortal: (() -> Unit)? = null,
 ) {
     private val repository get() = weather.repository
     private val places get() = weather.places
@@ -34,7 +40,10 @@ internal class WeatherSettingsDialog(
     private val dialogs = linkedSetOf<AlertDialog>()
 
     fun dismiss() {
-        dialogs.toList().asReversed().forEach(AlertDialog::dismiss)
+        dialogs.toList().asReversed().forEach { dialog ->
+            dialog.window?.peekDecorView()?.hideFormIme()
+            dialog.dismiss()
+        }
         dialogs.clear()
     }
 
@@ -42,7 +51,6 @@ internal class WeatherSettingsDialog(
         val layout = column()
         val list = column()
         val status = label("")
-        val dialog = dialog("天气服务与地点", layout)
         fun render() {
             status.text = if (weather.settings.config != null) "和风天气已配置" else weather.settings.problem
             list.removeAllViews()
@@ -54,9 +62,11 @@ internal class WeatherSettingsDialog(
         layout.addView(status)
         layout.addView(row(button("和风服务配置") { service(::render) }, button("搜索城市或区县") { search() },
             button("添加地点") { edit(null) }))
+        openPortal?.let { layout.addView(button("扫码配置") { dismiss(); it() }) }
         layout.addView(list)
         layout.addView(button("清除全部离线缓存") { confirmOfflineClear(null) })
         render()
+        val dialog = dialog("天气服务与地点", layout)
         val stop = places.observe(::render)
         dialog.onDismiss { stop() }
     }
@@ -64,10 +74,16 @@ internal class WeatherSettingsDialog(
     private fun service(updated: () -> Unit) {
         val layout = column()
         val host = field("专属 API Host", weather.settings.host)
-        val apiKey = CheckBox(context).apply { text = "使用 API Key 认证" }
-        val kid = field("凭据 ID（kid）")
-        val issuer = field("开发者 ID（iss）")
-        val subject = field("项目 ID（sub）")
+            .apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI }
+        val savedAuth = weather.settings.config?.auth
+        val savedJwt = savedAuth as? QWeatherAuth.Jwt
+        val apiKey = CheckBox(context).apply {
+            text = "使用 API Key 认证"
+            isChecked = savedAuth is QWeatherAuth.ApiKey
+        }
+        val kid = field("凭据 ID（kid）", savedJwt?.kid.orEmpty())
+        val issuer = field("开发者 ID（iss）", savedJwt?.issuer.orEmpty())
+        val subject = field("项目 ID（sub）", savedJwt?.subject.orEmpty())
         val secret = field("Ed25519 PKCS#8 私钥").apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             maxLines = 3
@@ -78,40 +94,87 @@ internal class WeatherSettingsDialog(
             inputType = InputType.TYPE_CLASS_NUMBER
         }
         val stats = label("")
-        val status = label(if (weather.settings.config == null) weather.settings.problem else "已保存加密凭据")
-        val dialog = dialog("和风天气服务", layout)
-        dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        val status = label(weather.credentialStatus)
+        val keyStatus = label("")
+        val keyChoice = Spinner(context).apply { contentDescription = "JWT 签名密钥" }
+        var keys = emptyList<QWeatherSigningKey>()
+        fun renderKeys(usePending: Boolean = false) {
+            val settings = weather.settings
+            keys = listOfNotNull(settings.activeKey, settings.pendingKey)
+            keyChoice.adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item,
+                keys.map { if (it === settings.activeKey) "当前凭据密钥" else "新密钥（等待注册公钥）" })
+            keyChoice.visibility = if (keys.isEmpty() || apiKey.isChecked) View.GONE else View.VISIBLE
+            if (usePending) keyChoice.setSelection(keys.lastIndex.coerceAtLeast(0))
+            keyStatus.text = when {
+                settings.keyUnavailable -> "待注册密钥不可用，请重新生成"
+                settings.pendingKey != null -> "已生成密钥，等待注册公钥"
+                settings.activeKey != null -> "已有 JWT 签名密钥"
+                else -> "尚未生成密钥"
+            }
+        }
         var stopTest: (() -> Unit)? = null
         fun renderStats() {
             val now = weather.budget.stats()
             stats.text = "${now.month} UTC 本机已用 ${now.requests} / ${now.limit}，剩余 ${now.remaining}\n" +
                 "最近成功 ${now.lastSuccess ?: "—"}\n最近错误 ${now.lastError ?: "—"}"
         }
-        apiKey.setOnCheckedChangeListener { _, checked ->
+        fun renderAuth(checked: Boolean) {
             listOf(kid, issuer, subject).forEach { it.visibility = if (checked) View.GONE else View.VISIBLE }
-            secret.text.clear()
-            secret.hint = if (checked) "API Key" else "Ed25519 PKCS#8 私钥"
+            secret.hint = if (checked) "API Key（留空保留已保存 Key）" else "导入 PKCS#8 私钥（可选）"
+            renderKeys()
         }
+        apiKey.setOnCheckedChangeListener { _, checked -> secret.text.clear(); renderAuth(checked) }
+        renderAuth(apiKey.isChecked)
         listOf(host, apiKey, kid, issuer, subject, secret).forEach(layout::addView)
+        layout.addView(keyChoice)
+        layout.addView(keyStatus)
+        layout.addView(row(button("生成 / 重新生成密钥") {
+            val settings = weather.settings
+            val generate = {
+                action(status) {
+                    settings.generateKey()
+                    renderKeys(usePending = true)
+                    status.text = "新密钥已加密保存。注册公钥后填写对应凭据标识。"
+                }
+            }
+            if (settings.activeKey != null || settings.pendingKey != null || settings.keyUnavailable)
+                confirm("生成新的 Ed25519 密钥？", "将替换待注册密钥。当前已保存凭据继续使用原密钥，直到保存新凭据。", generate)
+            else generate()
+        }, button("查看 / 复制公钥") {
+            val key = keys.getOrNull(keyChoice.selectedItemPosition) ?: weather.settings.pendingKey ?: weather.settings.activeKey
+            if (key == null) status.text = "请先生成密钥或保存导入的私钥" else showPublicKey(key)
+        }))
         layout.addView(row(button("保存凭据") {
             action(status) {
-                val auth = if (apiKey.isChecked) QWeatherAuth.ApiKey(secret.value())
-                else QWeatherAuth.Jwt(kid.value(), issuer.value(), subject.value(), secret.value())
-                weather.configure(host.value(), auth)
-                secret.text.clear()
-                status.text = "已保存加密凭据"
-                renderStats()
-                updated()
+                val validatedHost = qWeatherHost(host.value())
+                val auth = if (apiKey.isChecked) weather.settings.apiKeyFor(validatedHost, secret.value())
+                else QWeatherAuth.Jwt(kid.value(), issuer.value(), subject.value(),
+                    if (secret.value().isNotEmpty()) QWeatherSigningKey.read(secret.value())
+                    else requireNotNull(keys.getOrNull(keyChoice.selectedItemPosition)) { "请生成密钥或导入私钥" })
+                val save = {
+                    action(status) {
+                        val changed = weather.configure(validatedHost, auth)
+                        secret.text.clear()
+                        status.text = if (changed) weather.credentialStatus else "凭据未变化。当前状态：${weather.credentialStatus}"
+                        renderKeys()
+                        renderStats()
+                        updated()
+                    }
+                }
+                if (weather.settings.hasPayload) confirm("更换已保存的和风凭据？", "请确认 API Host、凭据标识和选中的密钥属于同一凭据。", save)
+                else save()
             }
         }, button("测试已保存凭据") {
             stopTest?.invoke()
             status.text = "正在请求实时天气…"
-            stopTest = weather.test { status.text = it; renderStats() }
+            stopTest = weather.test { status.text = it.message; renderStats() }
         }, button("清除凭据") {
-            confirm("清除和风凭据？") {
+            confirm("清除和风凭据？", "将删除已保存的认证凭据及待注册密钥。") {
                 action(status) {
                     weather.clearCredentials()
                     secret.text.clear()
+                    listOf(host, kid, issuer, subject).forEach { it.text.clear() }
+                    renderKeys()
                     status.text = "已清除天气凭据"
                     renderStats()
                     updated()
@@ -121,16 +184,40 @@ internal class WeatherSettingsDialog(
         layout.addView(status)
         layout.addView(row(limit, button("保存预算") {
             action(status) {
-                weather.budget.setLimit(limit.value().toIntOrNull() ?: 0)
-                repository.onConfigurationChanged(resetBudget = true)
+                weather.setBudgetLimit(limit.value().toIntOrNull() ?: 0)
                 status.text = "本机预算已保存"
                 renderStats()
             }
         }))
         layout.addView(stats)
         layout.addView(button("刷新周期设置") { refreshSettings(::renderStats) })
+        openPortal?.let { layout.addView(button("扫码配置") { dismiss(); it() }) }
+        val edits = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                status.text = "表单已编辑，尚未保存凭据"
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        }
+        listOf(host, kid, issuer, subject, secret).forEach { it.addTextChangedListener(edits) }
         renderStats()
+        val dialog = dialog("和风天气服务", layout, secure = true)
         dialog.onDismiss { stopTest?.invoke(); secret.text.clear() }
+    }
+
+    private fun showPublicKey(key: QWeatherSigningKey) {
+        val layout = column()
+        layout.addView(label("和风公钥文本 SHA-256（PEM 去除首尾空白，内部为 LF）\n${key.qWeatherPemSha256}")
+            .apply { setTextIsSelectable(true) })
+        layout.addView(label("SPKI DER SHA-256\n${key.spkiSha256}").apply { setTextIsSelectable(true) })
+        layout.addView(label(key.publicPem).apply { setTextIsSelectable(true) })
+        layout.addView(button("复制完整公钥") {
+            context.getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText("Ed25519 公钥", key.publicPem))
+            Toast.makeText(context, "已复制公钥", Toast.LENGTH_SHORT).show()
+        })
+        layout.addView(attribution(WeatherAttribution(link = QWEATHER_CREDENTIAL_GUIDE)))
+        dialog("和风 Ed25519 公钥", layout)
     }
 
     private fun refreshSettings(updated: () -> Unit) {
@@ -224,7 +311,6 @@ internal class WeatherSettingsDialog(
         val name = field("城市、区县或行政区域")
         val status = label("请选择地点预览或收藏。收藏使用和风公开目录中的地点编号。")
         val results = column()
-        val dialog = dialog("搜索和风地点", layout)
         var stop: (() -> Unit)? = null
         layout.addView(row(name, button("搜索") {
             stop?.invoke()
@@ -242,26 +328,29 @@ internal class WeatherSettingsDialog(
         }))
         layout.addView(status)
         layout.addView(results)
-        dialog.onDismiss { stop?.invoke() }
+        dialog("搜索和风地点", layout).onDismiss { stop?.invoke() }
     }
 
     private fun selectCity(city: WeatherServices.City) {
         val layout = column()
         val zone = field("地点时区（例如 Asia/Shanghai）", city.zone?.id.orEmpty())
         val status = label("预览保留至应用进程退出。收藏后可长期使用。")
-        val dialog = dialog(city.name, layout)
+        lateinit var dialog: AlertDialog
         layout.addView(zone)
         layout.addView(status)
         layout.addView(row(button("临时预览") {
             action(status) {
                 val place = weather.select(city, zone.parseZone())
+                layout.hideFormIme()
                 dialog.dismiss()
                 chooseSource(place)
             }
         }, button("收藏此地点") {
+            layout.hideFormIme()
             dialog.dismiss()
             favorite(null, city.locationId)
         }))
+        dialog = dialog(city.name, layout)
     }
 
     private fun favorite(previewId: String?, locationId: String?) {
@@ -269,7 +358,7 @@ internal class WeatherSettingsDialog(
         val name = field("收藏名称（自行填写）")
         val zone = field("地点时区（自行填写，例如 Asia/Shanghai）")
         val status = label("仅使用和风公开目录发布的地点编号。未收录地点可填写独立获得的经纬度。")
-        val dialog = dialog("收藏天气地点", layout)
+        lateinit var dialog: AlertDialog
         var cancel: (() -> Unit)? = null
         layout.addView(name)
         layout.addView(zone)
@@ -282,15 +371,18 @@ internal class WeatherSettingsDialog(
                 cancel = weather.favorite(previewId, locationId, name.value(), timeZone) { place, error ->
                     if (place == null) status.text = error.orEmpty()
                     else {
+                        layout.hideFormIme()
                         dialog.dismiss()
                         chooseSource(place)
                     }
                 }
             }
         }, button("用自有坐标收藏") {
+            layout.hideFormIme()
             dialog.dismiss()
             edit(null, previewId)
         }))
+        dialog = dialog("收藏天气地点", layout)
         dialog.onDismiss { cancel?.invoke() }
     }
 
@@ -304,12 +396,15 @@ internal class WeatherSettingsDialog(
         val zone = field("地点时区（例如 Asia/Shanghai）", place?.zone?.id.orEmpty())
         val latitude = field("纬度 −90 至 90", existingQ?.coordinates?.latitude?.toPlainString().orEmpty())
         val longitude = field("经度 −180 至 180", existingQ?.coordinates?.longitude?.toPlainString().orEmpty())
+        listOf(latitude, longitude).forEach {
+            it.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
         val locationId = field("历史天气 Location ID（可选）", existingQ?.locationId.orEmpty())
         val selections = ha.associate { (source, title) ->
             source to CheckBox(context).apply { text = "$title · ${source.entityId}"; isChecked = source in existingHa }
         }
         val status = label("")
-        val dialog = dialog(if (place == null) "添加地点" else "编辑地点", layout)
+        lateinit var dialog: AlertDialog
         layout.addView(name)
         layout.addView(zone)
         if (existingCity != null) layout.addView(label("公开地点编号 ${existingCity.locationId}。填写经纬度可改为自定义来源。"))
@@ -343,10 +438,12 @@ internal class WeatherSettingsDialog(
                 require(name.value().isNotEmpty() && sources.isNotEmpty()) { "请填写地点名称并添加至少一个天气来源" }
                 val saved = WeatherPlace(place?.id ?: previewId ?: UUID.randomUUID().toString(), name.value(), zone.parseZone(), sources, favorite = place?.favorite ?: (previewId != null))
                 if (previewId == null) places.save(saved) else places.saveFavorite(saved)
+                layout.hideFormIme()
                 dialog.dismiss()
                 onPlaceSelected?.invoke(saved)
             }
         })
+        dialog = dialog(if (place == null) "添加地点" else "编辑地点", layout)
     }
 
     private fun chooseSource(place: WeatherPlace) {
@@ -359,7 +456,6 @@ internal class WeatherSettingsDialog(
 
     private fun inspect(place: WeatherPlace, source: WeatherSourceRef) {
         val layout = column()
-        val dialog = dialog("${place.name} · ${sourceName(source)}", layout)
         val data = column()
         val requests = mutableMapOf<WeatherBlock, WeatherRepository.Subscription>()
         val status = label("")
@@ -414,6 +510,7 @@ internal class WeatherSettingsDialog(
                 }
             }
         }
+        val dialog = dialog("${place.name} · ${sourceName(source)}", layout)
         dialog.onDismiss { extra?.close(); requests.values.forEach { it.close() } }
     }
 
@@ -517,11 +614,23 @@ internal class WeatherSettingsDialog(
     private fun attribution(value: WeatherAttribution) =
         label(attributionText(value)).apply { autoLinkMask = Linkify.WEB_URLS; linksClickable = true }
 
-    private fun dialog(title: String, content: LinearLayout) = AlertDialog.Builder(context).setTitle(title)
+    private fun dialog(title: String, content: LinearLayout, secure: Boolean = false) = AlertDialog.Builder(context).setTitle(title)
         .setView(ScrollView(context).apply {
             isFillViewport = true
+            isFocusableInTouchMode = true
+            descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
+            requestFocus()
             addView(content.apply { setPadding(dp(20), dp(8), dp(20), dp(8)) })
-        }).setNegativeButton("关闭", null).showOwned().also { it.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) }
+        }).setNegativeButton("关闭") { _, _ -> content.hideFormIme() }.create().also { dialog ->
+            dialog.window?.apply {
+                setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+                if (secure) addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
+            dialogs += dialog
+            dialog.onDismiss {}
+            dialog.show()
+        }
 
     private fun confirmOfflineClear(placeId: String?) {
         val scope = if (placeId == null) "全部" else "此地点的"
@@ -542,7 +651,8 @@ internal class WeatherSettingsDialog(
             .setNegativeButton("取消", null).showOwned()
     }
 
-    private fun confirm(title: String, action: () -> Unit) = AlertDialog.Builder(context).setTitle(title)
+    private fun confirm(title: String, message: String? = null, action: () -> Unit) = AlertDialog.Builder(context).setTitle(title)
+        .setMessage(message)
         .setPositiveButton("确认") { _, _ -> action() }.setNegativeButton("取消", null).showOwned()
 
     private fun AlertDialog.Builder.showOwned() = show().also {
@@ -576,8 +686,12 @@ internal class WeatherSettingsDialog(
         contentDescription = label
         setText(value)
         setSingleLine()
+        imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
     }
     private fun EditText.value() = text.toString().trim()
+    private fun View.hideFormIme() {
+        windowToken?.let { context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(it, 0) }
+    }
     private fun EditText.parseZone(): ZoneId = runCatching { ZoneId.of(value()) }
         .getOrElse { throw IllegalArgumentException("请输入有效时区，例如 Asia/Shanghai") }
     private fun action(status: TextView, action: () -> Unit) {

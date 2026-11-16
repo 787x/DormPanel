@@ -57,11 +57,23 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
         appearance.themeCommand = ha::requestTheme; appearance.opacityCommand = ha::requestOpacity
         activate()
     }
-    fun hasToken() = !tokens.read().isNullOrBlank()
-    fun testToken(entered: String) = entered.trim().ifEmpty { tokens.read().orEmpty() }
+    private fun savedEndpoint() = runCatching { HaEndpoint.parse(settings.baseUrl).base }.getOrDefault("")
+    private fun savedToken() = tokens.readFor(savedEndpoint())
+    fun hasToken() = !savedToken().isNullOrBlank()
+    internal fun tokenStamp() = com.dormpanel.app.weather.weatherDigest(savedToken().orEmpty())
+    internal fun testToken(endpoint: HaEndpoint, entered: String): String {
+        val saved = savedToken()
+        requireHaToken(endpoint.base, savedEndpoint(), !saved.isNullOrBlank(), entered, required = true)
+        return entered.trim().ifEmpty { checkNotNull(saved) }
+    }
     fun save(value: HaConnectionSettings, enteredToken: String) {
         val normalized = value.copy(baseUrl = if (value.baseUrl.isBlank()) "" else HaEndpoint.parse(value.baseUrl).base)
-        if (enteredToken.isNotBlank()) tokens.write(enteredToken.trim())
+        requireHaToken(normalized.baseUrl, savedEndpoint(), hasToken(), enteredToken,
+            required = normalized.mode == BackendMode.HOME_ASSISTANT && normalized.baseUrl.isNotBlank())
+        if (enteredToken.isNotBlank()) {
+            require(normalized.baseUrl.isNotBlank()) { "请输入 HA 服务地址" }
+            tokens.write(enteredToken.trim(), normalized.baseUrl)
+        }
         settings = normalized; preferences.write(settings); activate()
     }
     fun clearCredentials() { tokens.clear(); activate() }
@@ -70,7 +82,7 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
         active = if (settings.mode == BackendMode.DEMO) demo else ha
         activeCatalog = if (settings.mode == BackendMode.DEMO) demoCatalog else ha.catalog
         home.activate(if (settings.mode == BackendMode.DEMO) demoHome else ha) {
-            val token = tokens.read()
+            val token = savedToken()
             weatherHaAccount = token?.takeIf { settings.mode == BackendMode.HOME_ASSISTANT && settings.baseUrl.isNotBlank() }
                 ?.let { com.dormpanel.app.weather.weatherDigest(settings.baseUrl + Char.MIN_VALUE + it) }
             ha.configure(settings, token)

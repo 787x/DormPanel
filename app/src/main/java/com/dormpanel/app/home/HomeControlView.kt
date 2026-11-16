@@ -48,6 +48,7 @@ private data class HomeRow(val key: String, val title: String = "", val entity: 
 
 class HomeControlView(context: Context, private val backend: DashboardBackend,
     private val appearance: AppearanceController, private val claimGesture: () -> Unit,
+    private val openPortal: (() -> Unit)? = null, private val closePortal: () -> Unit = {},
 ) : LinearLayout(context), PageInteraction, AppearanceAware {
     private val areaList = LinearLayout(context).apply { orientation = VERTICAL }
     private val title = TextView(context).apply { textSize = 28f }
@@ -74,7 +75,7 @@ class HomeControlView(context: Context, private val backend: DashboardBackend,
         addView(content, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         val heading = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
         heading.addView(title, LayoutParams(0, dp(56), 1f))
-        heading.addView(Button(context).apply { setText(R.string.home_settings); setOnClickListener { HaSettingsDialog(context, backend).show() } })
+        heading.addView(Button(context).apply { setText(R.string.home_settings); setOnClickListener { HaSettingsDialog(context, backend, openPortal).show() } })
         content.addView(heading)
         content.addView(status, LayoutParams(LayoutParams.MATCH_PARENT, dp(42)))
         list.adapter = rows
@@ -82,7 +83,7 @@ class HomeControlView(context: Context, private val backend: DashboardBackend,
         content.addView(TextView(context).apply { setText(R.string.home_swipe_hint); textSize = 14f; setPadding(0, dp(8), 0, 0) })
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); backend.addHomeListener(listener); backend.ha.addStatusListener(statusListener) }
-    override fun onDetachedFromWindow() { backend.removeHomeListener(listener); backend.ha.removeStatusListener(statusListener); dialog?.dismiss(); super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { closePortal(); backend.removeHomeListener(listener); backend.ha.removeStatusListener(statusListener); dialog?.dismiss(); super.onDetachedFromWindow() }
     private fun bind(state: HomeControlState) {
         backend.homeSelection.reconcile(state)
         val choice = backend.homeSelection.areaId

@@ -7,7 +7,9 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import java.security.KeyPairGenerator
+import java.security.KeyFactory
 import java.security.Signature
+import java.security.spec.X509EncodedKeySpec
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -202,6 +204,77 @@ class QWeatherContractTest {
         }
         http.connectionPool.evictAll()
         http.dispatcher.executorService.shutdown()
+    }
+
+    @Test fun rfc8032PublicKeyHasDistinctPemTextAndDerSha256() {
+        val pkcs8 = "302e020100300506032b6570042204209d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
+        val input = Base64.getEncoder().encodeToString(pkcs8.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
+        val key = QWeatherSigningKey.read("\r\n-----BEGIN PRIVATE KEY-----\r\n $input \r\n-----END PRIVATE KEY-----\r\n")
+        assertEquals("-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+            key.publicPem)
+        assertEquals("06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9", key.spkiSha256)
+        assertEquals("874261a353575e072e5a25e3eb15c94b6d5838ed3430cb974071eabbcb9bffd5", key.qWeatherPemSha256)
+        val restored = QWeatherSigningKey.read(key.encode())
+        assertEquals(key.publicPem, restored.publicPem)
+        assertEquals(key.qWeatherPemSha256, restored.qWeatherPemSha256)
+    }
+
+    @Test fun credentialEqualityUsesKeyMaterialAndAllJwtIdentifiers() {
+        val key = QWeatherSigningKey.generate()
+        val jwt = QWeatherAuth.Jwt("kid", "issuer", "project", key)
+        val reimported = QWeatherSigningKey.read(key.encode())
+        jwt.header(now)
+        assertTrue(jwt.sameCredentials(QWeatherAuth.Jwt("kid", "issuer", "project", reimported)))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.Jwt("other", "issuer", "project", reimported)))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.Jwt("kid", "other", "project", reimported)))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.Jwt("kid", "issuer", "other", reimported)))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.Jwt("kid", "issuer", "project", QWeatherSigningKey.generate())))
+        assertFalse(jwt.sameCredentials(QWeatherAuth.ApiKey("fixture")))
+        assertTrue(QWeatherAuth.ApiKey("fixture").sameCredentials(QWeatherAuth.ApiKey("fixture")))
+        assertFalse(QWeatherAuth.ApiKey("fixture").sameCredentials(QWeatherAuth.ApiKey("other")))
+    }
+
+    @Test fun generatedPemVerifiesProviderJwtAndSurvivesPkcs8Reload() {
+        val key = QWeatherSigningKey.generate()
+        val pem = key.publicPem.lines()
+        assertEquals("-----BEGIN PUBLIC KEY-----", pem[0])
+        assertEquals("-----END PUBLIC KEY-----", pem[2])
+        val publicKey = KeyFactory.getInstance("Ed25519").generatePublic(
+            X509EncodedKeySpec(Base64.getDecoder().decode(pem[1])))
+        val restored = QWeatherSigningKey.read(key.encode())
+        assertEquals(key.spkiSha256, restored.spkiSha256)
+        assertEquals(key.qWeatherPemSha256, restored.qWeatherPemSha256)
+        val config = QWeatherConfig("test", "test.qweatherapi.com",
+            QWeatherAuth.Jwt("kid1", "issuer1", "project1", restored))
+        MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                    val parts = request.getHeader("Authorization").orEmpty().removePrefix("Bearer ").split('.')
+                    val decoder = Base64.getUrlDecoder()
+                    val verified = parts.size == 3 && Signature.getInstance("Ed25519").run {
+                        initVerify(publicKey)
+                        update("${parts[0]}.${parts[1]}".toByteArray())
+                        verify(decoder.decode(parts[2]))
+                    }
+                    val claims = if (verified) JSONObject(decoder.decode(parts[1]).decodeToString()) else JSONObject()
+                    return if (claims.optString("sub") == "project1" && claims.optString("iss") == "issuer1")
+                        MockResponse().setBody("""{"temperature":{"value":22.5,"unit":"°C"}}""")
+                    else MockResponse().setResponseCode(401)
+                }
+            }
+            val http = OkHttpClient()
+            try {
+                val api = QWeatherApi(http, { now }) { _, endpoint -> server.url("/${endpoint.path}") }
+                val result = LinkedBlockingQueue<WeatherResult>()
+                api.execute(config, QWeatherEndpoint("weather/v1/current/39.92/116.42"),
+                    { QWeatherParser.parse(it, zone, WeatherQuery(WeatherBlock.CURRENT)) }, { result.add(it) })
+                assertEquals(22.5, ((result.poll(5, TimeUnit.SECONDS) as WeatherResult.Data)
+                    .parsed.data as WeatherData.Current).conditions.temperature!!, 0.0)
+            } finally {
+                http.connectionPool.evictAll()
+                http.dispatcher.executorService.shutdown()
+            }
+        }
     }
 
     @Test fun haUnitsAndForecastDateAreNormalized() {

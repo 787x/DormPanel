@@ -15,6 +15,14 @@ import java.time.ZoneId
 import java.util.UUID
 import java.util.concurrent.Executors
 
+internal sealed class WeatherConnectionTest(val message: String) {
+    data object Verified : WeatherConnectionTest("认证成功，实时天气已返回")
+    data object NoWeather : WeatherConnectionTest("服务已响应，测试地点无实时天气")
+    class Failed(val failure: WeatherFailure) : WeatherConnectionTest(failure.message)
+    class NotRun(message: String) : WeatherConnectionTest(message)
+    data object Cancelled : WeatherConnectionTest("连接测试已取消")
+}
+
 internal class WeatherServices(
     context: Context,
     private val scheduler: HaScheduler,
@@ -28,6 +36,18 @@ internal class WeatherServices(
 ) : AutoCloseable {
     val places = WeatherPlaceStore(context)
     val budget = QWeatherBudget(context.getSharedPreferences("weather_budget", Context.MODE_PRIVATE), now)
+    val credentialStatus: String get() {
+        if (settings.config == null) return settings.problem
+        val stats = budget.stats()
+        return when {
+            stats.lastRequestState == WeatherState.FRESH.name -> "已可用，最近成功请求 ${stats.lastSuccess}"
+            stats.lastRequestState == WeatherState.EMPTY.name -> WeatherConnectionTest.NoWeather.message
+            stats.lastRequestState == WeatherState.UNAUTHORIZED.name -> "认证失败或权限不足 · ${stats.lastError}"
+            stats.lastError != null -> "最近请求失败 · ${stats.lastError}"
+            stats.lastSuccess != null -> "已可用，最近成功请求 ${stats.lastSuccess}"
+            else -> "凭据已保存，尚未测试"
+        }
+    }
     private val refreshSettings = WeatherRefreshSettings(context.getSharedPreferences("weather_refresh", Context.MODE_PRIVATE))
     var refreshPolicy = refreshSettings.read()
         private set
@@ -85,9 +105,15 @@ internal class WeatherServices(
         repository.usePolicy(policy)
     }
 
-    fun configure(host: String, auth: QWeatherAuth) {
-        settings.save(host, auth)
+    fun setBudgetLimit(limit: Int) {
+        budget.setLimit(limit)
+        repository.onConfigurationChanged(resetBudget = true)
+    }
+
+    fun configure(host: String, auth: QWeatherAuth): Boolean {
+        if (!settings.save(host, auth)) return false
         changed()
+        return true
     }
 
     fun clearCredentials() {
@@ -105,18 +131,26 @@ internal class WeatherServices(
     fun haSources(): List<Pair<WeatherSourceRef.HomeAssistant, String>> = if (serverId().isEmpty()) emptyList()
     else ha.store.discovered("weather").map { WeatherSourceRef.HomeAssistant(it.id, serverId()) to ha.store.name(it) }
 
-    fun test(done: (String) -> Unit): () -> Unit {
+    fun test(done: (WeatherConnectionTest) -> Unit): () -> Unit {
         val source = places.places.asSequence().flatMap { it.sources.asSequence() }
             .filterIsInstance<WeatherSourceRef.QWeather>().firstOrNull()
             ?: WeatherSourceRef.QWeather(WeatherCoordinates("39.92".toBigDecimal(), "116.41".toBigDecimal()))
         val query = WeatherQuery(WeatherBlock.CURRENT)
-        return request(checkNotNull(QWeatherProvider.endpoint(source, query)), true,
-            { QWeatherParser.parse(it, ZoneId.of("UTC"), query) }, explicitTest = true) { result ->
-            if (result is WeatherResult.Data) repository.onConfigurationChanged(resetAuthorization = true)
-            done(when (result) {
-                is WeatherResult.Data -> if (result.parsed.data is WeatherData.Current) "认证成功，实时天气已返回" else "服务已响应，测试地点无实时数据"
-                is WeatherResult.Failed -> result.failure.message
-            })
+        return try {
+            request(checkNotNull(QWeatherProvider.endpoint(source, query)), true,
+                { QWeatherParser.parse(it, ZoneId.of("UTC"), query) }, explicitTest = true,
+                onCancelled = { done(WeatherConnectionTest.Cancelled) }) { result ->
+                if (result is WeatherResult.Data) repository.onConfigurationChanged(resetAuthorization = true)
+                done(when (result) {
+                    is WeatherResult.Data -> if (result.parsed.data is WeatherData.Current) WeatherConnectionTest.Verified
+                        else WeatherConnectionTest.NoWeather
+                    is WeatherResult.Failed -> if (result.failure.attempted) WeatherConnectionTest.Failed(result.failure)
+                        else WeatherConnectionTest.NotRun(result.failure.message)
+                })
+            }
+        } catch (_: Exception) {
+            done(WeatherConnectionTest.NotRun("无法启动连接测试，请重试"))
+            return {}
         }
     }
 
@@ -177,29 +211,39 @@ internal class WeatherServices(
     }
 
     private fun request(endpoint: QWeatherEndpoint, core: Boolean, parse: (JSONObject) -> ParsedWeather,
-                        explicitTest: Boolean = false, done: (WeatherResult) -> Unit): () -> Unit {
+                        explicitTest: Boolean = false, onCancelled: () -> Unit = {},
+                        done: (WeatherResult) -> Unit): () -> Unit {
         val config = settings.config
         if (config == null) {
-            done(WeatherResult.Failed(WeatherFailure(WeatherState.UNCONFIGURED, settings.problem)))
+            done(WeatherResult.Failed(WeatherFailure(WeatherState.UNCONFIGURED, settings.problem, attempted = false)))
             return {}
         }
-        var cancelled = false
+        var finished = false
         var stopNetwork: (() -> Unit)? = null
         lateinit var cancel: () -> Unit
         cancel = {
-            cancelled = true
-            stopNetwork?.invoke()
-            diagnostics -= cancel
-            Unit
+            if (!finished) {
+                finished = true
+                stopNetwork?.invoke()
+                diagnostics -= cancel
+                onCancelled()
+            }
         }
         diagnostics += cancel
-        stopNetwork = qw.request(config, endpoint, core, parse, explicitTest) { result ->
-            scheduler.execute {
-                if (!cancelled && settings.config?.id == config.id) {
-                    diagnostics -= cancel
-                    done(result)
+        try {
+            stopNetwork = qw.request(config, endpoint, core, parse, explicitTest) { result ->
+                scheduler.execute {
+                    if (!finished && settings.config?.id == config.id) {
+                        finished = true
+                        diagnostics -= cancel
+                        done(result)
+                    }
                 }
             }
+        } catch (failure: Exception) {
+            finished = true
+            diagnostics -= cancel
+            throw failure
         }
         return cancel
     }

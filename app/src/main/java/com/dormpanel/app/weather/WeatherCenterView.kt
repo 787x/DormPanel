@@ -30,13 +30,15 @@ internal class WeatherCenterView(
     private val back: () -> Unit,
     private val repository: WeatherRepository = backend.weatherRepository,
     private val now: () -> Instant = Instant::now,
+    openPortal: (() -> Unit)? = null,
+    private val closePortal: () -> Unit = {},
 ) : LinearLayout(context), PageInteraction, AppearanceAware {
     private enum class Section(val title: String) {
         FORECAST("天气预报"), RAIN("分钟降雨"), AIR("空气质量"), INDICES("生活指数"), SKY("日月天文"), HISTORY("历史天气"),
     }
 
     private val places = repository.places
-    private val settings = WeatherSettingsDialog(context, backend.weatherServices, ::openPlace)
+    private val settings = WeatherSettingsDialog(context, backend.weatherServices, ::openPlace, openPortal)
     private val ui = WeatherCenterContent(context, PanelPalette.forMode(appearance.state.themeMode))
     private val sidebar = ui.column()
     private val cityRows = ui.column()
@@ -111,6 +113,7 @@ internal class WeatherCenterView(
     }
 
     override fun onDetachedFromWindow() {
+        closePortal()
         stopPlaces?.invoke()
         stopPlaces = null
         settings.dismiss()

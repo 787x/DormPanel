@@ -6,7 +6,7 @@ import java.time.YearMonth
 import java.time.ZoneOffset
 
 internal data class QWeatherStatistics(val month: YearMonth, val requests: Int, val limit: Int,
-    val lastSuccess: Instant?, val lastError: String?) {
+    val lastSuccess: Instant?, val lastError: String?, val lastRequestState: String?) {
     val remaining get() = (limit - requests).coerceAtLeast(0)
 }
 
@@ -22,7 +22,8 @@ internal class QWeatherBudget(private val prefs: SharedPreferences, private val 
         val month = month()
         return QWeatherStatistics(month, if (prefs.getString("month", null) == month.toString()) prefs.getInt("count", 0) else 0,
             prefs.getInt("limit", DEFAULT_LIMIT),
-            prefs.getLong("success", -1).takeIf { it >= 0 }?.let(Instant::ofEpochMilli), prefs.getString("error", null))
+            prefs.getLong("success", -1).takeIf { it >= 0 }?.let(Instant::ofEpochMilli), prefs.getString("error", null),
+            prefs.getString("lastRequestState", null))
     }
 
     @Synchronized fun setLimit(limit: Int) {
@@ -36,7 +37,8 @@ internal class QWeatherBudget(private val prefs: SharedPreferences, private val 
         retryUntil = null
         throttles = 0
         nextExplicitTestAt = Instant.EPOCH
-        prefs.edit().remove("success").remove("error").remove("throttleAccount").remove("throttleUntil").apply()
+        prefs.edit().remove("success").remove("error").remove("lastRequestState")
+            .remove("throttleAccount").remove("throttleUntil").apply()
     }
 
     @Synchronized fun initialize(id: String?) {
@@ -82,7 +84,8 @@ internal class QWeatherBudget(private val prefs: SharedPreferences, private val 
                     throttles = 0
                     editor.remove("throttleAccount").remove("throttleUntil")
                 }
-                editor.putLong("success", now().toEpochMilli())
+                val state = if (explicitTest && result.parsed.data !is WeatherData.Current) WeatherState.EMPTY else WeatherState.FRESH
+                editor.putLong("success", now().toEpochMilli()).putString("lastRequestState", state.name)
             }
             is WeatherResult.Failed -> {
                 val error = result.failure
@@ -94,7 +97,7 @@ internal class QWeatherBudget(private val prefs: SharedPreferences, private val 
                     retryUntil = until
                     editor.putString("throttleAccount", id).putLong("throttleUntil", until.toEpochMilli())
                 }
-                editor.putString("error", error.message)
+                editor.putString("error", error.message).putString("lastRequestState", error.state.name)
             }
         }
         editor.apply()

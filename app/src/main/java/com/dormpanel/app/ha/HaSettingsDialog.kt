@@ -1,8 +1,6 @@
 package com.dormpanel.app.ha
 
 import com.dormpanel.app.R
-import com.dormpanel.app.lan.PhoneEntryUi
-import com.dormpanel.app.lan.SettingsEntryForm
 import android.content.Context
 import android.text.InputType
 import android.view.View
@@ -12,7 +10,8 @@ import androidx.appcompat.app.AlertDialog
 import okhttp3.Call
 
 /** Low-frequency configuration surface; protocol/state ownership remains in the backend. */
-class HaSettingsDialog(private val context: Context, private val backend: DashboardBackend) {
+class HaSettingsDialog(private val context: Context, private val backend: DashboardBackend,
+    private val openPortal: (() -> Unit)? = null) {
     fun show(): AlertDialog {
         val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 12, 24, 12) }
         val advanced = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
@@ -42,15 +41,10 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
             isSaveEnabled = false; importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
         }
         val diagnostic = TextView(context).apply { textSize = 16f }
-        val phoneEntry = PhoneEntryUi(context, SettingsEntryForm.HA,
-            { values ->
-                url.setText(values.getValue("url")); token.setText(values.getValue("token"))
-                diagnostic.text = "Received from phone — review, test, then Save / Reconnect."
-            }, { diagnostic.text = it })
-        content.addView(Button(context).apply {
-            text = "Fill from phone"
-            setOnClickListener { phoneEntry.start(mapOf("url" to url.text.toString())) }
-        })
+        lateinit var dialog: AlertDialog
+        openPortal?.let { open ->
+            content.addView(Button(context).apply { text = "扫码配置"; setOnClickListener { dialog.dismiss(); open() } })
+        }
         label("HTTP sends your token without encryption. Prefer HTTPS on untrusted networks.")
         if (initialSetup) label("Saving a URL and token enables Home Assistant. Backend mode can be changed in Advanced settings.")
         fun entities(domain: String, saved: String) = (listOf("") + backend.ha.store.discovered(domain).map { it.id } + listOf(saved)).distinct()
@@ -88,7 +82,7 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
             text = context.getString(R.string.ha_clear)
             setOnClickListener { token.text.clear(); backend.clearCredentials(); diagnostic.text = context.getString(R.string.ha_cleared) }
         })
-        val dialog = AlertDialog.Builder(context).setTitle("Home Assistant").setView(ScrollView(context).apply { addView(content) })
+        dialog = AlertDialog.Builder(context).setTitle("Home Assistant").setView(ScrollView(context).apply { addView(content) })
             .setNegativeButton("Close", null).setPositiveButton("Save / Reconnect", null).create()
         val listener: (HaStatus) -> Unit = { status.text = context.getString(R.string.ha_status, it.state, it.detail) }
         dialog.setOnShowListener {
@@ -103,10 +97,12 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
             test.setOnClickListener {
                 try {
                     val endpoint = HaEndpoint.parse(url.text.toString())
-                    val access = backend.testToken(token.text.toString())
-                    require(access.isNotBlank()) { "Enter an access token." }
+                    val access = backend.testToken(endpoint, token.text.toString())
                     call?.cancel(); diagnostic.text = context.getString(R.string.ha_testing)
                     call = backend.rest.test(endpoint, access) { if (!dismissed) diagnostic.text = it }
+                } catch (e: HaTokenRequired) {
+                    token.error = e.message
+                    diagnostic.text = e.message
                 } catch (_: Exception) { diagnostic.text = context.getString(R.string.ha_invalid) }
             }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -122,11 +118,14 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
                         keepAwake.selectedItem.toString(), startAfterBoot.selectedItem.toString()), token.text.toString())
                     backend.relayIdentity.setDisplayName(relayName.text.toString())
                     token.text.clear(); diagnostic.text = context.getString(R.string.ha_saved)
+                } catch (e: HaTokenRequired) {
+                    token.error = e.message
+                    diagnostic.text = e.message
                 } catch (_: Exception) { diagnostic.text = context.getString(R.string.ha_save_failed) }
             }
         }
         dialog.setOnDismissListener {
-            dismissed = true; phoneEntry.close(); call?.cancel(); backend.ha.removeStatusListener(listener); token.text.clear()
+            dismissed = true; call?.cancel(); backend.ha.removeStatusListener(listener); token.text.clear()
         }
         dialog.show()
         return dialog
