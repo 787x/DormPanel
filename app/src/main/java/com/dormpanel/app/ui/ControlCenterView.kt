@@ -2,48 +2,61 @@ package com.dormpanel.app.ui
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Rect
+import android.graphics.Typeface
 import android.net.Uri
 import android.provider.Settings
-import android.view.View
+import android.text.InputType
+import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.CompoundButton
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.EditText
-import android.text.InputType
 import androidx.appcompat.app.AlertDialog
-import com.dormpanel.app.schedule.WebDavSettings
-import com.dormpanel.app.schedule.WebDavSyncController
-import com.dormpanel.app.schedule.WebDavAccount
-import com.dormpanel.app.schedule.WebDavCredentials
+import androidx.appcompat.widget.SwitchCompat
 import com.dormpanel.app.R
+import com.dormpanel.app.appearance.AppearanceAware
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.AppearanceState
+import com.dormpanel.app.appearance.PanelPalette
 import com.dormpanel.app.appearance.ThemeMode
+import com.dormpanel.app.appearance.applyAppearanceTree
 import com.dormpanel.app.device.DeviceControlController
 import com.dormpanel.app.device.DeviceControlState
 import com.dormpanel.app.ha.DashboardBackend
+import com.dormpanel.app.ha.HaConnectionState
 import com.dormpanel.app.ha.HaStatus
+import com.dormpanel.app.schedule.WebDavAccount
+import com.dormpanel.app.schedule.WebDavCredentials
+import com.dormpanel.app.schedule.WebDavSettings
+import com.dormpanel.app.schedule.WebDavSyncController
 import com.dormpanel.app.schedule.saveImportAccount
 import com.dormpanel.app.startup.StartupPolicy
 import com.dormpanel.app.startup.SystemHomeNavigator
 import kotlin.math.roundToInt
 
 @android.annotation.SuppressLint("ViewConstructor")
-class ControlCenterView(context: Context, private val appearance: AppearanceController,
-    private val device: DeviceControlController, private val onGestureClaimed: () -> Unit,
+class ControlCenterView(
+    context: Context,
+    private val appearance: AppearanceController,
+    private val device: DeviceControlController,
+    private val onGestureClaimed: () -> Unit,
     private val backend: DashboardBackend? = null,
     private val startupPolicy: StartupPolicy,
     private val webDavSettings: WebDavSettings? = null,
     private val webDavSync: WebDavSyncController? = null,
     private val showPortal: ((() -> Unit) -> Unit)? = null,
     private val closePortal: () -> Unit = {},
-) : LinearLayout(context), PageInteraction {
+    private val onReturnHome: () -> Unit,
+) : LinearLayout(context), PageInteraction, AppearanceAware {
     private val openPortal: (() -> Unit)? = showPortal?.let { show -> { show(::updateWebDavStatus) } }
     private var openWeatherCenter: (() -> Unit)? = null
 
@@ -51,63 +64,157 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
 
     private val density = resources.displayMetrics.density
     private fun dp(value: Int) = (value * density).roundToInt()
-    private var claimed = false
-    private val brightnessLabel = TextView(context).apply { textSize = 21f }
-    private val systemLabel = TextView(context).apply { textSize = 21f }
+    private val secondaryLabels = mutableListOf<TextView>()
+    private val dividers = mutableListOf<View>()
+    private val switches = mutableListOf<SwitchCompat>()
+    private val returnSwipeArea = secondaryLabel(context.getString(R.string.return_home_up)).apply {
+        gravity = Gravity.CENTER
+        minHeight = dp(44)
+    }
+    private var returnSwipe = false
+
+    private val brightnessLabel = label(size = 18f)
+    private val systemLabel = label(size = 18f)
     private val systemBrightness = slider("System brightness").apply { min = 1 }
-    private val automatic = CheckBox(context).apply { text = "Automatic system brightness"; textSize = 19f; minimumHeight = dp(48) }
-    private val followSystem = CheckBox(context).apply { text = "Follow system"; textSize = 19f; minimumHeight = dp(48) }
-    private val allowSystem = Button(context).apply { text = "Allow system brightness control"; minimumHeight = dp(48) }
-    private val permissionStatus = TextView(context).apply { textSize = 16f; visibility = View.GONE }
-    private val volumeLabel = TextView(context).apply { textSize = 23f }
-    private val opacityLabel = TextView(context).apply { textSize = 22f }
-    private val brightness = slider("DormPanel brightness")
-        .apply { min = 1 }
+    private val automatic = toggle("Auto brightness").apply { contentDescription = "Automatic system brightness" }
+    private val followSystem = toggle("Follow system")
+    private val allowSystem = action("Grant access", "Allow system brightness control", ::requestBrightnessAccess)
+    private val permissionStatus = secondaryLabel().apply { visibility = GONE }
+    private val volumeLabel = label(size = 18f)
+    private val muteUnavailable = secondaryLabel("Mute unavailable")
+    private val opacityLabel = label(size = 18f)
+    private val brightness = slider("DormPanel brightness").apply { min = 1 }
     private val volume = slider("Media volume")
     private val opacity = slider(context.getString(R.string.card_opacity))
-    private val keepAwake = CheckBox(context).apply { text = "Keep screen awake"; textSize = 20f; minimumHeight = dp(52) }
-    private val mute = Button(context).apply { minimumHeight = dp(52); textSize = 18f }
-    private val haStatus = TextView(context).apply { textSize = 16f }
-    private val webDavStatus = TextView(context).apply { textSize = 18f }
-    private val startAfterBoot = CheckBox(context).apply {
-        id = R.id.start_after_boot
-        setText(R.string.start_after_boot)
-        textSize = 20f
-        minimumHeight = dp(52)
-    }
-    private val homeStatus = TextView(context).apply { textSize = 16f; visibility = View.GONE }
+    private val keepAwake = toggle("Keep screen awake")
+    private val mute = action("Mute") { device.toggleMute() }
+    private val haStatus = secondaryLabel()
+    private val webDavStatus = secondaryLabel()
+    private val startAfterBoot = toggle(context.getString(R.string.start_after_boot)).apply { id = R.id.start_after_boot }
+    private val homeStatus = secondaryLabel().apply { visibility = GONE }
     private val bootPreferenceListener = CompoundButton.OnCheckedChangeListener { _, enabled ->
         if (!startupPolicy.setStartAfterBoot(enabled)) {
             showBootPreference()
             homeStatus.setText(R.string.start_after_boot_save_failed)
             homeStatus.visibility = View.VISIBLE
         } else {
-            updateBootLabel(enabled)
             homeStatus.visibility = View.GONE
         }
     }
-    private fun updateBootLabel(enabled: Boolean) {
-        startAfterBoot.text = context.getString(R.string.start_after_boot_state,
-            context.getString(if (enabled) R.string.start_after_boot_on else R.string.start_after_boot_off))
-    }
     private fun showBootPreference() {
         startAfterBoot.setOnCheckedChangeListener(null)
-        val enabled = startupPolicy.startAfterBoot
-        startAfterBoot.isChecked = enabled
-        updateBootLabel(enabled)
+        startAfterBoot.isChecked = startupPolicy.startAfterBoot
         startAfterBoot.setOnCheckedChangeListener(bootPreferenceListener)
     }
     private val bootStateListener: (Boolean) -> Unit = { showBootPreference() }
-    private val light = RadioButton(context).apply { id = generateViewId(); setText(R.string.theme_light); textSize = 20f; minimumHeight = dp(52) }
-    private val dark = RadioButton(context).apply { id = generateViewId(); setText(R.string.theme_dark); textSize = 20f; minimumHeight = dp(52) }
-    private val modes = RadioGroup(context).apply { orientation = HORIZONTAL; addView(light); addView(dark) }
+    private val light = themeOption(R.string.theme_light)
+    private val dark = themeOption(R.string.theme_dark)
+    private val modes = RadioGroup(context).apply {
+        orientation = HORIZONTAL
+        addView(light)
+        addView(dark, RadioGroup.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+            marginStart = dp(8)
+        })
+    }
 
-    private fun slider(description: String) = ClaimingSeekBar(context) { claimed = true; onGestureClaimed() }.apply {
+    private fun slider(description: String) = ClaimingSeekBar(context, onGestureClaimed).apply {
         max = 100
         contentDescription = description
-        minimumHeight = dp(52)
     }
-    private fun section(title: String) = TextView(context).apply { text = title; textSize = 27f; setPadding(0, dp(12), 0, dp(8)) }
+
+    private fun column() = LinearLayout(context).apply { orientation = VERTICAL }
+
+    private fun label(value: String = "", size: Float, heading: Boolean = false) = TextView(context).apply {
+        text = value
+        textSize = size
+        if (heading) {
+            setTypeface(typeface, Typeface.BOLD)
+            isAccessibilityHeading = true
+        }
+    }
+
+    private fun secondaryLabel(value: String = "") = label(value, 14f).also(secondaryLabels::add)
+
+    private fun toggle(value: String) = SwitchCompat(context).apply {
+        text = value
+        textSize = 16f
+        minHeight = dp(48)
+        switchPadding = dp(8)
+    }.also(switches::add)
+
+    private fun themeOption(title: Int) = RadioButton(context).apply {
+        id = generateViewId()
+        setText(title)
+        textSize = 16f
+        minHeight = dp(48)
+    }
+
+    private fun action(value: String, description: String? = null, click: () -> Unit) = Button(context).apply {
+        text = value
+        contentDescription = description
+        isAllCaps = false
+        textSize = 16f
+        minimumHeight = dp(48)
+        minHeight = dp(48)
+        minimumWidth = dp(48)
+        minWidth = dp(48)
+        setPadding(dp(12), dp(4), dp(12), dp(4))
+        setOnClickListener {
+            onGestureClaimed()
+            click()
+        }
+    }
+
+    private fun row(leading: View, vararg trailing: View) = LinearLayout(context).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        minimumHeight = dp(32)
+        addView(leading, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        for (view in trailing) {
+            addView(view, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                marginStart = dp(8)
+            })
+        }
+    }
+
+    private fun LinearLayout.heading(title: String, vararg actions: View) {
+        if (childCount > 0) {
+            val divider = View(context).also(dividers::add)
+            addView(divider, LayoutParams(LayoutParams.MATCH_PARENT, dp(1)).apply {
+                topMargin = dp(8)
+                bottomMargin = dp(4)
+            })
+        }
+        addView(row(label(title, 21f, heading = true), *actions))
+    }
+
+    override fun applyAppearance(state: AppearanceState) {
+        val palette = PanelPalette.forMode(state.themeMode)
+        for (index in 0 until childCount) applyAppearanceTree(getChildAt(index), state)
+        secondaryLabels.forEach { it.setTextColor(palette.secondary) }
+        dividers.forEach { it.setBackgroundColor((palette.secondary and 0x00ffffff) or 0x40000000) }
+        val toggleColors = ColorStateList(
+            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(palette.secondary, palette.accent, palette.secondary),
+        )
+        val toggleText = ColorStateList(
+            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf(palette.secondary, palette.text),
+        )
+        val sliderColors = ColorStateList(
+            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf(palette.secondary, palette.accent),
+        )
+        for (slider in listOf(systemBrightness, brightness, volume, opacity)) {
+            slider.progressTintList = sliderColors
+            slider.thumbTintList = sliderColors
+        }
+        switches.forEach {
+            it.thumbTintList = toggleColors
+            it.trackTintList = toggleColors.withAlpha(100)
+            it.setTextColor(toggleText)
+        }
+    }
+
     private val appearanceListener: (AppearanceState) -> Unit = {
         modes.check(if (it.themeMode == ThemeMode.LIGHT) light.id else dark.id)
         val percent = (it.cardSurfaceOpacity * 100).roundToInt()
@@ -116,117 +223,107 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     }
     private val deviceListener: (DeviceControlState) -> Unit = {
         brightness.progress = it.brightness
-        brightnessLabel.text = "DormPanel override · ${it.brightness}%"
+        brightnessLabel.text = "DormPanel brightness · ${it.brightness}%"
         brightness.isEnabled = !it.useSystemBrightness
         followSystem.isChecked = it.useSystemBrightness
         systemBrightness.progress = it.system.percent
         systemBrightness.isEnabled = it.system.canWrite && !it.system.automatic
         automatic.isChecked = it.system.automatic
         automatic.isEnabled = it.system.canWrite
-        systemLabel.text = "System · ${if (it.system.automatic) "Automatic" else "Manual"} · ${it.system.percent}%${if (it.system.canWrite) "" else " · Read only"}"
+        systemLabel.text = "System brightness · ${it.system.percent}%${if (it.system.canWrite) "" else " · Read only"}"
         allowSystem.visibility = if (it.system.canWrite) View.GONE else View.VISIBLE
         if (it.system.canWrite) permissionStatus.visibility = View.GONE
-        volume.progress = it.mediaPercent
         volume.min = if (it.muteAvailable) 0 else (100f / it.mediaMax).roundToInt()
+        volume.progress = it.mediaPercent
         volumeLabel.text = "Media volume · ${it.mediaPercent}%"
         keepAwake.isChecked = it.keepAwake
-        mute.isEnabled = it.muteAvailable
-        mute.text = if (!it.muteAvailable) "Mute unavailable on X08E" else if (it.muted) "Unmute" else "Mute"
+        mute.visibility = if (it.muteAvailable) VISIBLE else GONE
+        muteUnavailable.visibility = if (it.muteAvailable) GONE else VISIBLE
+        mute.text = if (it.muted) "Unmute" else "Mute"
     }
-    private val haListener: (HaStatus) -> Unit = { haStatus.text = context.getString(R.string.ha_status, it.state, it.detail) }
+    private val haListener: (HaStatus) -> Unit = { status ->
+        val state = when (status.state) {
+            HaConnectionState.NOT_CONFIGURED -> "Not configured"
+            HaConnectionState.CONNECTING -> "Connecting"
+            HaConnectionState.SYNCING -> "Syncing"
+            HaConnectionState.CONNECTED -> "Connected"
+            HaConnectionState.RECONNECTING -> "Reconnecting"
+            HaConnectionState.AUTH_ERROR -> "Authentication error"
+            HaConnectionState.ERROR -> "Connection error"
+        }
+        haStatus.text = if (status.detail.isBlank()) state else "$state · ${status.detail}"
+    }
 
     init {
         orientation = VERTICAL
-        setPadding(dp(40), dp(22), dp(40), dp(16))
-        addView(LinearLayout(context).apply {
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            addView(TextView(context).apply { setText(R.string.control_center_title); textSize = 36f },
-                LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-            openPortal?.let { open ->
-                addView(Button(context).apply {
-                    text = "扫码配置"
-                    minimumHeight = dp(48)
-                    setOnClickListener { onGestureClaimed(); open() }
-                })
-            }
+        setPadding(dp(24), dp(10), dp(24), dp(24))
+        val title = label(context.getString(R.string.control_center_title), 28f, heading = true)
+        val home = action("Home", "Return to DormPanel home", onReturnHome)
+        val headerActions = listOfNotNull(home, openPortal?.let { action("扫码配置", click = it) })
+        addView(row(title, *headerActions.toTypedArray()), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(8)
         })
-        val columns = LinearLayout(context).apply { orientation = HORIZONTAL }
-        addView(columns, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
-        val left = LinearLayout(context).apply { orientation = VERTICAL; setPadding(0, 0, dp(28), 0) }
-        val right = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(28), 0, 0, 0) }
-        columns.addView(left, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
-        columns.addView(right, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
-        left.addView(section("Display"))
-        left.addView(systemLabel)
-        left.addView(automatic)
+
+        val columns = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            setPadding(0, 0, 0, dp(12))
+        }
+        addView(ScrollView(context).apply {
+            id = R.id.control_center_scroll
+            addView(columns, android.widget.FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        val left = column()
+        val right = column()
+        columns.addView(left, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(24) })
+        columns.addView(right, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+
+        left.heading("Display")
+        left.addView(row(systemLabel, automatic))
         left.addView(systemBrightness)
-        left.addView(allowSystem)
+        left.addView(allowSystem, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         left.addView(permissionStatus)
-        left.addView(brightnessLabel)
-        left.addView(followSystem)
+        left.addView(row(brightnessLabel, followSystem))
         left.addView(brightness)
-        left.addView(keepAwake)
-        left.addView(Button(context).apply {
-            text = "Blackout screen"
-            minimumHeight = dp(52)
-            setOnClickListener { onGestureClaimed(); device.enterBlackout() }
-        })
-        left.addView(section("Audio"))
-        left.addView(volumeLabel)
+        left.addView(keepAwake, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        left.addView(action("Blackout screen") { device.enterBlackout() },
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        left.heading("Audio")
+        left.addView(row(volumeLabel, mute, muteUnavailable))
         left.addView(volume)
-        left.addView(mute)
-        right.addView(section("Appearance"))
-        right.addView(modes)
+
+        right.heading("Appearance")
+        right.addView(row(label("Theme", 18f), modes))
         right.addView(opacityLabel)
         right.addView(opacity)
-        if (backend != null) right.addView(Button(context).apply {
-            text = "天气服务与地点"
-            minimumHeight = dp(52)
-            setOnClickListener {
-                onGestureClaimed()
-                com.dormpanel.app.weather.WeatherSettingsDialog(context, backend.weatherServices, openPortal = openPortal).show()
-            }
-        })
-        if (backend != null) right.addView(Button(context).apply {
-            text = "天气中心"
-            minimumHeight = dp(52)
-            setOnClickListener {
-                onGestureClaimed()
-                openWeatherCenter?.invoke()
-            }
-        })
-        right.addView(section("Home Assistant"))
-        right.addView(haStatus)
-        if (backend != null) right.addView(Button(context).apply {
-            setText(R.string.ha_settings)
-            minimumHeight = dp(52)
-            setOnClickListener { onGestureClaimed(); com.dormpanel.app.ha.HaSettingsDialog(context, backend, openPortal).show() }
-        })
-        if (webDavSettings != null) {
-            right.addView(section("WebDAV"))
+        if (backend != null) {
+            right.heading("天气",
+                action("天气中心") { openWeatherCenter?.invoke() },
+                action("设置", "天气服务与地点") {
+                    com.dormpanel.app.weather.WeatherSettingsDialog(context, backend.weatherServices, openPortal = openPortal).show()
+                },
+            )
+            right.heading("Home Assistant", action("设置", context.getString(R.string.ha_settings)) {
+                com.dormpanel.app.ha.HaSettingsDialog(context, backend, openPortal).show()
+            })
+            right.addView(haStatus)
+        }
+        if (webDavSettings != null && webDavSync != null) {
+            right.heading("WebDAV", action("设置", "WebDAV 连接设置", ::showWebDavSettings))
             right.addView(webDavStatus)
-            right.addView(Button(context).apply { text = "WebDAV 连接设置"; minimumHeight = dp(48)
-                setOnClickListener { onGestureClaimed(); showWebDavSettings() } })
             updateWebDavStatus()
         }
-        right.addView(section(context.getString(R.string.system_section)))
-        right.addView(startAfterBoot)
-        right.addView(Button(context).apply {
-            id = R.id.open_miui_home
-            setText(R.string.open_miui_home)
-            minimumHeight = dp(52)
-            setOnClickListener {
-                onGestureClaimed()
-                if (!SystemHomeNavigator(context).openHome()) {
-                    homeStatus.setText(R.string.open_miui_home_failed)
-                    homeStatus.visibility = View.VISIBLE
-                } else {
-                    homeStatus.visibility = View.GONE
-                }
+        right.heading(context.getString(R.string.system_section))
+        right.addView(startAfterBoot, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        right.addView(action(context.getString(R.string.open_miui_home)) {
+            if (!SystemHomeNavigator(context).openHome()) {
+                homeStatus.setText(R.string.open_miui_home_failed)
+                homeStatus.visibility = VISIBLE
+            } else {
+                homeStatus.visibility = GONE
             }
-        })
+        }.apply { id = R.id.open_miui_home }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         right.addView(homeStatus)
-        addView(TextView(context).apply { setText(R.string.return_home_up); textSize = 16f })
+        addView(returnSwipeArea)
         brightness.onUserProgress { device.setBrightness(it.coerceAtLeast(1)) }
         systemBrightness.onUserProgress { device.setSystemBrightness(it.coerceAtLeast(1)) }
         fun onAutomaticChanged(checked: Boolean) {
@@ -238,19 +335,8 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         }
         automatic.setOnCheckedChangeListener { _, checked -> onAutomaticChanged(checked) }
         followSystem.setOnCheckedChangeListener { _, checked -> device.setFollowSystem(checked) }
-        allowSystem.setOnClickListener {
-            onGestureClaimed()
-            try {
-                context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
-                    Uri.parse("package:${context.packageName}")))
-            } catch (_: Exception) {
-                permissionStatus.text = "System brightness access is unavailable on this device."
-                permissionStatus.visibility = View.VISIBLE
-            }
-        }
         volume.onUserProgress { device.setMediaPercent(it); volume.progress = device.state.mediaPercent }
         keepAwake.setOnCheckedChangeListener { _, checked -> device.setKeepAwake(checked) }
-        mute.setOnClickListener { device.toggleMute() }
         modes.setOnCheckedChangeListener { _, id -> appearance.setTheme(if (id == light.id) ThemeMode.LIGHT else ThemeMode.DARK) }
         opacity.onUserProgress { appearance.setCardOpacity(it / 100f) }
         showBootPreference()
@@ -266,6 +352,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         backend?.ha?.addStatusListener(haListener)
     }
     override fun onDetachedFromWindow() {
+        returnSwipe = false
         closePortal()
         backend?.ha?.removeStatusListener(haListener)
         startupPolicy.removeListener(bootStateListener)
@@ -273,21 +360,36 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         device.removeListener(deviceListener)
         super.onDetachedFromWindow()
     }
+    // The fixed footer is the swipe surface. The scroll viewport owns all content touches.
     override fun shouldObservePageSwipe(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            claimed = listOf(systemBrightness, brightness, volume, opacity).any { bar ->
-                val at = IntArray(2); bar.getLocationOnScreen(at)
-                event.rawX >= at[0] && event.rawX < at[0] + bar.width && event.rawY >= at[1] && event.rawY < at[1] + bar.height
-            }
+            val bounds = Rect()
+            returnSwipe = returnSwipeArea.getGlobalVisibleRect(bounds) &&
+                bounds.contains(event.rawX.toInt(), event.rawY.toInt())
         }
-        val observe = !claimed
-        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) claimed = false
+        val observe = returnSwipe
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            returnSwipe = false
+        }
         return observe
     }
-    override fun handleBack() = false
+
+    private fun requestBrightnessAccess() {
+        try {
+            context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                Uri.parse("package:${context.packageName}")))
+        } catch (_: Exception) {
+            permissionStatus.text = "System brightness access is unavailable on this device."
+            permissionStatus.visibility = VISIBLE
+        }
+    }
 
     private fun updateWebDavStatus() {
-        webDavStatus.text = if (webDavSettings?.account() == null) "Not configured" else "Configured"
+        val account = webDavSettings?.account()
+        webDavStatus.text = if (account == null) "Not configured" else {
+            val host = Uri.parse(account.baseUrl).host
+            if (host.isNullOrBlank()) "Configured" else "Configured · $host"
+        }
     }
 
     private fun showWebDavSettings() {

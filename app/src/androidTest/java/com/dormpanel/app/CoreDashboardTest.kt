@@ -209,7 +209,7 @@ class CoreDashboardTest {
                 assertTrue(model(it).appearance.state.cardSurfaceOpacity < .15f)
                 assertEquals(model(it).appearance.state, PreferencesAppearanceStore(it).read())
             }
-            navigate(swipe(.5f, .8f, .5f, .2f))
+            onView(withContentDescription("Return to DormPanel home")).perform(ViewActions.click())
             onView(card("Desk light")).check(matches(isDisplayed()))
             scenario.onActivity {
                 val root = it.findViewById<ViewGroup>(R.id.page_container)

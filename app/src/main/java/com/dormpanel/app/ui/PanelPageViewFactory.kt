@@ -49,7 +49,19 @@ class PanelPageViewFactory(
         if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, receiveTimetable, manageTimetables, scheduleViewport)
         if (page == PanelPage.APPS) return com.dormpanel.app.apps.AppsPageView(inflater.context, apps, apps.icons, appearance, onReturnHome, installApk)
         if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed, openPortal, closePortal)
-        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(inflater.context, appearance, deviceControls, onPageGestureClaimed, backend, startupPolicy, webDavSettings, webDavSync, portal?.let { it::show }, closePortal).apply {
+        if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(
+            context = inflater.context,
+            appearance = appearance,
+            device = deviceControls,
+            onGestureClaimed = onPageGestureClaimed,
+            backend = backend,
+            startupPolicy = startupPolicy,
+            webDavSettings = webDavSettings,
+            webDavSync = webDavSync,
+            showPortal = portal?.let { it::show },
+            closePortal = closePortal,
+            onReturnHome = onReturnHome,
+        ).apply {
             setWeatherCenterAction { openWeather(com.dormpanel.app.weather.WeatherCenterSelection()) }
         }
         if (page == PanelPage.HOME) {
