@@ -6,4 +6,5 @@ enum class PanelPage {
     CONTROL_CENTER,
     CALENDAR,
     HOME_CONTROL,
+    WEATHER,
 }

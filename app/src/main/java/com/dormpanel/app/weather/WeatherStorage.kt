@@ -78,6 +78,18 @@ class WeatherPlaceStore internal constructor(
     }.getOrDefault(emptyList()).associateByTo(linkedMapOf()) { it.id }
     private val listeners = linkedSetOf<() -> Unit>()
     val places: List<WeatherPlace> get() = saved.values.toList() + temporary.values
+    internal val orderedPlaces get() = places.sortedByDescending { it.favorite }
+
+    internal fun move(id: String, offset: Int) {
+        val place = saved[id] ?: return
+        val peers = saved.values.filter { it.favorite == place.favorite }
+        val index = peers.indexOf(place)
+        val neighbor = peers.getOrNull(index + offset) ?: return
+        val order = saved.keys.toMutableList()
+        java.util.Collections.swap(order, order.indexOf(id), order.indexOf(neighbor.id))
+        persist(order.associateWith(saved::getValue))
+    }
+
     fun get(id: String): WeatherPlace? = saved[id] ?: temporary[id]
     fun isTemporary(id: String) = id in temporary
 
@@ -119,10 +131,10 @@ class WeatherPlaceStore internal constructor(
 
     companion object {
         private fun encode(place: WeatherPlace) = JSONObject().put("id", place.id).put("name", place.name)
-            .put("zone", place.zone.id).put("sources", JSONArray(place.sources.map(WeatherSourceJson::encode)))
+            .put("zone", place.zone.id).put("favorite", place.favorite).put("sources", JSONArray(place.sources.map(WeatherSourceJson::encode)))
 
         private fun decode(row: JSONObject) = WeatherPlace(row.getString("id"), row.getString("name"), ZoneId.of(row.getString("zone")),
-            row.objects("sources").map(WeatherSourceJson::decode))
+            row.objects("sources").map(WeatherSourceJson::decode), row.optBoolean("favorite"))
     }
 }
 

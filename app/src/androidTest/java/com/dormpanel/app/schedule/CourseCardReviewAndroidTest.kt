@@ -61,6 +61,7 @@ class CourseCardReviewAndroidTest {
                 PanelPage.APPS -> "AppsPageView"
                 PanelPage.CALENDAR -> "SchedulePageView"
                 PanelPage.HOME_CONTROL -> "HomeControlView"
+                PanelPage.WEATHER -> "WeatherCenterView"
             }
             assertEquals(expected,visible.javaClass.simpleName)
             assertTrue(visible.isShown)

@@ -2,6 +2,14 @@ package com.dormpanel.app.ha
 
 import com.dormpanel.app.appearance.*
 import com.dormpanel.app.data.Availability
+import com.dormpanel.app.weather.HaWeatherProvider
+import com.dormpanel.app.weather.WeatherBlock
+import com.dormpanel.app.weather.WeatherQuery
+import com.dormpanel.app.weather.WeatherResult
+import com.dormpanel.app.weather.WeatherSourceRef
+import com.dormpanel.app.weather.WeatherState
+import java.time.Instant
+import java.time.ZoneOffset
 import okhttp3.*
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -688,6 +696,36 @@ class HaProtocolTest {
             assertEquals(AppearanceState(ThemeMode.DARK, 0.6f), f.appearance.state)
         }
     }
+    @Test fun boundWeatherDistinguishesOfflineFromMissingEntityAndRecovers() = Fixture().use { f ->
+        f.start()
+        f.until { f.source.connected }
+        val source = WeatherSourceRef.HomeAssistant("weather.home", "server")
+        val provider = HaWeatherProvider(f.source, { "server" }, { "account" })
+        val results = mutableListOf<WeatherResult>()
+        val stop = provider.plan(source, ZoneOffset.UTC, WeatherQuery(WeatherBlock.CURRENT), Instant.EPOCH)
+            .start { results += it }
+        fun failure() = (results.last() as? WeatherResult.Failed)?.failure
+        try {
+            assertTrue(results.last() is WeatherResult.Data)
+            f.peer.close(1000, "offline")
+            f.until { failure()?.offline == true }
+            assertEquals(WeatherState.ERROR, failure()?.state)
+            f.enqueueSocket()
+            f.scheduler.advance(1000)
+            f.until { f.source.connected && results.last() is WeatherResult.Data }
+
+            f.entity(source.entityId, "unavailable")
+            assertEquals(WeatherState.ERROR, failure()?.state)
+            f.entity(source.entityId, null)
+            assertEquals(WeatherState.UNSUPPORTED, failure()?.state)
+            assertEquals(false, failure()?.offline)
+            f.entity(source.entityId, "sunny")
+            assertTrue(results.last() is WeatherResult.Data)
+        } finally {
+            stop()
+        }
+    }
+
     @Test fun multipleWeatherFeedsShareSubscriptionsAndReconnectWithoutInterceptingStateEvents() {
         Fixture(modernWeather = true).use { f ->
             f.start()

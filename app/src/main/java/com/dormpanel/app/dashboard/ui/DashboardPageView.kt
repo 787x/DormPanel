@@ -37,6 +37,7 @@ class DashboardPageView @JvmOverloads constructor(
         }
     }
     private var picker: CardPickerDialog? = null
+    private var onOpenWeather: (WeatherCardConfiguration) -> Unit = {}
     private var weatherPicker: WeatherSourcePicker? = null
     private data class WeatherSave(
         val picker: WeatherSourcePicker,
@@ -231,6 +232,8 @@ class DashboardPageView @JvmOverloads constructor(
         return false
     }
 
+    internal fun setWeatherNavigation(open: (WeatherCardConfiguration) -> Unit) { onOpenWeather = open }
+
     private fun openWeather(action: WeatherCardNavigation) {
         if (editing || !isAttachedToWindow) return
         val backend = backend ?: return
@@ -239,10 +242,11 @@ class DashboardPageView @JvmOverloads constructor(
         val binding = configuration as? WeatherCardConfiguration.Bound
         if (action.placeId != binding?.placeId || action.source != binding?.source) return
         weatherDetail?.dismiss()
-        // The WEATHER_CENTER destination currently uses the expanded detail panel.
-        val more: (() -> Unit)? = if (action.destination == WeatherCardNavigation.Destination.QUICK_DETAIL) {
-            { openWeather(action.copy(destination = WeatherCardNavigation.Destination.WEATHER_CENTER)) }
-        } else null
+        if (action.destination == WeatherCardNavigation.Destination.WEATHER_CENTER) {
+            onOpenWeather(configuration)
+            return
+        }
+        val more = { openWeather(action.copy(destination = WeatherCardNavigation.Destination.WEATHER_CENTER)) }
         weatherDetail = WeatherDetailDialog(context, appearance, backend, backend.weatherRepository, configuration,
             changeBinding = { editWeather(action, configuration, card.configurationJson) },
             more = more,

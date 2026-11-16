@@ -1,6 +1,8 @@
 package com.dormpanel.app
 
 import android.os.Bundle
+import com.dormpanel.app.weather.WeatherCenterSelection
+import com.dormpanel.app.weather.WeatherCenterView
 import android.os.Handler
 import android.os.Looper
 import android.database.ContentObserver
@@ -43,6 +45,8 @@ class MainActivity : AppCompatActivity() {
         TopEdgeSwipeGate(resources.getDimension(R.dimen.system_top_edge_gesture_zone))
     }
     private var currentPage = PanelPage.HOME
+    private var weatherReturnPage = PanelPage.HOME
+    private var weatherReturnView: View? = null
     private var transitionInProgress = false
     private var activePageInteraction: PageInteraction? = null
     private lateinit var blackoutView: View
@@ -64,6 +68,8 @@ class MainActivity : AppCompatActivity() {
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         dashboardViewModel.dataSource.weatherRepository.setForeground(!state.blackout && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
         blackoutView.visibility = if (state.blackout) View.VISIBLE else View.GONE
+        (activePageInteraction as? WeatherCenterView)?.setActive(!state.blackout &&
+            lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
     }
     private val appearanceListener: (AppearanceState) -> Unit = { state ->
         pageContainer.setBackgroundColor(PanelPalette.forMode(state.themeMode).background)
@@ -72,11 +78,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        dashboardViewModel.dataSource.weatherRepository.setForeground(blackoutView.visibility != View.VISIBLE)
+        val visible = blackoutView.visibility != View.VISIBLE
+        dashboardViewModel.dataSource.weatherRepository.setForeground(visible)
+        (activePageInteraction as? WeatherCenterView)?.setActive(visible)
     }
 
     override fun onStop() {
         dashboardViewModel.dataSource.weatherRepository.setForeground(false)
+        (activePageInteraction as? WeatherCenterView)?.setActive(false)
         super.onStop()
     }
 
@@ -129,6 +138,8 @@ class MainActivity : AppCompatActivity() {
                 swipeGestureDetector.cancel()
             },
         )
+        pageViewFactory.openWeather = ::openWeatherCenter
+        pageViewFactory.backFromWeather = ::returnFromWeather
         swipeGestureDetector = SwipeGestureDetector(this, ::navigate)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -145,6 +156,10 @@ class MainActivity : AppCompatActivity() {
             ?.getString(STATE_CURRENT_PAGE)
             ?.let { savedName -> PanelPage.entries.firstOrNull { it.name == savedName } }
             ?: router.initialPage
+        weatherReturnPage = PanelPage.entries.firstOrNull { it.name == savedInstanceState?.getString("weather_return_page") && it != PanelPage.WEATHER }
+            ?: router.initialPage
+        pageViewFactory.weatherSelection = WeatherCenterSelection.restore(savedInstanceState?.getBundle("weather_selection"),
+            dashboardViewModel.dataSource.weatherRepository.places)
         showPage(currentPage, direction = null, animate = false)
         dashboardViewModel.appearance.addListener(appearanceListener)
         dashboardViewModel.deviceControls.addListener(deviceListener)
@@ -191,6 +206,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_CURRENT_PAGE, currentPage.name)
+        if (currentPage == PanelPage.WEATHER) {
+            outState.putString("weather_return_page", weatherReturnPage.name)
+            (activePageInteraction as? WeatherCenterView)?.selection?.let {
+                outState.putBundle("weather_selection", it.save(dashboardViewModel.dataSource.weatherRepository.places))
+            }
+        }
         super.onSaveInstanceState(outState)
     }
 
@@ -204,6 +225,21 @@ class MainActivity : AppCompatActivity() {
             pageContainer.getChildAt(index).animate().cancel()
         }
         super.onDestroy()
+    }
+
+    private fun openWeatherCenter(selection: WeatherCenterSelection) {
+        if (transitionInProgress || currentPage == PanelPage.WEATHER) return
+        weatherReturnPage = currentPage
+        weatherReturnView = pageContainer.getChildAt(0)
+        pageViewFactory.weatherSelection = selection
+        showPage(PanelPage.WEATHER, direction = null, animate = false)
+    }
+
+    private fun returnFromWeather() {
+        if (currentPage != PanelPage.WEATHER) return
+        val restored = weatherReturnView
+        weatherReturnView = null
+        showPage(weatherReturnPage, direction = null, animate = false, restored = restored)
     }
 
     private fun navigate(direction: SwipeDirection) {
@@ -222,10 +258,13 @@ class MainActivity : AppCompatActivity() {
         showPage(PanelPage.CALENDAR, null, false)
     }
 
-    private fun showPage(page: PanelPage, direction: SwipeDirection?, animate: Boolean) {
+    private fun showPage(page: PanelPage, direction: SwipeDirection?, animate: Boolean, restored: View? = null) {
+        if (currentPage == PanelPage.WEATHER && page != PanelPage.WEATHER) weatherReturnView = null
         val previousView = pageContainer.getChildAt(pageContainer.childCount - 1)
-        val nextView = pageViewFactory.create(page, pageContainer)
+        val nextView = restored ?: pageViewFactory.create(page, pageContainer)
         applyPageAppearance(nextView, dashboardViewModel.appearance.state)
+        (nextView as? WeatherCenterView)?.setActive(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) &&
+            blackoutView.visibility != View.VISIBLE)
         activePageInteraction = nextView as? PageInteraction
         currentPage = page
 

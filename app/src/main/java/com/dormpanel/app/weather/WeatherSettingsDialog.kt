@@ -23,7 +23,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
-internal class WeatherSettingsDialog(private val context: Context, private val weather: WeatherServices) {
+internal class WeatherSettingsDialog(
+    private val context: Context,
+    private val weather: WeatherServices,
+    private val onPlaceSelected: ((WeatherPlace) -> Unit)? = null,
+) {
     private val repository get() = weather.repository
     private val places get() = weather.places
 
@@ -189,22 +193,33 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         dialog("和风刷新周期", layout)
     }
 
+    internal fun showPlace(id: String) = placeMenu(id)
+
     private fun placeMenu(id: String) {
         val place = places.get(id) ?: return
         val temporary = places.isTemporary(id)
-        val actions = arrayOf("检查天气数据", if (temporary) "收藏此地点" else "编辑地点", "清除此地点离线缓存", "删除地点")
+        val actions = arrayOf("检查天气数据", if (temporary) "收藏此地点" else "编辑地点", "清除此地点离线缓存", "删除地点") + if (temporary) emptyArray() else arrayOf(
+            if (place.favorite) "取消置顶收藏" else "置顶收藏", "向上移", "向下移",
+        )
         AlertDialog.Builder(context).setTitle(place.name).setItems(actions) { _, index ->
             when (index) {
                 0 -> chooseSource(place)
                 1 -> if (temporary) favorite(id, place.sources.filterIsInstance<WeatherSourceRef.QWeather>().single().locationId)
                     else edit(place)
                 2 -> confirmOfflineClear(id)
-                3 -> confirm("删除地点「${place.name}」？") { places.delete(id) }
+                3 -> confirm("删除地点「${place.name}」？") { changePlace { places.delete(id) } }
+                4 -> changePlace { places.save(place.copy(favorite = !place.favorite)) }
+                5 -> changePlace { places.move(id, -1) }
+                6 -> changePlace { places.move(id, 1) }
             }
         }.setNegativeButton("取消", null).showOwned()
     }
 
-    private fun search() {
+    private fun changePlace(action: () -> Unit) {
+        runCatching(action).onFailure { android.widget.Toast.makeText(context, it.message, android.widget.Toast.LENGTH_LONG).show() }
+    }
+
+    internal fun search() {
         val layout = column()
         val name = field("城市、区县或行政区域")
         val status = label("请选择地点预览或收藏。收藏使用和风公开目录中的地点编号。")
@@ -279,7 +294,7 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         dialog.onDismiss { cancel?.invoke() }
     }
 
-    private fun edit(place: WeatherPlace?, previewId: String? = null) {
+    internal fun edit(place: WeatherPlace?, previewId: String? = null) {
         val existingQ = place?.sources?.filterIsInstance<WeatherSourceRef.QWeather>()?.firstOrNull()
         val existingCity = place?.sources?.filterIsInstance<WeatherSourceRef.QWeatherCity>()?.firstOrNull()
         val existingHa = place?.sources?.filterIsInstance<WeatherSourceRef.HomeAssistant>().orEmpty()
@@ -300,6 +315,13 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
         if (existingCity != null) layout.addView(label("公开地点编号 ${existingCity.locationId}。填写经纬度可改为自定义来源。"))
         layout.addView(label("和风天气坐标"))
         layout.addView(row(latitude, longitude))
+        layout.addView(button("在地图上选点") {
+            val seed = runCatching { WeatherCoordinates(latitude.value().toBigDecimal(), longitude.value().toBigDecimal()) }.getOrNull()
+            WeatherMapPicker.show(context, seed) { point ->
+                latitude.setText(point.latitude.toPlainString())
+                longitude.setText(point.longitude.toPlainString())
+            }.let { map -> dialogs += map; map.onDismiss {} }
+        })
         layout.addView(locationId)
         layout.addView(label("Home Assistant 天气实体"))
         if (ha.isEmpty()) layout.addView(label("HA 连接后可选择发现的天气实体"))
@@ -319,14 +341,16 @@ internal class WeatherSettingsDialog(private val context: Context, private val w
                 } else if (existingCity != null) sources.add(0, existingCity)
                 if (previewId != null) require(sources.any { it is WeatherSourceRef.QWeather }) { "请填写自己的经纬度" }
                 require(name.value().isNotEmpty() && sources.isNotEmpty()) { "请填写地点名称并添加至少一个天气来源" }
-                val saved = WeatherPlace(place?.id ?: previewId ?: UUID.randomUUID().toString(), name.value(), zone.parseZone(), sources)
+                val saved = WeatherPlace(place?.id ?: previewId ?: UUID.randomUUID().toString(), name.value(), zone.parseZone(), sources, favorite = place?.favorite ?: (previewId != null))
                 if (previewId == null) places.save(saved) else places.saveFavorite(saved)
                 dialog.dismiss()
+                onPlaceSelected?.invoke(saved)
             }
         })
     }
 
     private fun chooseSource(place: WeatherPlace) {
+        onPlaceSelected?.let { it(place); return }
         if (place.sources.size == 1) inspect(place, place.sources.single())
         else AlertDialog.Builder(context).setTitle("选择天气来源")
             .setItems(place.sources.map(::sourceName).toTypedArray()) { _, index -> inspect(place, place.sources[index]) }

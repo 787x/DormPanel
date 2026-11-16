@@ -57,6 +57,21 @@ internal class WeatherIconView(context: Context) : View(context) {
                 moveTo(3f, 18f); lineTo(27f, 18f)
                 moveTo(7f, 24f); lineTo(20f, 24f); cubicTo(26f, 24f, 24f, 31f, 20f, 28f)
             }
+            WeatherSymbol.THERMOMETER -> stroke(canvas) {
+                moveTo(13f, 19f); lineTo(13f, 7f); quadTo(16f, 2f, 19f, 7f); lineTo(19f, 19f)
+                cubicTo(29f, 33f, 3f, 33f, 13f, 19f)
+                moveTo(16f, 11f); lineTo(16f, 24f)
+            }
+            WeatherSymbol.DROPLET -> stroke(canvas) {
+                moveTo(16f, 4f); cubicTo(14f, 9f, 7f, 16f, 7f, 21f)
+                cubicTo(7f, 31f, 25f, 31f, 25f, 21f)
+                cubicTo(25f, 16f, 18f, 9f, 16f, 4f)
+            }
+            WeatherSymbol.GAUGE -> {
+                canvas.drawArc(5f, 7f, 27f, 29f, 180f, 180f, false, paint)
+                canvas.drawLine(16f, 18f, 22f, 12f, paint)
+                canvas.drawLine(6f, 24f, 26f, 24f, paint)
+            }
             WeatherSymbol.UNKNOWN -> {
                 canvas.drawCircle(16f, 16f, 11f, paint)
                 stroke(canvas) { moveTo(12f, 12f); cubicTo(12f, 6f, 25f, 9f, 18f, 14f); quadTo(16f, 15f, 16f, 18f) }

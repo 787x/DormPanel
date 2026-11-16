@@ -167,7 +167,7 @@ internal class WeatherServices(
                 } else if (previewId != null && !places.isTemporary(previewId)) {
                     done(null, "预览地点已移除，请重新搜索")
                 } else {
-                    val place = WeatherPlace(previewId ?: UUID.randomUUID().toString(), name, zone, listOf(city))
+                    val place = WeatherPlace(previewId ?: UUID.randomUUID().toString(), name, zone, listOf(city), favorite = true)
                     if (runCatching { places.saveFavorite(place) }.isSuccess) done(place, null)
                     else done(null, "无法保存收藏，请检查存储空间或地点数量")
                 }
