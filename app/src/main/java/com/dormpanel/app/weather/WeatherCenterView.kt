@@ -69,12 +69,16 @@ internal class WeatherCenterView(
     private val rangeButtons = linkedMapOf<Int, Button>()
     private var historyDate: LocalDate? = null
     private var requestedHistory: LocalDate? = null
-    private var shownPlace: WeatherPlace? = initial.placeId?.let(places::get)
+    private var shownPlace: WeatherPlace? = initial.selectedPlace(places)
     private var active = true
     private lateinit var header: LinearLayout
     private lateinit var hero: LinearLayout
     private lateinit var refreshFeedback: TextView
     private val current get() = snapshots.values.firstOrNull { it.query.block == WeatherBlock.CURRENT }
+    private val localBindingUnavailable get() = selection.isUnavailable(places)
+    private val haBindingUnavailable get() = selection.source is WeatherSourceRef.HomeAssistant &&
+        current?.state == WeatherState.UNSUPPORTED
+    private val bindingUnavailable get() = localBindingUnavailable || haBindingUnavailable
     private val daily get() = snapshots.values.firstOrNull { it.query.block == WeatherBlock.DAILY }
     private val zone get() = shownPlace?.zone ?: ZoneId.systemDefault()
     private val legacyListener: (DashboardData) -> Unit = { renderLegacy(it) }
@@ -151,7 +155,7 @@ internal class WeatherCenterView(
 
     private fun select(next: WeatherCenterSelection) {
         val resolved = next.resolve(places)
-        val place = resolved.placeId?.let(places::get)
+        val place = resolved.selectedPlace(places)
         if (resolved == selection && shownPlace?.zone == place?.zone) {
             shownPlace = place
             renderSidebar()
@@ -159,7 +163,7 @@ internal class WeatherCenterView(
             return
         }
         alertPopup?.dismiss()
-        release(includePreviews = false)
+        release(includePreviews = resolved.isUnavailable(places))
         selection = resolved
         shownPlace = place
         if (section != Section.SKY || resolved.source == null || resolved.source is WeatherSourceRef.HomeAssistant)
@@ -177,8 +181,12 @@ internal class WeatherCenterView(
         cityRows.removeAllViews()
         cities.clear()
         places.orderedPlaces.forEach { place ->
-            val selected = place.id == selection.placeId
-            val reading = if (selected) current else repository.cachedCurrent(place.id, place.sources.first())
+            val selected = !bindingUnavailable && place.id == selection.placeId
+            val reading = when {
+                bindingUnavailable -> null
+                selected -> current
+                else -> repository.cachedCurrent(place.id, place.sources.first())
+            }
             val summary = label("", 15f, subdued = true)
             val glyph = icon(sky(null), 34)
             val caption = column().apply {
@@ -190,7 +198,10 @@ internal class WeatherCenterView(
                 minimumHeight = dp(68)
                 isFocusable = true
                 background = surface(if (selected) palette.accent else palette.surface, selected)
-                setOnClickListener { select(WeatherCenterSelection(place.id, selection.source)) }
+                setOnClickListener {
+                    val source = selection.source?.takeIf { !bindingUnavailable && it in place.sources } ?: place.sources.first()
+                    select(WeatherCenterSelection(place.id, source))
+                }
             }
             val city = CityRow(place, item, summary, glyph)
             cities[place.id] = city
@@ -214,21 +225,27 @@ internal class WeatherCenterView(
         val summary = if (conditions != null) {
             listOfNotNull(conditions.temperature.value("°C"), sky.description,
                 status?.takeUnless { it == "最新" }).joinToString(" · ")
-        } else status ?: if (places.isTemporary(city.place.id)) "临时预览" else "待加载"
+        } else if (bindingUnavailable) "选择地点" else status ?: if (places.isTemporary(city.place.id)) "临时预览" else "待加载"
         city.summary.text = summary
-        val selectionLabel = if (city.place.id == selection.placeId) "已选中 · " else ""
+        val selectionLabel = if (!bindingUnavailable && city.place.id == selection.placeId) "已选中 · " else ""
         city.item.contentDescription = "$selectionLabel${city.place.name} · $summary"
     }
 
     private fun schedulePreviews() {
         cityScroll.removeCallbacks(trimPreviews)
-        cityScroll.postOnAnimation(trimPreviews)
         cityScroll.removeCallbacks(updatePreviews)
+        if (bindingUnavailable) {
+            val closing = previews.values.toList()
+            previews.clear()
+            repository.closeSubscriptions(closing)
+            return
+        }
+        cityScroll.postOnAnimation(trimPreviews)
         cityScroll.postDelayed(updatePreviews, 120)
     }
 
     private fun bindPreviews(add: Boolean) {
-        if (!active || !isAttachedToWindow) return
+        if (!active || !isAttachedToWindow || bindingUnavailable) return
         val top = cityScroll.scrollY
         val bottom = top + cityScroll.height
         val visible = cities.values.filter { city ->
@@ -240,7 +257,7 @@ internal class WeatherCenterView(
         (visible.keys - previews.keys).forEach { key ->
             val (id, source) = key
             previews[key] = repository.observeCurrentPreview(id, source) { snapshot ->
-                if (id != selection.placeId) cities[id]?.takeIf { it.place.sources.first() == source }
+                if (!bindingUnavailable && id != selection.placeId) cities[id]?.takeIf { it.place.sources.first() == source }
                     ?.let { renderCity(it, snapshot) }
             }
         }
@@ -250,7 +267,7 @@ internal class WeatherCenterView(
         detail.removeAllViews()
         sections.clear()
         rangeButtons.clear()
-        shownPlace = selection.placeId?.let(places::get)
+        shownPlace = selection.selectedPlace(places)
         header = column()
         detail.addView(header)
         hero = card()
@@ -260,6 +277,7 @@ internal class WeatherCenterView(
         renderHeader()
         when {
             selection.legacy -> renderLegacy(backend.state)
+            localBindingUnavailable -> renderUnavailable()
             shownPlace == null -> hero.addView(label("搜索城市或添加经纬度地点，即可查看天气。", 21f))
             else -> {
                 if (selection.source !is WeatherSourceRef.HomeAssistant) {
@@ -325,12 +343,19 @@ internal class WeatherCenterView(
         subscribe()
     }
 
+    private fun renderUnavailable() = with(ui) {
+        hero.removeAllViews()
+        hero.addView(label("原地点或来源已失效", 22f, bold = true))
+        hero.addView(label("请从左侧重新选择地点。桌面卡片可长按后用「切换天气」重新绑定。", 17f))
+    }
+
     private fun renderHeader() = with(ui) {
         if (!::header.isInitialized) return
         header.removeAllViews()
         val source = selection.source
         val place = shownPlace
-        val title = place?.name ?: if (selection.legacy) "默认天气" else "选择天气地点"
+        val title = (place ?: selection.placeId?.let(places::get))?.name
+            ?: if (selection.legacy) "默认天气" else "选择天气地点"
         val titleView = label(title, 31f, bold = true)
         val actions = row()
         actions.addView(titleView, LayoutParams(0, -2, 1f))
@@ -429,7 +454,13 @@ internal class WeatherCenterView(
                 when (query.block) {
                     WeatherBlock.CURRENT -> {
                         renderHero()
-                        cities[place.id]?.let { renderCity(it, snapshot) }
+                        val wasUnavailable = source is WeatherSourceRef.HomeAssistant && previous?.state == WeatherState.UNSUPPORTED
+                        if (wasUnavailable != haBindingUnavailable) {
+                            renderSidebar()
+                            sections.keys.toList().forEach { block ->
+                                renderBlock(block, snapshots.values.firstOrNull { it.query.block == block })
+                            }
+                        } else if (!haBindingUnavailable) cities[place.id]?.let { renderCity(it, snapshot) }
                     }
                     WeatherBlock.DAILY -> {
                         renderHero()
@@ -476,6 +507,11 @@ internal class WeatherCenterView(
     }
 
     private fun renderHero() = with(ui) {
+        if (haBindingUnavailable) {
+            renderUnavailable()
+            hero.addView(metadata(current))
+            return
+        }
         val c = current.conditions()
         val today = daily.today(Instant.now())?.conditions
         renderCurrent(hero, c, range(today?.minTemperature, today?.maxTemperature, "°C"))
@@ -503,6 +539,11 @@ internal class WeatherCenterView(
             return
         }
         val box = sections[block] ?: return
+        if (haBindingUnavailable) {
+            box.removeAllViews()
+            box.visibility = GONE
+            return
+        }
         if (block in astronomyBlocks) {
             ui.renderAstronomy(box, block, centerAstronomy(block, daily, snapshot, Instant.now(), zone), zone)
             return

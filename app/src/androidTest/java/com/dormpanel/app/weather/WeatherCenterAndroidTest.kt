@@ -159,10 +159,11 @@ class WeatherCenterAndroidTest {
                             day = WeatherForecast(WeatherPeriod(isDaytime = true), conditions),
                             night = WeatherForecast(WeatherPeriod(isDaytime = false), conditions.copy(code = "150")),
                             astronomy = if (day == 0 && source in setOf(wuhan, shanghai)) WeatherAstronomy(date, emptyMap(),
-                                if (source == wuhan) "满月" else null, emptyList(), buildMap {
+                                if (source == wuhan) "满月" else "新月", emptyList(), buildMap {
                                     put(AstronomicalEvent.SUNRISE, date.atTime(6, 17))
                                     put(AstronomicalEvent.SUNSET, date.atTime(17, 19))
-                                    if (source == shanghai) put(AstronomicalEvent.MOONRISE, date.atTime(14, 10))
+                                    put(AstronomicalEvent.MOONRISE, date.atTime(14, 10))
+                                    if (source == wuhan) put(AstronomicalEvent.MOONSET, date.atTime(3, 20))
                                 }) else null)
 
                     })
@@ -205,7 +206,7 @@ class WeatherCenterAndroidTest {
                     }
                     val cancel: () -> Unit = { stopped += source to query }
                     cancel
-                }, live = query.block != WeatherBlock.HISTORY)
+                }, live = query.block !in setOf(WeatherBlock.HISTORY, WeatherBlock.MOON))
             }
         }
         val cache = object : WeatherCache {
@@ -268,6 +269,8 @@ class WeatherCenterAndroidTest {
                 onView(withText("上海")).perform(click())
                 onView(withText(containsString("月升  14:10"))).check(matches(isDisplayed()))
                 onView(withText(containsString("测试月相不可用"))).perform(scrollTo()).check(matches(isDisplayed()))
+                onView(withText(containsString("新月"))).perform(scrollTo()).check(matches(isDisplayed()))
+                onView(withText("暂无月落数据")).perform(scrollTo()).check(matches(isDisplayed()))
                 assertTrue(started.any { it.first == shanghai && it.second.block == WeatherBlock.MOON })
                 assertFalse(started.any { it.first == shanghai && it.second.block == WeatherBlock.SUN })
                 onView(withText(containsString("满月"))).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
@@ -289,6 +292,10 @@ class WeatherCenterAndroidTest {
                 onView(withText(containsString("日出  06:30"))).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
                 scenario.onActivity { checkNotNull(finishBeijingSun).invoke() }
                 onView(withText(containsString("日出  06:30"))).check(matches(isDisplayed()))
+                onView(withText("生活指数")).perform(scrollTo(), click())
+                onView(withText("日月天文")).perform(scrollTo(), click())
+                onView(withText(containsString("上弦月"))).perform(scrollTo()).check(matches(isDisplayed()))
+                assertEquals(1, started.count { it.first == beijing && it.second.block == WeatherBlock.MOON })
                 onView(withText("历史天气")).perform(scrollTo(), click())
                 assertFalse(started.any { it.second.block == WeatherBlock.HISTORY })
                 onView(withText("选择历史日期")).perform(scrollTo(), click())

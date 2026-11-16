@@ -382,6 +382,16 @@ class CoreDashboardTest {
                     assertEquals(city.id, selection(it).placeId)
                     assertEquals(saved, model(it).stateHolder.state.cards)
                 }
+                scenario.onActivity { model(it).dataSource.weatherRepository.places.save(city.copy(sources = listOf(district))) }
+                onView(withText("原地点或来源已失效")).check(matches(isDisplayed()))
+                scenario.recreate()
+                onView(withText("原地点或来源已失效")).check(matches(isDisplayed()))
+                scenario.onActivity {
+                    assertEquals(home, selection(it).source)
+                    assertEquals(city.id, selection(it).placeId)
+                    assertEquals(saved, model(it).stateHolder.state.cards)
+                    model(it).dataSource.weatherRepository.places.save(city)
+                }
                 androidx.test.espresso.Espresso.pressBack()
                 onView(card("测试武汉")).perform(ViewActions.longClick())
                 onView(withText("查看天气")).perform(ViewActions.click())
@@ -438,8 +448,20 @@ class CoreDashboardTest {
                 scenario.onActivity {
                     val vm = model(it)
                     assertEquals(saved.associateBy { it.id }, vm.stateHolder.state.cards.associateBy { it.id })
-                    vm.dataSource.weatherRepository.places.delete(destination.id)
+                    vm.dataSource.weatherRepository.places.save(destination.copy(sources = listOf(home)))
                 }
+                onView(card("地点或来源已失效")).perform(ViewActions.click())
+                onView(withText("原地点或来源已失效")).check(matches(isDisplayed()))
+                onView(withText("Home Assistant · weather.home")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                onView(withText("‹ 返回")).perform(ViewActions.click())
+                scenario.onActivity { model(it).dataSource.weatherRepository.places.delete(destination.id) }
+                onView(card("地点或来源已失效")).perform(ViewActions.click())
+                onView(withText("原地点或来源已失效")).check(matches(isDisplayed()))
+                onView(withText("逐小时预报")).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                onView(withText("测试武汉")).perform(ViewActions.click())
+                onView(withText("地点管理")).check(matches(isDisplayed()))
+                scenario.onActivity { assertEquals(saved.associateBy { c -> c.id }, model(it).stateHolder.state.cards.associateBy { c -> c.id }) }
+                onView(withText("‹ 返回")).perform(ViewActions.click())
                 onView(card("地点或来源已失效")).check(matches(isDisplayed()))
                 onView(card("地点或来源已失效")).perform(ViewActions.longClick())
                 onView(withText("地点或来源已失效，请重新选择")).check(matches(isDisplayed()))

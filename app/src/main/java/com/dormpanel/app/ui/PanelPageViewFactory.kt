@@ -49,9 +49,7 @@ class PanelPageViewFactory(
         }
         if (page == PanelPage.HOME) {
             return (inflater.inflate(R.layout.view_home_page, parent, false) as DashboardPageView).apply {
-                setWeatherNavigation { action -> openWeather(com.dormpanel.app.weather.WeatherCenterSelection(
-                    action.placeId, action.source, legacy = action.placeId == null,
-                )) }
+                setWeatherNavigation { openWeather(com.dormpanel.app.weather.WeatherCenterSelection.fromCard(it)) }
                 bind(dashboardStateHolder, cardRegistry, onPageGestureClaimed, catalog, appearance, backend)
             }
         }

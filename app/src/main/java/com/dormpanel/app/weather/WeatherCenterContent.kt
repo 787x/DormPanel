@@ -531,7 +531,8 @@ internal class WeatherCenterContent(private val context: Context, var palette: P
         }
         info.supplement?.let { box.addView(label(astronomy(it, zone, includeDate = false).joinToString("\n"))) }
         val supplemental = info.supplementSnapshot
-        val pending = supplemental == null || supplemental.state in setOf(WeatherState.LOADING, WeatherState.UNLOADED)
+        val pending = supplemental == null || (supplemental.network != WeatherNetworkStatus.OFFLINE &&
+            supplemental.state in setOf(WeatherState.LOADING, WeatherState.UNLOADED))
         when {
             info.waitingForDaily && supplemental == null -> box.addView(label("正在加载每日预报", subdued = true))
             info.needsSupplement || supplemental != null -> {

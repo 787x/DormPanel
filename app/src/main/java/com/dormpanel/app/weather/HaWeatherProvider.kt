@@ -23,10 +23,13 @@ internal class HaWeatherProvider(
         require(source is WeatherSourceRef.HomeAssistant)
         val forecast = query.block.haForecastFeature()
         val account = accountId()
+        val server = serverId()
         val unavailable = when {
             forecast == null && query.block != WeatherBlock.CURRENT ->
                 WeatherFailure(WeatherState.UNSUPPORTED, "HA 来源没有此天气数据")
-            serverId() != source.serverId || account == null ->
+            query.block == WeatherBlock.CURRENT && server.isNotEmpty() && server != source.serverId ->
+                WeatherFailure(WeatherState.UNSUPPORTED, "此地点绑定的是另一台 Home Assistant 服务器")
+            server != source.serverId || account == null ->
                 WeatherFailure(WeatherState.UNCONFIGURED, "请启用此地点绑定的 Home Assistant 服务")
             else -> null
         }
@@ -45,9 +48,12 @@ internal class HaWeatherProvider(
                     stopForecast = null
                     lastCurrent = null
                     val authError = ha.status.state == HaConnectionState.AUTH_ERROR
-                    fail(if (authError) WeatherState.UNAUTHORIZED else WeatherState.ERROR,
-                        if (authError) "HA 认证失败，请检查凭据" else "HA 连接或天气实体暂不可用",
-                        offline = !ha.connected && !authError)
+                    val missing = query.block == WeatherBlock.CURRENT && ha.connected && entity == null
+                    when {
+                        authError -> fail(WeatherState.UNAUTHORIZED, "HA 认证失败，请检查凭据")
+                        missing -> fail(WeatherState.UNSUPPORTED, "当前 HA 天气实体未找到或已停用")
+                        else -> fail(WeatherState.ERROR, "HA 连接或天气实体暂不可用", offline = !ha.connected)
+                    }
                     return
                 }
                 fun send(wire: JSONObject) = emit(WeatherResult.Data(wire, parse(wire, zone), zone))

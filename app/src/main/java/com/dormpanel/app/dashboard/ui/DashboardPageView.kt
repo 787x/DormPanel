@@ -37,7 +37,7 @@ class DashboardPageView @JvmOverloads constructor(
         }
     }
     private var picker: CardPickerDialog? = null
-    private var onOpenWeather: (WeatherCardNavigation) -> Unit = {}
+    private var onOpenWeather: (WeatherCardConfiguration) -> Unit = {}
     private var weatherPicker: WeatherSourcePicker? = null
     private data class WeatherSave(
         val picker: WeatherSourcePicker,
@@ -232,7 +232,7 @@ class DashboardPageView @JvmOverloads constructor(
         return false
     }
 
-    internal fun setWeatherNavigation(open: (WeatherCardNavigation) -> Unit) { onOpenWeather = open }
+    internal fun setWeatherNavigation(open: (WeatherCardConfiguration) -> Unit) { onOpenWeather = open }
 
     private fun openWeather(action: WeatherCardNavigation) {
         if (editing || !isAttachedToWindow) return
@@ -243,7 +243,7 @@ class DashboardPageView @JvmOverloads constructor(
         if (action.placeId != binding?.placeId || action.source != binding?.source) return
         weatherDetail?.dismiss()
         if (action.destination == WeatherCardNavigation.Destination.WEATHER_CENTER) {
-            onOpenWeather(action)
+            onOpenWeather(configuration)
             return
         }
         val more = { openWeather(action.copy(destination = WeatherCardNavigation.Destination.WEATHER_CENTER)) }

@@ -1,6 +1,7 @@
 package com.dormpanel.app.weather
 
 import android.os.Bundle
+import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
 import com.dormpanel.app.dashboard.card.localDate
 import com.dormpanel.app.dashboard.card.value
 import com.dormpanel.app.dashboard.card.today
@@ -17,28 +18,44 @@ internal data class WeatherCenterSelection(
     val placeId: String? = null,
     val source: WeatherSourceRef? = null,
     val legacy: Boolean = false,
+    val invalidBinding: Boolean = false,
 ) {
     fun resolve(places: WeatherPlaceStore): WeatherCenterSelection {
-        if (legacy) return WeatherCenterSelection(legacy = true)
-        val place = placeId?.let(places::get) ?: places.orderedPlaces.firstOrNull()
-            ?: return WeatherCenterSelection()
-        return WeatherCenterSelection(place.id, source?.takeIf { it in place.sources } ?: place.sources.first())
+        if (legacy || invalidBinding || source != null) return this
+        val place = if (placeId == null) places.orderedPlaces.firstOrNull { !places.isTemporary(it.id) } else places.get(placeId)
+        return if (place != null) WeatherCenterSelection(place.id, place.sources.first()) else this
     }
+
+    fun selectedPlace(places: WeatherPlaceStore): WeatherPlace? =
+        placeId?.let(places::get)?.takeIf { !invalidBinding && source in it.sources }
+
+    fun isUnavailable(places: WeatherPlaceStore) = invalidBinding || (placeId != null && selectedPlace(places) == null)
 
     fun save(places: WeatherPlaceStore) = Bundle().apply {
         putBoolean("legacy", legacy)
-        if (placeId != null && !places.isTemporary(placeId)) {
+        val temporary = placeId != null && places.isTemporary(placeId)
+        putBoolean("invalid", invalidBinding || temporary)
+        if (placeId != null && !temporary) {
             putString("place", placeId)
             putString("source", source?.let { WeatherSourceJson.encode(it).toString() })
         }
     }
 
     companion object {
+        fun fromCard(config: WeatherCardConfiguration): WeatherCenterSelection = when (config) {
+            WeatherCardConfiguration.Default -> WeatherCenterSelection(legacy = true)
+            WeatherCardConfiguration.Invalid -> WeatherCenterSelection(invalidBinding = true)
+            is WeatherCardConfiguration.Bound -> WeatherCenterSelection(config.placeId, config.source)
+        }
+
         fun restore(state: Bundle?, places: WeatherPlaceStore): WeatherCenterSelection {
             val source = state?.getString("source")?.let {
                 runCatching { WeatherSourceJson.decode(JSONObject(it)) }.getOrNull()
             }
-            return WeatherCenterSelection(state?.getString("place"), source, state?.getBoolean("legacy") == true).resolve(places)
+            val place = state?.getString("place")
+            val invalid = state?.getBoolean("invalid") == true || ((place != null || state?.containsKey("source") == true) &&
+                (place.isNullOrBlank() || source == null))
+            return WeatherCenterSelection(place, source, state?.getBoolean("legacy") == true, invalid).resolve(places)
         }
     }
 }
@@ -181,19 +198,25 @@ internal fun centerAstronomy(
             hourlyPhases = hourlyPhases.takeIf { moon && exclude?.phaseName() == null }.orEmpty())
             .takeIf { it.events.isNotEmpty() || it.localEvents.isNotEmpty() || it.phaseName() != null }
     }
-    val forecast = daily.today(now)?.astronomy?.part()
+    fun WeatherSnapshot.isCurrent() = !stale && expiresAt?.let { now < it } != false
+    val currentDaily = daily?.takeIf { it.isCurrent() }
+    val forecast = currentDaily.today(now)?.astronomy?.part()
     fun WeatherAstronomy?.has(event: AstronomicalEvent) = this != null && (event in events || event in localEvents)
     val waiting = daily == null || (daily.state in setOf(WeatherState.UNLOADED, WeatherState.LOADING) &&
-        daily.data == null && daily.network != WeatherNetworkStatus.OFFLINE)
-    val needs = if (moon) forecast?.phaseName() == null
-        else !forecast.has(AstronomicalEvent.SUNRISE) || !forecast.has(AstronomicalEvent.SUNSET)
-    val currentSupplement = supplement?.takeIf { needs && (it.query.date == null || it.query.date == date) }
-    val additional = (currentSupplement?.data as? WeatherData.Astronomy)?.value?.part(forecast)
+        currentDaily?.data == null && daily.network != WeatherNetworkStatus.OFFLINE)
     val events = if (moon) listOf(AstronomicalEvent.MOONRISE to "月升", AstronomicalEvent.MOONSET to "月落")
         else listOf(AstronomicalEvent.SUNRISE to "日出", AstronomicalEvent.SUNSET to "日落")
-    val missing = events.filterNot { forecast.has(it.first) || additional.has(it.first) }.map { it.second } +
-        listOfNotNull("月相".takeIf { moon && forecast?.phaseName() == null && additional?.phaseName() == null })
-    return CenterAstronomy(date, forecast, daily, additional, currentSupplement, waiting, needs && !waiting, missing)
+    fun missing(additional: WeatherAstronomy?) =
+        events.filterNot { forecast.has(it.first) || additional.has(it.first) }.map { it.second } +
+            listOfNotNull("月相".takeIf { moon && forecast?.phaseName() == null && additional?.phaseName() == null })
+    val needs = missing(null).isNotEmpty()
+    val currentSupplement = supplement?.takeIf {
+        needs && it.query.block == block && (it.query.date == null || it.query.date == date) &&
+            (daily == null || it.source == daily.source) && it.zone == zone
+    }
+    val usableSupplement = currentSupplement?.takeIf { it.isCurrent() }
+    val additional = (usableSupplement?.data as? WeatherData.Astronomy)?.value?.part(forecast)
+    return CenterAstronomy(date, forecast, daily, additional, currentSupplement, waiting, needs && !waiting, missing(additional))
 }
 
 internal fun WeatherAstronomy.phaseName(): String? =

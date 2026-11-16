@@ -1,5 +1,6 @@
 package com.dormpanel.app.weather
 
+import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.Instant
@@ -30,22 +31,34 @@ class WeatherCenterPresentationTest {
         assertEquals(listOf("wuhan", "third", "second"), reopened.orderedPlaces.map { it.id })
     }
 
-    @Test fun selectionKeepsExplicitSourceAndRecoversAfterDeletion() {
+    @Test fun defaultAndExplicitEntriesKeepDifferentSelectionSemantics() {
         val ha = WeatherSourceRef.HomeAssistant("weather.wuhan", "server")
         val city = WeatherSourceRef.QWeatherCity("101200101")
         val store = WeatherPlaceStore("[]") { true }
         val wuhan = WeatherPlace("wuhan", "武汉", shanghai, listOf(city, ha))
         store.save(wuhan)
         store.save(wuhan.copy(id = "other", sources = listOf(city), favorite = true))
-        val entry = WeatherCenterSelection(wuhan.id, ha)
-        assertEquals(entry, entry.resolve(store))
-        assertEquals(WeatherCenterSelection("other", city), WeatherCenterSelection("other", ha).resolve(store))
-        assertEquals(listOf(city, ha), store.get("wuhan")?.sources)
+        val config = WeatherCardConfiguration.Bound(wuhan.id, ha)
+        val entry = WeatherCenterSelection.fromCard(config)
+        val default = WeatherCenterSelection()
+        assertEquals(default, default.resolve(WeatherPlaceStore("[]") { true }))
+        assertEquals(WeatherCenterSelection("other", city), default.resolve(store))
+        assertEquals(wuhan, entry.resolve(store).selectedPlace(store))
+        assertEquals(ha, entry.source)
+
         store.save(wuhan.copy(sources = listOf(city)))
-        assertEquals(WeatherCenterSelection("wuhan", city), entry.resolve(store))
+        assertEquals(entry, entry.resolve(store))
+        assertTrue(entry.isUnavailable(store))
+        assertNull(entry.selectedPlace(store))
+        assertEquals(WeatherCenterSelection("wuhan", city), WeatherCenterSelection("wuhan").resolve(store))
         store.delete("wuhan")
-        assertEquals(WeatherCenterSelection("other", city), entry.resolve(store))
-        assertTrue(WeatherCenterSelection(legacy = true).resolve(store).legacy)
+        assertEquals(entry, entry.resolve(store))
+        assertTrue(entry.isUnavailable(store))
+        assertEquals(WeatherCenterSelection("other", city), WeatherCenterSelection("other").resolve(store))
+        assertTrue(WeatherCenterSelection.fromCard(WeatherCardConfiguration.decode("{}")).resolve(store).legacy)
+        val malformed = WeatherCenterSelection.fromCard(WeatherCardConfiguration.decode("""{"version":1}"""))
+        assertTrue(malformed.resolve(store).isUnavailable(store))
+        assertFalse(malformed.legacy)
     }
 
     @Test fun repeatedLocalHoursStayDistinctAndMissingReadingsStayMissing() {
@@ -115,9 +128,16 @@ class WeatherCenterPresentationTest {
         assertFalse(solar.needsSupplement)
         assertEquals(sun, solar.daily?.localEvents)
         val moon = centerAstronomy(WeatherBlock.MOON, daily(astro), null, now, shanghai)
-        assertFalse(moon.needsSupplement)
+        assertTrue(moon.needsSupplement)
+        assertEquals(listOf("月升", "月落"), moon.missing)
         assertEquals("上弦月", moon.daily?.phase)
-        assertTrue(centerAstronomy(WeatherBlock.MOON, daily(astro.copy(phase = null)), null, now, shanghai).needsSupplement)
+        val lunarEvents = mapOf(AstronomicalEvent.MOONRISE to date.atTime(15, 10),
+            AstronomicalEvent.MOONSET to date.atTime(2, 15))
+        val complete = astro.copy(localEvents = sun + lunarEvents)
+        assertFalse(centerAstronomy(WeatherBlock.MOON, daily(complete), null, now, shanghai).needsSupplement)
+        val noPhase = centerAstronomy(WeatherBlock.MOON, daily(complete.copy(phase = null)), null, now, shanghai)
+        assertEquals(listOf("月相"), noPhase.missing)
+        assertTrue(noPhase.needsSupplement)
     }
 
     @Test fun skyPreservesDailyFieldsAndAttributionAcrossSupplementFailureAndSuccess() {
@@ -144,6 +164,46 @@ class WeatherCenterPresentationTest {
         assertEquals(daily.attribution, combined.forecastSnapshot?.attribution)
         assertEquals(success.attribution, combined.supplementSnapshot?.attribution)
         assertNull(centerAstronomy(WeatherBlock.SUN, daily, success, now.plusSeconds(86400), shanghai).supplement)
+    }
+
+    @Test fun moonFillsOnlyMissingEventsAndIgnoresUnusableSupplementData() {
+        val now = Instant.parse("2026-11-14T16:30:00Z")
+        val date = LocalDate.parse("2026-11-15")
+        val source = WeatherSourceRef.QWeatherCity("101200101")
+        val rise = AstronomicalEvent.MOONRISE
+        val set = AstronomicalEvent.MOONSET
+        val known = WeatherAstronomy(date, emptyMap(), "满月", emptyList(), mapOf(rise to date.atTime(17, 10)))
+        val daily = WeatherSnapshot(source, shanghai, WeatherQuery(WeatherBlock.DAILY), WeatherState.FRESH,
+            WeatherData.Forecast(listOf(WeatherForecast(WeatherPeriod(date = date), WeatherConditions(), astronomy = known))),
+            attribution = WeatherAttribution(sources = listOf("Daily")))
+        val supplemental = known.copy(phase = "其他月相", localEvents = mapOf(rise to date.atTime(17, 50), set to date.atTime(5, 30)))
+        val moon = WeatherSnapshot(source, shanghai, WeatherQuery(WeatherBlock.MOON, date = date), WeatherState.FRESH,
+            WeatherData.Astronomy(supplemental), attribution = WeatherAttribution(sources = listOf("Moon")))
+        fun read(snapshot: WeatherSnapshot) = centerAstronomy(WeatherBlock.MOON, daily, snapshot, now, shanghai)
+        val combined = read(moon)
+        assertTrue(combined.needsSupplement)
+        assertEquals(known, combined.daily)
+        assertEquals(setOf(set), combined.supplement?.localEvents?.keys)
+        assertNull(combined.supplement?.phase)
+        assertTrue(combined.missing.isEmpty())
+        assertEquals(daily.attribution, combined.forecastSnapshot?.attribution)
+        assertEquals(moon.attribution, combined.supplementSnapshot?.attribution)
+        for (bad in listOf(moon.copy(state = WeatherState.EMPTY, data = null), moon.copy(state = WeatherState.ERROR, data = null),
+            moon.copy(stale = true), moon.copy(source = WeatherSourceRef.QWeatherCity("101010100")),
+            moon.copy(query = moon.query.copy(date = date.minusDays(1))))) {
+            val result = read(bad)
+            assertEquals(known, result.daily)
+            assertNull(result.supplement)
+            assertEquals(listOf("月落"), result.missing)
+        }
+        val beforeDaily = daily.copy(data = null, state = WeatherState.LOADING)
+        val early = centerAstronomy(WeatherBlock.MOON, beforeDaily, moon, now, shanghai)
+        assertTrue(early.waitingForDaily)
+        assertFalse(early.needsSupplement)
+        assertNotNull(early.supplement)
+        val expiredForecast = centerAstronomy(WeatherBlock.MOON, daily.copy(stale = true), moon, now, shanghai)
+        assertNull(expiredForecast.daily)
+        assertEquals(supplemental, expiredForecast.supplement)
     }
 
     private fun forecast(time: String, temperature: Double?) =
