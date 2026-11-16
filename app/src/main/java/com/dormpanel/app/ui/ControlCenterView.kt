@@ -19,7 +19,6 @@ import android.text.InputType
 import androidx.appcompat.app.AlertDialog
 import com.dormpanel.app.schedule.WebDavSettings
 import com.dormpanel.app.schedule.WebDavSyncController
-import com.dormpanel.app.schedule.WebDavClient
 import com.dormpanel.app.schedule.WebDavAccount
 import com.dormpanel.app.schedule.WebDavCredentials
 import com.dormpanel.app.R
@@ -30,8 +29,7 @@ import com.dormpanel.app.device.DeviceControlController
 import com.dormpanel.app.device.DeviceControlState
 import com.dormpanel.app.ha.DashboardBackend
 import com.dormpanel.app.ha.HaStatus
-import com.dormpanel.app.lan.PhoneEntryUi
-import com.dormpanel.app.lan.SettingsEntryForm
+import com.dormpanel.app.schedule.saveImportAccount
 import com.dormpanel.app.startup.StartupPolicy
 import com.dormpanel.app.startup.SystemHomeNavigator
 import kotlin.math.roundToInt
@@ -43,7 +41,10 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     private val startupPolicy: StartupPolicy,
     private val webDavSettings: WebDavSettings? = null,
     private val webDavSync: WebDavSyncController? = null,
+    private val showPortal: ((() -> Unit) -> Unit)? = null,
+    private val closePortal: () -> Unit = {},
 ) : LinearLayout(context), PageInteraction {
+    private val openPortal: (() -> Unit)? = showPortal?.let { show -> { show(::updateWebDavStatus) } }
     private var openWeatherCenter: (() -> Unit)? = null
 
     internal fun setWeatherCenterAction(open: () -> Unit) { openWeatherCenter = open }
@@ -137,7 +138,18 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
     init {
         orientation = VERTICAL
         setPadding(dp(40), dp(22), dp(40), dp(16))
-        addView(TextView(context).apply { setText(R.string.control_center_title); textSize = 36f })
+        addView(LinearLayout(context).apply {
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(TextView(context).apply { setText(R.string.control_center_title); textSize = 36f },
+                LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+            openPortal?.let { open ->
+                addView(Button(context).apply {
+                    text = "扫码配置"
+                    minimumHeight = dp(48)
+                    setOnClickListener { onGestureClaimed(); open() }
+                })
+            }
+        })
         val columns = LinearLayout(context).apply { orientation = HORIZONTAL }
         addView(columns, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         val left = LinearLayout(context).apply { orientation = VERTICAL; setPadding(0, 0, dp(28), 0) }
@@ -172,7 +184,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
             minimumHeight = dp(52)
             setOnClickListener {
                 onGestureClaimed()
-                com.dormpanel.app.weather.WeatherSettingsDialog(context, backend.weatherServices).show()
+                com.dormpanel.app.weather.WeatherSettingsDialog(context, backend.weatherServices, openPortal = openPortal).show()
             }
         })
         if (backend != null) right.addView(Button(context).apply {
@@ -188,7 +200,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         if (backend != null) right.addView(Button(context).apply {
             setText(R.string.ha_settings)
             minimumHeight = dp(52)
-            setOnClickListener { onGestureClaimed(); com.dormpanel.app.ha.HaSettingsDialog(context, backend).show() }
+            setOnClickListener { onGestureClaimed(); com.dormpanel.app.ha.HaSettingsDialog(context, backend, openPortal).show() }
         })
         if (webDavSettings != null) {
             right.addView(section("WebDAV"))
@@ -254,6 +266,7 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         backend?.ha?.addStatusListener(haListener)
     }
     override fun onDetachedFromWindow() {
+        closePortal()
         backend?.ha?.removeStatusListener(haListener)
         startupPolicy.removeListener(bootStateListener)
         appearance.removeListener(appearanceListener)
@@ -294,21 +307,14 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
         val user = field("用户名", oldUser)
         val password = field("密码（仅同一访问身份可留空复用）", "", true)
         val status = TextView(context).apply { textSize = 16f; text = "建议使用 HTTPS，已保存密码不会回显。" }
-        val phoneEntry = PhoneEntryUi(context, SettingsEntryForm.WEBDAV,
-            { values ->
-                url.setText(values.getValue("url")); user.setText(values.getValue("username"))
-                password.setText(values.getValue("password"))
-                status.text = "已接收手机填写内容，请检查、测试后保存。"
-            }, { status.text = it })
-        fields.addView(Button(context).apply {
-            text = "用手机填写"
-            setOnClickListener { phoneEntry.start(mapOf("url" to url.text.toString(), "username" to user.text.toString())) }
-        })
+        lateinit var dialog: AlertDialog
+        openPortal?.let { open ->
+            fields.addView(Button(context).apply { text = "扫码配置"; setOnClickListener { dialog.dismiss(); open() } })
+        }
         fields.addView(status)
-        fun candidate(): WebDavAccount? {
+        fun candidate(saved: WebDavAccount? = settings.account()): WebDavAccount? {
             val entered = url.text.toString().trim()
             val username = user.text.toString()
-            val saved = settings.account()
             return runCatching { WebDavCredentials.candidate(saved,entered,username,password.text.toString(),
                 WebDavCredentials.inheritedCertificate(saved,entered,username)) }
                 .onFailure { status.text = it.message }.getOrNull()
@@ -319,27 +325,19 @@ class ControlCenterView(context: Context, private val appearance: AppearanceCont
             sync.test(account) { result -> status.text = result.fold({ "连接成功。" }, { it.message ?: "连接失败。" }) }
         } }
         fields.addView(test)
-        val dialog = AlertDialog.Builder(context).setTitle("全局 WebDAV 导入账号").setView(fields)
+        dialog = AlertDialog.Builder(context).setTitle("全局 WebDAV 导入账号").setView(fields)
             .setNegativeButton("关闭", null).setNeutralButton("清除凭据", null)
             .setPositiveButton("保存", null).create()
-        dialog.setOnDismissListener { phoneEntry.close(); password.text.clear() }
+        dialog.setOnDismissListener { password.text.clear() }
         dialog.show()
         dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val account = candidate() ?: return@setOnClickListener
             val old = settings.account()
-            fun save() { settings.saveAccount(account); updateWebDavStatus(); dialog.dismiss() }
-            val client = WebDavClient()
-            val previous = old?.let { client.url(it.baseUrl) }
-            val next = client.url(account.baseUrl)
-            val originChanged = previous != null && (previous.scheme != next.scheme || previous.host != next.host || previous.port != next.port)
-            val bindings = settings.bindings()
-            if (originChanged && bindings.isNotEmpty()) {
-                AlertDialog.Builder(context).setTitle("WebDAV 服务器已改变")
-                    .setMessage("有 ${bindings.size} 个文件导入绑定指向旧服务器。是否移除这些绑定？本机课程内容保留，之后可重新选择导入来源。独立 v3 访问端点不通过此处切换。")
-                    .setNegativeButton("保留当前账号", null)
-                    .setPositiveButton("移除导入绑定并保存") { _, _ -> sync.clearBindingsForAccountChange(); save() }.show()
-            } else save()
+            val account = candidate(old) ?: return@setOnClickListener
+            saveImportAccount(context, settings, sync, old, account) { error ->
+                if (error == null) { updateWebDavStatus(); dialog.dismiss() }
+                else status.text = error
+            }
         }
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
             AlertDialog.Builder(context).setTitle("清除 WebDAV 凭据？")

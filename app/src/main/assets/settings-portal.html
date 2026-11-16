@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DormPanel 配置门户</title>
+<style>
+:root{color-scheme:light dark;--bg:#eef2f5;--card:#fff;--ink:#18292e;--muted:#405961;--line:#b8c8cb;--accent:#086052;--accent-ink:#fff;--soft:#e1f2ec;--warn:#733615;--warn-bg:#fff0db}
+@media(prefers-color-scheme:dark){:root{--bg:#101b20;--card:#18272d;--ink:#eef6f6;--muted:#c1d2d5;--line:#617b80;--accent:#91e6cf;--accent-ink:#0b3026;--soft:#244339;--warn:#ffd4a7;--warn-bg:#483625}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif}
+main{max-width:56rem;margin:auto;padding:clamp(12px,4vw,36px)}
+header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:.3rem 1rem}
+h1{font-size:clamp(1.45rem,5vw,2rem);margin:0} h2{margin:0;font-size:1.25rem} h3{font-size:1.05rem}
+p{margin:.7rem 0} small,.muted{color:var(--muted)}
+#state{background:var(--soft);padding:.25rem .65rem;border-radius:.6rem}
+.notice,.error{color:var(--warn);background:var(--warn-bg);padding:.65rem .85rem;border-radius:.6rem}
+nav,.actions{display:flex;gap:.5rem;flex-wrap:wrap}
+nav{margin:1rem 0} nav button{flex:1 1 auto}
+button,input,select,textarea,.download{font:inherit;min-height:44px;border-radius:.55rem;border:1px solid var(--line);color:var(--ink);background:var(--card)}
+button,.download{padding:.45rem .8rem;cursor:pointer;text-align:center;text-decoration:none}
+button[aria-pressed=true],.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:disabled{opacity:.6;cursor:default}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+section{background:var(--card);padding:clamp(12px,3vw,26px);border-radius:1rem;border:1px solid var(--line)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 1rem}
+@media(max-width:560px){.grid{grid-template-columns:1fr}}
+label{display:block;margin:.75rem 0;min-width:0}
+input,select,textarea{display:block;width:100%;padding:.5rem .65rem;margin-top:.3rem}
+textarea{resize:vertical;font-family:monospace} input[type=checkbox]{display:inline-block;width:20px;height:20px;min-height:0;vertical-align:middle;margin:0 .35rem 0 0}
+details{padding-top:.65rem;margin-top:.8rem;border-top:1px solid var(--line)} summary{cursor:pointer;padding:.5rem 0}
+a{color:var(--accent)} .fingerprint,li,.error{overflow-wrap:anywhere} .field-error{display:block;font-weight:600;color:var(--warn)}
+[aria-invalid=true]{border:2px solid var(--warn)}
+footer{margin-top:1rem}.actions{align-items:center}.queue li{margin:.35rem 0}.queue button{margin-left:.5rem}
+</style>
+</head>
+<body><main>
+<header><h1>DormPanel 配置门户</h1><span id="state" role="status">已连接 X08E</span></header>
+<p class="notice">仅在可信局域网使用。此网页通过 HTTP 明文传输填写的凭据。</p>
+<noscript><p class="notice">请启用浏览器 JavaScript 后重新打开配置门户。</p></noscript>
+<nav aria-label="配置分区" id="nav">
+<button type="button" data-tab="ha" aria-pressed="true">Home Assistant</button>
+<button type="button" data-tab="dav" aria-pressed="false">WebDAV</button>
+<button type="button" data-tab="qw" aria-pressed="false">和风天气</button>
+<button type="button" data-tab="places" aria-pressed="false">天气地点</button>
+</nav>
+<section id="ha">
+<h2>Home Assistant</h2><p class="muted" id="ha_status"></p>
+<label>服务地址<input id="ha_url" type="text" inputmode="url" placeholder="http://homeassistant.local:8123" maxlength="2048" autocapitalize="none" spellcheck="false"></label>
+<label>长期访问令牌<input id="ha_token" type="password" autocomplete="new-password" maxlength="8192" placeholder="留空保留已保存令牌"></label>
+<button type="button" data-reveal="ha_token" aria-pressed="false">显示令牌</button>
+<details><summary>高级选项</summary>
+<label>连接模式<select id="ha_mode"><option value="">首次配置时启用 HA</option><option value="HOME_ASSISTANT">连接 Home Assistant</option><option value="DEMO">演示模式</option></select></label>
+<label>首选天气实体<input id="ha_weather" placeholder="weather.home（留空自动选择）" maxlength="255" autocapitalize="none"></label>
+</details>
+<label><input type="checkbox" id="include_ha">发送 Home Assistant 修改</label>
+</section>
+<section id="dav" hidden>
+<h2>WebDAV</h2><p class="muted" id="dav_status"></p>
+<label>服务地址<input id="dav_url" type="url" placeholder="https://nas.example.com/dav/" maxlength="2048" autocapitalize="none" spellcheck="false"></label>
+<label>用户名<input id="dav_username" autocomplete="username" maxlength="256" autocapitalize="none"></label>
+<label>密码<input id="dav_password" type="password" autocomplete="new-password" maxlength="4096" placeholder="同一服务器及用户名可留空"></label>
+<button type="button" data-reveal="dav_password" aria-pressed="false">显示密码</button>
+<label><input type="checkbox" id="include_dav">发送 WebDAV 修改</label>
+</section>
+<section id="qw" hidden>
+<h2>和风天气</h2><p class="muted" id="qw_status"></p>
+<label>专属 API Host<input id="qw_host" inputmode="url" placeholder="abcxyz.qweatherapi.com" maxlength="256" autocapitalize="none" spellcheck="false"></label>
+<label>认证方式<select id="qw_auth"><option value="jwt">JWT</option><option value="api">API Key</option></select></label>
+<div id="jwt">
+<label>JWT 签名密钥<select id="qw_key"></select></label>
+<p class="muted" id="key_help"></p>
+<details id="export"><summary>查看、复制或下载公钥</summary>
+<label>完整公钥 PEM<textarea id="pem" rows="4" readonly spellcheck="false"></textarea></label>
+<p id="fingerprint" class="fingerprint"></p>
+<div class="actions"><button type="button" id="copy">复制公钥</button><a class="download" id="download" download="dormpanel-ed25519-public.pem">下载 PEM</a></div>
+<p id="copy_status" role="status"></p>
+</details>
+<p><a id="guide" target="_blank" rel="noopener noreferrer">和风官方凭据创建说明</a></p>
+<div class="grid">
+<label>凭据 ID（kid）<input id="qw_kid" maxlength="64" placeholder="控制台项目下的 JWT 凭据 ID" autocapitalize="none"></label>
+<label>开发者 ID（iss）<input id="qw_iss" maxlength="64" placeholder="控制台设置中的开发者 ID" autocapitalize="none"></label>
+<label>项目 ID（sub）<input id="qw_sub" maxlength="64" placeholder="创建凭据所在项目的 ID" autocapitalize="none"></label>
+</div>
+</div>
+<div id="api" hidden>
+<label>API Key<input id="qw_api" type="password" maxlength="256" autocomplete="new-password" placeholder="同一 API Host 可留空保留" autocapitalize="none"></label>
+<button type="button" data-reveal="qw_api" aria-pressed="false">显示 API Key</button>
+</div>
+<label><input type="checkbox" id="include_qw">发送和风凭据修改</label>
+<details><summary>刷新模式与本机请求预算</summary>
+<div class="grid">
+<label>刷新模式<select id="mode"></select><small>自定义周期沿用设备端各数据项的设置。</small></label>
+<label>本机月请求上限<input id="budget" type="number" min="1" max="1000000" step="1" inputmode="numeric"><small>单位为次，按 UTC 月计算。</small></label>
+</div>
+<label><input type="checkbox" id="include_refresh">发送刷新或预算修改</label>
+</details>
+</section>
+<section id="places" hidden>
+<h2>天气地点</h2>
+<label>选择已保存地点或新建<select id="place_select"><option value="">添加新地点</option></select></label>
+<p id="source" class="muted"></p>
+<details id="city_search"><summary>搜索城市或区县</summary>
+<p class="muted">使用 X08E 已保存的和风凭据搜索。确认保存时会核对和风公开目录。也可填写自行获得的坐标。</p>
+<label>城市或区县<input id="query" type="search" maxlength="100" placeholder="例如 海淀"></label>
+<button type="button" id="search">搜索</button>
+<label id="candidate_label" hidden>选择公开目录候选<select id="candidate"></select></label>
+<p id="search_status" role="status"></p>
+</details>
+<div class="grid">
+<label>地点名称<input id="place_name" maxlength="100" placeholder="例如 宿舍"></label>
+<label>IANA 时区<input id="place_zone" maxlength="64" placeholder="Asia/Shanghai" autocapitalize="none" spellcheck="false"></label>
+<label>纬度<input id="place_lat" maxlength="32" inputmode="decimal" placeholder="39.92"></label>
+<label>经度<input id="place_lon" maxlength="32" inputmode="decimal" placeholder="116.41"></label>
+</div>
+<details><summary>历史天气编号（可选）</summary><label>自有坐标对应的和风 Location ID<input id="place_locationId" maxlength="40" autocapitalize="none"></label></details>
+<p id="place_error" class="field-error" role="alert"></p>
+<button type="button" id="queue">加入待确认地点</button>
+<ul id="queue_list" class="queue"></ul>
+</section>
+<footer>
+<p id="feedback" role="status" aria-live="polite">发送后请在 X08E 上核对并确认保存。</p>
+<div class="actions"><button type="button" class="primary" id="submit">发送待确认配置</button><button type="button" id="cancel">取消会话</button></div>
+</footer>
+</main>
+<script type="application/json" id="model">{{MODEL}}</script>
+<script nonce="{{NONCE}}">
+"use strict";
+const $ = id => document.getElementById(id);
+const model = JSON.parse($("model").textContent);
+const expires = Date.now() + {{REMAINING}};
+const groups = {
+  include_ha:["ha_url","ha_token","ha_mode","ha_weather"],
+  include_dav:["dav_url","dav_username","dav_password"],
+  include_qw:["qw_host","qw_auth","qw_kid","qw_iss","qw_sub","qw_key","qw_api"],
+  include_refresh:["mode","budget"]
+};
+let busy = false;
+let ended = false;
+let disconnected = false;
+let placeDirty = false;
+const pendingPlaces = [];
+const secrets = ["ha_token","dav_password","qw_api"];
+function openTab(id) {
+  document.querySelectorAll("[data-tab]").forEach(button => {
+    const selected = button.dataset.tab === id;
+    button.setAttribute("aria-pressed", selected);
+    $(button.dataset.tab).hidden = !selected;
+  });
+}
+document.querySelectorAll("[data-tab]").forEach(button => button.onclick = () => openTab(button.dataset.tab));
+for (const [scope, ids] of Object.entries(groups)) {
+  for (const id of ids) $(id).addEventListener("input", () => { $(scope).checked = true; });
+}
+document.querySelectorAll("[data-reveal]").forEach(button => {
+  const title = button.textContent.slice(2);
+  button.onclick = () => {
+    const input = $(button.dataset.reveal);
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    button.textContent = (show ? "隐藏" : "显示") + title;
+    button.setAttribute("aria-pressed", show);
+  };
+});
+function populate(prefix, source, fields) {
+  for (const key of fields) $(prefix + key).value = source[key];
+}
+populate("ha_", model.ha, ["url","mode","weather"]);
+if (model.ha.mode) $("ha_mode").remove(0);
+populate("dav_", model.dav, ["url","username"]);
+populate("qw_", model.qw, ["host","auth","kid","iss","sub"]);
+$("ha_status").textContent = model.ha.configured ? "已配置" : "未配置";
+$("dav_status").textContent = model.dav.configured ? "已配置" : "未配置或凭据不可用";
+$("qw_status").textContent = model.qw.status;
+$("guide").href = model.qw.guide;
+$("budget").value = model.qw.budget;
+for (const [mode,label] of Object.entries(model.qw.modes)) $("mode").add(new Option(label,mode));
+$("mode").value = model.qw.mode;
+for (const key of model.qw.keys) $("qw_key").add(new Option(key.title, key.id));
+if (!model.qw.keys.length) $("qw_key").add(new Option("尚无可用密钥", ""));
+function renderAuth() {
+  const jwt = $("qw_auth").value === "jwt";
+  $("jwt").hidden = !jwt;
+  $("api").hidden = jwt;
+}
+function renderKey() {
+  const key = model.qw.keys.find(key => key.id === $("qw_key").value);
+  $("key_help").textContent = key ? "在和风控制台上传此公钥，再填写对应的 JWT 凭据标识。" :
+    "请在 X08E 的和风服务配置中生成密钥，然后重新扫码。";
+  $("export").hidden = !key;
+  $("pem").value = key ? key.pem : "";
+  $("fingerprint").textContent = key ? "SHA-256（SPKI） " + key.fingerprint : "";
+  $("download").href = key ? "data:application/octet-stream," + encodeURIComponent(key.pem) : "#";
+  $("copy_status").textContent = "";
+}
+$("copy").onclick = async () => {
+  $("pem").focus();
+  $("pem").select();
+  $("pem").setSelectionRange(0, $("pem").value.length);
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch (_) {}
+  $("copy_status").textContent = copied ? "已复制完整公钥。" : "公钥已选中，请使用浏览器的复制操作。";
+};
+$("qw_auth").onchange = renderAuth;
+$("qw_key").onchange = renderKey;
+renderAuth();
+renderKey();
+
+const placeFields = ["name","zone","lat","lon","locationId"];
+for (const place of model.places) $("place_select").add(new Option(place.name + " · " + place.zone, place.id));
+function loadPlace() {
+  const id = $("place_select").value;
+  const stored = model.places.find(place => place.id === id);
+  const place = pendingPlaces.find(place => id && place.id === id) || stored;
+  for (const key of placeFields) $("place_" + key).value = place ? place[key] : (key === "zone" ? "Asia/Shanghai" : "");
+  $("source").textContent = stored ? "已有来源 · " + stored.sources : "新地点可用自有坐标或公开城市编号。";
+  $("city_search").hidden = Boolean(stored);
+  $("candidate").value = "";
+  for (const key of ["lat","lon","locationId"]) $("place_" + key).disabled = false;
+  $("place_error").textContent = "";
+  placeDirty = false;
+}
+$("place_select").onchange = () => {
+  loadPlace();
+};
+for (const key of placeFields) $("place_" + key).oninput = () => { placeDirty = true; };
+$("candidate").onchange = () => {
+  const city = Boolean($("candidate").value);
+  for (const key of ["lat","lon","locationId"]) $("place_" + key).disabled = city;
+  placeDirty = true;
+};
+function renderQueue() {
+  $("queue_list").replaceChildren();
+  pendingPlaces.forEach((place, index) => {
+    const li = document.createElement("li");
+    li.textContent = place.name + " · " + place.zone;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "移除";
+    remove.setAttribute("aria-label", "移除待确认地点 " + place.name);
+    remove.onclick = () => { pendingPlaces.splice(index,1); renderQueue(); };
+    li.append(remove);
+    $("queue_list").append(li);
+  });
+}
+$("queue").onclick = () => {
+  const row = {id:$("place_select").value,city:$("place_select").value ? "" : $("candidate").value};
+  for (const key of placeFields) row[key] = $("place_" + key).disabled ? "" : $("place_" + key).value.trim();
+  if (!row.name || !row.zone || (!row.id && !row.city && (!row.lat || !row.lon))) {
+    $("place_error").textContent = "请填写名称、时区以及坐标，或先选择一个搜索结果。";
+    return;
+  }
+  const previous = pendingPlaces.findIndex(place => row.id && place.id === row.id);
+  if (previous >= 0) pendingPlaces[previous] = row;
+  else if (pendingPlaces.length < 12) pendingPlaces.push(row);
+  else { $("place_error").textContent = "一次可发送最多 12 个地点。"; return; }
+  renderQueue();
+  $("place_select").value = "";
+  for (const key of ["lat","lon","locationId"]) $("place_" + key).disabled = false;
+  loadPlace();
+};
+loadPlace();
+
+function renderState() {
+  if (ended) return;
+  const seconds = Math.ceil((expires - Date.now()) / 1000);
+  if (seconds <= 0 && !busy) {
+    end("会话已过期","请在 X08E 重新打开扫码配置。");
+    return;
+  }
+  $("state").textContent = !navigator.onLine ? "手机网络已断开" : disconnected ?
+    "与 X08E 的连接中断" : "已连接 X08E · " + Math.max(0, seconds) + " 秒内有效";
+}
+function end(title,message) {
+  ended = true;
+  $("state").textContent = title;
+  $("feedback").textContent = message;
+  for (const id of secrets) $(id).value = "";
+  document.querySelectorAll("input, select, button, textarea").forEach(element => element.disabled = true);
+}
+const timer = setInterval(() => { renderState(); if (ended) clearInterval(timer); },1000);
+renderState();
+window.addEventListener("online",renderState);
+window.addEventListener("offline",renderState);
+function showError(data) {
+  const field = $(data.field || "");
+  const section = field && field.closest("section");
+  if (section) {
+    openTab(section.id);
+    const details = field.closest("details");
+    if (details) details.open = true;
+    if (field.tagName !== "SECTION") {
+      const hint = document.createElement("span");
+      hint.className = "field-error server-error";
+      hint.id = field.id + "_error";
+      hint.textContent = data.message;
+      field.setAttribute("aria-invalid","true");
+      field.setAttribute("aria-describedby",hint.id);
+      field.after(hint);
+      field.focus();
+    } else $("place_error").textContent = data.message;
+  }
+  $("feedback").textContent = data.message;
+}
+async function request(fields) {
+  if (busy || ended) return;
+  document.querySelectorAll(".server-error").forEach(el => el.remove());
+  document.querySelectorAll("[aria-invalid]").forEach(field => { field.removeAttribute("aria-invalid"); field.removeAttribute("aria-describedby"); });
+  busy = true;
+  const buttons = ["submit","cancel","search"];
+  buttons.forEach(id => $(id).disabled = true);
+  const timeout = new AbortController();
+  const deadline = setTimeout(() => timeout.abort(), 15000);
+  try {
+    const response = await fetch(location.pathname,{
+      method:"POST", body:new URLSearchParams(fields), cache:"no-store", signal:timeout.signal
+    });
+    disconnected = false;
+    renderState();
+    let data;
+    try { data = await response.json(); } catch (_) { data = {}; }
+    if (response.status === 404) { end("会话已结束","请在 X08E 检查状态，或重新打开扫码配置。"); return; }
+    if (!response.ok) {
+      showError({message:data.message || (response.status === 413 ? "提交内容过长。" : "请求无法处理，请检查输入后重试。"), field:data.field});
+      return;
+    }
+    return data;
+  } catch (_) {
+    disconnected = true;
+    renderState();
+    $("feedback").textContent = "请检查 X08E 是否收到配置，以及扫码会话和局域网是否可用。";
+  } finally {
+    clearTimeout(deadline);
+    busy = false;
+    if (!ended) buttons.forEach(id => $(id).disabled = false);
+  }
+}
+$("search").onclick = async () => {
+  $("search_status").textContent = "正在搜索…";
+  const data = await request({_action:"search",query:$("query").value});
+  if (!data) { $("search_status").textContent = "搜索未完成，请查看页面提示。"; return; }
+  $("candidate").replaceChildren(new Option("请选择候选",""));
+  for (const city of data.cities) $("candidate").add(new Option(city.title,city.id));
+  $("candidate_label").hidden = !data.cities.length;
+  $("candidate").onchange();
+  $("search_status").textContent = (data.cities.length ? "选择城市后，自行填写收藏名称和时区。" :
+    "未找到可收藏候选，可用自行获得的坐标添加。") + " " + data.credit;
+};
+$("submit").onclick = async () => {
+  if (placeDirty) { openTab("places"); $("place_error").textContent = "请先将编辑中的地点加入待确认列表，或重新选择地点。"; return; }
+  const fields = {_action:"submit"};
+  for (const [scope, ids] of Object.entries(groups)) if ($(scope).checked) {
+    for (const id of ids) fields[id] = $(id).value;
+  }
+  if (fields.qw_auth === "jwt") fields.qw_api = "";
+  if (pendingPlaces.length) fields.places = JSON.stringify(pendingPlaces);
+  if (Object.keys(fields).length === 1) { $("feedback").textContent = "请选择要发送的分区或加入待确认地点。"; return; }
+  $("feedback").textContent = "正在发送…";
+  const data = await request(fields);
+  if (data) end("等待 X08E 确认",data.message);
+};
+$("cancel").onclick = async () => {
+  const data = await request({_action:"cancel"});
+  if (data) end("已取消",data.message);
+};
+</script>
+</body>
+</html>

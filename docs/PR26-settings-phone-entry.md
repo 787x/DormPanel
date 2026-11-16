@@ -1,9 +1,30 @@
-# PR26 — Settings and phone entry
+# X08E 统一扫码配置
 
-Home Assistant settings show status, URL, token, **Fill from phone**, the HTTP warning, **Preferred weather**, and the normal Test, Save / Reconnect, and Clear actions. **Advanced settings** starts collapsed and contains backend mode, relay identity/status, all helper bindings, and the helper sync note. Expanding or collapsing does not write configuration; Save reads the existing selected values even while Advanced is hidden. Preferred weather stays directly available.
+从 DormPanel 首页下滑，点控制中心右上方的「扫码配置」。Home Assistant、WebDAV 和天气设置中的同名按钮打开同一个门户。用同一可信局域网里的手机扫 X08E 上的二维码。也可以在手机浏览器中输入二维码旁显示的完整地址。一个会话中可以填多个分区，切换分区会保留本页输入。
 
-For first-time HA setup, saving a new URL and token enables the HA backend without opening Advanced. Existing backend choices are preserved on later saves.
+**只在可信局域网使用。门户使用 HTTP，填入的凭据会在局域网明文传输。** 不要把临时地址发给其他人，也无需配置端口映射。会话最多开放 10 分钟。发送待确认内容、在网页取消、在 X08E 关闭扫码窗口或将应用退到后台都会结束会话。
 
-Home Assistant and WebDAV settings can each start a ten-minute, one-shot LAN form. The X08E displays a QR code and selectable URL. A phone on the same trusted LAN can enter the URL and secret. Submission updates the current Android fields only; Test and Save remain explicit Android actions. Closing the settings dialog discards unsaved entries and stops the server. No suitable private IPv4 address means no server starts.
+## 填写和保存
 
-**Use only on a trusted local network. Credentials are sent directly to this DormPanel over the LAN.** The form uses plain HTTP, not encrypted transport. Its random capability URL contains no credential; secrets travel in the POST body. The browser never receives the saved HA token or WebDAV password. The server has bounded requests, one accepted submission, an expiry, and no persistent storage. Existing Android Keystore encrypted credential storage and its aliases remain unchanged. The timetable upload server and QR behavior are retained.
+- **Home Assistant**：填写服务地址和长期访问令牌。地址可用 `http://homeassistant.local:8123`，也兼容 HA 的 WebSocket 地址形式。新设备首次填写后默认启用 Home Assistant。高级选项可选择连接模式和首选天气实体。已有配置中留空令牌会继续使用原令牌。设备端「Advanced settings」默认折叠，可调整屏幕中继名称和其他 HA 辅助实体。首选天气实体及测试连接仍可在设备端直接操作。
+- **WebDAV**：填写 HTTP(S) 服务地址、用户名和密码。已有配置只有在服务器协议、主机、端口、用户名和 TLS 信任一致时才可以留空复用密码。更换服务器且已有文件导入绑定时，X08E 会要求确认移除旧绑定。已导入课程保留，之后可重新选择导入来源。
+- **和风天气**：填写专属 API Host，选择 JWT 或 API Key。API Key 留空只会复用同一专属 Host 上已保存的 Key。刷新模式和本机 UTC 月预算可以单独提交。自定义各数据项周期继续在设备端调整。
+- **天气地点**：可编辑已保存地点的名称、IANA 时区和坐标。新地点可以使用自己取得的坐标，也可用已经保存的和风凭据搜索城市或区县。搜索后选中候选，自行填写收藏名和时区，再加入待确认列表。X08E 确认时会核对该编号确实在和风公开目录中。公开目录未收录的地点请手填自有坐标。地图选点和 HA 来源管理在 X08E 天气中心完成。
+
+勾选要发送的分区，点「发送待确认配置」。在 X08E 核对「待保存配置」，选择「确认应用」后才能写入设置。X08E 会分别报告各项目的结果。留空或更换凭据的影响会在摘要中说明。旧密码、令牌和私钥不会回填到网页。
+
+## 和风 JWT 首次配置或换钥
+
+1. 在 X08E 进入「天气服务与地点 → 和风服务配置」，点「生成 / 重新生成密钥」。待注册私钥保存在设备的加密存储里。已有 JWT 继续使用当前密钥，直到确认保存新的凭据。
+2. 在扫码门户的「和风天气」选择待注册的新密钥，展开「查看、复制或下载公钥」。复制含首尾标记的完整 PEM，也可直接在 X08E 选择或复制。公钥旁有 SPKI 的 SHA-256 指纹。扫码过期后可以重新打开会话，继续使用同一待注册密钥。
+3. 在和风控制台进入「项目」，选择目标项目并添加 JSON Web Token 凭据，把公钥 PEM 粘贴到上传公钥文本框并保存。[和风官方凭据创建说明](https://dev.qweather.com/docs/configuration/project-and-key/) · [和风官方认证说明](https://dev.qweather.com/docs/configuration/authentication/)
+4. 在门户填写控制台为账号分配的专属 API Host。把项目中刚创建的**凭据 ID**填为 `kid`，控制台设置中的**开发者 ID**填为 `iss`，创建凭据所在的**项目 ID**填为 `sub`。选择与上传公钥对应的签名密钥。[和风 API Host 说明](https://dev.qweather.com/docs/configuration/api-host/)
+5. 发送后到 X08E 确认应用，再到「和风服务配置」点「测试已保存凭据」。结果使用正常天气请求及本机预算。此测试会消耗请求额度。认证失败时，核对专属 Host、三个标识、签名公钥及设备时间。
+
+已有 PKCS#8 私钥可在 X08E 的和风设置导入。应用可从有效的 Ed25519 私钥导出对应公钥。保存或更换已生效凭据、重新生成待注册密钥、清除凭据均会按设备界面提示确认。清除和风凭据也会删除待注册密钥。
+
+## 备用操作
+
+- 扫码失败时，手动在手机浏览器输入设备显示的完整临时地址。网页打不开时，检查两台设备是否在同一个可互访的可信局域网，避开访客网络的客户端隔离。
+- 没有可用局域网时，可通过 X08E 各服务的独立设置手动填写。天气地点可在天气中心手动填坐标或从离线地图选点。
+- X08E 软键盘暂时不可用时，可在局域网用手机填写，或在独立设置中用外接键盘输入。表单支持滚动，设备仍保留原有测试和保存入口。

@@ -48,6 +48,104 @@ class WeatherAndroidTest {
         }
     }
 
+    @Test fun weatherFormsOpenTheSystemImeAndKeepActionsReachable() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        fun imeShown(): Boolean = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand("dumpsys input_method")
+        ).bufferedReader().use { it.readText().contains("mInputShown=true") }
+        fun awaitIme(shown: Boolean) {
+            val deadline = android.os.SystemClock.uptimeMillis() + 5000
+            while (imeShown() != shown && android.os.SystemClock.uptimeMillis() < deadline) {
+                android.os.SystemClock.sleep(120)
+            }
+            assertEquals("System IME visibility", shown, imeShown())
+        }
+        fun edit(description: String, change: (android.widget.EditText) -> Unit) {
+            onView(withContentDescription(description)).perform(object : androidx.test.espresso.ViewAction {
+                override fun getDescription() = "Edit through the focused text field"
+                override fun getConstraints() = androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom(android.widget.EditText::class.java)
+                override fun perform(controller: androidx.test.espresso.UiController, view: android.view.View) {
+                    val field = view as android.widget.EditText
+                    assertTrue(field.hasFocus())
+                    change(field)
+                }
+            })
+        }
+        fun input(description: String, value: String) {
+            onView(withContentDescription(description)).perform(scrollTo(), click())
+            awaitIme(true)
+            onView(withContentDescription(description)).check(matches(isDisplayed()))
+            // Injecting hardware key events switches the X08E's Sogou IME to physical-keyboard mode.
+            edit(description) {
+                it.selectAll()
+                assertTrue(it.onCreateInputConnection(android.view.inputmethod.EditorInfo())!!.commitText(value, 1))
+                assertEquals(value, it.text.toString())
+            }
+        }
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            onView(withId(R.id.page_container)).perform(swipeDown())
+            onView(withText("天气服务与地点")).perform(click())
+            onView(withText("和风服务配置")).perform(click())
+            input("专属 API Host", "abc.qweatherapi.com")
+            edit("专属 API Host") {
+                assertTrue(it.onCreateInputConnection(android.view.inputmethod.EditorInfo())!!.deleteSurroundingText(1, 0))
+                assertEquals("abc.qweatherapi.co", it.text.toString())
+            }
+            onView(withContentDescription("Ed25519 PKCS#8 私钥")).perform(scrollTo(), click())
+            awaitIme(true)
+            lateinit var clipboard: android.content.ClipboardManager
+            var previousClip: android.content.ClipData? = null
+            scenario.onActivity { activity ->
+                clipboard = activity.getSystemService(android.content.ClipboardManager::class.java)
+                previousClip = clipboard.primaryClip
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("test", "fixture"))
+            }
+            try {
+                edit("Ed25519 PKCS#8 私钥") {
+                    assertTrue(it.onTextContextMenuItem(android.R.id.paste))
+                    assertEquals("fixture", it.text.toString())
+                }
+            } finally {
+                scenario.onActivity { previousClip?.let(clipboard::setPrimaryClip) ?: clipboard.clearPrimaryClip() }
+            }
+            onView(withText("保存凭据")).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withText("关闭")).perform(click())
+            awaitIme(false)
+
+            onView(withText("搜索城市或区县")).perform(click())
+            input("城市、区县或行政区域", "Beijing")
+            onView(withText("搜索")).check(matches(isDisplayed()))
+            onView(withText("关闭")).perform(click())
+            awaitIme(false)
+
+            onView(withText("添加地点")).perform(click())
+            input("地点名称", "IME place")
+            input("地点时区（例如 Asia/Shanghai）", "Asia/Shanghai")
+            input("纬度 −90 至 90", "39.92")
+            input("经度 −180 至 180", "116.41")
+            onView(withText("保存地点")).perform(scrollTo(), click())
+            awaitIme(false)
+            scenario.onActivity { activity ->
+                val store = ViewModelProvider(activity)[DashboardViewModel::class.java].dataSource.weatherRepository.places
+                val place = store.places.single { it.name == "IME place" }
+                assertEquals(ZoneId.of("Asia/Shanghai"), place.zone)
+                assertEquals(WeatherCoordinates("39.92".toBigDecimal(), "116.41".toBigDecimal()),
+                    (place.sources.single() as WeatherSourceRef.QWeather).coordinates)
+                store.delete(place.id)
+            }
+
+            onView(withText("和风服务配置")).perform(click())
+            onView(withText("刷新周期设置")).perform(scrollTo(), click())
+            onView(withContentDescription("和风刷新模式")).perform(click())
+            onView(withText("自定义")).inRoot(isPlatformPopup()).perform(click())
+            input("实时天气（10–180 分钟）", "25")
+            onView(withText("保存刷新周期")).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withText("关闭")).perform(click())
+            awaitIme(false)
+        }
+    }
+
     @Test fun controlCenterRefreshModeAndManualButtonsAreTouchable() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val id = UUID.randomUUID().toString()
@@ -143,6 +241,21 @@ class WeatherAndroidTest {
             val pem = Base64.getEncoder().encodeToString(hex("302e020100300506032b657004220420$seed"))
             settings.save("test.qweatherapi.com", QWeatherAuth.Jwt("kid", "issuer", "subject", pem))
             assertFalse(prefs.getString("payload", "")!!.contains(pem))
+            val initial = settings.activeKey!!.fingerprint
+            val export = settings.activeKey!!.publicPem.lineSequence().elementAt(1)
+            assertArrayEquals(hex("302a300506032b6570032100$public"), Base64.getDecoder().decode(export))
+            settings.generateKey()
+            val restored = QWeatherSettings(isolated, namespace)
+            assertEquals(initial, restored.activeKey!!.fingerprint)
+            val pending = restored.pendingKey!!
+            assertNotEquals(initial, pending.fingerprint)
+            assertFalse(prefs.getString("pending_key", "")!!.contains(pending.encode()))
+            restored.save("test.qweatherapi.com", QWeatherAuth.Jwt("newkid", "issuer", "subject", pending))
+            val activated = QWeatherSettings(isolated, namespace)
+            assertNull(activated.pendingKey)
+            assertEquals(pending.fingerprint, activated.activeKey!!.fingerprint)
+            settings.save("test.qweatherapi.com", QWeatherAuth.Jwt("kid", "issuer", "subject", pem))
+
             val saved = QWeatherSettings(isolated, namespace).config!!
             val parts = saved.auth.header(Instant.parse("2026-11-15T00:00:00Z")).second.removePrefix("Bearer ").split(".")
             val verifier = EdDSAEngine(MessageDigest.getInstance("SHA-512"))

@@ -17,16 +17,15 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-enum class SettingsEntryForm(val title: String, val fields: List<Pair<String, String>>, val secret: String) {
-    HA("Home Assistant", listOf("url" to "Home Assistant base URL", "token" to "Access token"), "token"),
-    WEBDAV("WebDAV", listOf("url" to "WebDAV server URL", "username" to "Username", "password" to "Password"), "password")
-}
+internal class SettingsEntryReply(val code: Int, val text: String, val terminal: Boolean = false)
+internal class SettingsEntryError(val field: String, message: String) : IllegalArgumentException(message)
 
-/** Short-lived, one-shot LAN form. No configuration or credential store is reachable from this server. */
-class TemporarySettingsEntryServer private constructor(
+/** Bounded capability URL. Only a successfully staged submission or cancellation consumes it. */
+internal class TemporarySettingsEntryServer private constructor(
     private val listener: ServerSocket, val address: String, val token: String,
-    val expiresAt: Long, private val form: SettingsEntryForm, private val publicValues: Map<String, String>,
-    private val onAccepted: (Map<String, String>) -> Unit, private val onExpired: () -> Unit,
+    val expiresAt: Long, private val page: (String, Long) -> String,
+    private val onPost: (Map<String, String>) -> SettingsEntryReply,
+    private val onFinished: (Map<String, String>) -> Unit, private val onExpired: () -> Unit,
     private val now: () -> Long
 ) : AutoCloseable {
     val url = "http://$address:${listener.localPort}/$token/"
@@ -47,6 +46,7 @@ class TemporarySettingsEntryServer private constructor(
                 if (closed.get()) { socket.close(); break }
                 socket.soTimeout = 15_000
                 clients.add(socket)
+                if (closed.get()) { clients.remove(socket); socket.close(); break }
                 try { workers.execute { serve(socket) } } catch (_: Exception) {
                     clients.remove(socket)
                     runCatching { reply(socket, 503, "Receiver busy.") }
@@ -83,7 +83,7 @@ class TemporarySettingsEntryServer private constructor(
                 if (closed.get() || now() >= expiresAt || !MessageDigest.isEqual(path, expected)) {
                     reply(it, 404, "Not found."); return
                 }
-                if (request[0] == "GET") { reply(it, 200, page()); return }
+                if (request[0] == "GET") { reply(it, 200, page(token, expiresAt - now()), html = true, nonce = token); return }
                 if (request[0] != "POST") { reply(it, 405, "Method not allowed."); return }
                 if (!submitting.compareAndSet(false, true)) { reply(it, 409, "Submission in progress."); return }
                 try {
@@ -93,6 +93,12 @@ class TemporarySettingsEntryServer private constructor(
                         line.substring(0, colon).lowercase() to line.substring(colon + 1).trim()
                     }
                     val headers = pairs.toMap()
+                    val origin = "http://$address:$port"
+                    if (pairs.count { entry -> entry.first == "origin" } > 1 ||
+                        headers["origin"]?.let { value -> value != origin } == true ||
+                        headers["sec-fetch-site"] == "cross-site") {
+                        reply(it, 403, "请求来源无效"); return
+                    }
                     if (pairs.count { entry -> entry.first == "content-length" } != 1 ||
                         headers.containsKey("transfer-encoding")) { reply(it, 411, "Content length required."); return }
                     val length = headers["content-length"]?.toIntOrNull()
@@ -110,12 +116,22 @@ class TemporarySettingsEntryServer private constructor(
                         if (count < 0) throw IOException("Incomplete form")
                         read += count
                     }
-                    val values = parse(bytes) ?: run { reply(it, 400, "Invalid form."); return }
-                    if (closed.get() || now() >= expiresAt || !finish(it)) {
-                        reply(it, 404, "Session expired."); return
+                    val values = parse(bytes) ?: run { reply(it, 400, "表单格式无效"); return }
+                    if (closed.get() || now() >= expiresAt) {
+                        reply(it, 404, "会话已结束"); return
                     }
-                    try { reply(it, 200, "Received. Review and save on DormPanel.") }
-                    finally { onAccepted(values) }
+                    val response = try { onPost(values) } catch (_: Exception) {
+                        SettingsEntryReply(500, """{"message":"设备暂时无法处理请求"}""")
+                    }
+                    if (!response.terminal) {
+                        if (!closed.get()) reply(it, response.code, response.text)
+                        return
+                    }
+                    if (now() >= expiresAt || !finish(it)) {
+                        reply(it, 404, "会话已结束"); return
+                    }
+                    try { reply(it, response.code, response.text) }
+                    finally { onFinished(values) }
                 } finally { submitting.set(false) }
             }
         } catch (_: IOException) { /* Closed or disconnected browser. */ }
@@ -129,15 +145,10 @@ class TemporarySettingsEntryServer private constructor(
             val equals = part.indexOf('=')
             require(equals > 0)
             val key = decode(part.substring(0, equals))
-            require(form.fields.any { it.first == key } && key !in result)
+            require(key.matches(Regex("[A-Za-z_][A-Za-z_0-9]{0,63}")) && key !in result && result.size < 64)
             result[key] = decode(part.substring(equals + 1))
         }
-        require(result.keys == form.fields.map { it.first }.toSet())
-        require(result.values.none { it.any { char -> char == '\u0000' || char == '\r' || char == '\n' } })
-        require(result[form.secret]!!.length <= if (form == SettingsEntryForm.HA) 8192 else 4096)
-        require(result["username"].orEmpty().length <= 256)
-        val url = result["url"].orEmpty()
-        require(url.length <= 2048 && url.isNotBlank())
+        require(result.values.none { value -> value.any { it.isISOControl() } })
         result
     }.getOrNull()
 
@@ -163,23 +174,6 @@ class TemporarySettingsEntryServer private constructor(
             .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(out.toByteArray())).toString()
     }
 
-    private fun page(): String = buildString {
-        append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>DormPanel settings entry</title>")
-        append("<style>body{font:18px system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:1rem;line-height:1.5}label{display:block;margin:1rem 0}input{display:block;width:100%;box-sizing:border-box;font:inherit;padding:.6rem}button{font:inherit;padding:.7rem;min-height:3rem}</style></head><body>")
-        append("<h1>").append(escape(form.title)).append(" settings</h1><p>Use only on a trusted local network. Credentials are sent directly to this DormPanel over the LAN.</p>")
-        append("<form method=\"post\" enctype=\"application/x-www-form-urlencoded\">")
-        for ((key, label) in form.fields) {
-            append("<label>").append(escape(label)).append("<input name=\"").append(key).append("\" type=\"")
-                .append(if (key == form.secret) "password" else "text").append('"')
-            if (key == "url") append(" required")
-            append(" maxlength=\"")
-                .append(when (key) { "url" -> 2048; "username" -> 256; "token" -> 8192; else -> 4096 }).append('"')
-            if (key != form.secret) append(" value=\"").append(escape(publicValues[key].orEmpty())).append('"')
-            append("></label>")
-        }
-        append("<button type=\"submit\">Send to DormPanel</button></form><p>Review and save on DormPanel after sending.</p></body></html>")
-    }
-
     override fun close() { finish(null) }
 
     private fun finish(except: Socket?): Boolean {
@@ -196,34 +190,24 @@ class TemporarySettingsEntryServer private constructor(
         private const val HEADER_LIMIT = 8192
         private const val BODY_LIMIT = 16 * 1024
 
-        fun start(address: String, form: SettingsEntryForm, publicValues: Map<String, String>,
-            onAccepted: (Map<String, String>) -> Unit, onExpired: () -> Unit = {},
-            now: () -> Long = System::currentTimeMillis, lifetimeMs: Long = LIFETIME_MS): TemporarySettingsEntryServer {
+        fun start(address: String, page: (String, Long) -> String,
+            onPost: (Map<String, String>) -> SettingsEntryReply,
+            onFinished: (Map<String, String>) -> Unit, onExpired: () -> Unit = {},
+            now: () -> Long = { System.nanoTime() / 1_000_000 }, lifetimeMs: Long = LIFETIME_MS): TemporarySettingsEntryServer {
             require(lifetimeMs > 0)
-            val safeValues = publicValues.filterKeys { key -> key != form.secret && form.fields.any { it.first == key } }
-                .mapValues { (key, value) -> value.take(if (key == "url") 2048 else 256) }
             val bytes = ByteArray(24).also { SecureRandom().nextBytes(it) }
             val token = bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
             val listener = ServerSocket(0, 8, InetAddress.getByName(address))
-            return TemporarySettingsEntryServer(listener, address, token, now() + lifetimeMs, form, safeValues,
-                onAccepted, onExpired, now)
+            return TemporarySettingsEntryServer(listener, address, token, now() + lifetimeMs, page,
+                onPost, onFinished, onExpired, now)
         }
 
-        private fun escape(value: String): String = buildString {
-            for (char in value) append(when (char) {
-                '&' -> "&amp;"; '<' -> "&lt;"; '>' -> "&gt;"; '"' -> "&quot;"; '\'' -> "&#39;"
-                else -> if (char.code < 32 || char.code == 127) "" else char.toString()
-            })
-        }
-
-        private fun reply(socket: Socket, code: Int, message: String) {
-            val page = if (message.startsWith("<!doctype")) message else
-                "<!doctype html><html><meta charset=\"utf-8\"><body><p>${escape(message)}</p></body></html>"
-            val bytes = page.toByteArray(StandardCharsets.UTF_8)
+        private fun reply(socket: Socket, code: Int, message: String, html: Boolean = false, nonce: String = "") {
+            val bytes = message.toByteArray(StandardCharsets.UTF_8)
             val headers = "HTTP/1.1 $code ${if (code == 200) "OK" else "Error"}\r\n" +
-                "Content-Type: text/html; charset=utf-8\r\nContent-Length: ${bytes.size}\r\n" +
+                "Content-Type: ${if (html) "text/html" else "text/plain"}; charset=utf-8\r\nContent-Length: ${bytes.size}\r\n" +
                 "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n" +
-                "Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'\r\n" +
+                "Content-Security-Policy: default-src 'none'; script-src 'nonce-$nonce'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'\r\n" +
                 "X-Frame-Options: DENY\r\nConnection: close\r\n\r\n"
             socket.getOutputStream().write(headers.toByteArray(StandardCharsets.US_ASCII))
             socket.getOutputStream().write(bytes)
