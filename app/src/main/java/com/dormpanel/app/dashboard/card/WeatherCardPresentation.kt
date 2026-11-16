@@ -11,7 +11,8 @@ import java.util.Locale
 
 internal enum class WeatherSymbol { SUN, MOON, PARTLY, PARTLY_NIGHT, CLOUD, RAIN, SNOW, STORM, FOG, HAZE, WIND, UNKNOWN, THERMOMETER, DROPLET, GAUGE }
 internal data class WeatherSky(val symbol: WeatherSymbol, val description: String)
-internal data class WeatherLine(val label: String, val sky: WeatherSky, val temperature: String?, val rain: String?)
+internal data class WeatherLine(val label: String, val sky: WeatherSky, val temperature: String?, val rain: String?,
+    val secondaryDate: String? = null)
 
 internal fun sky(code: String?, description: String? = null, daytime: Boolean? = null): WeatherSky {
     val night = daytime == false
@@ -85,7 +86,8 @@ internal fun WeatherSnapshot?.today(now: Instant): WeatherForecast? {
     return snapshot.entries().firstOrNull { it.localDate(snapshot.zone) == date }
 }
 
-internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeToday: Boolean = true): List<WeatherLine> {
+internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeToday: Boolean = true,
+    forCard: Boolean = false): List<WeatherLine> {
     val snapshot = this ?: return emptyList()
     val today = now.atZone(zone).toLocalDate()
     val homeAssistant = source is WeatherSourceRef.HomeAssistant
@@ -102,7 +104,8 @@ internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeTod
             WeatherBlock.DAILY, WeatherBlock.TWICE_DAILY -> {
                 if (date == null || (!homeAssistant && date < today) || (!includeToday && date == today)) return@mapNotNull null
                 val part = when (item.period.isDaytime) { true -> " 白天"; false -> " 夜间"; null -> "" }
-                dateLabel(date) + if (query.block == WeatherBlock.TWICE_DAILY) part else ""
+                if (forCard && query.block == WeatherBlock.DAILY) cardDayLabel(date, today)
+                else dateLabel(date) + if (query.block == WeatherBlock.TWICE_DAILY) part else ""
             }
             else -> return@mapNotNull null
         }
@@ -110,16 +113,27 @@ internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeTod
             item.day?.conditions ?: item.night?.conditions ?: item.conditions
         } else item.conditions
         val daytime = item.period.isDaytime ?: if (conditions === item.night?.conditions) false else null
-        WeatherLine(label, sky(conditions.code, conditions.description, daytime),
-            if (query.block != WeatherBlock.DAILY) conditions.temperature.value("°")
-            else range(item.conditions.minTemperature, item.conditions.maxTemperature, "°"),
-            conditions.precipitationProbability.value("%")?.let { "降水 $it" })
+        val temperature = if (forCard) {
+            if (query.block == WeatherBlock.DAILY) item.conditions.cardRange() else conditions.cardTemperature()
+        } else if (query.block == WeatherBlock.DAILY) range(item.conditions.minTemperature, item.conditions.maxTemperature, "°")
+        else conditions.temperature.value("°")
+        WeatherLine(label, sky(conditions.code, conditions.description, daytime), temperature,
+            conditions.precipitationProbability.value("%")?.let { "降水 $it" },
+            date?.takeIf { forCard && query.block == WeatherBlock.DAILY }?.let(::dateLabel))
     }.take(limit).toList()
 }
 
 private val hourFormat = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)
 internal val weatherUpdateFormat = DateTimeFormatter.ofPattern("M月d日 HH:mm", Locale.CHINA)
 internal fun dateLabel(date: LocalDate) = "${date.monthValue}月${date.dayOfMonth}日"
+internal fun cardDayLabel(date: LocalDate, today: LocalDate) = when (date) {
+    today -> "今天"
+    today.plusDays(1) -> "明天"
+    else -> "周" + "一二三四五六日"[date.dayOfWeek.value - 1]
+}
+
+internal fun nextWeatherMidnight(now: Instant, zone: ZoneId): Instant =
+    now.atZone(zone).toLocalDate().plusDays(1).atStartOfDay(zone).toInstant()
 internal fun Number?.value(unit: String): String? {
     val number = this?.toDouble()?.takeIf(Double::isFinite) ?: return null
     val formatted = if (number % 1 == 0.0) String.format(Locale.ROOT, "%.0f", number) else String.format(Locale.ROOT, "%.1f", number)
@@ -130,27 +144,67 @@ internal fun range(low: Number?, high: Number?, unit: String): String? =
     listOfNotNull(low.value(unit)?.let { "低 $it" }, high.value(unit)?.let { "高 $it" })
         .joinToString(" / ").ifEmpty { null }
 
-internal fun WeatherConditions.metric(metric: WeatherCardMetric) = when (metric) {
-    WeatherCardMetric.FEELS_LIKE -> feelsLike.value("°C")?.let { "体感 $it" }
+internal fun cardRange(low: Number?, high: Number?, unit: String): String? {
+    val minimum = low.value("")?.removeSuffix(".0")
+    val maximum = high.value("")?.removeSuffix(".0")
+    return when {
+        minimum != null && maximum != null -> "$minimum–$maximum$unit"
+        maximum != null -> "最高 $maximum$unit"
+        minimum != null -> "最低 $minimum$unit"
+        else -> null
+    }
+}
+
+private fun Double?.inDisplayUnit(unit: String): Double? = this?.let {
+    when (unit) {
+        "°F" -> it * 1.8 + 32
+        "K" -> it + 273.15
+        else -> it
+    }
+}
+
+internal fun WeatherConditions.cardTemperature() =
+    (sourceTemperatureUnit ?: "°C").let { unit ->
+        temperature.inDisplayUnit(unit).value("")?.removeSuffix(".0")?.plus(unit)
+    }
+
+internal fun WeatherConditions.cardRange() = (sourceTemperatureUnit ?: "°C").let {
+    cardRange(minTemperature.inDisplayUnit(it), maxTemperature.inDisplayUnit(it), it)
+}
+
+internal fun WeatherConditions.metric(metric: WeatherCardMetric, temperatureUnit: String = "°C") = when (metric) {
+    WeatherCardMetric.FEELS_LIKE -> feelsLike.inDisplayUnit(temperatureUnit).value(temperatureUnit)?.let { "体感 $it" }
     WeatherCardMetric.HUMIDITY -> humidity.value("%")?.let { "湿度 $it" }
     WeatherCardMetric.WIND -> listOfNotNull(windDirection, windDegrees.value("°").takeIf { windDirection == null }, windSpeed.value(" m/s"))
         .joinToString(" ").takeIf(String::isNotEmpty)?.let { "风 $it" }
 }
 
-internal fun LegacyWeather.lines(now: Instant, limit: Int): List<WeatherLine> {
-    val zone = ZoneId.systemDefault()
+internal fun LegacyWeather.lines(now: Instant, limit: Int, forCard: Boolean = false,
+    zone: ZoneId = ZoneId.systemDefault()): List<WeatherLine> {
     val today = now.atZone(zone).toLocalDate()
     return forecast.asSequence().mapNotNull {
         val start = Instant.ofEpochMilli(it.timeEpochMillis)
         val local = start.atZone(zone)
+        val date = local.toLocalDate()
         val label = when (forecastType) {
             "hourly" -> if (start.plusSeconds(3600) <= now) return@mapNotNull null else local.format(hourFormat)
-            "twice_daily" -> dateLabel(local.toLocalDate()) + when (it.isDaytime) { true -> " 白天"; false -> " 夜间"; null -> "" }
-            else -> dateLabel(local.toLocalDate())
+            "twice_daily" -> {
+                if (forCard && WeatherPeriod(start = start, isDaytime = it.isDaytime)
+                        .haForecastEnd(WeatherBlock.TWICE_DAILY, zone)?.isAfter(now) != true) return@mapNotNull null
+                dateLabel(date) + when (it.isDaytime) { true -> " 白天"; false -> " 夜间"; null -> "" }
+            }
+            else -> {
+                if (forCard && date < today) return@mapNotNull null
+                if (forCard) cardDayLabel(date, today) else dateLabel(date)
+            }
         }
-        if (entityId != null && local.toLocalDate() < today) return@mapNotNull null
+        if (!forCard && entityId != null && date < today) return@mapNotNull null
         WeatherLine(label, sky(it.condition, daytime = it.isDaytime),
-            if (forecastType != "daily") it.forecastTemperature.value(temperatureUnit) else range(it.low, it.high, temperatureUnit),
-            it.rainProbability.value("%")?.let { probability -> "降水 $probability" })
+            when {
+                forecastType != "daily" -> it.forecastTemperature.value(temperatureUnit)
+                forCard -> cardRange(it.low, it.high, temperatureUnit)
+                else -> range(it.low, it.high, temperatureUnit)
+            }, it.rainProbability.value("%")?.let { probability -> "降水 $probability" },
+            date.takeIf { forCard && forecastType == "daily" }?.let(::dateLabel))
     }.take(limit).toList()
 }

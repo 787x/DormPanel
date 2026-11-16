@@ -34,7 +34,9 @@ class CoreCardPresentationTest {
     }
     @Test fun `weather and climate change structure independently`() {
         assertEquals(0, weatherPresentation(CardSize(4, 1)).forecastColumns)
-        assertFalse(weatherPresentation(CardSize(2, 2)).horizontal)
+        assertEquals(1, weatherPresentation(CardSize(2, 2)).forecastColumns)
+        assertTrue(weatherPresentation(CardSize(2, 3)).stackedCurrent)
+        assertEquals(2, weatherPresentation(CardSize(2, 3)).forecastColumns)
         assertEquals(3, weatherPresentation(CardSize(4, 3)).forecastColumns)
         assertEquals(2, weatherPresentation(CardSize(3, 3)).forecastColumns)
         assertFalse(sensorPresentation(CardSize(2, 2)).sideBySide)

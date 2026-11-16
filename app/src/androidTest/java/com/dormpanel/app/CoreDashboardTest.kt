@@ -576,7 +576,11 @@ class CoreDashboardTest {
                     val bounds = android.graphics.Rect()
                     assertTrue(view.getLocalVisibleRect(bounds))
                     assertEquals(view.height, bounds.height())
-                    assertTrue((view as TextView).text.contains("19°  雷暴"))
+                    assertEquals("夜间", (view as TextView).text.toString().substringAfterLast(' '))
+                    val forecast = view.parent as ViewGroup
+                    assertTrue(descendants(forecast).filterIsInstance<TextView>().any { it.text == "19°C" && it.isShown })
+                    assertTrue(descendants(forecast).filterIsInstance<com.dormpanel.app.dashboard.card.WeatherIconView>()
+                        .any { it.symbol == com.dormpanel.app.dashboard.card.WeatherSymbol.STORM && it.isShown })
                 }
                 onView(allOf(withText("和风天气"), isDescendantOfA(card("武汉副卡")))).check(matches(isDisplayed()))
                 onView(allOf(withText("HA"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
@@ -593,7 +597,7 @@ class CoreDashboardTest {
                 } finally {
                     instrumentation.removeMonitor(monitor)
                 }
-                captureReview("pr79-four-fake-sources")
+                captureReview("pr83-four-fake-sources")
                 repeat(2) { iteration ->
                     scenario.onActivity { activity ->
                         val vm = model(activity)
@@ -922,6 +926,94 @@ class CoreDashboardTest {
                 }
                 captureReview("pr12-core-${columns}x${rows}")
             }
+        }
+    }
+
+    @Test fun weatherCardFitsLargeFontAndRecoversAfterResize() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val appearance = model(activity).appearance
+                for (scale in listOf(1f, 1.3f)) {
+                    val context = activity.createConfigurationContext(android.content.res.Configuration(activity.resources.configuration).apply {
+                        fontScale = scale
+                    })
+                    val demo = com.dormpanel.app.data.FakeDashboardDataSource()
+                    val sample = demo.state.weather.copy(
+                        name = "很长的地点名称用于验证天气卡片在最窄尺寸下仍然显示来源和状态",
+                        temperature = -123, low = -123, high = 105, temperatureUnit = "°F",
+                        conditions = WeatherConditions(code = "rainy", description = "持续性暴雨转雨夹雪",
+                            temperature = (-123.5 - 32) / 1.8, sourceTemperatureUnit = "°F",
+                            humidity = 95.0, feelsLike = -82.0, windSpeed = 123.4),
+                        availability = com.dormpanel.app.data.Availability.STALE,
+                        forecast = demo.state.weather.forecast.take(1).map { it.copy(low = -123, high = 105) },
+                    )
+                    val source = object : com.dormpanel.app.data.DashboardDataSource by demo {
+                        override val state get() = demo.state.copy(weather = sample)
+                        override fun addListener(listener: (com.dormpanel.app.data.DashboardData) -> Unit) = listener(state)
+                        override fun removeListener(listener: (com.dormpanel.app.data.DashboardData) -> Unit) = Unit
+                    }
+                    val card = com.dormpanel.app.dashboard.card.WeatherCardView(context, appearance, source)
+                    val host = android.widget.FrameLayout(activity)
+                    activity.addContentView(host, android.widget.FrameLayout.LayoutParams(-1, -1))
+                    host.addView(card)
+                    try {
+                        val sizes = listOf(CardSize(4, 3)) + (1..3).flatMap { rows -> (2..4).map { CardSize(it, rows) } } + CardSize(4, 3)
+                        val sizesPx = sizes.map { size ->
+                            card.bind(PlacedCard("fit", "weather", 0, 0, size),
+                                com.dormpanel.app.dashboard.card.CardInteractionScope(false) {})
+                            fun exact(px: Int) = View.MeasureSpec.makeMeasureSpec(px, View.MeasureSpec.EXACTLY)
+                            card.measure(exact(148 * size.columnSpan - 10), exact(114 * size.rowSpan - 10))
+                            card.layout(0, 0, card.measuredWidth, card.measuredHeight)
+                            card.applyAppearance(AppearanceState(themeMode = if (scale == 1f) ThemeMode.DARK else ThemeMode.LIGHT))
+                            val shown = descendants(card).filter { it.isShown }.toList()
+                            val text = shown.filterIsInstance<TextView>().filter { it.text.isNotEmpty() }
+                            text.forEach { label ->
+                                val rect = android.graphics.Rect(0, 0, label.width, label.height)
+                                card.offsetDescendantRectToMyCoords(label, rect)
+                                assertTrue("$scale $size ${label.text}: $rect", rect.left >= 0 && rect.top >= 0 &&
+                                    rect.right <= card.width && rect.bottom <= card.height)
+                                assertTrue("$scale $size ${label.text}: text layout ${label.layout.height}px in ${label.height}px",
+                                    label.layout.height <= label.height + 1)
+                                if (label.text.toString() != sample.name) {
+                                    assertTrue("$scale $size ${label.text}: line width ${label.layout.getLineWidth(0)}px in ${label.width}px",
+                                        label.layout.getLineWidth(0) <= label.width + 1)
+                                }
+                            }
+                            assertTrue(text.any { it.text == "-123–105°F" })
+                            assertTrue(text.any { it.text == "离线 · 已过期" })
+                            val forecastIcons = shown.filterIsInstance<com.dormpanel.app.dashboard.card.WeatherIconView>()
+                            assertEquals(if (size.rowSpan > 1) 2 else 1, forecastIcons.size)
+                            assertTrue(forecastIcons.all { it.width >= 20 && it.height >= 20 })
+                            text.first { it.text == "-123.5°F" }.textSize
+                        }
+                        assertEquals(sizesPx.first(), sizesPx.last(), 0.1f)
+                        assertTrue(sizesPx.first() > sizesPx[1])
+                    } finally {
+                        (host.parent as ViewGroup).removeView(host)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun weatherCardUpdatesDateAtMidnightWithoutAFeedChange() {
+        val demo = com.dormpanel.app.data.FakeDashboardDataSource()
+        val zone = ZoneId.systemDefault()
+        val midnight = java.time.LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant()
+        val now = java.util.concurrent.atomic.AtomicReference(midnight.minusMillis(350))
+        val updated = java.util.concurrent.CountDownLatch(1)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val card = com.dormpanel.app.dashboard.card.WeatherCardView(activity, model(activity).appearance, demo,
+                    clock = { now.get().also { if (it == midnight) updated.countDown() } })
+                card.bind(PlacedCard("midnight", "weather", 0, 0, CardSize(3, 3)),
+                    com.dormpanel.app.dashboard.card.CardInteractionScope(false) {})
+                activity.addContentView(card, android.widget.FrameLayout.LayoutParams(434, 332))
+                assertTrue(card.contentDescription.contains("明天 20–26°C"))
+                now.set(midnight)
+            }
+            assertTrue("Card did not render at local midnight", updated.await(4, java.util.concurrent.TimeUnit.SECONDS))
+            onView(card("今天 20–26°C")).check(matches(isDisplayed()))
         }
     }
 

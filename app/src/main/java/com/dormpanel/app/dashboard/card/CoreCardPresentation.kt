@@ -26,12 +26,15 @@ fun clockPresentation(size: CardSize) = ClockPresentation(
     centered = size.columnSpan <= 2,
 )
 
-data class WeatherPresentation(val horizontal: Boolean, val temperatureSp: Float, val summary: Boolean, val forecastColumns: Int)
+data class WeatherPresentation(val stackedCurrent: Boolean, val summary: Boolean, val forecastColumns: Int)
 fun weatherPresentation(size: CardSize) = WeatherPresentation(
-    horizontal = size.rowSpan == 1 || size.columnSpan >= 3,
-    temperatureSp = if (size.rowSpan == 1) 36f else 72f,
+    stackedCurrent = size.columnSpan == 2 && size.rowSpan == 3,
     summary = size.rowSpan >= 2,
-    forecastColumns = if (size.rowSpan >= 3 && size.columnSpan >= 3) size.columnSpan - 1 else 0,
+    forecastColumns = when (size.rowSpan) {
+        1 -> 0
+        2 -> 1
+        else -> maxOf(2, size.columnSpan - 1)
+    },
 )
 
 data class SensorPresentation(val sideBySide: Boolean, val valueSp: Float, val valueLabels: Boolean, val status: Boolean)
