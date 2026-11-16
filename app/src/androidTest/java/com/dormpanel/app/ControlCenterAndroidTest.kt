@@ -65,16 +65,17 @@ class ControlCenterAndroidTest {
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 openControlCenter()
-                onView(withText("Not configured · Demo backend")).check(matches(isDisplayed()))
-                onView(withText("Not configured")).check(matches(isDisplayed()))
-                onView(withText("Mute unavailable")).check(matches(isDisplayed()))
-                onView(withText("Mute")).check(matches(not(isDisplayed())))
-                onView(withContentDescription("Allow system brightness control")).check(matches(isDisplayed()))
-                onView(withContentDescription("System brightness")).check(matches(isNotEnabled()))
-                checkHeadingAction("Home Assistant", "Home Assistant settings")
+                onView(withText("${context.getString(R.string.control_center_not_configured)} · Demo backend")).check(matches(isDisplayed()))
+                onView(withText(R.string.control_center_not_configured)).check(matches(isDisplayed()))
+                onView(withText(R.string.control_center_mute_unavailable)).check(matches(isDisplayed()))
+                onView(withText(R.string.control_center_mute)).check(matches(not(isDisplayed())))
+                onView(withContentDescription(R.string.control_center_grant_description)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_system_brightness)).check(matches(isNotEnabled()))
+                checkInlineAction(withText("Home Assistant"), withContentDescription(R.string.ha_settings))
                 checkHeadingAction("WebDAV", "WebDAV 连接设置")
+                checkInlineAction(withText(R.string.control_center_awake), withText(R.string.control_center_blackout))
 
-                onView(withContentDescription("Home Assistant settings")).perform(click())
+                onView(withContentDescription(R.string.ha_settings)).perform(click())
                 onView(withText("Home Assistant base URL")).inRoot(isDialog()).check(matches(isDisplayed()))
                 onView(withText("Close")).inRoot(isDialog()).perform(click())
                 onView(withContentDescription("WebDAV 连接设置")).perform(click())
@@ -94,10 +95,10 @@ class ControlCenterAndroidTest {
                     assertEquals(!(savedBoot ?: false), enabled)
                     assertEquals(enabled, it.findViewById<CompoundButton>(R.id.start_after_boot).isChecked)
                 }
-                onView(withText("Blackout screen")).perform(scrollTo(), click())
+                onView(withText(R.string.control_center_blackout)).perform(scrollTo(), click())
                 onView(withId(R.id.blackout_surface)).check(matches(isDisplayed())).perform(click())
-                onView(withContentDescription("Return to DormPanel home")).perform(click())
-                onView(withText("Control Center")).check(doesNotExist())
+                onView(withContentDescription(R.string.control_center_home_description)).perform(click())
+                onView(withText(R.string.control_center_title)).check(doesNotExist())
             }
         } finally {
             ha.write(savedHa)
@@ -126,7 +127,7 @@ class ControlCenterAndroidTest {
                 val drag = GeneralSwipeAction(Swipe.FAST,
                     { view -> point(view, .50f, .88f) }, { view -> point(view, .50f, .15f) }, Press.FINGER)
                 repeat(3) { scroll.perform(drag) }
-                onView(withText("Control Center")).check(matches(isDisplayed()))
+                onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
                 onView(withId(R.id.open_miui_home)).check(matches(isDisplayed()))
                 scenario.onActivity {
                     val viewport = it.findViewById<ScrollView>(R.id.control_center_scroll)
@@ -138,13 +139,13 @@ class ControlCenterAndroidTest {
                     assertEquals(savedOffset, viewport.scrollY)
                 }
                 scenario.recreate()
-                onView(withText("Control Center")).check(matches(isDisplayed()))
+                onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
                 val footer = onView(withText(R.string.return_home_up))
                 footer.perform(GeneralSwipeAction(Swipe.FAST,
                     { view -> point(view, .50f, .5f) },
                     { view -> point(view, .50f, .5f).apply { this[1] -= 160 } },
                     Press.FINGER))
-                onView(withText("Control Center")).check(doesNotExist())
+                onView(withText(R.string.control_center_title)).check(doesNotExist())
             }
         } finally {
             store.write(previous)
@@ -166,7 +167,7 @@ class ControlCenterAndroidTest {
                     val backend = ViewModelProvider(it)[DashboardViewModel::class.java].dataSource
                     backend.ha.configure(HaConnectionSettings(BackendMode.HOME_ASSISTANT, endpoint), "test")
                 }
-                val text = "Authentication error · Authentication rejected; re-enter credentials."
+                val text = "${context.getString(R.string.control_center_auth_error)} · Authentication rejected; re-enter credentials."
                 val statusText = onView(withText(text))
                 val deadline = android.os.SystemClock.uptimeMillis() + 5000
                 var ready = false
@@ -183,9 +184,9 @@ class ControlCenterAndroidTest {
                     if (error != null) throw error
                     (view as TextView).text = longText
                 }
-                checkHeadingAction("Home Assistant", "Home Assistant settings")
+                checkInlineAction(withText("Home Assistant"), withContentDescription(R.string.ha_settings))
                 val actionBounds = Rect()
-                onView(withContentDescription("Home Assistant settings")).check { view, _ ->
+                onView(withContentDescription(R.string.ha_settings)).check { view, _ ->
                     assertTrue(view.getGlobalVisibleRect(actionBounds))
                 }
                 onView(withText(longText)).check { view, _ ->
@@ -218,10 +219,10 @@ class ControlCenterAndroidTest {
                 for (mode in ThemeMode.entries) panel.applyAppearance(model.appearance.state.copy(themeMode = mode))
                 assertEquals(1.5f, panel.resources.configuration.fontScale, 0f)
             }
-            checkHeadingAction("Home Assistant", "Home Assistant settings")
+            checkInlineAction(withText("Home Assistant"), withContentDescription(R.string.ha_settings))
             checkHeadingAction("WebDAV", "WebDAV 连接设置")
-            onView(withText("Not configured · Demo backend")).check(matches(isDisplayed()))
-            onView(withText("Follow system")).check(matches(isDisplayed()))
+            onView(withText("${context.getString(R.string.control_center_not_configured)} · Demo backend")).check(matches(isDisplayed()))
+            onView(withText(R.string.control_center_follow)).check(matches(isDisplayed()))
             onView(withId(R.id.open_miui_home)).perform(scrollTo()).check(matches(isDisplayed()))
             onView(withContentDescription("天气服务与地点")).perform(scrollTo(), click())
             onView(withText("搜索城市或区县")).inRoot(isDialog()).check(matches(isDisplayed()))
@@ -266,21 +267,21 @@ class ControlCenterAndroidTest {
                 }
                 panel.applyAppearance(model.appearance.state)
             }
-            onView(withText("Mute")).perform(click())
+            onView(withText(R.string.control_center_mute)).perform(click())
             assertTrue(muted)
-            onView(withText("Unmute")).perform(click())
+            onView(withText(R.string.control_center_unmute)).perform(click())
             assertFalse(muted)
             scenario.onActivity {
                 volume = 8
                 device.refreshAudio()
             }
-            onView(withText("Media volume · 80%")).check(matches(isDisplayed()))
-            onView(withContentDescription("Media volume")).check { view, _ -> assertEquals(0, (view as SeekBar).min) }
-            onView(withContentDescription("System brightness")).check(matches(isNotEnabled()))
-            onView(withContentDescription("Automatic system brightness")).perform(click())
-            onView(withContentDescription("System brightness")).check(matches(isEnabled()))
-            onView(withText("Follow system")).perform(click())
-            onView(withContentDescription("DormPanel brightness")).check(matches(isNotEnabled()))
+            onView(withText(context.getString(R.string.control_center_volume_value, 80))).check(matches(isDisplayed()))
+            onView(withContentDescription(R.string.control_center_volume)).check { view, _ -> assertEquals(0, (view as SeekBar).min) }
+            onView(withContentDescription(R.string.control_center_system_brightness)).check(matches(isNotEnabled()))
+            onView(withContentDescription(R.string.control_center_auto_description)).perform(click())
+            onView(withContentDescription(R.string.control_center_system_brightness)).check(matches(isEnabled()))
+            onView(withText(R.string.control_center_follow)).perform(click())
+            onView(withContentDescription(R.string.control_center_brightness)).check(matches(isNotEnabled()))
         }
     }
 
@@ -290,12 +291,18 @@ class ControlCenterAndroidTest {
 
     private fun openControlCenter() = onView(withId(R.id.page_container)).perform(swipeDown())
 
-    private fun checkHeadingAction(title: String, description: String) {
+    private fun checkHeadingAction(title: String, description: String) =
+        checkInlineAction(withText(title), withContentDescription(description))
+
+    private fun checkInlineAction(leading: org.hamcrest.Matcher<View>, trailing: org.hamcrest.Matcher<View>) {
         val heading = Rect()
-        onView(withText(title)).check { view, _ -> assertTrue(view.getGlobalVisibleRect(heading)) }
-        onView(withContentDescription(description)).check { view, _ ->
+        onView(leading).check { view, _ -> assertTrue(view.getGlobalVisibleRect(heading)) }
+        onView(trailing).check { view, _ ->
             val action = Rect()
             assertTrue(view.getGlobalVisibleRect(action))
+            val density = view.resources.displayMetrics.density
+            assertTrue(action.height() >= (56 * density).toInt())
+            assertTrue(action.width() >= (144 * density).toInt())
             assertTrue(heading.right <= action.left)
             assertTrue(heading.centerY() in action.top until action.bottom)
         }

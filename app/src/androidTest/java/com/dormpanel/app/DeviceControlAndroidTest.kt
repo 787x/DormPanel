@@ -174,17 +174,17 @@ class DeviceControlAndroidTest {
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 onView(withId(R.id.page_container)).perform(swipeDown())
-                onView(withText("Control Center")).check(matches(isDisplayed()))
-                onView(withContentDescription("Automatic system brightness")).check(matches(isDisplayed()))
-                onView(withText("Follow system")).check(matches(isDisplayed()))
-                onView(withContentDescription("System brightness")).check(matches(isDisplayed()))
-                onView(withContentDescription("DormPanel brightness")).check(matches(isDisplayed()))
-                onView(withContentDescription("Allow system brightness control")).check(matches(isDisplayed()))
+                onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_auto_description)).check(matches(isDisplayed()))
+                onView(withText(R.string.control_center_follow)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_system_brightness)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_brightness)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_grant_description)).check(matches(isDisplayed()))
                 scenario.onActivity { ViewModelProvider(it)[DashboardViewModel::class.java].deviceControls.setFollowSystem(false) }
-                onView(withContentDescription("DormPanel brightness")).perform(swipeRight())
-                onView(withText("Control Center")).check(matches(isDisplayed()))
-                onView(withContentDescription("Media volume")).perform(swipeLeft())
-                onView(withText("Control Center")).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_brightness)).perform(swipeRight())
+                onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
+                onView(withContentDescription(R.string.control_center_volume)).perform(swipeLeft())
+                onView(withText(R.string.control_center_title)).check(matches(isDisplayed()))
                 scenario.onActivity {
                     audio.setStreamVolume(AudioManager.STREAM_MUSIC, 8, 0)
                 }

@@ -75,19 +75,19 @@ class ControlCenterView(
 
     private val brightnessLabel = label(size = 18f)
     private val systemLabel = label(size = 18f)
-    private val systemBrightness = slider("System brightness").apply { min = 1 }
-    private val automatic = toggle("Auto brightness").apply { contentDescription = "Automatic system brightness" }
-    private val followSystem = toggle("Follow system")
-    private val allowSystem = action("Grant access", "Allow system brightness control", ::requestBrightnessAccess)
+    private val systemBrightness = slider(context.getString(R.string.control_center_system_brightness)).apply { min = 1 }
+    private val automatic = toggle(context.getString(R.string.control_center_auto)).apply { contentDescription = context.getString(R.string.control_center_auto_description) }
+    private val followSystem = toggle(context.getString(R.string.control_center_follow))
+    private val allowSystem = action(context.getString(R.string.control_center_grant), context.getString(R.string.control_center_grant_description), ::requestBrightnessAccess)
     private val permissionStatus = secondaryLabel().apply { visibility = GONE }
     private val volumeLabel = label(size = 18f)
-    private val muteUnavailable = secondaryLabel("Mute unavailable")
+    private val muteUnavailable = secondaryLabel(context.getString(R.string.control_center_mute_unavailable))
     private val opacityLabel = label(size = 18f)
-    private val brightness = slider("DormPanel brightness").apply { min = 1 }
-    private val volume = slider("Media volume")
+    private val brightness = slider(context.getString(R.string.control_center_brightness)).apply { min = 1 }
+    private val volume = slider(context.getString(R.string.control_center_volume))
     private val opacity = slider(context.getString(R.string.card_opacity))
-    private val keepAwake = toggle("Keep screen awake")
-    private val mute = action("Mute") { device.toggleMute() }
+    private val keepAwake = toggle(context.getString(R.string.control_center_awake))
+    private val mute = action(context.getString(R.string.control_center_mute)) { device.toggleMute() }
     private val haStatus = secondaryLabel()
     private val webDavStatus = secondaryLabel()
     private val startAfterBoot = toggle(context.getString(R.string.start_after_boot)).apply { id = R.id.start_after_boot }
@@ -153,12 +153,12 @@ class ControlCenterView(
         text = value
         contentDescription = description
         isAllCaps = false
-        textSize = 16f
-        minimumHeight = dp(48)
-        minHeight = dp(48)
-        minimumWidth = dp(48)
-        minWidth = dp(48)
-        setPadding(dp(12), dp(4), dp(12), dp(4))
+        textSize = 18f
+        minimumHeight = dp(56)
+        minHeight = dp(56)
+        minimumWidth = dp(144)
+        minWidth = dp(144)
+        setPadding(dp(16), dp(6), dp(16), dp(6))
         setOnClickListener {
             onGestureClaimed()
             click()
@@ -223,34 +223,38 @@ class ControlCenterView(
     }
     private val deviceListener: (DeviceControlState) -> Unit = {
         brightness.progress = it.brightness
-        brightnessLabel.text = "DormPanel brightness · ${it.brightness}%"
+        brightnessLabel.text = context.getString(R.string.control_center_brightness_value, it.brightness)
         brightness.isEnabled = !it.useSystemBrightness
         followSystem.isChecked = it.useSystemBrightness
         systemBrightness.progress = it.system.percent
         systemBrightness.isEnabled = it.system.canWrite && !it.system.automatic
         automatic.isChecked = it.system.automatic
         automatic.isEnabled = it.system.canWrite
-        systemLabel.text = "System brightness · ${it.system.percent}%${if (it.system.canWrite) "" else " · Read only"}"
+        val systemValue = context.getString(R.string.control_center_system_brightness_value, it.system.percent)
+        systemLabel.text = if (it.system.canWrite) systemValue else {
+            "$systemValue · ${context.getString(R.string.control_center_read_only)}"
+        }
         allowSystem.visibility = if (it.system.canWrite) View.GONE else View.VISIBLE
         if (it.system.canWrite) permissionStatus.visibility = View.GONE
         volume.min = if (it.muteAvailable) 0 else (100f / it.mediaMax).roundToInt()
         volume.progress = it.mediaPercent
-        volumeLabel.text = "Media volume · ${it.mediaPercent}%"
+        volumeLabel.text = context.getString(R.string.control_center_volume_value, it.mediaPercent)
         keepAwake.isChecked = it.keepAwake
         mute.visibility = if (it.muteAvailable) VISIBLE else GONE
         muteUnavailable.visibility = if (it.muteAvailable) GONE else VISIBLE
-        mute.text = if (it.muted) "Unmute" else "Mute"
+        mute.setText(if (it.muted) R.string.control_center_unmute else R.string.control_center_mute)
     }
     private val haListener: (HaStatus) -> Unit = { status ->
-        val state = when (status.state) {
-            HaConnectionState.NOT_CONFIGURED -> "Not configured"
-            HaConnectionState.CONNECTING -> "Connecting"
-            HaConnectionState.SYNCING -> "Syncing"
-            HaConnectionState.CONNECTED -> "Connected"
-            HaConnectionState.RECONNECTING -> "Reconnecting"
-            HaConnectionState.AUTH_ERROR -> "Authentication error"
-            HaConnectionState.ERROR -> "Connection error"
+        val stateLabel = when (status.state) {
+            HaConnectionState.NOT_CONFIGURED -> R.string.control_center_not_configured
+            HaConnectionState.CONNECTING -> R.string.control_center_connecting
+            HaConnectionState.SYNCING -> R.string.control_center_syncing
+            HaConnectionState.CONNECTED -> R.string.control_center_connected
+            HaConnectionState.RECONNECTING -> R.string.control_center_reconnecting
+            HaConnectionState.AUTH_ERROR -> R.string.control_center_auth_error
+            HaConnectionState.ERROR -> R.string.control_center_connection_error
         }
+        val state = context.getString(stateLabel)
         haStatus.text = if (status.detail.isBlank()) state else "$state · ${status.detail}"
     }
 
@@ -258,7 +262,7 @@ class ControlCenterView(
         orientation = VERTICAL
         setPadding(dp(24), dp(10), dp(24), dp(24))
         val title = label(context.getString(R.string.control_center_title), 28f, heading = true)
-        val home = action("Home", "Return to DormPanel home", onReturnHome)
+        val home = action(context.getString(R.string.control_center_home), context.getString(R.string.control_center_home_description), onReturnHome)
         val headerActions = listOfNotNull(home, openPortal?.let { action("扫码配置", click = it) })
         addView(row(title, *headerActions.toTypedArray()), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             bottomMargin = dp(8)
@@ -277,22 +281,23 @@ class ControlCenterView(
         columns.addView(left, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(24) })
         columns.addView(right, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
 
-        left.heading("Display")
+        left.heading(context.getString(R.string.control_center_display))
         left.addView(row(systemLabel, automatic))
         left.addView(systemBrightness)
         left.addView(allowSystem, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         left.addView(permissionStatus)
         left.addView(row(brightnessLabel, followSystem))
         left.addView(brightness)
-        left.addView(keepAwake, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-        left.addView(action("Blackout screen") { device.enterBlackout() },
-            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-        left.heading("Audio")
+        val awakeToggle = LinearLayout(context).apply {
+            addView(keepAwake, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        }
+        left.addView(row(awakeToggle, action(context.getString(R.string.control_center_blackout)) { device.enterBlackout() }))
+        left.heading(context.getString(R.string.control_center_audio))
         left.addView(row(volumeLabel, mute, muteUnavailable))
         left.addView(volume)
 
-        right.heading("Appearance")
-        right.addView(row(label("Theme", 18f), modes))
+        right.heading(context.getString(R.string.control_center_appearance))
+        right.addView(row(label(context.getString(R.string.control_center_theme), 18f), modes))
         right.addView(opacityLabel)
         right.addView(opacity)
         if (backend != null) {
@@ -379,17 +384,16 @@ class ControlCenterView(
             context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
                 Uri.parse("package:${context.packageName}")))
         } catch (_: Exception) {
-            permissionStatus.text = "System brightness access is unavailable on this device."
+            permissionStatus.text = context.getString(R.string.control_center_grant_failed)
             permissionStatus.visibility = VISIBLE
         }
     }
 
     private fun updateWebDavStatus() {
         val account = webDavSettings?.account()
-        webDavStatus.text = if (account == null) "Not configured" else {
-            val host = Uri.parse(account.baseUrl).host
-            if (host.isNullOrBlank()) "Configured" else "Configured · $host"
-        }
+        val label = context.getString(if (account == null) R.string.control_center_not_configured else R.string.control_center_configured)
+        val host = account?.let { Uri.parse(it.baseUrl).host }
+        webDavStatus.text = if (host.isNullOrBlank()) label else "$label · $host"
     }
 
     private fun showWebDavSettings() {
