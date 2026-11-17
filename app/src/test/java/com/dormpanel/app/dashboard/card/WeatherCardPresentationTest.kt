@@ -247,9 +247,14 @@ class WeatherCardPresentationTest {
         val data = HaWeatherParser.parse(org.json.JSONObject("""{
           "attrs":{"temperature_unit":"°F"},
           "forecast":[{"datetime":"2026-11-17T00:00:00+08:00","temperature":74.5,"templow":34,
-          "condition":"partlycloudy","is_daytime":false}]
+          "condition":"partlycloudy","is_daytime":false},
+          {"datetime":"2026-11-18T00:00:00+08:00","temperature":32,"templow":-2,"condition":"snowy"},
+          {"datetime":"2026-11-19T00:00:00+08:00","temperature":39,"templow":31,"condition":"cloudy"}]
         }"""), zone, WeatherBlock.DAILY).data
         val ha = snapshot(WeatherBlock.DAILY).copy(source = WeatherSourceRef.HomeAssistant("weather.home", "server"), data = data)
+        val lines = ha.forecastLines(instant, 3, includeToday = false, forCard = true)
+        assertEquals(listOf("明天", "周三", "周四"), lines.map { it.label })
+        assertEquals(listOf("34–74.5°F", "-2–32°F", "31–39°F"), lines.map { it.temperature })
         val line = ha.forecastLines(instant, 1, forCard = true).single()
         assertEquals("明天", line.label)
         assertEquals("34–74.5°F", line.temperature)
@@ -264,16 +269,17 @@ class WeatherCardPresentationTest {
         assertEquals(Instant.parse("2026-11-02T05:00:00Z"), nextWeatherMidnight(midnight, newYork))
         fun day(date: String) = WeatherForecast(WeatherPeriod(date = LocalDate.parse(date)),
             WeatherConditions(code = "unmapped", minTemperature = 18.0, maxTemperature = 27.0))
-        val qweather = snapshot(WeatherBlock.DAILY, day("2026-11-01"), day("2026-11-03")).copy(zone = newYork)
+        val qweather = snapshot(WeatherBlock.DAILY, day("2026-11-01"), day("2026-11-03"), day("2026-11-04"))
+            .copy(zone = newYork)
         val before = qweather.forecastLines(beforeMidnight, 3, forCard = true)
-        assertEquals(listOf("明天", "周二"), before.map { it.label })
+        assertEquals(listOf("明天", "周二", "周三"), before.map { it.label })
         assertEquals("11月1日", before.first().secondaryDate)
         assertEquals("18–27°C", before.first().temperature)
         assertEquals(WeatherSymbol.UNKNOWN, before.first().sky.symbol)
-        assertEquals(listOf("今天", "周二"), qweather.forecastLines(midnight, 3, forCard = true).map { it.label })
-        val single = qweather.forecastLines(midnight, 3, includeToday = false, forCard = true).single()
-        assertEquals("周二", single.label)
-        assertEquals("明天", qweather.forecastLines(nextWeatherMidnight(midnight, newYork), 3, forCard = true).single().label)
+        assertEquals(listOf("今天", "周二", "周三"), qweather.forecastLines(midnight, 3, forCard = true).map { it.label })
+        val after = qweather.forecastLines(midnight, 3, includeToday = false, forCard = true)
+        assertEquals(listOf("周二", "周三"), after.map { it.label })
+        assertEquals("明天", qweather.forecastLines(nextWeatherMidnight(midnight, newYork), 3, forCard = true).first().label)
     }
 
     @Test fun cardHourlyAndSplitForecastsKeepTheirPeriodAndNightIcon() {

@@ -509,6 +509,7 @@ class CoreDashboardTest {
                 val forecast = List(4) { day ->
                     WeatherForecast(WeatherPeriod(date = now.atZone(zone).toLocalDate().plusDays(day.toLong())),
                         WeatherConditions(if (source == wuhan && day > 0) "304" else code,
+                            description = "雷阵雨伴有冰雹".takeIf { source == wuhan && day > 0 },
                             minTemperature = (temp - 3).takeUnless { source == beijing }, maxTemperature = temp + 3))
                 }
                 val parsed = when (query.block) {
@@ -564,7 +565,7 @@ class CoreDashboardTest {
                     bind(vm.stateHolder, registry, {}, {}, onOperationRejected = { fail(it) })
                 }
                 cards = listOf(
-                    PlacedCard("a", "weather", 0, 0, CardSize(4, 3), WeatherCardConfiguration.Bound("wuhan", wuhan).encode()),
+                    PlacedCard("a", "weather", 0, 0, CardSize(2, 3), WeatherCardConfiguration.Bound("wuhan", wuhan).encode()),
                     PlacedCard("b", "weather_classic", 4, 0, CardSize(2, 3), WeatherCardConfiguration.Bound("beijing", beijing).encode()),
                     PlacedCard("c", "weather", 6, 0, CardSize(2, 2), WeatherCardConfiguration.Bound("home", home).encode()),
                     PlacedCard("d", "weather_classic", 0, 3, CardSize(4, 3), WeatherCardConfiguration.Bound("wuhan", wuhan).encode()),
@@ -577,7 +578,16 @@ class CoreDashboardTest {
             try {
                 scenario.onActivity {
                     val views = descendants(grid).filterIsInstance<DashboardCardView>().associateBy { view -> view.tag }
-                    assertTrue(views.getValue("a").contentDescription.contains("23°C"))
+                    val modern = views.getValue("a")
+                    assertTrue(modern.contentDescription.contains("23°C"))
+                    val forecastLabels = descendants(modern).filterIsInstance<TextView>()
+                        .filter { it.isShown && it.text == "雷阵雨伴有冰雹" }.toList()
+                    assertEquals(3, forecastLabels.size)
+                    forecastLabels.forEach { label ->
+                        assertTrue(label.layout.getLineWidth(0) <= label.width)
+                        assertTrue(label.layout.height <= label.height)
+                        assertTrue(label.textSize / label.resources.displayMetrics.density >= 11f)
+                    }
                     val missingReading = views.getValue("b").contentDescription.toString()
                     assertTrue(missingReading.contains("北京, —, Mist, 最高 11°C"))
                     assertFalse(missingReading.contains("湿度"))
@@ -987,7 +997,8 @@ class CoreDashboardTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 val appearance = model(activity).appearance
-                for (scale in listOf(1f, 1.3f)) {
+                val forecastCounts = if (classic) listOf(3) else listOf(1, 2, 3)
+                for (scale in listOf(1f, 1.3f)) for (forecastCount in forecastCounts) {
                     val context = activity.createConfigurationContext(android.content.res.Configuration(activity.resources.configuration).apply {
                         fontScale = scale
                     })
@@ -1000,7 +1011,7 @@ class CoreDashboardTest {
                             temperature = (-123.5 - 32) / 1.8, sourceTemperatureUnit = "°F",
                             humidity = 95.0, feelsLike = -82.0, windSpeed = 123.4),
                         availability = com.dormpanel.app.data.Availability.STALE,
-                        forecast = demo.state.weather.forecast.take(if (classic) 3 else 1)
+                        forecast = demo.state.weather.forecast.take(forecastCount)
                             .map { it.copy(low = -123, high = 105) },
                     )
                     val source = object : com.dormpanel.app.data.DashboardDataSource by demo {
@@ -1015,7 +1026,8 @@ class CoreDashboardTest {
                     activity.addContentView(host, android.widget.FrameLayout.LayoutParams(-1, -1))
                     host.addView(card)
                     try {
-                        val sizes = listOf(CardSize(4, 3)) + (1..3).flatMap { rows -> (2..4).map { CardSize(it, rows) } } + CardSize(4, 3)
+                        val sizes = listOf(CardSize(2, 3)) +
+                            (1..3).flatMap { rows -> (2..4).map { CardSize(it, rows) } } + CardSize(2, 3)
                         val sizesPx = sizes.map { size ->
                             card.bind(PlacedCard("fit", providerType, 0, 0, size),
                                 com.dormpanel.app.dashboard.card.CardInteractionScope(false) {})
@@ -1055,7 +1067,25 @@ class CoreDashboardTest {
                                 }
                             }
                             val forecastIcons = shown.filterIsInstance<com.dormpanel.app.dashboard.card.WeatherIconView>()
-                            assertEquals(if (classic) 0 else if (size.rowSpan > 1) 2 else 1, forecastIcons.size)
+                            if (classic) {
+                                assertTrue(forecastIcons.isEmpty())
+                            } else {
+                                val expected = when {
+                                    size.rowSpan == 1 -> 0
+                                    size.rowSpan == 2 -> 1
+                                    size.columnSpan == 3 -> 2
+                                    else -> 3
+                                }.coerceAtMost(forecastCount)
+                                assertEquals("$scale $size forecasts", expected + 1, forecastIcons.size)
+                                if (size == CardSize(2, 3)) {
+                                    val cells = forecastIcons.drop(1).map { it.parent as ViewGroup }
+                                    assertTrue(cells.maxOf { it.width } - cells.minOf { it.width } <= 1)
+                                    assertTrue(cells.zipWithNext().all { (left, right) -> left.right <= right.left })
+                                    assertTrue(cells.all { cell ->
+                                        descendants(cell).filterIsInstance<TextView>().any { it.isShown && it.text == "-123–105°F" }
+                                    })
+                                }
+                            }
                             assertTrue(forecastIcons.all { it.width >= 20 && it.height >= 20 })
                             temperature.textSize
                         }
@@ -1143,9 +1173,9 @@ class CoreDashboardTest {
             scenario.onActivity { activity ->
                 val card = com.dormpanel.app.dashboard.card.WeatherCardView(activity, model(activity).appearance, demo,
                     clock = { now.get().also { if (it == midnight) updated.countDown() } })
-                card.bind(PlacedCard("midnight", "weather", 0, 0, CardSize(3, 3)),
+                card.bind(PlacedCard("midnight", "weather", 0, 0, CardSize(2, 3)),
                     com.dormpanel.app.dashboard.card.CardInteractionScope(false) {})
-                activity.addContentView(card, android.widget.FrameLayout.LayoutParams(434, 332))
+                activity.addContentView(card, android.widget.FrameLayout.LayoutParams(286, 332))
                 assertTrue(card.contentDescription.contains("明天 20–26°C"))
                 now.set(midnight)
             }

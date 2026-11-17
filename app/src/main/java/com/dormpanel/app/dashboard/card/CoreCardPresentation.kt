@@ -30,9 +30,10 @@ data class WeatherPresentation(val stackedCurrent: Boolean, val summary: Boolean
 fun weatherPresentation(size: CardSize) = WeatherPresentation(
     stackedCurrent = size.columnSpan == 2 && size.rowSpan == 3,
     summary = size.rowSpan >= 2,
-    forecastColumns = when (size.rowSpan) {
-        1 -> 0
-        2 -> 1
+    forecastColumns = when {
+        size.rowSpan == 1 -> 0
+        size.rowSpan == 2 -> 1
+        size.rowSpan == 3 && size.columnSpan == 2 -> 3
         else -> maxOf(2, size.columnSpan - 1)
     },
 )

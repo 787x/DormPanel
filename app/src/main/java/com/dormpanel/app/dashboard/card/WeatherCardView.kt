@@ -153,6 +153,7 @@ internal class WeatherCardView(
         val tall = card.size.rowSpan == 3
         val compact = card.size.rowSpan == 1
         val stacked = weatherPresentation(card.size).stackedCurrent
+        val narrowForecast = stacked && key.forecasts == 3
         val inset = if (compact) 6.dp else 10.dp
         setPadding(14.dp, inset, 14.dp, inset)
         val available = (height - inset * 2).coerceAtLeast(0)
@@ -180,10 +181,10 @@ internal class WeatherCardView(
 
         val count = key.forecasts.coerceAtLeast(1)
         val cellWidth = (width - paddingLeft - paddingRight) / count
-        showSecondaryDates = tall && available - headingHeight - statusHeight >=
+        showSecondaryDates = tall && !narrowForecast && available - headingHeight - statusHeight >=
             (215 * key.density * key.fontScale).roundToInt()
         forecastCells.forEachIndexed { index, cell ->
-            if (cell.root.visibility == VISIBLE) cell.measurePolicy(tall, cellWidth, index != 0)
+            if (cell.root.visibility == VISIBLE) cell.measurePolicy(tall, cellWidth, index != 0, narrowForecast)
         }
     }
 
@@ -206,14 +207,19 @@ internal class WeatherCardView(
             sky.text = line?.sky?.description.orEmpty()
         }
 
-        fun measurePolicy(tall: Boolean, width: Int, separated: Boolean) {
+        fun measurePolicy(tall: Boolean, width: Int, separated: Boolean, narrow: Boolean) {
             root.orientation = if (tall) VERTICAL else HORIZONTAL
             root.gravity = Gravity.CENTER
-            root.setPadding(if (separated) 5.dp else 0, 3.dp, 0, 0)
+            if (narrow) root.setPadding(2.dp, 3.dp, 2.dp, 0)
+            else root.setPadding(if (separated) 5.dp else 0, 3.dp, 0, 0)
             date.show(showSecondaryDates && date.text.isNotEmpty())
+            day.maximumTextSp = if (narrow) 20f else 24f
+            range.maximumTextSp = if (narrow) 22f else 27f
+            sky.maximumTextSp = if (narrow) 18f else 21f
+            listOf(day, range, sky).forEach { it.verifyFittedWidth = narrow }
             day.layoutParams = weighted(!tall, if (tall) 1.18f else 1.1f)
             date.layoutParams = weighted(horizontal = false, .65f)
-            icon.layoutParams = if (tall) LayoutParams(minOf(width / 2, 56.dp), 0, 1.6f)
+            icon.layoutParams = if (tall) LayoutParams(minOf(width / 2, if (narrow) 40.dp else 56.dp), 0, 1.6f)
                 else LayoutParams(minOf(width / 8, 30.dp), LayoutParams.MATCH_PARENT)
             range.layoutParams = weighted(!tall, if (tall) 1.12f else 1.35f)
             sky.layoutParams = weighted(!tall, 1f)
