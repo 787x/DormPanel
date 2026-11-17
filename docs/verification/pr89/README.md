@@ -57,3 +57,11 @@ npm run verify:package
 - 三方任务对照展示类型和记录 ID，并对清单归属、排序、完成状态和正文逐字段比较。实测正文、完成状态相同而清单及顺序不同的记录可以区分。原始 CRLF、空行、Unicode 与空白保留。未知版本显示为无法读取，和记录不存在区分。大型课程记录分段展示。
 - 回执丢失后只读比较当前权威值和请求目标摘要。实测提交前中断、提交后丢回执、事务仍运行、页面重开及原任务 ID 在其他清单中仍存在。界面区分匹配、不匹配和暂时无法核对。匹配仅说明当前值一致，暂时无法读取期间操作保护保留。
 - 本次 `node --test` 定向执行效率 HTTP、冲突、CLI/MCP、Catalog、写入和安全套件，61 项通过、5 项跳过。效率和课程管理浏览器套件 27 项通过，`npm run build` 成功。Android、已安装 FPK 和真实 WebDAV 联调未重跑。
+
+## CLI/MCP 全局冲突确认复验
+
+DPV3/4 的 `productivity.resolve` 和 `conflicts.resolve` 共用相同的全局范围检查。CLI 使用 `productivity conflicts`，MCP 使用 `productivity_conflicts`。从 `scope: "all", offset: 0` 开始检查三方内容，并将每页的 `next` 和 `reviewCursor` 用于下一页。完整检查的末页返回 `confirmScope`。决定请求提交该值、原工作区身份、版本、冲突 token 及 `choice: "local"` 或 `choice: "remote"`。该决定应用于本次全部冲突组。服务重启、范围或版本变化后重新检查。决定回执继续通过 `operations.receipt` 和原 operationId 查询。
+
+真实 CLI 子进程和 MCP stdio 客户端均覆盖课程与备忘混合冲突。局部读取、跳页、伪造范围、过期版本、跨工作区或数据集以及恢复保护均受到拒绝。未知记录会阻止确认。测试核对拒绝前后的业务哈希、冲突、决定与发布候选，并检查提交事务排队期间版本变化的情况。完整检查后通过两条入口提交，核对课程、备忘及幂等回执。网页继续通过完整检查逐页决定。
+
+本次 `node --test` 定向执行效率冲突、HTTP、Agent、写入与 Catalog 套件，57 项通过、5 项跳过。v3 引擎决定和合并定向检查 5 项通过，包含旧决定失效与发布回执冲突。Playwright 效率网页 8 项通过。`npm run build` 成功。Android、已安装 FPK 和真实 WebDAV 四端联调本次未重跑。

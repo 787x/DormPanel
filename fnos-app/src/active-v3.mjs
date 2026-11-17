@@ -91,9 +91,9 @@ export async function openActiveV3(catalog, id, create = false) {
       await journal.transaction(s => { s.lastRound = { ...result, checkedAt: Date.now(), oldHistoryAuditComplete: false }; }, true);
       return result;
     },
-    async resolve(choice, token, version) {
+    async resolve(choice, token, version, validateContext) {
       ensure(version === workspace.frame.revision && token === journal.value.conflict?.id, '冲突版本过期');
-      await engine.resolve(token, choice);
+      await engine.resolve(token, choice, validateContext);
     },
     async close() { await journal.close(); }
   };

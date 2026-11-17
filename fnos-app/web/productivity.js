@@ -218,34 +218,27 @@ export function installProductivity({ host, get, post, el, button, confirmAction
     }
   }
 
-  function renderConflicts(list, conflicts, state) {
+  function renderConflicts(conflicts, state) {
     const panel = el('section', null, 'panel');
     panel.append(el('h3', '共享效率冲突'));
     conflictRows(panel, conflicts);
     panel.append(pageButtons(conflicts, 1, offset => { state.conflictOffset = offset; return refresh(); }));
-    if (!conflicts.complete || conflicts.total !== 1) {
-      panel.append(el('p', conflicts.hidden ? '此页未展示课程等其他业务记录。请检查完整范围后决定。'
-        : '请检查全部关联记录后决定。'), button('查看完整共享冲突', openConflictReview));
-    } else {
-      panel.append(el('p', '决定应用于本次全部冲突组，独立修改仍保留。'));
-      decisionButtons(panel, !list.contextBlock && canWrite(), async (choice, label) => {
-        const ticket = epoch;
-        if (await confirmAction(`${label}？此次决定应用于全部冲突组。`, label) && ticket === epoch)
-          await apply(list, { action:'productivity.resolve', token:conflicts.token, choice });
-      });
-    }
+    panel.append(el('p', conflicts.hidden ? '此页未展示课程等其他业务记录。请检查完整范围后决定。'
+      : '请检查全部关联记录后决定。'), button('查看完整共享冲突', openConflictReview));
     return panel;
   }
 
   async function reviewConflicts(form, panel, close) {
-    let initial, request = 0;
+    let initial, request = 0, confirmScope;
     const examined = new Set();
+    const cursors = new Map();
     async function page(offset) {
       const ticket = ++request;
-      const current = await read('productivity.conflicts', { scope:'all', offset });
+      const reviewCursor = cursors.get(offset);
+      const current = await read('productivity.conflicts', { scope:'all', offset, ...(reviewCursor ? { reviewCursor } : {}) });
       if (!form.current() || ticket !== request) return;
       initial ??= current;
-      if (!sameContext(initial, current) || initial.token !== current.token) {
+      if (!sameContext(initial, current) || initial.token !== current.token || initial.scopeId !== current.scopeId) {
         panel.replaceChildren(el('p', '冲突版本已变化，请关闭后重新打开。'));
         return;
       }
@@ -254,17 +247,21 @@ export function installProductivity({ host, get, post, el, button, confirmAction
         return;
       }
       if (current.rows.length) examined.add(offset);
+      if (current.reviewCursor) cursors.set(current.next, current.reviewCursor);
+      if (current.confirmScope) confirmScope = current.confirmScope;
       panel.replaceChildren(el('p', `本次决定覆盖全部 ${current.groups} 个冲突组。独立修改仍保留。`));
       conflictRows(panel, current);
       panel.append(pageButtons(current, 1, page));
       if (!current.complete) panel.append(el('p', '有记录无法完整展示。当前无法提交决定。'));
       else if (examined.size !== current.total) panel.append(el('p', `请逐页检查关联记录（${examined.size} / ${current.total}）。`));
-      decisionButtons(panel, current.complete && examined.size === current.total && !current.contextBlock && canWrite(),
+      decisionButtons(panel, !!confirmScope && examined.size === current.total && !current.contextBlock && canWrite(),
         async (choice, label) => {
           if (!await confirmAction(`${label}？此次决定应用于全部冲突组。`, label) || !form.current() || ticket !== request) return;
           close();
-          await post(editRoute, { ...context(current), action:'productivity.resolve', token:current.token, choice, review:'all' });
-          await reload();
+          try {
+            await post(editRoute, { ...context(current), action:'productivity.resolve', token:current.token, choice, confirmScope });
+            await reload();
+          } catch { /* The shared write status displays the rejection or pending verification. */ }
         });
     }
     await page(0);
@@ -295,7 +292,7 @@ export function installProductivity({ host, get, post, el, button, confirmAction
     ].filter(Boolean);
     host.append(el('p', [...statuses, '其他设备接收情况未知。'].join(' · ')));
     if (list.writeBlock) host.append(el('p', '编辑受限：' + list.writeBlock, 'warning'));
-    if (conflicts) host.append(renderConflicts(list, conflicts, state));
+    if (conflicts) host.append(renderConflicts(conflicts, state));
     const allowed = !list.writeBlock && !list.writeInFlight && canWrite();
     if (state.draft) host.append(editor(state, allowed));
     if (list.availability !== 'ready') return;

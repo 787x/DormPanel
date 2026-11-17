@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ensure } from './protocol.mjs';
+import { json } from './store.mjs';
 import { LIST, TASK, MEMO, decodeProductivity } from './shared-productivity.mjs';
 import { wireRecords } from './shared-records.mjs';
 import { productivityBlock, productivityConflict } from './productivity.mjs';
@@ -11,6 +12,8 @@ export const productivityCheckRoute = '/api/productivity/check';
 const id = z.string().length(36).regex(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/)
   .refine(value => value !== '00000000-0000-0000-0000-000000000000');
 const revision = z.number().int().nonnegative();
+const hex = size => z.string().length(size).regex(/^[0-9a-f]+$/);
+export const conflictConfirmation = hex(64).optional().describe('完整冲突检查最后一页的 confirmScope，确认决定应用于本次全部冲突组');
 const scope = { workspaceId:id };
 export const productivityWriteScope = { ...scope, datasetId:id, version:revision, catalogVersion:revision };
 const page = { offset:revision.max(4096).default(0), limit:revision.min(1).max(40).default(20) };
@@ -26,7 +29,8 @@ export const productivityReads = {
   'todo.task': { id },
   'memo.list': { ...page },
   'memo.get': { id },
-  'productivity.conflicts': { offset:revision.max(100000).default(0), scope:z.enum(['efficiency','all']).default('efficiency') },
+  'productivity.conflicts': { offset:revision.max(100000).default(0), scope:z.enum(['efficiency','all']).default('efficiency'),
+    reviewCursor:hex(64).optional().describe('完整检查的上一页返回的 reviewCursor') },
 };
 const conflictToken = z.string().regex(/^[0-9a-f-]{36}:[0-9a-f]{64}$/);
 const choice = z.enum(['local','remote']);
@@ -42,10 +46,8 @@ export const productivityWrites = {
   'memo.rename': { id, title },
   'memo.edit': { id, title:title.optional(), body:memo },
   'memo.delete': { id },
-  'productivity.resolve': { token:conflictToken, choice },
+  'productivity.resolve': { token:conflictToken, choice, confirmScope:conflictConfirmation },
 };
-const httpWrites = { ...productivityWrites,
-  'productivity.resolve': { ...productivityWrites['productivity.resolve'], review:z.literal('all').optional() } };
 
 function parse(variants, key, input, context) {
   const name = input[key];
@@ -63,7 +65,7 @@ export function parseProductivityRead(params) {
   }
   return parse(productivityReads, 'view', query, scope);
 }
-export const parseProductivityWrite = input => parse(httpWrites, 'action', input, productivityWriteScope);
+export const parseProductivityWrite = input => parse(productivityWrites, 'action', input, productivityWriteScope);
 
 function pageOf(rows, { offset, limit }) {
   return { rows:rows.slice(offset, offset + limit), total:rows.length, offset,
@@ -96,7 +98,44 @@ export function productivityStatus(catalog, db, workspaceId) {
   };
 }
 
-export function readProductivity(catalog, db, input) {
+function scopeIdentity(status, conflict) {
+  const { workspaceId, datasetId, version, catalogVersion } = status;
+  const hash = createHash('sha256').update(json([workspaceId, datasetId, version, catalogVersion,
+    conflict.token, conflict.groups, conflict.rows.length]));
+  for (const row of conflict.rows) hash.update('\n').update(json(row));
+  return hash.digest('hex');
+}
+
+function reviewProof(key, kind, scopeId, offset) {
+  return createHmac('sha256', key).update(json([kind, scopeId, offset])).digest('hex');
+}
+const validProof = (supplied, expected) => typeof supplied === 'string' && supplied.length === expected.length &&
+  timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+
+function reviewPage(key, status, conflict, input, page) {
+  if (!key || input.scope !== 'all' || !conflict?.complete) return {};
+  const scopeId = scopeIdentity(status, conflict);
+  if (input.reviewCursor !== undefined)
+    ensure(input.offset > 0 && validProof(input.reviewCursor, reviewProof(key, 'page', scopeId, input.offset)),
+      '冲突检查游标已失效，请从首页重新读取');
+  if (!page.rows.length || input.offset > 0 && input.reviewCursor === undefined) return { scopeId };
+  if (page.next !== null) return { scopeId, reviewCursor:reviewProof(key, 'page', scopeId, page.next) };
+  return { scopeId, confirmScope:reviewProof(key, 'decision', scopeId, conflict.rows.length) };
+}
+
+export function validateSharedDecision(catalog, db, input, key) {
+  validateProductivityContext(catalog, db, input, { decision:true });
+  const status = productivityStatus(catalog, db, input.workspaceId);
+  const conflict = productivityConflict(db.frame, true);
+  ensure(conflict && input.token === `${input.workspaceId}:${conflict.token}`, '冲突 token 已失效或工作区不匹配');
+  ensure(conflict.complete, '冲突范围无法完整展示，禁止作出全局决定');
+  ensure(input.confirmScope, '请先完整读取冲突并提交全局范围确认');
+  const expected = reviewProof(key, 'decision', scopeIdentity(status, conflict), conflict.rows.length);
+  ensure(validProof(input.confirmScope, expected), '冲突范围确认已失效，请重新完整读取');
+  return conflict.token;
+}
+
+export function readProductivity(catalog, db, input, reviewKey) {
   const status = productivityStatus(catalog, db, input.workspaceId);
   const view = db.productivity();
   const result = { ...status, writeBlock:status.contextBlock ?? view.writeBlock,
@@ -122,7 +161,8 @@ export function readProductivity(catalog, db, input) {
     case 'memo.get': return { ...result, memo:view.memos.find(memo => memo.id === input.id) ?? null };
     case 'productivity.conflicts': {
       const conflict = input.scope === 'all' ? productivityConflict(db.frame, true) : view.conflict;
-      return { ...result, ...pageOf(conflict?.rows ?? [], { offset:input.offset, limit:1 }),
+      const page = pageOf(conflict?.rows ?? [], { offset:input.offset, limit:1 });
+      return { ...result, ...page, scope:input.scope ?? 'efficiency', ...reviewPage(reviewKey, status, conflict, input, page),
         token:conflict ? `${input.workspaceId}:${conflict.token}` : null,
         groups:conflict?.groups ?? 0, hidden:conflict?.hidden ?? 0, unreadable:conflict?.unreadable ?? 0,
         complete:conflict?.complete ?? false };
@@ -149,7 +189,6 @@ export function productivityExpectation(rawInput) {
   return { action, id, salt, fields };
 }
 
-const hex = size => z.string().length(size).regex(/^[0-9a-f]+$/);
 const checkScope = z.strictObject({ workspaceId:id, datasetId:id, expectation:z.object({ action:z.string() }).passthrough() });
 export const parseProductivityCheck = input => checkScope.parse(input);
 

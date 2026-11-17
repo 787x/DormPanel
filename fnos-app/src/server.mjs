@@ -22,10 +22,10 @@ import { date, ensure, zone } from "./protocol.mjs";
 import { projectWeek, monday, addDays } from "./projection.mjs";
 import { mergePlan } from "./merge.mjs";
 import { previewImport, commitImport } from "./import.mjs";
-import { editProductivity, productivityConflict } from './productivity.mjs';
+import { editProductivity } from './productivity.mjs';
 import { productivityRoute, productivityEditRoute, productivityCheckRoute, parseProductivityRead, parseProductivityWrite,
   productivityStatus, readProductivity, validateProductivityContext, productivityEdit,
-  productivityExpectation, parseProductivityCheck, checkProductivityExpectation } from './productivity-api.mjs';
+  productivityExpectation, parseProductivityCheck, checkProductivityExpectation, validateSharedDecision } from './productivity-api.mjs';
 
 export const PREFIX = "/app/dormpanel-schedule-manager";
 export function validatePageOrigin(req, value) {
@@ -130,6 +130,7 @@ export async function createApp({
   const history = new HistoryManager(catalog);
   const tokens = new Map(),
     previews = new Map();
+  const conflictReviewKey = randomBytes(32);
   const userToken = (user, origin = null) => {
     const key = user + "\n" + (origin ?? "");
     if (!tokens.has(key)) {
@@ -142,7 +143,7 @@ export async function createApp({
   let agents;
   const handle = async (req, res, internal = false) => {
     requests++; let writing = false, requestPath, coursePersistenceStarted=false;
-    let productivityPersistenceStarted = false;
+    let productivityPersistenceStarted = false, sharedDecision = false;
     const productivityWrite = req.method === 'POST' && req.url.split('?')[0] === PREFIX + productivityEditRoute;
     const productivityRejection = productivityWrite ? { writeApplied:false } : {};
     const send = (status, value, type = "application/json; charset=utf-8") => {
@@ -268,6 +269,7 @@ export async function createApp({
         }
         const workspaceId = input.workspaceId;
         const db = await catalog.load(workspaceId);
+        sharedDecision = path === '/api/resolve' && db.frame.v3?.binding?.format === 4;
         if (
           !Number.isSafeInteger(input.version) ||
           input.version !== db.frame.revision
@@ -356,18 +358,18 @@ export async function createApp({
             send(200, publicValue({ ...result, version: db.frame.revision })); return;
           } finally { historyLock = false; }
         }
-        else if (path === productivityEditRoute) {
-          const decision = input.action === 'productivity.resolve';
-          const validateContext = () => validateProductivityContext(catalog, db, input, { decision });
-          validateContext();
-          if (decision) {
-            const token = db.conflictToken();
-            ensure(token && input.token === `${workspaceId}:${token}`, '冲突 token 已失效或工作区不匹配');
-            if (!internal) ensure(productivityConflict(db.frame, input.review === 'all')?.complete,
-              '当前范围未完整展示冲突，请查看完整冲突后决定');
+        else if (path === productivityEditRoute || sharedDecision) {
+          if (sharedDecision || input.action === 'productivity.resolve') {
+            const decision = sharedDecision ? parseProductivityWrite({ action:'productivity.resolve', ...input }) : input;
+            ensure(decision.action === 'productivity.resolve', '未知共享冲突决定');
+            const validateContext = () => validateSharedDecision(catalog, db, decision, conflictReviewKey);
+            const token = validateContext();
             productivityPersistenceStarted = true;
-            await network(engine => engine.resolve(input.choice, token, input.version));
+            // A decision is local. Recheck the same scope inside the Writer transaction.
+            await db.activeV3.resolve(decision.choice, token, decision.version, validateContext);
           } else {
+            const validateContext = () => validateProductivityContext(catalog, db, input);
+            validateContext();
             const edit = productivityEdit(db, input);
             productivityPersistenceStarted = true;
             await db.saveProductivity(edit, { datasetId:input.datasetId, revision:input.version }, validateContext);
@@ -400,7 +402,6 @@ export async function createApp({
           if (input.discover && db.activeV3) { send(200, result); return; }
         }
         else if (path === "/api/resolve") {
-          ensure(internal || db.frame.v3?.binding?.format !== 4, '请使用完整共享冲突检查入口');
           ensure(input.token === `${workspaceId}:${db.conflictToken()}` && db.conflictToken(), '冲突 token 已失效或工作区不匹配');
           await network((engine) =>
             engine.resolve(input.choice, db.conflictToken(), input.version),
@@ -481,7 +482,7 @@ export async function createApp({
         const input = parseProductivityRead(u.searchParams);
         ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
         const db = await catalog.load(input.workspaceId);
-        const result = readProductivity(catalog, db, input);
+        const result = readProductivity(catalog, db, input, conflictReviewKey);
         send(200, { ...(input.scope === 'all' ? publicValue(result) : result), writeInFlight: writes > 0 || db.writing > 0 });
         return;
       }
@@ -675,7 +676,7 @@ export async function createApp({
       const message=String(e.message ?? '操作失败');
       const sensitive=/\b(?:ENOENT|EACCES|EPERM|EIO|ERR_SQLITE|SQLITE_[A-Z_]+)\b|\/(?:data|var|vol\d+|home|proc|tmp)\/|[A-Za-z]:\\|password=|token=/i.test(message+' '+(e.code ?? ''));
       send(/过期|变化|失效/.test(message) ? 409 : 400, { error:sensitive ? '存储或访问验证失败；数据与恢复证据已保留，敏感位置已隐藏' : message.slice(0,500),
-        ...(requestPath === productivityEditRoute ? { writeApplied:!productivityPersistenceStarted || rejectedBeforePersistence(e) ? false : null } : {}),
+        ...(requestPath === productivityEditRoute || sharedDecision ? { writeApplied:!productivityPersistenceStarted || rejectedBeforePersistence(e) ? false : null } : {}),
         ...(['/api/edit','/api/courses/save','/api/import/confirm'].includes(requestPath) && (rejectedBeforePersistence(e)||requestPath==='/api/courses/save'&&!coursePersistenceStarted) ? {writeApplied:false} : {}) });
     } finally {
       if (writing) writes--; requests--;

@@ -88,7 +88,8 @@ export class AgentService {
         await this.save(); intentSaved = true;
         let result;
         try { result = await this.perform(op, input); }
-        catch (e) { result = { ok:false, error:op.route === productivityEditRoute ? errorValue(null, 'UNKNOWN') : errorValue(e, e.agentCode) }; }
+        catch (e) { result = { ok:false, error:op.route === productivityEditRoute || op.name === 'conflicts.resolve'
+          ? errorValue(null, 'UNKNOWN') : errorValue(e, e.agentCode) }; }
         result.operationId = operationId;
         receipt.result = result;
         // 回执持久化上限；大预览通过读取工具重新取得。
@@ -124,7 +125,8 @@ export class AgentService {
     let data = { ...input, ...op.fixed };
     if (op.edit) { data.operation = { ...input.edit, ...op.edit }; delete data.edit; }
     const result = await this.dispatch(method, op.route, data);
-    if (op.route === productivityEditRoute) {
+    if (op.route === productivityEditRoute || op.name === 'conflicts.resolve' && result.status !== 200 &&
+        Object.hasOwn(result.data, 'writeApplied')) {
       if (result.status === 200) return { ok:true, data:result.data };
       const writeApplied = result.data.writeApplied === false ? false : null;
       return { ok:false, writeApplied, error:writeApplied === false

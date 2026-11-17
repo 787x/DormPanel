@@ -143,13 +143,15 @@ test('网页显示备忘三方内容、保护和实际决定范围', async t => 
     await expect(page.locator('.productivity-conflict pre').filter({ hasText:value })).toHaveCount(1);
   }
   await expect(page.getByRole('button', { name:'编辑备忘' })).toBeDisabled();
-  await expect(page.getByText(/决定应用于本次全部冲突组/)).toBeVisible();
+  await expect(page.getByText(/请检查全部关联记录后决定/)).toBeVisible();
   if (process.env.PR89_SCREENSHOTS) await page.screenshot({ path:process.env.PR89_SCREENSHOTS+'/fnos-conflict.png', fullPage:true });
+  await click('查看完整共享冲突');
   await click('采用远端冲突方案');
   await f.sync(); // 另一次检查使网页之前的 revision 过期
   await page.locator('#feedbackAccept').click();
   await expect(page.locator('#writeStatus')).toContainText('版本过期');
   await expect(page.getByRole('heading', { name:'共享效率冲突' })).toBeVisible();
+  await click('查看完整共享冲突');
   await click('采用远端冲突方案'); await page.locator('#feedbackAccept').click();
   await expect(page.getByRole('heading', { name:'共享效率冲突' })).toHaveCount(0);
   assert.equal((await f.read('memo.get', { id })).data.memo.body, '远端正文');
