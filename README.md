@@ -1,321 +1,289 @@
 # DormPanel
 
-DormPanel is a lightweight always-on dashboard and smart-home control panel for
-the **Xiaomi Redmi XiaoAI Touchscreen Speaker Pro 8 (X08E)**.
+**让小爱触屏音箱成为真正好用的桌面信息中心。**
 
-It is designed for a fixed landscape 1280×800 bedside/desk screen on Android 9,
-not as a general tablet launcher.
+DormPanel 是一个面向 **小米 Redmi 小爱触屏音箱 Pro 8（X08E）** 的开源常驻桌面与智能家居控制项目，也包含配套的 **Android 手机课表应用**、**fnOS 课程表管理器**和可选的 **Home Assistant 集成**。
 
-## Supported hardware
+它不是要把音箱改造成平板，也不是替代米家或 Home Assistant；它想做的是把时间、天气、课程、待办和常用家居控制放到一块固定横屏上，抬眼就能看见，伸手就能操作。
 
-| Item | Value |
+[**下载最新版**](https://github.com/787x/DormPanel/releases) · [快速开始](#快速开始) · [功能介绍](#功能介绍) · [同步说明](#课程表与多端同步) · [项目文档](#更多文档)
+
+## 看看 DormPanel
+
+| X08E：两种天气卡片 | X08E：近日课程卡片 | Phone：一周课程小部件 |
+| --- | --- | --- |
+| ![X08E 上的新旧天气卡片](docs/verification/pr84-mixed-weather-cards.png) | ![X08E 近日课程卡片](docs/verification/pr74/review-fixes/pr74-review-schedule_recent-4x4-DARK-screen.png) | ![Phone 一周课程桌面小部件](docs/verification/pr72/miui-week-time-five-dark.png) |
+
+> 截图来自功能开发期间的隔离测试环境，展示的是实际界面，不代表设备默认配置或实时天气、课表数据。不同版本、卡片尺寸和主题下可能有所区别。
+
+## 一分钟了解
+
+- **可编辑的横屏桌面**：像摆放积木一样添加、拖动、删除和调整卡片大小，按需要组合自己的床头或书桌信息屏。
+- **天气与家居一屏掌握**：天气支持和风天气、Home Assistant、多地点与详细预报；家居控制通过 HA WebSocket 获取状态并执行确定性的设备操作。
+- **真正能管理的课程表**：日视图、周视图、多时段课程编辑、教学周、调课/停课、课程颜色、导入导出与桌面组件。
+- **不依赖专用云端的多端同步**：通过普通 WebDAV 在 X08E、Phone 和可选的 fnOS 管理器之间共享课表；离线仍可查看本地数据。
+- **尽量与原系统共存**：不要求 Root 或卸载小米服务，不默认替换 MIUI Home；小爱同学、蓝牙 Mesh 网关等仍由原厂系统负责。
+
+## 版本与组成
+
+| 组件 | 当前公开版本 | 适合谁 | 是否必需 |
+| --- | --- | --- | --- |
+| [X08E 应用](https://github.com/787x/DormPanel/releases/tag/v0.1.12) | **0.1.12** | 在小爱触屏音箱 Pro 8 上使用桌面、天气、控制与课表 | 核心应用 |
+| [Phone 应用](https://github.com/787x/DormPanel/releases/tag/v0.1.12) | **0.1.11** | 在 Android 手机上查看、编辑课程及添加桌面小部件 | 可选 |
+| [fnOS Schedule Manager](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.2) | **0.8.2 · Pre-release** | 在 NAS 浏览器中管理课程、共享工作区、历史和备份 | 可选 |
+| [Home Assistant 集成](https://github.com/787x/DormPanel/releases/tag/v0.1.9) | **0.1.2** | 从 HA 向 X08E 发送课表/APK，以及使用可选的辅助实体联动 | 可选 |
+
+X08E 与 Phone 的版本号独立。**仅使用 X08E 的本地卡片和工具不需要 NAS 或 Home Assistant；两台 Android 设备通过 WebDAV 同步课表也不要求安装 FPK。**
+
+主要目标设备为 **X08E · Android 9（API 28）· 1280×800 横屏 · 约 2 GB RAM**。Phone 应用支持 Android 9 及以上；其他 Android 横屏设备的实际适配程度可能不同。
+
+## 功能介绍
+
+### 1. X08E：可自由布置的桌面卡片
+
+首页采用适合 8 英寸横屏的逻辑网格，支持：
+
+- 添加、删除和拖动卡片，自动处理布局位置；
+- 在卡片支持的范围内调整尺寸；
+- 同类卡片添加多个实例，分别保存配置；
+- 深色/浅色外观与卡片背景透明度调整；
+- 断网或数据过期时保留必要提示，不把旧数据伪装成最新状态。
+
+当前主要卡片包括：
+
+| 类别 | 卡片 | 能做什么 |
+| --- | --- | --- |
+| 时间 | 时钟与日期 | 快速查看本地时间和日期 |
+| 天气 | **天气**、**经典天气** | 实时温度、天气描述、温度范围、湿度及预报；两种外观可同时放置，各自选择地点和来源 |
+| 智能家居 | 灯光、传感器 | 查看 HA 实时状态，快捷开关灯、调光，查看传感器数值 |
+| 效率工具 | Todo、备忘、计时器 | 勾选任务、编辑纯文本备忘、启动/暂停/重置倒计时 |
+| 日程 | 日历、课表 | 查看日期、课程与日程信息 |
+| 课程速览 | 今日课程、近日课程 | 按卡片尺寸展示当天或近日课程；近日课程支持可滚动列表 |
+| 应用 | 应用快捷卡片 | 快速打开设备中的应用 |
+
+不同卡片具有不同的可调整尺寸范围；不是所有卡片都能任意放大缩小。Todo、备忘和计时器为**本地功能**，目前不随共享课表自动同步。
+
+首页之外，还可以通过方向手势进入**应用列表、控制中心、完整课表/日历、完整家居控制**等页面。页面保留明确的返回首页操作；目前不承诺任意方向目标都可自定义。
+
+### 2. 天气：一个桌面，查看多个地方
+
+X08E 天气功能可以选择 **和风天气（QWeather）**或 **Home Assistant 天气实体**，每张天气卡片可独立绑定地点和来源。新版天气卡片偏重信息密度和可读性，经典天气卡片保留更醒目的大号温度与传统布局。
+
+点击天气卡片进入完整天气中心，可查看（以实际来源提供的数据为准）：
+
+- 实时天气、体感温度、湿度、风、气压等指标；
+- 可触摸的逐小时走势图与最长 **10 天**预报；
+- 天气预警、空气质量、分钟级降水、生活指数；
+- 日出日落、月相等天文信息，以及受支持的历史天气；
+- 多城市收藏、搜索、切换、排序，或通过离线地图选点并精确填写经纬度。
+
+卡片和详情共用请求与缓存，支持可调刷新周期、手动刷新、请求预算、限流退避及离线缓存；过期数据会有状态提示。部分天气能力依赖和风账号、接口权限、地区和实际数据覆盖范围，**并非所有数据源都提供全部指标**。
+
+配置与使用详见 [X08E 天气服务](docs/x08e-weather.md)。
+
+### 3. Home Assistant：快捷控制，而不是重做一个 HA 客户端
+
+连接 Home Assistant 后，DormPanel 主要通过 **WebSocket** 接收实体状态变化并发送常规控制；REST 仅用于必要的辅助请求。
+
+- 首页灯光卡片：开关、亮度和受支持的色温快捷控制；
+- 首页传感器卡片：温湿度等状态与单位；
+- 完整家居控制页：按区域/设备浏览，支持灯、开关、传感器、场景和受支持的脚本；
+- 离线、不可用或数据过期时区分状态，不在未确认成功前假定设备已执行命令。
+
+**普通设备控制不依赖 AI。** HA 不可用时，家居控制会受影响，但本地时间、Todo、备忘和已保存课程仍可使用。
+
+可选的 DormPanel HA 自定义集成还提供：
+
+- **课程表中继**：从 HA 面板向已注册的 X08E 发送 ICS、支持的湖北大学 CSV/XLS，设备预览并本地确认后导入；
+- **APK 中继**：从 HA 面板发送 APK，经设备验证、DormPanel 确认和 Android 系统安装确认后安装；
+- **辅助实体联动**：可将亮度、音量、黑屏、主题、透明度、常亮、自启等选项绑定到已有 HA Helpers。
+
+一般的 HA 灯光/传感器控制不要求先安装此自定义集成；上述中继功能则需要它。更多信息见 [Home Assistant 接入](docs/PR4-home-assistant.md)、[完整家居控制](docs/PR5-home-control.md)及 [XLS 中继](docs/pr52-ha-xls.md)。
+
+### 4. X08E 控制中心与系统共存
+
+控制中心集中提供媒体音量、DormPanel 自身亮度、系统亮度、主题外观、常亮、黑屏、开机启动以及 HA/WebDAV/天气配置。
+
+- **应用亮度与系统亮度分开**：修改 Android 系统亮度需要系统的“修改系统设置”特殊授权；
+- **黑屏不是关闭背光**：黑屏功能以黑色界面遮住内容，仍可恢复操作，并非硬件断电；
+- **开机自启可选**：依赖 Android 正常启动广播，实际启动时间受小米系统影响；
+- **保持小米原生能力**：默认作为普通 Activity 运行，可以返回 MIUI Home，不要求删除小爱、Mesh 网关或原生闹钟。
+
+应用列表还提供从**本地文件、局域网临时上传、WebDAV、HA 中继**选择单个 APK 的安装入口。安装需要用户和 Android 系统双重确认，不是静默安装；暂不支持 XAPK/APKS 等分包格式。
+
+### 5. 课程表：从查看到完整编辑
+
+课程表是 X08E、Phone 和 fnOS 共同使用的主要功能之一。
+
+**查看与展示**
+
+- 日视图、周视图和按需切换的五天/七天布局；
+- 按实际时间或第几节课展示，支持可靠教学作息的节次轴；
+- 当前日期高亮、当前时间提示、教学周和周次切换；
+- 同一逻辑课程统一颜色，可手动修改；
+- X08E 保留经典列表、时间网格、节次网格等不同展示风格。
+
+**课程管理**
+
+- 按逻辑课程分组，查看同一门课的多个上课时段；
+- 修改课程名称、教师、备注、教室、星期和时间；
+- 精确设置有效周次，包括不连续周和单双周；
+- 新增、复制、停用或删除安排，保留导入课程的原始来源；
+- 预览修改影响，按已有事务规则一次保存；
+- 区分整门课程公共字段与仅影响某个时段的修改。
+
+**导入与导出**
+
+- 支持 ICS、受支持的湖北大学 CSV 等课程来源；湖北大学 `.xls` 可通过对应版本的 HA 中继导入；
+- 支持停课、补课、日期调整及学期作息；
+- Phone 与 fnOS 可以导出 ICS，供系统日历或其他日历软件使用。
+
+**ICS 导出是日历交换，不是完整备份**：不会保留全部来源、颜色、编辑覆盖与同步历史。导出最多 366 天、20,000 个事件、8 MiB；当前 ICS 导入另有 256 个事件/1 MiB 的限制。
+
+### 6. Phone：手机上的课程表与桌面小部件
+
+Phone 是独立的 Android 课表应用，不是把 X08E 横屏首页强行搬到手机上。
+
+除了查看和编辑课程，Phone 还提供 **四种原生桌面小部件**：
+
+| 小部件 | 内容 |
 | --- | --- |
-| Primary device | Xiaomi Redmi XiaoAI Touchscreen Speaker Pro 8 (X08E) |
-| OS | Android 9 / API 28 |
-| Display | 1280×800 landscape |
-| RAM | ~2 GB |
+| 今日课程 · 紧凑 | 在较小区域快速查看今天的课程 |
+| 今日课程 · 宽版 | 更完整地展示课程和时间 |
+| 近日课程 | 分别展示今天与明天，支持纵向滚动 |
+| 一周课程 | 七天或五天的课程网格，支持滚动、按节次/实际时间展示和纵向调整高度 |
 
-Other Android 9+ landscape devices may work, but only the X08E is validated.
+这些小部件使用正式课表投影和共享课程颜色，不需要单独维护第二份课表。实际桌面尺寸、滚动与调整手柄由 Android Launcher 决定，不同 ROM 的表现可能不同。
 
-The signed 0.1.1 candidate was physically exercised on X08E on 2026-10-07–08
-(Asia/Shanghai). Separately, the unfiltered X08E instrumentation testbed suite
-passed **98/98**. The signed, non-debuggable APK was verified in an in-place
-upgrade, with live HA CSV/WebDAV, phone entry, Xiaomi coexistence/boot, and a
-**>4h** physical observation window. See [PR29 physical acceptance]
-(docs/PR29-release-acceptance.md) for artifact identities, evidence types and
-observation limits, and [0.1.1 release notes](docs/RELEASE-0.1.1.md) for changes
-since 0.1.0. PR29 recorded acceptance evidence only; it did not publish a release.
+Phone 还提供**可选的课程常驻通知**：显示当前或下一节课程、课前/课中倒计时，并允许主动跟踪一节正在进行的课程。默认关闭，需在应用中开启并授予相应通知权限。Android 16+ 的 Live Updates 为实验性尝试，是否显示由系统决定，**不等于已经支持小米超级岛**。详见 [课程通知说明](docs/phone-course-notifications.md)。
 
-最新 Android：[v0.1.12](https://github.com/787x/DormPanel/releases/tag/v0.1.12)，包含 **X08E 0.1.12 / code 15、Phone 0.1.11 / code 13**。详见[发布说明](docs/RELEASE-0.1.12.md)。最新 fnOS：[0.8.2 Pre-release](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.2)，详见[发布说明](docs/RELEASE-fpk-0.8.2.md)。HA 保持 0.1.2。升级不自动迁移现有同步绑定。
+## 课程表与多端同步
 
-Sync v3 已发布：[Android v0.1.9（历史 Stable）](https://github.com/787x/DormPanel/releases/tag/v0.1.9) 包含 **X08E 0.1.9 / code 12、Phone 0.1.8 / code 10、HA Integration 0.1.2**；[fnOS Schedule Manager 0.8.1](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.1) 延续 Pre-release 标记。
-复用 PR58 最终已验收产物；[RC ACCEPTED 历史验收](docs/pr58-sync-v3-rc.md)与[正式发布说明](docs/RELEASE-sync-v3.md)分别记录。v2→v3 必须显式迁移，不会自动迁移已有日用库；保留旧 v2 RAW、工作区和各端安装 Writer，普通 WebDAV 不自动清理远端历史。
-支持现有本地数据原位升级及 Sync v2/v3 共享；v3 采用课程三方合并、Epoch、离线恢复和安全端点切换，仍受每轮/分代预算约束；v2 累计 256 提交限制未解除。已有 v1 共享绑定不提供兼容性保证。
-[RC2/PR36 验收记录](docs/PR36-rc2-physical-acceptance.md)、RC1/PR34 历史结论和 0.1.1 产物保留。
+### 不需要专门的同步服务器
 
-Sync v3 的 fnOS 可选安装包见 [0.8.2 FPK](https://github.com/787x/DormPanel/releases/download/fpk-v0.8.2/dormpanel-schedule-manager-0.8.2.fpk)及其 [SHA-256 清单](https://github.com/787x/DormPanel/releases/download/fpk-v0.8.2/SHA256SUMS.txt)。HA [0.1.2 ZIP](https://github.com/787x/DormPanel/releases/download/v0.1.9/DormPanel-HA-0.1.2.zip)保持原版本和能力；已部署同版本无需仅为本次 Sync v3 重复部署。
+DormPanel 使用普通 **WebDAV** 存放共享课程数据：
 
-## Install / update
+```text
+X08E ──────┐
+           ├──── WebDAV 共享数据集 ──── 课程、颜色、安排与历史
+Phone ─────┤
+           │
+fnOS FPK ──┘  （可选：网页管理、备份、历史、CLI/MCP）
+```
 
-### APK installation
+**WebDAV 负责存储，合并逻辑由客户端负责。** 只要有可访问的 WebDAV 服务，X08E 和 Phone 就可以共享课表；fnOS FPK 不是同步的必需中转服务器。
 
-1. 下载 [X08E 0.1.12 APK](https://github.com/787x/DormPanel/releases/download/v0.1.12/DormPanel-X08E-0.1.12.apk) 或 [Phone 0.1.11 APK](https://github.com/787x/DormPanel/releases/download/v0.1.12/DormPanel-Phone-0.1.11.apk)，按同页 [SHA-256 清单](https://github.com/787x/DormPanel/releases/download/v0.1.12/SHA256SUMS.txt)核对后传到设备。
-2. Open the APK on the device and confirm installation.
-3. If Android asks, grant **Install unknown apps** for the app you are installing from.
+### Sync v2 与 Sync v3
 
-### Updating an existing install (important)
+- **Sync v2**：为旧客户端保留兼容能力；原有整个数据集累计约 **256 次提交**的限制仍然存在。
+- **Sync v3**：使用不可变提交、因果历史、Epoch 分代、三方合并和持久恢复，避免 v2 的全数据集累计 256 次提交限制，但仍有每轮及分代资源预算。
+- **扩展版 Sync v3（DPV3/4）**：通过通用记录类型共享 `course.color`、`course.schedule` 等新课程信息，为未来其他共享数据提供扩展基础。
 
-Always update in place:
+多端各自保存本地课表。离线编辑首先持久化到本机；重新联网并执行相应同步后，客户端检查远端变化、合并可独立保留的编辑，并对无法安全合并的冲突要求明确选择，不采用简单的“最后上传者覆盖一切”。远端上传成功也**不等于其他设备已经接收**。
+
+**重要：升级 APK/FPK 不会自动迁移已有同步数据集。** 旧 `dormpanel-sync-v3/` 与扩展版 `dormpanel-sync-v3-shared/` 是不同数据集，不会自动持续双向桥接。要让共享颜色、课程安排跨端生效，应先确认各端版本兼容，并按明确的预览、绑定和迁移流程操作；不要直接改目录或删除旧历史。
+
+目前通用扩展机制**不表示 Todo、备忘、天气配置或所有设备设置已经开启跨端同步**。
+
+技术细节见 [Sync v3 扩展格式](docs/sync-v3-shared-state.md)、[课程安排语义](docs/pr70-course-schedule.md)、[同步发布与迁移](docs/RELEASE-sync-v3.md)。
+
+## fnOS：可选的 NAS 课程管理器
+
+[fnOS Schedule Manager 0.8.2](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.2) 提供适合浏览器的课程管理界面，并需要 fnOS 官方 **Node.js 22** 运行环境。
+
+主要支持：
+
+- 本地工作区与 WebDAV 共享工作区管理；
+- 按课程分组、共享选色、多时段、教学周和课程安排编辑；
+- ICS 导入/导出、学期管理、日期调整；
+- 历史版本查看、比较、冲突处理与新提交式回退；
+- 应用私有数据的加密备份、恢复和受保护的维护操作；
+- 管理员控制的 CLI/MCP 读写能力（默认只读，写入需授权）。
+
+它是**可选的管理端**，不是必须部署的 Sync v3 中央服务器；没有 fnOS 也可以使用 WebDAV 共享课表。FPK 目前标记为 **Pre-release**。升级已安装 FPK 请使用 fnOS 官方应用中心的较高版本原位升级，不要通过可能先卸载旧包的命令强行安装。
+
+详见 [fnOS 课程管理](docs/pr71-course-management.md) 与 [fnOS 发布说明](docs/RELEASE-fpk-0.8.2.md)。
+
+## 快速开始
+
+### 第一步：下载安装
+
+1. **X08E**：从 [Android v0.1.12 Release](https://github.com/787x/DormPanel/releases/tag/v0.1.12) 下载 `DormPanel-X08E-0.1.12.apk`。
+2. **Phone**（可选）：从同一 Release 下载 `DormPanel-Phone-0.1.11.apk`。
+3. **fnOS**（可选）：从 [fpk-v0.8.2](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.2) 下载 `dormpanel-schedule-manager-0.8.2.fpk`，通过官方应用中心安装。
+4. **HA 集成**（按需）：从 [v0.1.9 的资产](https://github.com/787x/DormPanel/releases/tag/v0.1.9) 获取 `DormPanel-HA-0.1.2.zip`；按 HA 自定义集成方式安装后重启 HA，再添加 DormPanel 集成。
+
+下载后请按 Release 内的 `SHA256SUMS.txt` 校验文件。Android APK 可以通过系统安装器安装，或在具备 ADB 的电脑上原位安装：
 
 ```bash
 adb install -r DormPanel-X08E-0.1.12.apk
-# 手机请使用 DormPanel-Phone-0.1.9.apk
+# Phone 使用：adb install -r DormPanel-Phone-0.1.11.apk
 ```
 
-or install the new APK over the existing one from the system installer.
+**升级已有安装时不要卸载重装或清除应用数据**，尤其是使用了 WebDAV、HA 凭据及加密本地状态的设备。签名不一致时应停止安装，不能通过卸载旧版来绕过。
 
-| Action | App data |
+### 第二步：先使用本地功能
+
+打开 X08E 上的 DormPanel，编辑首页、添加时钟、Todo、备忘、计时器或课程卡片。无需先配置 HA、天气账号或 WebDAV。
+
+### 第三步：按需要连接服务
+
+- **想控制智能家居**：在 X08E 控制中心配置 Home Assistant 地址和长期访问令牌。
+- **想查看多城市天气**：配置和风天气凭据或选择 HA 天气来源，添加地点并绑定到天气卡片。
+- **想把课表同步到手机**：在参与设备上配置 WebDAV，并明确创建或加入**同一个兼容的共享数据集**。
+- **想用 NAS 网页编辑**：安装 fnOS FPK，再创建或加入对应工作区；不需要为已经正常工作的 Android 同步强制安装 FPK。
+
+X08E 的 HA、WebDAV 和和风天气配置支持**同一个限时扫码配置网页**。在 X08E 控制中心打开「扫码配置」，用同一可信局域网内的手机填写，最后在 X08E 上核对并确认保存。
+
+**注意：扫码配置门户使用临时局域网 HTTP，填写内容在局域网内明文传输。** 请只在可信网络操作，不要把配置地址公开到互联网。参见 [扫码配置指南](docs/PR26-settings-phone-entry.md)。
+
+## 数据、安全与兼容性
+
+- **本地优先**：课表与本地工具保存在设备上；网络或 HA 不可用不会使本地时钟、备忘等功能失效。
+- **凭据保护**：Android 的 HA/WebDAV/和风敏感凭据使用 Android Keystore 相关保护；临时上传与配置入口有时效及授权边界。
+- **不强制 Root**：普通功能不依赖 Root，也不要求替换小米 Launcher 或删除小米服务。
+- **不承诺无条件实时同步**：WebDAV 共享和 HA 实时状态是两种不同机制；跨设备接收、失败重试和冲突处理需依据各端实际状态判断。
+- **已知限制**：X08E 的系统媒体静音接口不可可靠使用；黑屏不是关闭背光；普通 Android 单 APK 安装入口不支持 XAPK/APKS；通知提醒及开机启动时机可能受系统省电策略影响。
+- **兼容性**：主要针对 X08E Android 9 横屏验证；其他 ROM、Launcher、系统版本的外观和后台行为不能一概保证。
+
+## 开发与仓库结构
+
+主要技术栈：**Kotlin + Android Views/XML + Room**（Android）、**Node.js 22**（fnOS）、**Python**（HA 集成），通过 HA WebSocket 和标准 WebDAV 与外部系统通信。
+
+| 目录 | 内容 |
 | --- | --- |
-| APK update (`adb install -r` / Android update) | **Kept** — dashboard, HA credentials, relay identity, WebDAV account, schedules, productivity data, settings |
-| Uninstall + reinstall | **Not guaranteed** — Android Keystore-backed secrets and app-local data are lost |
+| `app/` | X08E Android 应用、卡片、天气、家居控制与界面 |
+| `phone-app/` | Android Phone 课表、桌面小部件和课程通知 |
+| `schedule-core/` | 双 Android 端共用的课表数据模型、投影与同步逻辑 |
+| `fnos-app/` | fnOS 网页、Workspace、CLI/MCP、FPK 构建与测试 |
+| `homeassistant/custom_components/dormpanel/` | 可选的 Home Assistant 自定义集成 |
+| `tools/` | 构建、发布、签名和设备验证脚本 |
+| `docs/` | 功能说明、协议、设计与验收记录 |
 
-PR29 physically verified an `adb install -r` upgrade from an approved-signer
-**daily 0.1.0-labelled build**, not a byte-identical copy of the canonical
-published v0.1.0 APK. The v2→v3 schedule migration retained the original source
-and 131 occurrences; exercised dashboard state, preferences, HA/WebDAV
-configuration, and relay identity survived. Nonempty daily Todo/Memo retention
-was not physically exercised because the baseline had no such data; isolated
-persistence/migration tests provide separate evidence.
-
-Uninstall/reinstall is **not** a supported upgrade path. A previous test incident
-confirmed that migration after uninstall is not possible for Keystore-backed state.
-
-### Signing
-
-Release APKs are signed with the project release identity. The public certificate
-SHA-256 is printed by `tools/build-release.ps1` at build time and should match the
-certificate of any previously installed DormPanel package. If Android reports a
-signature conflict, **stop** — do not uninstall the existing app to force the update.
-
-## Home Assistant
-
-DormPanel talks to Home Assistant over WebSocket for live entity state and
-control. REST is used only for the user-triggered connection diagnostic and
-other necessary supplemental calls — not as an entity-state fallback.
-
-### Configure
-
-1. Open **Control Center → Home Assistant**.
-2. Enter the HA URL (for example `http://homeassistant.local:8123`) and a long-lived access token.
-3. Save. Status should become **CONNECTED**.
-
-HA and WebDAV settings also offer **Fill from phone** on a trusted LAN. Phone
-submission fills the open fields; Test and Save remain explicit device actions.
-The temporary form uses plain HTTP. HA **Advanced settings** starts collapsed;
-**Preferred weather** remains directly visible.
-
-### Custom integration (`custom_components/dormpanel`)
-
-Optional, required for timetable and APK relay features:
-
-1. Unpack `DormPanel-HA-0.1.2.zip` into the HA `config` directory so you have
-   `config/custom_components/dormpanel/`.
-2. Restart Home Assistant.
-
-   XLS 升级顺序：先将 HA 集成更新到 0.1.2 并重启 HA（当前集成不支持卸载重载），再升级 X08E 到已发布的 0.1.9 / code 12 并重新连接 HA，重新注册 `schedule_xls_v1`。面板刷新后使用 XLS 区域上传湖北大学 BIFF8 `.xls`（最多 1 MiB）；仅支持该能力的设备可选。设备预览并确认后才保存，未知学期先配置日期和作息；旧设备仍可接收原有 ICS/CSV。详见 [PR52 说明](docs/pr52-ha-xls.md)。
-
-3. **Settings → Devices & Services → Add Integration → DormPanel**.
-4. Create the integration entry (admin user required for relay registration).
-
-DormPanel does not create these helper entities. It can bind/configure existing
-Home Assistant helpers for synchronization (names are chosen in DormPanel
-settings):
-
-- **Brightness** — DormPanel display brightness
-- **Volume** — media volume
-- **Blackout** — screen blackout switch
-- **System brightness** — Android system brightness (manual writes)
-- **Theme / Opacity** — appearance helpers (`input_select` / `input_number`)
-- **Automatic system brightness** — optional `input_boolean`
-- **Follow System** — optional `input_boolean`
-- **Keep screen awake** — optional `input_boolean`
-- **Start after boot** — optional `input_boolean`
-
-The four `input_boolean` bindings mirror the existing Control Center toggles
-bidirectionally when configured. Local controls keep working if HA is
-disconnected or a helper is missing, disabled, or unavailable.
-
-Notes on the optional Boolean helpers:
-
-- **Automatic system brightness** and **System brightness** require the normal
-  Android **WRITE_SETTINGS** conditions (see below). Manual System brightness
-  additionally requires Automatic mode OFF.
-- **Start after boot** updates the persisted next-boot preference only. It does
-  not remotely launch DormPanel while the app is not running.
-
-### Timetable relay
-
-From the HA DormPanel panel, send an ICS or supported Hubei University CSV
-timetable to a registered X08E over the existing WebSocket connection. The device
-previews the file and imports it only after local confirmation. CSV relay
-requires the device's `schedule_csv_v1` capability.
-
-PR29 live-verified a sanitized Hubei CSV over HA `schedule_csv`:
-`preview_ready` → `imported` after local confirmation. Native HA light control
-was independently observed on the HA server, and live sensor state populated.
-A separate live HA APK-relay run was not documented as exercised by PR29.
-
-### APK relay
-
-From the HA DormPanel panel, send an APK to a registered X08E. The device
-validates the file, then requires local Install confirmation **and** the Android
-system installer confirmation. HA reaches `installed` only after the package is
-actually installed.
-
-## WebDAV
-
-One WebDAV account is configured **globally** in Control Center
-(URL, username, password). The password is stored encrypted with Android Keystore.
-
-Timetable page owns the sync bindings:
-
-- select a specific ICS or supported CSV file, or
-- select a folder and use the newest file of the selected format (ICS or CSV);
-- hourly automatic sync;
-- **Sync now** for manual sync.
-
-The Apps page owns one-shot APK browsing/install from the same WebDAV account.
-
-PR29 verified authentication with preserved WebDAV credentials, browsing and
-importing a human-confirmed sanitized CSV into a separate local source, and
-`Sync now` → `Already up to date`. The original remote file was untouched.
-Optional profile-sensitive live resync was not exercised.
-
-## Device controls
-
-| Control | Behavior |
-| --- | --- |
-| System brightness | Writes Android `screen_brightness`. Requires **WRITE_SETTINGS** special access and Manual brightness mode. |
-| DormPanel brightness | App-local overlay brightness; does not change the system value. |
-| Follow System | DormPanel brightness tracks the system brightness. |
-| Keep screen awake | Uses `FLAG_KEEP_SCREEN_ON` while enabled. It does not modify `screen_off_timeout`. |
-| Blackout | Covers the screen with a black surface and blocks touch. |
-
-**Blackout is not a true LCD/backlight power-off.** The panel stays powered;
-only the UI is covered. Recover by tapping the blackout surface (or the
-configured gesture) to restore the UI.
-
-### WRITE_SETTINGS
-
-System brightness writes need the **Modify system settings** special access.
-Grant it once from Control Center when prompted. Without it, system-brightness
-HA commands cannot be applied.
-
-## Startup and system coexistence
-
-- **Boot start is opt-in.** Enable it in Control Center if you want DormPanel
-  after reboot. It uses the standard `BOOT_COMPLETED` broadcast — no root, no
-  persistent service.
-- On X08E, `BOOT_COMPLETED` may arrive noticeably after `sys.boot_completed`.
-  Startup is therefore later than on typical Android devices.
-- **Open MIUI Home** (Control Center) returns to the Xiaomi launcher.
-- DormPanel is not a Home launcher and does not replace MIUI Home, XiaoAI,
-  the Bluetooth Mesh gateway, or the native alarm app. In signed **0.1.1**
-  physical X08E acceptance, **Open MIUI Home** reached the Xiaomi launcher;
-  a human confirmed visible XiaoAI response **and heard wake-word audio**,
-  plus successful Bluetooth Mesh control with the prior state restored.
-  Native Xiaomi/Mesh/Bluetooth services were observed.
-- With **Start after boot** already enabled, one normal reboot reached
-  DormPanel through the existing boot path after OEM startup ordering.
-  **Native alarm firing was not separately tested.** See
-  [PR29 acceptance](docs/PR29-release-acceptance.md) for evidence and limits;
-  prior 0.1.0 acceptance remains documented in
-  [PR24](docs/PR24-release-acceptance.md).
-
-## APK install sources
-
-From the Apps page you can install an APK from:
-
-| Source | Notes |
-| --- | --- |
-| Local (SAF) | Pick a `.apk` from device storage |
-| LAN temporary upload | Short-lived private URL; upload from a phone/PC on the same network |
-| WebDAV | Browse the global WebDAV account |
-| Home Assistant | Relay through the HA integration |
-
-Common rules:
-
-- **256 MiB** size limit;
-- local DormPanel confirmation **and** Android system confirmation;
-- **no silent or root installation**;
-- single APK only — **no** split APK / XAPK / APKS.
-
-A staged APK is validated (package metadata, signing certificate) before the
-Install button is enabled. An update with a different signing certificate is
-blocked so the existing app and its data stay untouched.
-
-If DormPanel is killed while the Android installer is open, the session is
-reconciled on the next start from persisted non-secret metadata. A lost callback
-is never reported as a successful install without platform proof.
-
-## Dashboard
-
-The home screen is an editable card grid (Mijia-style):
-
-- add / delete / drag cards;
-- resize cards across preset sizes;
-- cards: Clock, Weather, HA lights / sensors / scenes, Todo, Memo, Timer,
-  Calendar, Timetable, Apps, and more.
-
-Swipe edges open the secondary pages (Apps, Control Center, Schedule, Home
-Control). Directional page targets are fixed defaults and are not yet user
-configurable.
-
-## Backup and sensitive state
-
-The following are **excluded from Android backup and device transfer**:
-
-- HA access token (`ha_credentials`)
-- HA relay installation identity/secret (`ha_relay_identity`)
-- WebDAV encrypted password (`webdav_credentials`)
-- pending installer session metadata (`pending_install`)
-
-Staged APK cache and LAN capability tokens live in cache/ephemeral storage and
-are not backed up.
-
-Ordinary non-secret user state (layout, schedules, todos, non-secret preferences)
-remains backup-eligible.
-
-## Known limitations
-
-- X08E public Android **media mute is unavailable** (no reliable `MUTE` stream API
-  on this build). Volume control works.
-- **True display power-off is not implemented.** Blackout only covers the UI.
-- System-brightness HA writes require **WRITE_SETTINGS** and Manual brightness mode.
-- Boot startup may occur noticeably after `sys.boot_completed` because X08E
-  delivers `BOOT_COMPLETED` late.
-- **Split APK bundles (XAPK/APKS) are unsupported.** Single-APK only.
-- **0.1.1 physical soak has sparse observations.** The X08E device/process
-  observation window lasted **4h 10m 40s**, with successful samples at
-  09:03:16, 11:48:23, and 13:13:57 (2026-10-08, Asia/Shanghai). Planned
-  +1h/+2h metrics are **UNVERIFIED** due to ADB absence; the collector did not
-  retain its scheduled final point. Later final checks do not establish four
-  successful scheduled checkpoints or continuous telemetry. Unobserved transient
-  CPU/reconnection behavior cannot be excluded.
-- **0.1.1 upgrade scope:** PR29 used an approved-signer daily 0.1.0-labelled
-  baseline, not the canonical published v0.1.0 APK; nonempty daily Todo/Memo
-  retention was not physically exercised.
-- **Optional live paths not verified by PR29:** native alarm firing,
-  profile-sensitive WebDAV live resync, and the opt-in real-light and
-  granted-`WRITE_SETTINGS` tests without their prerequisites. JUnit case
-  results alone do not establish these optional live paths.
-- **Other evidence limits:** exact disposable phone-form bytes were not
-  independently compared; timetable-edit restoration was verified
-  functionally rather than by byte-level database comparison; earlier
-  empty UTP `status -1` results did not reproduce but have unknown root cause;
-  UI observation latency was not a frame-rate benchmark. See
-  [PR29 acceptance](docs/PR29-release-acceptance.md).
-
-## Build
+开发环境示例（Windows）：
 
 ```powershell
-.\gradlew.bat assembleDebug testDebugUnitTest lintDebug
-.\tools\test-x08e.ps1          # physical X08E suite (device required)
-.\tools\build-release.ps1      # signed release APK + HA archive
+.\gradlew.bat :app:assembleDebug :phone-app:assembleDebug
+# fnOS：进入 fnos-app 后使用 npm ci、npm run build
 ```
 
-Release signing is configured through environment variables or Gradle properties
-(`DORMPANEL_RELEASE_KEYSTORE`, `DORMPANEL_RELEASE_KEY_ALIAS`,
-`DORMPANEL_RELEASE_STORE_PASSWORD`, `DORMPANEL_RELEASE_KEY_PASSWORD`). Secret
-values are never committed. `tools/build-release.ps1` refuses an official release
-build when signing inputs are missing.
+正式签名发布有单独的证书和产物核验流程；普通 Debug APK 不代表正式发布包。
 
-## Repository layout
+## 更多文档
 
-| Path | Content |
-| --- | --- |
-| `app/` | Android application (Kotlin) |
-| `homeassistant/custom_components/dormpanel/` | HA custom integration |
-| `homeassistant/tests/` | HA integration tests |
-| `tools/` | Windows helper scripts |
-| `docs/` | Design and PR documentation |
+- [最新 Android 发布说明](docs/RELEASE-0.1.12.md)
+- [fnOS 0.8.2 发布说明](docs/RELEASE-fpk-0.8.2.md)
+- [X08E 天气功能与和风配置](docs/x08e-weather.md)
+- [扫码配置 HA / WebDAV / 和风天气](docs/PR26-settings-phone-entry.md)
+- [Phone 课程通知与 Live Updates 边界](docs/phone-course-notifications.md)
+- [Sync v3 通用共享记录与兼容性](docs/sync-v3-shared-state.md)
+- [课程安排与多时段编辑](docs/pr70-course-schedule.md)
+- [fnOS 课程管理与 CLI/MCP](docs/pr71-course-management.md)
+- [ICS 导出说明与限制](docs/ics-export.md)
+- [X08E 本地效率卡片](docs/Local-productivity-core.md)
+
+---
+
+**DormPanel 的目标很简单：保留小爱音箱原本擅长的事，同时让这块 8 英寸屏幕更有用。**
+
+> 这是一个面向实际设备持续完善的开源项目，不是小米、米家、Home Assistant 或和风天气的官方产品。相关服务和商标归各自所有。
