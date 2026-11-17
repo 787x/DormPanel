@@ -35,3 +35,10 @@
 ## 验证边界
 
 使用隔离模拟器及 WsgiDAV。实体 X08E、实体 Phone、fnOS FPK 联调、OEM Launcher 的重启恢复和系统桌面完整手势未进行实测。共享状态按本机提交、待发布和精确回读分别呈现。普通 WebDAV 上仍可能有未观察的 Writer，回读证明对应的服务器对象，本机审批不能冻结服务器历史。
+
+## Widget 审查修复复验
+
+- API 28 和 API 37 的隔离 AppWidgetHost 均从真实 RemoteViews 行点击，经系统 PendingIntent 进入透明入口。点正文打开对应任务编辑框，勾选写入明确的完成状态。重复、过期 revision、错误实例及更换绑定后的旧点击均未写入。API 37 还从独立进程的 Pixel Launcher 实际点按；系统日志记录了 Launcher 的调用 UID 和可见窗口授权。按 Home 将编辑器留在后台后，勾选仍写入完成状态并返回桌面。实测有一次勾选图标更新后剩余计数仍停留在旧值。[Android 集合 Widget 接口](https://developer.android.com/develop/ui/views/appwidgets/collections) · [后台 Activity 启动规则](https://developer.android.com/guide/components/activities/secure-bal)
+- 删除回归覆盖宿主仍返回实例信息、重复 ID、错 Provider、正在处理的绑定请求及正常宿主删除。目标绑定与行缓存被清理，另一 Todo 实例和备忘实例保留。Phone 批量导入测试还执行了共享清单 Widget 删除，前后共享快照相同。
+- API 28 X08E 的 12 项任务和长备忘预览、API 37 Phone 的 5 张清单、80 项任务及 5 条长备忘批量预览通过。取消保留原内容和绑定，确认后核对原文和换行。Phone 通过完整对象比较核对任务 ID。PR87 旧库指纹及绑定回归通过。
+- 两端 Debug 构建、预览 JVM 2 项及 Phone JVM 89 项通过。实体设备和第三方 OEM Launcher 仍待覆盖。

@@ -67,6 +67,12 @@ class ProductivityActivity : AppCompatActivity() {
 
     private fun open() {
         if (isFinishing || isDestroyed) return
+        val binding = intent.getStringExtra("widgetBinding")
+        val widgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+        if (binding != null && !ProductivityWidgets.isTodoBindingCurrent(this, widgetId, binding)) {
+            finish()
+            return
+        }
         panel?.close()
         mode = runCatching { target?.datasetId ?: PhoneProductivity.mode() }.getOrElse {
             setContentView(TextView(this).apply { text = "本机数据来源读取失败 · ${it.message}" })
@@ -75,7 +81,13 @@ class ProductivityActivity : AppCompatActivity() {
         val editor = ProductivityPanel(this, data, kind, PhoneProductivity.dataset(mode), target?.recordId, task,
             editMemo = intent.getBooleanExtra("editMemo", false),
             local = mode == PhoneProductivity.LOCAL, sourceAction = ::sources,
-            validate = if (target != null) ({}) else guardMode(mode))
+            validate = when {
+                binding != null -> ({
+                    check(ProductivityWidgets.isTodoBindingCurrent(applicationContext, widgetId, binding)) { "小组件绑定已变化" }
+                })
+                target != null -> ({})
+                else -> guardMode(mode)
+            })
         task = null
         intent.removeExtra("editMemo")
         panel = editor
@@ -166,11 +178,8 @@ class ProductivityActivity : AppCompatActivity() {
                     } else PhoneProductivity.local.transfer(store, source, version, false, {}) { checked ->
                         checked.fold(checked@{
                             if (isFinishing || isDestroyed) return@checked
-                            val summary = (lists + memos).joinToString("\n\n") {
-                                "${it.title}\n${it.summary(preview.content)}"
-                            }
                             AlertDialog.Builder(this).setTitle("导入本机 Todo 和备忘")
-                                .setMessage("${lists.size} 张清单 · ${preview.content.tasks.size} 项任务 · ${memos.size} 条备忘\n\n$summary\n\n原本机内容会保留。")
+                                .setMessage("${preview.content.importPreview()}\n\n原本机内容会保留。")
                                 .setNegativeButton("取消", null)
                                 .setPositiveButton("确认导入并切换") { _, _ ->
                                     if (!busy) {

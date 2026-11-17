@@ -37,6 +37,9 @@
 <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/><action android:name="android.intent.action.DATE_CHANGED"/><action android:name="android.intent.action.TIME_SET"/><action android:name="android.intent.action.TIMEZONE_CHANGED"/><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
 <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_week"/></receiver>
         <activity android:name=".ProductivityActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".ProductivityWidgetClickActivity" android:exported="false"
+            android:excludeFromRecents="true" android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <activity android:name=".ProductivityWidgetConfiguration" android:exported="true">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_CONFIGURE"/></intent-filter>
         </activity>

@@ -15,6 +15,9 @@ import androidx.test.espresso.action.ViewActions.*
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleCallback
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import com.dormpanel.app.schedule.*
 import org.hamcrest.Matchers.allOf
 import org.junit.Assert.*
@@ -55,6 +58,202 @@ class PhoneProductivityAndroidTest {
                 assertEquals("first", ProductivityBindings(context, bindingsName).get("widget"))
             } finally { context.deleteFile(bindingsName) }
         } finally { context.deleteFile(name) }
+    }
+
+    @Test fun batchImportPreviewIsBoundedAndKeepsOriginals() {
+        val url = InstrumentationRegistry.getArguments().getString("pr88ReviewImportUrl")
+        assumeNotNull(url)
+        check(context.packageName.endsWith(".pr88review"))
+        check(Regex("http://127[.]0[.]0[.]1:[0-9]+/pr88-[0-9a-f-]{36}/").matches(requireNotNull(url)))
+        val store = requireNotNull(data.shared)
+        val account = WebDavAccount(url, "fixture", "fixture")
+        store.prepareV3(url, sharedFormat = true)
+        settle(store, account)
+        val shared = await(store::loadProductivity).getOrThrow()
+        val dataset = shared.version!!.datasetId
+        val lists = List(5) { ProductivityRecord.TodoList(AndroidProductivity.id(), "导入清单 $it") }
+        val tasks = lists.flatMap { list ->
+            List(16) { i -> ProductivityRecord.Task(AndroidProductivity.id(), list.id,
+                "任务 $i\r\n" + "长".repeat(400) + "\n任务末尾", i % 2 == 0, i) }
+        }
+        val memos = List(5) { ProductivityRecord.Memo(AndroidProductivity.id(), "导入备忘 $it",
+            "首行\r\n" + "正文".repeat(1100) + "\n备忘末尾") }
+        val version = load(null).version!!
+        await<Unit> { data.save(version, (lists + tasks + memos).map(ProductivityEdit::Create), it) }.getOrThrow()
+        val local = load(null)
+        val previousMode = PhoneProductivity.bindings.get(PhoneProductivity.MODE)
+        try {
+            ActivityScenario.launch<ProductivityActivity>(ProductivityActivity.intent(context, ProductivityKind.TODO)).use {
+                fun preview() {
+                    onView(withText("数据来源")).perform(click())
+                    onView(withText("预览并导入本机 Todo 和备忘")).perform(click())
+                    waitText("确认导入并切换")
+                    onView(withId(android.R.id.message)).check { view, missing ->
+                        if (missing != null) throw missing
+                        val text = (view as TextView).text.toString()
+                        assertTrue(text.length < 5_000)
+                        assertTrue(text.contains("另有 2 张清单未展示"))
+                        assertTrue(text.contains("另有 2 条备忘未展示"))
+                        assertTrue(text.contains("16 项任务，8 项已完成，8 项未完成"))
+                        assertTrue(text.contains("另有 10 项任务未展示"))
+                        assertTrue(text.contains("正文已省略"))
+                        assertFalse(text.contains("任务末尾"))
+                        assertFalse(text.contains("备忘末尾"))
+                    }
+                }
+                preview()
+                onView(withText("取消")).perform(click())
+                assertEquals(previousMode, PhoneProductivity.bindings.get(PhoneProductivity.MODE))
+                assertEquals(shared, load(dataset))
+                assertEquals(local, load(null))
+                preview()
+                onView(withText("确认导入并切换")).perform(click())
+                waitFor { PhoneProductivity.mode() == dataset }
+                val imported = load(dataset).content
+                assertEquals(local.content, imported)
+                assertEquals(local, load(null))
+            }
+            val host = AppWidgetHost(context, 8889)
+            val widget = host.allocateAppWidgetId()
+            try {
+                val manager = AppWidgetManager.getInstance(context)
+                check(manager.bindAppWidgetIdIfAllowed(widget, ComponentName(context, TodoWidgetProvider::class.java)))
+                val imported = load(dataset)
+                await<Unit> {
+                    ProductivityWidgets.bind(context, widget, ProductivityKind.TODO,
+                        ProductivityTarget(dataset, lists.first().id), imported.version!!, it)
+                }.getOrThrow()
+                assertNotNull(PhoneProductivity.bindings.get("widget-$widget"))
+                host.deleteAppWidgetId(widget)
+                waitFor { PhoneProductivity.bindings.get("widget-$widget") == null }
+                assertEquals(imported, load(dataset))
+            } finally {
+                host.deleteAppWidgetId(widget)
+            }
+        } finally {
+            PhoneProductivity.bindings.set(PhoneProductivity.MODE, previousMode)
+        }
+    }
+
+    @Test fun widgetDispatchAndDeleteWithHostStillReportingInstance() {
+        org.junit.Assume.assumeTrue(context.packageName.endsWith(".pr88review"))
+        val suffix = AndroidProductivity.id().take(8)
+        val list = ProductivityRecord.TodoList(AndroidProductivity.id(), "目标清单 $suffix")
+        val other = ProductivityRecord.TodoList(AndroidProductivity.id(), "另一清单 $suffix")
+        val task = ProductivityRecord.Task(AndroidProductivity.id(), list.id, "打开这条任务 $suffix", false, 0)
+        val memo = ProductivityRecord.Memo(AndroidProductivity.id(), "备忘 $suffix", "保留正文")
+        val initialVersion = load(null).version!!
+        await<Unit> { data.save(initialVersion, listOf(list, other, task, memo).map(ProductivityEdit::Create), it) }.getOrThrow()
+
+        val manager = AppWidgetManager.getInstance(context)
+        val host = AppWidgetHost(context, 8888)
+        val ids = mutableListOf<Int>()
+        ActivityScenario.launch<ProductivityActivity>(ProductivityActivity.intent(context, ProductivityKind.TODO)).use { scenario ->
+            fun configure(kind: ProductivityKind, target: ProductivityRecord): Int {
+                val id = host.allocateAppWidgetId().also(ids::add)
+                val provider = if (kind == ProductivityKind.TODO) TodoWidgetProvider::class.java else MemoWidgetProvider::class.java
+                check(manager.bindAppWidgetIdIfAllowed(id, ComponentName(context, provider)))
+                scenario.onActivity { host.startAppWidgetConfigureActivityForResult(it, id, 0, 8801, null) }
+                waitText("选择小组件数据来源")
+                onView(allOf(withText("仅本机"), isDisplayed())).perform(click())
+                waitText(target.title)
+                onView(allOf(withText(target.title), isDisplayed())).perform(click())
+                waitText("数据来源")
+                waitFor { PhoneProductivity.bindings.get("widget-$id")?.contains(target.id) == true }
+                return id
+            }
+
+            try {
+                val todo = configure(ProductivityKind.TODO, list)
+                val otherTodo = configure(ProductivityKind.TODO, other)
+                val memoId = configure(ProductivityKind.MEMO, memo)
+                val before = load(null)
+                scenario.onActivity { activity ->
+                    host.startListening()
+                    activity.setContentView(host.createView(activity, todo, manager.getAppWidgetInfo(todo)))
+                }
+                waitText(task.text)
+                val routed = java.util.concurrent.atomic.AtomicInteger()
+                val lifecycle = ActivityLifecycleMonitorRegistry.getInstance()
+                val router = ActivityLifecycleCallback { activity, stage ->
+                    if (stage == Stage.RESUMED && activity is ProductivityWidgetClickActivity) routed.incrementAndGet()
+                }
+                instrument.runOnMainSync { lifecycle.addLifecycleCallback(router) }
+                try {
+                    onView(allOf(withId(R.id.productivity_check), hasSibling(withText(task.text)), isDisplayed())).perform(click())
+                    waitFor { load(null).content.tasks(list.id).single().completed }
+                    waitFor {
+                        var focused = false
+                        scenario.onActivity { focused = it.hasWindowFocus() }
+                        focused
+                    }
+                    assertEquals(1, routed.get())
+                    val completed = load(null)
+                    assertTrue(completed.version!!.revision > before.version!!.revision)
+                    onView(allOf(withId(R.id.productivity_task), withText(task.text), isDisplayed())).perform(click())
+                    waitFor {
+                        runCatching {
+                            onView(allOf(withHint("任务正文"), withText(task.text))).check(matches(isDisplayed()))
+                        }.isSuccess
+                    }
+                    assertEquals(2, routed.get())
+                    assertEquals(completed, load(null))
+                    onView(withText("取消")).perform(click())
+                    onView(withText("返回 · Todo")).perform(click())
+                } finally {
+                    instrument.runOnMainSync { lifecycle.removeLifecycleCallback(router) }
+                }
+                val snapshot = ProductivityWidgets.rows(todo)!!
+                fun clickSnapshot(id: Int, binding: String, desired: Boolean) =
+                    Intent(ProductivityWidgets.ROW, Uri.parse("dormpanel-productivity://row/$id"))
+                        .putExtra("binding", binding).putExtra("task", task.id)
+                        .putExtra("revision", snapshot.version.revision).putExtra("hash", snapshot.version.businessHash)
+                        .putExtra("completed", desired)
+                fun action(click: Intent) {
+                    await<Unit> { done ->
+                        ProductivityWidgets.rowAction(context, ProductivityKind.TODO, click) { done(Result.success(Unit)) }
+                    }.getOrThrow()
+                }
+                val completed = load(null)
+                action(clickSnapshot(todo, snapshot.binding, true))
+                action(clickSnapshot(otherTodo, snapshot.binding, false))
+                action(clickSnapshot(todo, snapshot.binding, false).putExtra("revision", snapshot.version.revision - 1))
+                assertEquals(completed, load(null))
+
+                val rebound = ProductivityTarget(PhoneProductivity.LOCAL, other.id)
+                val version = completed.version!!
+                await<Unit> { ProductivityWidgets.bind(context, todo, ProductivityKind.TODO, rebound, version, it) }.getOrThrow()
+                action(clickSnapshot(todo, snapshot.binding, false))
+                val stale = clickSnapshot(todo, snapshot.binding, false).apply { removeExtra("completed") }
+                await<Intent?> { callback -> ProductivityWidgets.openTask(context, stale) { callback(Result.success(it)) } }
+                    .getOrThrow().also { assertNull(it) }
+                assertEquals(completed, load(null))
+
+                assertNotNull(manager.getAppWidgetInfo(todo))
+                val competing = LinkedBlockingQueue<Result<Unit>>()
+                await<Unit> { deleted ->
+                    ProductivityWidgets.bind(context, todo, ProductivityKind.TODO,
+                        ProductivityTarget(PhoneProductivity.LOCAL, list.id), version) { competing.add(it) }
+                    ProductivityWidgets.delete(context, ProductivityKind.TODO, intArrayOf(todo, memoId, todo)) {
+                        deleted(Result.success(Unit))
+                    }
+                }.getOrThrow()
+                assertTrue(competing.poll(10, TimeUnit.SECONDS)!!.isFailure)
+                assertNotNull(manager.getAppWidgetInfo(todo))
+                waitFor { PhoneProductivity.bindings.get("widget-$todo") == null && ProductivityWidgets.rows(todo) == null }
+                assertNotNull(PhoneProductivity.bindings.get("widget-$otherTodo"))
+                assertNotNull(PhoneProductivity.bindings.get("widget-$memoId"))
+                host.deleteAppWidgetId(otherTodo)
+                waitFor { PhoneProductivity.bindings.get("widget-$otherTodo") == null }
+                assertNotNull(PhoneProductivity.bindings.get("widget-$memoId"))
+                assertEquals(completed, load(null))
+            } finally {
+                instrument.runOnMainSync {
+                    host.stopListening()
+                    ids.forEach(host::deleteAppWidgetId)
+                }
+            }
+        }
     }
 
     @Test fun managementOpensBothLocalEditors() {

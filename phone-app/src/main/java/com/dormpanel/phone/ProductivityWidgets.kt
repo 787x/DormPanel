@@ -1,5 +1,6 @@
 package com.dormpanel.phone
 
+import android.app.Activity
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
@@ -48,7 +49,7 @@ abstract class ProductivityWidgetProvider(private val kind: ProductivityKind) : 
 
     override fun onDeleted(context: Context, ids: IntArray) {
         val pending = goAsync()
-        ProductivityWidgets.delete(context, ids) { pending.finish() }
+        ProductivityWidgets.delete(context, kind, ids) { pending.finish() }
     }
 
     override fun onDisabled(context: Context) = ProductivityWidgets.request(context)
@@ -77,6 +78,8 @@ internal object ProductivityWidgets {
     internal data class Rows(val binding: String, val version: ProductivityVersion,
         val tasks: List<ProductivityRecord.Task>, val writable: Boolean)
 
+    // System IDs identify allocated instances. Fence callbacks even while the host still lists a deleted ID.
+    private val deleted = ConcurrentHashMap.newKeySet<Pair<ProductivityKind, Int>>()
     private val rows = ConcurrentHashMap<Int, Rows>()
     fun rows(id: Int) = rows[id]
 
@@ -84,7 +87,10 @@ internal object ProductivityWidgets {
     private fun provider(context: Context, kind: ProductivityKind) = ComponentName(context,
         if (kind == ProductivityKind.TODO) TodoWidgetProvider::class.java else MemoWidgetProvider::class.java)
 
-    fun kind(context: Context, id: Int): ProductivityKind? {
+    fun kind(context: Context, id: Int): ProductivityKind? =
+        providerKind(context, id)?.takeUnless { (it to id) in deleted }
+
+    private fun providerKind(context: Context, id: Int): ProductivityKind? {
         val component = AppWidgetManager.getInstance(context).getAppWidgetInfo(id)?.provider ?: return null
         return ProductivityKind.entries.find { provider(context, it) == component }
     }
@@ -98,6 +104,10 @@ internal object ProductivityWidgets {
     fun bind(context: Context, id: Int, kind: ProductivityKind, target: ProductivityTarget, version: ProductivityVersion,
         callback: (Result<Unit>) -> Unit) {
         val app = context.applicationContext
+        val previous = runCatching { bindings.get(key(id)) }.getOrElse {
+            callback(Result.failure(it))
+            return
+        }
         data.load(PhoneProductivity.dataset(target.datasetId)) { loaded ->
             val checked = runCatching {
                 val view = loaded.getOrThrow()
@@ -106,13 +116,13 @@ internal object ProductivityWidgets {
             }
             if (checked.isFailure) { callback(checked); return@load }
             AndroidProductivity.work({ result: Result<Unit> ->
-                errors.remove(id)
+                if ((kind to id) !in deleted) errors.remove(id)
                 request(app)
                 callback(result)
             }) {
                 val persist = {
                     check(kind(app, id) == kind) { "小组件已移除" }
-                    bindings.set(key(id), Bound(target, AndroidProductivity.id()).encode())
+                    bindings.setIf(key(id), previous, Bound(target, AndroidProductivity.id()).encode())
                 }
                 if (target.datasetId == PhoneProductivity.LOCAL) {
                     PhoneProductivity.local.withVersion(version, persist)
@@ -121,17 +131,33 @@ internal object ProductivityWidgets {
         }
     }
 
-    fun delete(context: Context, ids: IntArray, done: () -> Unit) {
+    fun delete(context: Context, kind: ProductivityKind, ids: IntArray, done: () -> Unit) {
         val app = context.applicationContext
-        ids.forEach { rows.remove(it); errors.remove(it) }
-        AndroidProductivity.work({ _: Result<Unit> -> request(app); done() }) {
-            ids.forEach { if (kind(app, it) == null) bindings.set(key(it), null) }
+        val owned = ids.distinct().filter { id ->
+            val provider = providerKind(app, id)
+            provider == null || provider == kind
+        }
+        owned.forEach {
+            deleted.add(kind to it)
+            rows.remove(it)
+            errors.remove(it)
+        }
+        request(app)
+        // The same worker serializes persistence with any bind already admitted before deletion.
+        AndroidProductivity.work({ result: Result<Unit> ->
+            result.exceptionOrNull()?.let { android.util.Log.e("ProductivityWidgets", "Widget binding cleanup failed", it) }
+            request(app)
+            done()
+        }) {
+            owned.forEach {
+                if (bindings.get(key(it)) != null) bindings.set(key(it), null)
+            }
         }
     }
 
     fun reload(context: Context, id: Int?, done: () -> Unit) {
         val app = context.applicationContext
-        val target = id?.let { runCatching { binding(it) }.getOrNull()?.target }
+        val target = id?.takeIf { kind(app, it) != null }?.let { runCatching { binding(it) }.getOrNull()?.target }
         if (target == null) { request(app, done); return }
         errors.remove(id)
         if (target.datasetId == PhoneProductivity.LOCAL) {
@@ -164,7 +190,7 @@ internal object ProductivityWidgets {
     private fun refresh(app: Context) {
         val manager = AppWidgetManager.getInstance(app)
         val widgets = ProductivityKind.entries.flatMap { kind ->
-            manager.getAppWidgetIds(provider(app, kind)).map { id ->
+            manager.getAppWidgetIds(provider(app, kind)).filter { (kind to it) !in deleted }.map { id ->
                 Triple(kind, id, runCatching { binding(id) })
             }
         }
@@ -247,8 +273,10 @@ internal object ProductivityWidgets {
                     rows[id] = Rows(binding.encode(), version, ordered, view.writeBlock == null)
                 } else rows.remove(id)
                 remote.setViewVisibility(R.id.productivity_tasks, if (record == null) View.GONE else View.VISIBLE)
-                val template = Intent(ROW).setComponent(provider(app, kind)).setData(uri("row", id))
-                remote.setPendingIntentTemplate(R.id.productivity_tasks, PendingIntent.getBroadcast(app, id, template,
+                // RemoteViews sends this Activity PendingIntent with the host's user-interaction grant.
+                val template = Intent(app, ProductivityWidgetClickActivity::class.java).setAction(ROW)
+                    .setData(uri("row", id)).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                remote.setPendingIntentTemplate(R.id.productivity_tasks, PendingIntent.getActivity(app, id, template,
                     PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0))
                 remote.setRemoteAdapter(R.id.productivity_tasks, Intent(app, ProductivityTaskService::class.java)
                     .setData(uri("tasks", id)))
@@ -270,12 +298,41 @@ internal object ProductivityWidgets {
     private fun uri(action: String, id: Int) = Uri.parse("dormpanel-productivity://$action/$id")
     fun id(intent: Intent) = intent.data?.lastPathSegment?.toIntOrNull()
 
+    fun isTodoBindingCurrent(context: Context, id: Int, encoded: String?): Boolean =
+        encoded != null && kind(context, id) == ProductivityKind.TODO &&
+            runCatching { binding(id)?.encode() == encoded }.getOrDefault(false)
+
+    fun openTask(context: Context, click: Intent, done: (Intent?) -> Unit) {
+        val id = id(click)
+        val encoded = click.getStringExtra("binding")
+        val task = click.getStringExtra("task")
+        val bound = id?.let { runCatching { binding(it) }.getOrNull() }
+        if (id == null || task == null || bound == null || encoded != bound.encode() ||
+            kind(context, id) != ProductivityKind.TODO) {
+            done(null)
+            return
+        }
+        val target = bound.target
+        data.load(PhoneProductivity.dataset(target.datasetId)) { result ->
+            val view = result.getOrNull()
+            val exists = view?.version?.datasetId == target.datasetId &&
+                view.content.tasks(target.recordId).any { it.id == task }
+            done(if (exists && isTodoBindingCurrent(context, id, encoded)) {
+                ProductivityActivity.intent(context, ProductivityKind.TODO, target, task)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id).putExtra("widgetBinding", encoded)
+                    // Use the app task for the editor; the transient click task must be empty after dispatch.
+                    .setData(uri("task-edit", id).buildUpon().appendPath(AndroidProductivity.id()).build())
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            } else null)
+        }
+    }
+
     fun rowAction(context: Context, kind: ProductivityKind, intent: Intent, done: () -> Unit) {
         val app = context.applicationContext
         val id = id(intent)
         val bound = id?.let { runCatching { binding(it) }.getOrNull() }
         val taskId = intent.getStringExtra("task")
-        if (id == null || kind != ProductivityKind.TODO || kind(app, id) != kind || bound == null ||
+        if (!intent.hasExtra("completed") || id == null || kind != ProductivityKind.TODO || kind(app, id) != kind || bound == null ||
             bound.encode() != intent.getStringExtra("binding") || taskId == null) { done(); return }
         val target = bound.target
         val desired = intent.getBooleanExtra("completed", false)
@@ -285,17 +342,14 @@ internal object ProductivityWidgets {
             val version = view?.version
             fun bindingStillCurrent() = kind(app, id) == kind && binding(id) == bound
             fun finish(message: String? = null) {
-                if (message == null) errors.remove(id) else errors[id] = message
-                request(app)
+                if (isTodoBindingCurrent(app, id, bound.encode())) {
+                    if (message == null) errors.remove(id) else errors[id] = message
+                    request(app)
+                }
                 done()
             }
             if (!runCatching { bindingStillCurrent() }.getOrDefault(false)) { done(); return@load }
             if (task == null || version == null) { finish("任务已变化 · 请刷新"); return@load }
-            if (!intent.hasExtra("completed")) {
-                app.startActivity(ProductivityActivity.intent(app, kind, target, taskId).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                finish()
-                return@load
-            }
             if (task.completed == desired) { finish(); return@load }
             if (view.writeBlock != null || version.revision != intent.getLongExtra("revision", -1) ||
                 version.businessHash != intent.getStringExtra("hash")) {
@@ -306,6 +360,34 @@ internal object ProductivityWidgets {
                 finish(it.exceptionOrNull()?.message)
             }) { check(bindingStillCurrent()) { "小组件绑定已变化" } }
         }
+    }
+}
+
+/** A collection has one template. This transparent entry handles both row actions. */
+class ProductivityWidgetClickActivity : Activity() {
+    private var dispatched = false
+
+    override fun onPostResume() {
+        super.onPostResume()
+        if (dispatched) return
+        dispatched = true
+        if (intent.action != ProductivityWidgets.ROW) {
+            finish()
+        } else if (intent.hasExtra("completed")) {
+            ProductivityWidgets.rowAction(applicationContext, ProductivityKind.TODO, intent) { finish() }
+        } else {
+            ProductivityWidgets.openTask(applicationContext, intent) { editor ->
+                if (!isFinishing && !isDestroyed) {
+                    if (editor != null) startActivity(editor)
+                    finish()
+                }
+            }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isFinishing) finish()
     }
 }
 

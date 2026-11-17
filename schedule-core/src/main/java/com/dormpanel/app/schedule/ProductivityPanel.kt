@@ -30,16 +30,6 @@ val ProductivityRecord.title: String get() = when (this) {
     is ProductivityRecord.Memo -> title
 }
 
-fun ProductivityRecord.summary(content: SharedProductivity.Content): String = when (this) {
-    is ProductivityRecord.TodoList -> {
-        val tasks = content.tasks(id)
-        "${tasks.size} 项任务，${tasks.count { it.completed }} 项已完成\n" +
-            tasks.joinToString("\n") { (if (it.completed) "☑ " else "☐ ") + it.text }
-    }
-    is ProductivityRecord.Task -> (if (completed) "已完成" else "未完成") + "\n$text"
-    is ProductivityRecord.Memo -> body
-}
-
 fun Context.productivityMessage(title: String, text: String) =
     AlertDialog.Builder(this).setTitle(title).setMessage(text).setPositiveButton("关闭", null).show()
 

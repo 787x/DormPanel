@@ -78,8 +78,8 @@ internal class ProductivityCardBinding(
     private fun connect(version: ProductivityVersion, record: ProductivityRecord, content: SharedProductivity.Content,
         difference: String?) {
         val target = ProductivityTarget(version.datasetId, record.id)
-        show(AlertDialog.Builder(context).setTitle("连接「${record.title}」")
-            .setMessage(listOfNotNull(difference, record.summary(content)).joinToString("\n\n"))
+        show(AlertDialog.Builder(context).setTitle("连接已有共享内容")
+            .setMessage(listOfNotNull(difference, record.importPreview(content)).joinToString("\n\n"))
             .setPositiveButton("连接已有内容") { _, _ ->
                 pending(true)
                 AndroidProductivity.work(::saved) {
@@ -110,7 +110,7 @@ internal class ProductivityCardBinding(
                 val current = kind.records(view.content).firstOrNull { it.id == record.id }
                 val equal = current == record && (kind == ProductivityKind.MEMO ||
                     view.content.tasks(record.id) == content.tasks(record.id))
-                val summary = "本地导入预览 · ${record.title}\n${record.summary(content)}"
+                val summary = "本地导入预览\n${record.importPreview(content)}"
                 if (current != null && !equal) {
                     existing(record.id, "$summary\n\n共享端已有同身份的不同内容。下方是当前共享内容。")
                     return@read

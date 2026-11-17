@@ -23,6 +23,8 @@ import java.util.concurrent.TimeUnit
 class ProductivitySharedCardTest {
     private val instrument = InstrumentationRegistry.getInstrumentation()
     private val context: Context = instrument.targetContext
+    private val memoBody = "周五宿舍检查\n记得带钥匙\r\n" + "备用".repeat(1100) + "\n备忘末尾"
+    private val longTask = "多行任务\r\n" + "长".repeat(500) + "\n任务末尾"
 
     @Test fun importConnectAndReturnToLegacy() {
         val url = InstrumentationRegistry.getArguments().getString("pr88Url")
@@ -52,8 +54,9 @@ class ProductivitySharedCardTest {
                 }
                 vm.productivity.addTodo(ids[0], "检查 WebDAV 回执")
                 vm.productivity.addTodo(ids[0], "整理下周课表")
+                repeat(10) { vm.productivity.addTodo(ids[0], "$it $longTask") }
                 vm.productivity.addTodo(ids[1], "第二张卡片的本机内容")
-                vm.productivity.saveMemo(ids[2], "周五宿舍检查\n记得带钥匙")
+                vm.productivity.saveMemo(ids[2], memoBody)
                 vm.productivity.configureTimer(ids[3], 300_000)
             }
             fun card(index: Int) = onView(withTagValue(equalTo(ids[index] as Any)))
@@ -71,7 +74,14 @@ class ProductivitySharedCardTest {
             screenshot("x08e-source")
             onView(withText("导入这张卡片的本地内容")).perform(click())
             waitText("确认导入并绑定")
-            screenshot("x08e-import")
+            checkPreview("12 项任务，0 项已完成，12 项未完成", "另有 6 项任务未展示")
+            onView(withText("取消")).perform(click())
+            assertTrue(load(store).content.lists.isEmpty())
+            assertFalse("共享" in description(0))
+            card(0).perform(longClick())
+            onView(withText("导入这张卡片的本地内容")).perform(click())
+            waitText("确认导入并绑定")
+            screenshot("x08e-import-review")
             onView(withText("确认导入并绑定")).perform(click())
             waitFor { "共享" in description(0) }
             val view = load(store)
@@ -86,15 +96,18 @@ class ProductivitySharedCardTest {
             card(2).perform(longClick())
             onView(withText("导入这张卡片的本地内容")).perform(click())
             waitText("确认导入并绑定")
+            checkPreview("字符", "正文已省略")
             onView(withText("确认导入并绑定")).perform(click())
             waitFor { "共享" in description(2) }
             val updated = load(store)
+            assertEquals(memoBody, updated.content.memos.single().body)
+            assertEquals(List(10) { "$it $longTask" }, updated.content.tasks(list.id).drop(2).map { it.text })
             val task = updated.content.tasks(list.id).first { it.text == "检查 WebDAV 回执" }
             card(0).perform(click())
             onView(org.hamcrest.Matchers.allOf(withText("标为完成"), isDescendantOfA(withTagValue(equalTo(task.id as Any))))).perform(click())
             waitFor { load(store).content.tasks(list.id).first { it.id == task.id }.completed }
             instrument.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-            waitFor { "剩余 1 项" in description(0) && "剩余 1 项" in description(1) }
+            waitFor { "剩余 11 项" in description(0) && "剩余 11 项" in description(1) }
             screenshot("x08e-shared")
 
             card(1).perform(longClick())
@@ -103,11 +116,11 @@ class ProductivitySharedCardTest {
             scenario.onActivity { activity ->
                 val vm = ViewModelProvider(activity)[DashboardViewModel::class.java]
                 assertEquals(300_000L, vm.productivity.state(ids[3]).timer.duration)
-                assertEquals(2, vm.productivity.state(ids[0]).todos.size)
-                assertEquals("周五宿舍检查\n记得带钥匙", vm.productivity.state(ids[2]).memo)
+                assertEquals(12, vm.productivity.state(ids[0]).todos.size)
+                assertEquals(memoBody, vm.productivity.state(ids[2]).memo)
                 vm.stateHolder.delete(ids[1])
             }
-            assertEquals(2, load(store).content.tasks(list.id).size)
+            assertEquals(12, load(store).content.tasks(list.id).size)
             settle(store, account)
             assertFalse(load(store).pending)
         }
@@ -124,6 +137,17 @@ class ProductivitySharedCardTest {
         val phoneList = view.content.lists.single { it.name == "开学准备" }
         assertTrue(view.content.tasks(phoneList.id).single { it.text == "确认实验室开放时间" }.completed)
         assertEquals("离线修改\n原样保留", view.content.memos.single { it.title == "宿舍检查" }.body)
+    }
+
+    private fun checkPreview(vararg fragments: String) {
+        onView(withId(android.R.id.message)).check { view, missing ->
+            if (missing != null) throw missing
+            val text = (view as android.widget.TextView).text.toString()
+            assertTrue(text.length < 1_200)
+            fragments.forEach { assertTrue(text.contains(it)) }
+            assertFalse(text.contains("任务末尾"))
+            assertFalse(text.contains("备忘末尾"))
+        }
     }
 
     private fun load(store: RoomScheduleStore): ProductivityView {
