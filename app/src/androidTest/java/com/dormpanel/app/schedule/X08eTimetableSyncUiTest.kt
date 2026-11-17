@@ -14,6 +14,8 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.scrollTo
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.isEnabled
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.IsolatedDashboardRule
@@ -29,6 +31,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import okhttp3.mockwebserver.MockResponse
+import org.hamcrest.Matchers.not
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -44,12 +47,15 @@ class X08eTimetableSyncUiTest {
     private fun exerciseBackgroundJob(scenario: ActivityScenario<MainActivity>, fixture: V3UiFixture) {
         val scheduler = context.getSystemService(JobScheduler::class.java)
         var jobId = 8500
-        fun startJob() {
-            jobId++
+        fun startJob(reuseId: Boolean = false) {
+            if (!reuseId) jobId++
             val job = JobInfo.Builder(jobId, ComponentName(context, ScheduleSyncJobService::class.java))
                 .setOverrideDeadline(100).build()
             assertEquals(JobScheduler.RESULT_SUCCESS, scheduler.schedule(job))
         }
+        val events = mutableListOf<SharedSyncUpdate>()
+        val listener: (SharedSyncUpdate) -> Unit = { events += it }
+        scenario.onActivity { vm.sharedSchedule.addSyncListener(listener) }
         val normalFactory = ScheduleStores.overrideFactory
         val activeStore = requireNotNull(vm.schedule.syncStore)
         // Like the production process-owned Store, a Job borrows this isolated Store.
@@ -67,6 +73,8 @@ class X08eTimetableSyncUiTest {
                 null
             }
             try {
+                scenario.onActivity { SharedScheduleDialog.show(it, vm.schedule, vm.sharedSchedule, true) }
+                onView(withText("立即同步")).check(matches(isEnabled()))
                 startJob()
                 if (!requestEntered.await(15, TimeUnit.SECONDS)) scenario.onActivity {
                     error("后台请求未启动 · ${button().text} · ${vm.sharedSchedule.settings.lastResult} · ${scheduler.getPendingJob(jobId)}")
@@ -74,13 +82,20 @@ class X08eTimetableSyncUiTest {
                 scenario.onActivity {
                     assertEquals("同步中", button().text.toString())
                     assertFalse(button().isEnabled)
+                    val beforeClick = events.toList()
+                    assertFalse(vm.sharedSchedule.sync())
+                    assertEquals(beforeClick, events)
                 }
+                onView(withText("立即同步")).check(matches(not(isEnabled())))
             } finally {
                 fixture.interceptRequest = null
                 resume.countDown()
             }
             waitFor(scenario, "后台成功") { button().text == "成功" && !vm.sharedSchedule.syncing }
             waitFor(scenario, "系统已结束成功 Job") { scheduler.getPendingJob(jobId) == null }
+            waitFor(scenario, "快捷入口恢复可用") { button().isEnabled }
+            onView(withText("立即同步")).check(matches(isEnabled()))
+            onView(withText("关闭")).perform(click())
 
             fixture.interceptRequest = { MockResponse().setResponseCode(401) }
             startJob()
@@ -115,24 +130,42 @@ class X08eTimetableSyncUiTest {
             waitFor(scenario, "取消后回到空闲") { button().text == "同步" && !vm.sharedSchedule.syncing }
             assertEquals(before, fixture.requests.size)
 
-            val openingOlderJob = CountDownLatch(1)
-            val finishOlderJob = CountDownLatch(1)
-            ScheduleStores.overrideFactory = {
-                openingOlderJob.countDown()
-                check(finishOlderJob.await(15, TimeUnit.SECONDS))
-                error("隔离测试：较早启动的 Job 晚于手动同步失败")
+            val oldRequest = CountDownLatch(1)
+            val releaseOld = CountDownLatch(1)
+            ScheduleStores.overrideFactory = { borrowedStore }
+            fixture.interceptRequest = {
+                oldRequest.countDown()
+                check(releaseOld.await(15, TimeUnit.SECONDS))
+                null
             }
+            var oldRun = 0L
+            var newRun = 0L
             try {
                 startJob()
-                assertTrue(openingOlderJob.await(10, TimeUnit.SECONDS))
-                scenario.onActivity { assertTrue(vm.sharedSchedule.sync()) }
-                waitFor(scenario, "手动结束而旧 Job 仍运行") { !vm.sharedSchedule.busy && vm.sharedSchedule.syncing }
+                assertTrue(oldRequest.await(10, TimeUnit.SECONDS))
+                scenario.onActivity { oldRun = vm.sharedSchedule.latestSyncId }
+                scheduler.cancel(jobId)
+                scheduler.cancel(jobId)
+                waitFor(scenario, "已取消正在发送请求的 Job") { scheduler.getPendingJob(jobId) == null }
+                startJob(reuseId = true)
+                waitFor(scenario, "相同 jobId 的新实例") { vm.sharedSchedule.latestSyncId > oldRun }
+                scenario.onActivity {
+                    newRun = vm.sharedSchedule.latestSyncId
+                    assertEquals("同步中", button().text.toString())
+                }
             } finally {
-                finishOlderJob.countDown()
+                fixture.interceptRequest = null
+                releaseOld.countDown()
             }
-            waitFor(scenario, "旧 Job 结束后显示手动成功") { button().text == "成功" && !vm.sharedSchedule.syncing }
+            waitFor(scenario, "替代 Job 成功") { button().text == "成功" && !vm.sharedSchedule.syncing }
+            scenario.onActivity {
+                val completed = events.filterIsInstance<SharedSyncUpdate.Finished>()
+                assertEquals(listOf(SharedSyncUpdate.Finished(oldRun, null)), completed.filter { it.id == oldRun })
+                assertEquals(listOf(SharedSyncUpdate.Finished(newRun, SharedSyncResult.SUCCEEDED)), completed.filter { it.id == newRun })
+            }
         } finally {
             scheduler.cancel(jobId)
+            scenario.onActivity { vm.sharedSchedule.removeSyncListener(listener) }
             ScheduleStores.overrideFactory = normalFactory
             fixture.interceptRequest = null
         }
@@ -176,16 +209,23 @@ class X08eTimetableSyncUiTest {
                     }
                     val store = requireNotNull(vm.schedule.syncStore)
                     store.prepareV3(fixture.account.baseUrl)
-                    // Initialize the isolated fixture until its bounded discovery reaches an active binding.
-                    val setupResults = mutableListOf<String>()
+                    scenario.onActivity { vm.schedule.reload() }
+                    waitFor(scenario, "创建中的 v3 允许继续") { vm.sharedSchedule.presentation.transition && button().isEnabled }
+                    scenario.onActivity { SharedScheduleDialog.show(it, vm.schedule, vm.sharedSchedule, true) }
+                    onView(withText("继续处理未完成操作")).check(matches(isEnabled())).perform(scrollTo(), click())
+                    waitFor(scenario, "继续处理 v3 后退出忙碌") { !vm.sharedSchedule.syncing }
+                    onView(withText("关闭")).perform(click())
+                    // Bounded discovery can need multiple rounds before the binding becomes active.
                     repeat(8) {
-                        if (runCatching { store.v3EndpointFolder() }.isFailure) {
-                            setupResults += store.synchronizeV3(fixture.account)
+                        var transition = false
+                        scenario.onActivity { transition = vm.sharedSchedule.presentation.transition }
+                        if (transition) {
+                            waitFor(scenario) { button().isEnabled }
+                            scenario.onActivity { assertTrue(vm.sharedSchedule.sync()) }
+                            waitFor(scenario) { !vm.sharedSchedule.syncing && button().isEnabled }
                         }
                     }
-                    check(runCatching { store.v3EndpointFolder() }.isSuccess) { "隔离 v3 绑定未就绪 · $setupResults" }
-                    scenario.onActivity { vm.schedule.reload() }
-                    waitFor(scenario) { button().isEnabled }
+                    assertEquals(fixture.account.baseUrl, store.v3EndpointFolder())
 
                     for (locale in listOf(Locale.SIMPLIFIED_CHINESE, Locale.US)) {
                         for (layout in X08eScheduleLayout.entries) {

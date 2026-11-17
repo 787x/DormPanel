@@ -9,8 +9,14 @@ sealed interface SharedSyncUpdate {
     data class Finished(val id: Long, val result: SharedSyncResult?) : SharedSyncUpdate
 }
 
-internal fun v3SyncResult(code: String, pending: Boolean): SharedSyncResult = when (code) {
-    "OBSERVED", "PUBLISHED" -> if (pending) SharedSyncResult.CONTINUE else SharedSyncResult.SUCCEEDED
+internal fun v3SyncResult(code: String, facts: () -> SharedSchedulePresentation): SharedSyncResult = when (code) {
+    "OBSERVED", "PUBLISHED" -> facts().let {
+        when {
+            it.conflict || it.recovery -> SharedSyncResult.NEEDS_ACTION
+            !it.ready || it.mode != SharedMode.V3 || it.pending || it.confirming || it.receipting || it.transition -> SharedSyncResult.CONTINUE
+            else -> SharedSyncResult.SUCCEEDED
+        }
+    }
     "BUDGET", "DISCOVERING", "ROTATED", "PARTIAL", "EQUIVALENT_FRONTIERS" -> SharedSyncResult.CONTINUE
     "CONFLICT" -> SharedSyncResult.NEEDS_ACTION
     else -> SharedSyncResult.FAILED

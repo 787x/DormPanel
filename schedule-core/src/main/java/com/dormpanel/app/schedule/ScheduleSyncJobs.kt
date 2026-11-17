@@ -81,15 +81,16 @@ class ScheduleSyncJobService : JobService() {
             if (store is RoomScheduleStore && store.isV3()) {
                 val result = synchronized(SharedScheduleRunLock) {
                     if (invocation.stopped) return
+                    if (SharedAction.SYNC !in store.sharedPresentation(true).actions) return
                     val account = store.v3Account(WebDavSettings(this))
-                    checkScope = sharedCheckScope(account, store.v3EndpointFolder())
+                    checkScope = sharedCheckScope(account, store.v3SyncFolder())
+                    // A stop before this boundary skips the round. An admitted round can finish its receipts.
+                    if (invocation.stopped) return
                     store.synchronizeV3(account).also { code ->
-                        val pending = code in listOf("OBSERVED", "PUBLISHED") && store.sharedPresentation(true).let {
-                            it.pending || it.confirming || it.receipting || it.transition || it.recovery || it.conflict
-                        }
-                        outcome = v3SyncResult(code, pending)
+                        outcome = v3SyncResult(code) { store.sharedPresentation(true) }
                     }
                 }
+                if (invocation.stopped) return
                 retry = result in listOf("BUDGET", "DISCOVERING", "ROTATED") && settings.retryAllowed()
                 val verified = result in listOf("OBSERVED", "PUBLISHED")
                 settings.recordCheck(checkScope, result, verified)
@@ -101,7 +102,7 @@ class ScheduleSyncJobService : JobService() {
                     if (invocation.stopped) return
                     val local = store as ScheduleV2Store
                     if (local.v2DatasetPaused()) return@synchronized null
-                    if (store is RoomScheduleStore && !store.sharedPresentation(true).bound) return@synchronized null
+                    if (store is RoomScheduleStore && SharedAction.SYNC !in store.sharedPresentation(true).actions) return@synchronized null
                     val frame = local.v2Frame()
                     if (frame.baseline == null && frame.pending == null) null else {
                         val account = requireNotNull(WebDavSettings(this).account())
@@ -113,7 +114,9 @@ class ScheduleSyncJobService : JobService() {
                             override fun v2Apply(plan: ScheduleV2Plan) = SharedScheduleViews.changing { local.v2Apply(plan) }
                             override fun v2Receipt(bytes: ByteArray) = SharedScheduleViews.changing { local.v2Receipt(bytes) }
                         }
-                        AppendOnlyScheduleSync(visible, WebDavCommitStore(account, folder)).synchronize().also {
+                        val round = AppendOnlyScheduleSync(visible, WebDavCommitStore(account, folder))
+                        if (invocation.stopped) return
+                        round.synchronize().also {
                             val pending = it.checkState == "VERIFIED" && local.v2Frame().let { frame ->
                                 frame.pending != null || frame.unverifiable.isNotEmpty() ||
                                     frame.baseline?.let { baseline -> !ScheduleMerge.same(frame.local, baseline.state) } != false
@@ -122,6 +125,7 @@ class ScheduleSyncJobService : JobService() {
                         }
                     }
                 }
+                if (invocation.stopped) return
                 result?.let {
                     settings.recordCheck(checkScope, if (it.conflicts.isNotEmpty()) "CONFLICT" else it.checkState, it.checkState == "VERIFIED")
                     val needsRetry = it.waitingToPublish || it.checkState == "PARTIAL"
@@ -131,6 +135,7 @@ class ScheduleSyncJobService : JobService() {
                 }
             }
         } catch (error: Exception) {
+            if (invocation.stopped) return
             outcome = error.syncFailureResult()
             // Diagnostic storage can fail too. The scheduler and UI still need completion.
             runCatching {

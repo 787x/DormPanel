@@ -109,6 +109,8 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
         return journal.meta.localOperation { listOf("endpointJob","endpointReceipt","endpointRetired").flatMap { journal.meta.page(it,0,128) }.maxByOrNull { it.value.optLong("createdAt") }?.key?.let(::endpointJob) }
     }
     fun endpointFolder():String = binding().let { check(it.optString("phase")=="ACTIVE") { "活动绑定尚未完成" };it.getString("folder").also { value -> check(value.isNotBlank());WebDavClient().url(value) } }
+    // An unfinished binding resumes against its own saved target.
+    fun syncFolder(): String = binding().getString("folder").also { check(it.isNotBlank()); WebDavClient().url(it) }
     fun endpointStart(account:WebDavAccount,folder:String,sealed:String):JSONObject = synchronized(journal.networkGate) {
         endpointProtection();reapEndpoints();val budget=V3Budget();val remote=V3WebDavStore(account,folder,budget)
         val token=UUID.randomUUID().toString()

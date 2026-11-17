@@ -486,6 +486,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         if(!ActiveScheduleV3.active(database))null else {requireV3EndpointAllowed();v3().endpointLatest()?.let(::endpointSummary)}
     }
     fun v3EndpointFolder():String = workerCall { requireV3EndpointAllowed();v3().endpointFolder() }
+    internal fun v3SyncFolder(): String = workerCall { requireV3EndpointAllowed(); v3().syncFolder() }
     internal fun synchronizeV3(remote: V3ObjectStore, publication: V3PublicationStore, budget: V3Budget, source: CommitStore? = null): String {
         val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
         val proof = if(runtime.binding().has("migrationId")) ScheduleV3MigrationPreview.restore(runtime.migrationEvidence()) else null
