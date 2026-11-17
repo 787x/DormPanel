@@ -29,5 +29,5 @@
 ## 验收依据
 
 - Phone 复用 PR76 的通知调度、有效期及 Android 9 仪器验证，以及 PR77 的 89 项 JVM 测试和 MIX 2S / API 33 隔离包会话验证。Android 16 实际提升和 HyperOS 展示仍未实测。[PR76](https://github.com/787x/DormPanel/pull/76) · [PR77](https://github.com/787x/DormPanel/pull/77)
-- 天气复用 Repository、独立卡片、天气中心和统一扫码的定向 JVM 与 X08E 隔离包验证，涵盖缓存、来源切换、预报交互、软键盘、Keystore、JWT 和扫码门户。记录中的天气中心月相可见性断言在基线可复现。真实和风账号、生产 HA 和真实手机同网扫码未纳入通过范围。[PR78](https://github.com/787x/DormPanel/pull/78) · [PR79](https://github.com/787x/DormPanel/pull/79) · [PR80](https://github.com/787x/DormPanel/pull/80) · [PR81](https://github.com/787x/DormPanel/pull/81)
-- X08E 复用 Android 9、1280×800 的控制中心触控与手势、两种天气卡片的尺寸和布局验证，以及课表同步 9 项 JVM 和 6 项隔离实机用例。课表使用 MockWebServer 与预置绑定验证，真实 WebDAV 和多设备接收未纳入通过范围。[PR82](verification/pr82-control-center.md) · [PR83](verification/pr83-x08e-weather.md) · [PR84](verification/pr84-x08e-weather.md) · [PR85](https://github.com/787x/DormPanel/pull/85)
+- 天气复用 Repository、独立卡片、天气中心和统一扫码的定向 JVM 与 X08E 隔离包验证，涵盖缓存、来源切换、预报交互、软键盘、Keystore、JWT 和扫码门户。记录中的天气中心月相可见性断言在基线可复现。[PR78](https://github.com/787x/DormPanel/pull/78) · [PR79](https://github.com/787x/DormPanel/pull/79) · [PR80](https://github.com/787x/DormPanel/pull/80) · [PR81](https://github.com/787x/DormPanel/pull/81)
+- X08E 复用 Android 9、1280×800 的控制中心触控与手势、两种天气卡片的尺寸和布局验证，以及课表同步 9 项 JVM 和 6 项隔离实机用例。[PR82](verification/pr82-control-center.md) · [PR83](verification/pr83-x08e-weather.md) · [PR84](verification/pr84-x08e-weather.md) · [PR85](https://github.com/787x/DormPanel/pull/85)
