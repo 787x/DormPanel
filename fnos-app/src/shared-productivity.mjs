@@ -36,11 +36,11 @@ export function encodeProductivity(value) {
     case MEMO: payload = Buffer.concat([field(value.title, 256), field(value.body, 32768, false)]); break;
     default: throw new Error('未知共享效率类型');
   }
-  return { typeId, recordId: identity(id), schemaVersion: 1, required: false, dependencies: [], payload };
+  return { typeId, recordId: identity(id), schemaVersion: 1, required: typeId !== MEMO, dependencies: typeId === TASK ? [LIST] : [], payload };
 }
 export const supportedProductivity = r => r.schemaVersion === 1 && Object.hasOwn(limits, r.typeId);
 export function decodeProductivity(record) {
-  check(supportedProductivity(record) && record.required === false && record.dependencies.length === 0);
+  check(supportedProductivity(record));
   const { typeId, recordId: id, payload } = record;
   let position = 0;
   const take = size => {
@@ -67,7 +67,10 @@ export function decodeProductivity(record) {
     }
     case MEMO: value = { typeId, id, title: read(256), body: read(32768) }; break;
   }
-  check(position === payload.length && encodeProductivity(value).payload.equals(payload), '共享效率记录编码不规范');
+  const canonical = encodeProductivity(value);
+  check(position === payload.length && canonical.payload.equals(payload) && canonical.required === record.required &&
+    canonical.dependencies.length === record.dependencies.length &&
+    canonical.dependencies.every((type, index) => type === record.dependencies[index]), '共享效率记录编码不规范');
   return value;
 }
 export const productivityAdapters = Object.entries(limits).map(([typeId, [maxRecords, maxPayload]]) => ({

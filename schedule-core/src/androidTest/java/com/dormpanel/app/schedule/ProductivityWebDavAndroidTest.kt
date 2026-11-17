@@ -125,6 +125,82 @@ class ProductivityWebDavAndroidTest {
         } finally { store.close() }
     }
 
+    @Test fun syncPresentationUpdatesAcrossMemoConflictWithoutReloadingCourses() {
+        val url = InstrumentationRegistry.getArguments().getString("productivityStatusUrl")
+        assumeTrue("requires isolated WebDAV test endpoint", url != null)
+        require(Regex("^http://127[.]0[.]0[.]1:[0-9]+/pr87-isolated-[0-9a-f-]{36}/$").matches(url!!))
+        val namespace = "pr87-status-${java.util.UUID.randomUUID()}"
+        SharedScheduleSettings.overrideNamespace = namespace
+        WebDavSettings.overrideNamespace = namespace
+        TermScheduleProfileStore.overrideNamespace = namespace
+        val profiles = TermScheduleProfileStore(context)
+        fun open(suffix: String) = RoomScheduleStore(
+            Room.databaseBuilder(context, ScheduleDatabase::class.java, "$namespace-$suffix.db").build(), profiles = profiles)
+        val store = open("left")
+        val peer = open("right")
+        var controller: SharedScheduleController? = null
+        var source: ScheduleSource? = null
+        val statusEvents = LinkedBlockingQueue<SharedSchedulePresentation>()
+        val fullRefreshes = AtomicInteger()
+        val account = WebDavAccount(url, "fixture", "fixture")
+        fun settle(writer: RoomScheduleStore) {
+            repeat(4) { if (writer.synchronizeV3(account) == "OBSERVED") return }
+            error("WebDAV did not settle")
+        }
+        fun waitForStatus(match: (SharedSchedulePresentation) -> Boolean): SharedSchedulePresentation {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            while (System.nanoTime() < deadline) {
+                val state = statusEvents.poll(100, TimeUnit.MILLISECONDS) ?: continue
+                if (match(state)) return state
+            }
+            error("同步状态未更新")
+        }
+        fun reload() = instrument.runOnMainSync { requireNotNull(source).reload() }
+        fun edit(writer: RoomScheduleStore, edit: ProductivityEdit) =
+            await<Unit> { writer.editProductivity(readVersion(writer), edit, it) }.getOrThrow()
+
+        try {
+            store.prepareV3(url, sharedFormat = true)
+            settle(store)
+            edit(store, ProductivityEdit.Create(memo))
+            settle(store)
+            val descriptor = V3WebDavStore(account, url, V3Budget(), sharedFormat = true)
+                .read(store.v3Control()!!.getJSONObject("binding").getString("descriptorPath"))
+            peer.prepareV3(url, requireNotNull(descriptor))
+            settle(peer)
+            instrument.runOnMainSync {
+                val model = ScheduleSource(store)
+                source = model
+                controller = SharedScheduleController(context, model).also { sync ->
+                    sync.addSyncListener { statusEvents.offer(sync.presentation) }
+                }
+            }
+            val initial = waitForStatus { it.mode == SharedMode.V3 && !it.pending }
+            instrument.runOnMainSync { requireNotNull(source).subscribe { fullRefreshes.incrementAndGet() } }
+            edit(store, ProductivityEdit.EditMemo(memo.id, "左边"))
+            reload()
+            waitForStatus { it.pending && !it.conflict }
+            edit(peer, ProductivityEdit.EditMemo(memo.id, "右边"))
+            settle(peer)
+            assertEquals("CONFLICT", store.synchronizeV3(account))
+            reload()
+            waitForStatus { it.conflict }
+            val token = store.v3Control()!!.getJSONObject("conflict").getString("id")
+            store.resolveV3(token, ScheduleMerge.Choice.LOCAL)
+            settle(store)
+            reload()
+            waitForStatus { !it.conflict && !it.pending && initial.revision != it.revision }
+            assertEquals(0, fullRefreshes.get())
+        } finally {
+            instrument.runOnMainSync { controller?.close(); source?.close() }
+            store.close()
+            peer.close()
+            SharedScheduleSettings.overrideNamespace = null
+            WebDavSettings.overrideNamespace = null
+            TermScheduleProfileStore.overrideNamespace = null
+        }
+    }
+
     private fun readVersion(store: RoomScheduleStore) = requireNotNull(await(store::loadProductivity).getOrThrow().version)
     private fun result(phase: String, value: JSONObject) = File(context.filesDir, "pr87-$phase.json").writeText(value.toString())
 }

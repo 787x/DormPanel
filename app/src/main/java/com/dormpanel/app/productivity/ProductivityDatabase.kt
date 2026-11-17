@@ -6,6 +6,9 @@ import android.os.Looper
 import android.os.SystemClock
 import androidx.room.*
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 @Entity(tableName = "owners")
 data class ProductivityEntity(@PrimaryKey val owner: String, val memo: String, val duration: Long,
@@ -25,8 +28,12 @@ abstract class ProductivityDatabase : RoomDatabase() { abstract fun dao(): Produ
 
 object ProductivityStores {
     @Volatile var overrideFactory: ((Context) -> ProductivityStore)? = null
+    // All production stores and imports use the same admission order, including across Activity recreation.
+    internal val legacyQueue = ThreadPoolExecutor(1, 1, 30, TimeUnit.SECONDS, LinkedBlockingQueue()).apply {
+        allowCoreThreadTimeOut(true)
+    }
     fun create(context: Context): ProductivityStore = overrideFactory?.invoke(context) ?: RoomProductivityStore(
-        Room.databaseBuilder(context.applicationContext, ProductivityDatabase::class.java, "productivity.db").build())
+        Room.databaseBuilder(context.applicationContext, ProductivityDatabase::class.java, "productivity.db").build(), legacyQueue, ownsExecutor = false)
 }
 object AndroidProductivityClock : ProductivityClock {
     override fun wallMillis() = System.currentTimeMillis()
@@ -36,7 +43,7 @@ object AndroidProductivityClock : ProductivityClock {
  * Posted callbacks recheck closed, so they cannot resurrect a disposed source. */
 class RoomProductivityStore(private val database: ProductivityDatabase,
     private val executor: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor(),
-    private val closeDatabase: Boolean = true) : ProductivityStore {
+    private val closeDatabase: Boolean = true, private val ownsExecutor: Boolean = true) : ProductivityStore {
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var closed = false
     @Synchronized private fun <T> submit(callback: (Result<T>) -> Unit, operation: () -> T) {
@@ -67,6 +74,6 @@ class RoomProductivityStore(private val database: ProductivityDatabase,
         if (closed) return
         closed = true
         executor.execute { if (closeDatabase) database.close() }
-        executor.shutdown()
+        if (ownsExecutor) executor.shutdown()
     }
 }

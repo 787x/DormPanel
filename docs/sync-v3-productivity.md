@@ -1,16 +1,16 @@
 # Sync v3 Todo 与备忘
 
-共享 Todo 和备忘以 DPV3/4 的正式 Writer 为权威来源。X08E、Phone 和 fnOS 使用同一组可选记录，随完整业务状态参与业务哈希、不可变对象、Checkpoint、缓存、回执与应用备份。外层对象和通用记录格式沿用 [DPV3/4、DPXS/1、DPXR/1](sync-v3-shared-state.md)。
+共享 Todo 和备忘以 DPV3/4 的正式 Writer 为权威来源。X08E、Phone 和 fnOS 使用同一组共享记录，随完整业务状态参与业务哈希、不可变对象、Checkpoint、缓存、回执与应用备份。外层对象和通用记录格式沿用 [DPV3/4、DPXS/1、DPXR/1](sync-v3-shared-state.md)。
 
 ## 类型规范
 
-三种类型均为 schemaVersion 1、required=false、dependencies=[]。业务身份为 `(typeId, recordId)`。recordId 是小写、带连字符的 36 字节 UUID 字符串，禁止全零。新建操作在提交前分配 UUID，整次重试保留原 ID。
+三种类型均为 schemaVersion 1，能力声明如下。业务身份为 `(typeId, recordId)`。recordId 是小写、带连字符的 36 字节 UUID 字符串，禁止全零。新建操作在提交前分配 UUID，整次重试保留原 ID。
 
-| typeId | payload 字段顺序 | 单集合上限 | payload 上限 |
-| --- | --- | ---: | ---: |
-| `todo.list` | 名称 | 128 清单 | 260 B |
-| `todo.task` | 清单 UUID ASCII 36 B、顺序 I32、完成标志 U8、正文 | 2048 任务 | 4141 B |
-| `memo.text` | 标题、正文 | 256 备忘 | 33032 B |
+| typeId | required | dependencies | payload 字段顺序 | 单集合上限 | payload 上限 |
+| --- | --- | --- | --- | ---: | ---: |
+| `todo.list` | true | `[]` | 名称 | 128 清单 | 260 B |
+| `todo.task` | true | `["todo.list"]` | 清单 UUID ASCII 36 B、顺序 I32、完成标志 U8、正文 | 2048 任务 | 4141 B |
+| `memo.text` | false | `[]` | 标题、正文 | 256 备忘 | 33032 B |
 
 - 文本字段为大端 I32 字节数及严格 UTF-8。名称和标题最多 256 B，任务正文最多 4096 B，备忘正文最多 32768 B。名称、标题及任务正文至少包含一个 ASCII 空白集合（U+0009–000D、U+0020）之外的字符。备忘可用空正文。所有字段禁止 NUL 及未配对代理项，保留 CR、LF、BOM、前后空白及 Unicode 原始形式。
 - 任务顺序为 0 至 2147483647。每个清单按顺序值及任务 ID 升序排列，允许两个设备并发分配相同顺序值。清单和备忘按 ID 返回。完成标志只能为 0 或 1。
@@ -21,28 +21,34 @@
 
 同一清单下的不同任务和不同备忘各为独立记录。相同修改合并。对同记录的不同修改或删除与修改保留三方内容。任务通过 Registry 声明所属清单为关联键。清单变化与并发子任务变化走关联决策，避免产生孤儿；清单改名与另一端子任务编辑也可能要求人工选择。
 
-新版 Writer 接纳远端对象时对任务引用和预算做验证。旧 DPV3/4 Writer 可在编辑课程时透传规范的未知可选记录。旧 Writer 缺少清单关联语义，若它对分岔的清单删除和任务新增自行合并并发布无效组合，新版会拒绝接纳并保留本地数据及同步证据；混合版本同时处理此类分岔存在停止同步的风险。DPV3/3 和 v2 的共享效率写入口拒绝写入。
+符合 DPV3/4 规范且缺少 Todo 适配器的旧 Writer 仍可读取数据集、访问原有课表和原样保留未知记录。含 Todo 必需能力时，旧 Writer 的 Registry 会拒绝本地业务写入，发布检查也会拒绝任何仍含 Todo 的旧 Registry 合并候选，包括含孤儿任务的候选。继续编辑含 Todo 的数据集需要升级 Writer。数据集只有备忘等独立可选记录时，旧 Writer 可以继续编辑课表并透传原字节。DPV3/3 和 v2 的共享效率写入口拒绝写入。
+
+PR87 审查草稿 `a6b8cb3` 的可选 Todo 字节仅用于早期隔离测试。schema 1 使用本页唯一的能力声明，修复版拒绝早期可选 Todo 字节。早期测试目录和本地绑定可以保留用于核对，重新验收需创建全新的隔离 DPV3/4 目标并重新生成测试数据。已写入的不可变对象保持原样。
 
 冲突视图返回现有冲突 token、版本以及带类型和业务 ID 的 base/local/remote 记录。删除侧用 null，双方文本包含原始换行。UI 可直接比较字段，备忘可做逐行差异显示。选择仍交正式版本化冲突入口 `resolveV3` / `activeV3.resolve`。
 
 ## PR88/89 接口
 
 - Android 从宿主取得当前 `RoomScheduleStore`。用 `loadProductivity` 读取清单、任务、备忘、版本、写保护原因及冲突。向 `editProductivity(version, edit, callback)` 提交 `ProductivityEdit`，包括明确的 `SetTaskCompleted(id, completed)`。新建任务提供所属清单、位置以及目标完成状态。版本包含 datasetId、本地 revision 和当前完整业务哈希。回调成功表示本机事务已保存。视图的 `pending` 反映整个数据集与正式基线的差异。
-- Android 观察者在主线程调用 `observeProductivity` 并在生命周期结束时关闭句柄。订阅按 Writer 事件重读，包含远端应用和冲突决定。仅效率记录变化时保留课表投影，提交仍通过既有同步 Job 发布。
+- Android 观察者在主线程调用 `observeProductivity` 并在生命周期结束时关闭句柄。订阅按 Writer 事件重读，包含远端应用和冲突决定。仅效率记录变化时保留课表投影。共享控制器通过独立的 reload 通知重读 pending、revision、冲突和写保护快照，呈现变化才通知状态 UI。该通知沿用现有同步调度，提交仍由既有 Job 发布。
 - fnOS 调用已通过管理权限和 Workspace 准入检查的 `workspace.productivity()` 读取视图。把视图的 `{ datasetId, revision }` 交给 `workspace.saveProductivity(edit, version, validateContext)`。宿主提供同步事务内的上下文校验以复核当前工作区、访问权限或保存范围。操作名为 `create`、`renameList`、`deleteList`、`editTask`、`setTaskCompleted`、`deleteTask`、`renameMemo`、`editMemo`、`deleteMemo`。`create` 的 `value` 含 `typeId`、`id` 和上述领域字段。任务通过 `listId` 过滤。修改后可用活动 Workspace 的既有同步能力单独发布。
 - 读取或编辑移到当前 datasetId 时，应重新取版本和内容。编辑中的网络错误与本地保存结果分别呈现。遇到本地提交不确定，重开 Writer 后以同一身份重读；遇到上传回读不确定，沿用已持久化候选和正式恢复流程。
 
 ## X08E 旧数据导入
 
-用 `LegacyProductivityImport.scan(context)` 在工作线程只读扫描旧库。每个 owner 按 Todo 与 Memo 各生成可选预览项。Todo 保持旧 `position, id` 顺序和完成状态，Memo 保持原文本。Timer 专属 owner 可以被扫描，但其计时字段与空内容没有共享记录。超出单项限制的预览项返回错误，不载入超大的正文。扫描期间若其他连接提交，则要求重新扫描。
+用 `LegacyProductivityImport.scan(context, callback)` 在旧 Store 的串行队列上只读扫描旧库。每个 owner 按 Todo 与 Memo 各生成可选预览项。Todo 保持旧 `position, id` 顺序和完成状态，Memo 保持原文本。Timer 专属 owner 可以被扫描，但其计时字段与空内容没有共享记录。超出单项限制的预览项返回错误，不载入超大的正文。扫描期间若其他连接提交，则要求重新扫描。
 
-`preview(owners)` 是纯转换，调用者可传名称。导入身份由版本化命名空间、旧 owner ID、类型和旧任务 ID 稳定导出，名称、内容、时钟与 Writer 无关。对相同来源及内容再次预检使用相同记录；如共享端已有同身份的不同内容，导入报冲突并保留双方。
+`preview(scan)` 是纯转换，调用者可传名称。导入身份由版本化命名空间、旧 owner ID、类型和旧任务 ID 稳定导出，名称、内容、时钟与 Writer 无关。对相同来源及内容再次预检使用相同记录；如共享端已有同身份的不同内容，导入报冲突并保留双方。
 
-`check(store, version, preview, selected, callback)` 预检所选集合、全量 RAW 预算和版本，返回可确认的精确候选。取消时丢弃候选。集合超限时可减少选择后重新预检。确认只接受已预检的快照，并在正式 Writer 事务内复核版本与内容。重复确认过期候选会失败；重新预检同一批相同内容没有重复记录。导入成功后旧库与卡片绑定依然可读，后续 UI 决定如何展示。
+候选关联原始数据库路径和所选 owner／类型的 SHA-256 内容指纹。Todo 指纹包含 owner 是否存在、任务 ID、正文、完成状态及原始 position；Memo 指纹包含完整正文。未选中的 owner 或同 owner 的另一类内容在预览后变化时可独立保留。
+
+`check(store, version, preview, selected, callback)` 预检所选内容、全量 RAW 预算、目标版本及源指纹。取消时丢弃候选。确认期间，应用内旧 Store 的串行队列先完成已入队的写入，再等待共享事务结束；共享事务实际保存前复核目标版本与源指纹。源内容变化或 owner 被删除时要求重新扫描。重复确认过期候选会失败。重新预检同一批相同内容后确认，记录身份保持稳定。
+
+旧库与共享库仍是独立数据库。外部 SQLite 连接可以在最后一次只读核验后提交。导入确认只代表候选已提交到共享库。PR88 若增加绑定切换，须在切换前调用 `validateSource(checked, callback)`，复核当时共享目标仍含确认记录，并协调应用内旧写入准入。发现来源变化时保留旧绑定，重新扫描并让用户检查差异。
 
 ## PR87 定向验证记录
 
-验证日期 2026-11-17，基线 `011224c`。
+初版验证日期 2026-11-17，基线 `011224c`。下表记录审查修复前的草稿验证。
 
 | 检查 | 实测结果 |
 | --- | --- |
@@ -54,3 +60,11 @@
 WebDAV 往返使用隔离的 WsgiDAV 目录、合成凭据、API 28 testbed 和独立 Node Workspace。Android 测试使用 `ProductivityWebDavAndroidTest` 的 `seed`、`receive` 阶段，中间运行 `fnos-app/scripts/verify-productivity-webdav.mjs` 并传入 seed JSON。fnOS 实机验证范围为隔离 Workspace 的本地事务和恢复。日用应用数据、绑定和正式 fnOS 工作区均未纳入验证，未进行正式 UI 或 FPK 安装验收。
 
 额外选入的 `publishes1024AndRotatesWithoutGlobalCommitLimit` 在第 32 次发布后的检查失败，快照缓存读取期望 0、实测 1。在 `main` 的独立检出仅运行原用例至第 32 次发布，复现相同断言。本 PR 的定向验收不包含历史增长全量测试。
+
+## PR87 审查修复验证
+
+- Kotlin 定向测试 20 项、Node 定向测试 22 项通过。两端旧 Registry 实际读取含 Todo 的数据集并拒绝本地课表编辑，清单删除及任务新增的分岔没有产生新的 PUT。新版保存关联冲突。仅含独立备忘的旧 Writer 仍可发布课表编辑。
+- API 28 模拟器的旧库导入与持久化 3 项通过。覆盖预览后的新增、修改、完成、删除、排序值改变、备忘正文变更、owner 删除、排队写入、未选内容变化、目标版本过期及绑定前重新核验。X08E testbed APK 构建与 Phone Debug Kotlin 编译通过。
+- 使用新的隔离 DPV3/4 目录完成 Android Room 与主机 Node 的真实 WebDAV 往返。两端业务哈希均为 `977a1c8a46aea033eeaa3f26e11bbe0eba04455607fea40cc3579de9053bcfa7`。两阶段测试包含回读中断后重开、任务和备忘跨端更新及效率订阅。
+- 独立的 API 28 控制器测试通过。真实 WebDAV 上的两台隔离 Writer 编辑同一备忘，状态订阅收到待发布、冲突及解决后回执，课表完整刷新计数为 0。
+- 审查修复使用主机 Node 和 API 28 模拟器。实体 X08E、Phone 及 fnOS 实机 FPK 未重测。历史增长用例保留初版的基线记录。

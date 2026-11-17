@@ -24,7 +24,7 @@ class SharedProductivityTest {
         val registry = SharedTypes.registry()
         assertEquals(memo, SharedProductivity.project(records).memos.first())
         for (bad in listOf(records + records.first(), records.drop(1),
-            records.map { if (it.typeId == SharedProductivity.TASK) it.copy(required = true) else it },
+            records.map { if (it.typeId == SharedProductivity.TASK) it.copy(required = false) else it },
             records.map { if (it.typeId == SharedProductivity.MEMO) it.copy(payload = it.payload + 0.toByte()) else it })) {
             assertTrue(runCatching { registry.validate(bad) }.isFailure)
         }
@@ -34,7 +34,12 @@ class SharedProductivityTest {
         val many = List(33) { index -> SharedProductivity.encode(memo.copy(id = java.util.UUID(0, index.toLong() + 1).toString(), body = "a".repeat(32768))) }
         assertTrue(runCatching { registry.validate(many) }.isFailure)
         val old = SharedTypeRegistry(listOf(SharedCourseColor, SharedCourseSchedule))
-        old.writable(records)
+        old.validate(records)
+        assertThrows(IllegalArgumentException::class.java) { old.writable(records) }
+        old.writable(records.filter { it.typeId == SharedProductivity.MEMO })
+        assertThrows(IllegalArgumentException::class.java) {
+            registry.validate(records.map { if (it.typeId == SharedProductivity.TASK) it.copy(dependencies = emptyList()) else it })
+        }
         val a = base.copy(entries = listOf(TimetableEntry("x", "旧客户端新课程", 1, 480, 540)))
         assertEquals(records.toSet(), ScheduleMerge.merge(base, a, base, sharedRegistry = old).state.sharedRecords!!.toSet())
         assertTrue(runCatching { ScheduleState().editProductivity(ProductivityEdit.DeleteMemo(memo.id)) }.isFailure)

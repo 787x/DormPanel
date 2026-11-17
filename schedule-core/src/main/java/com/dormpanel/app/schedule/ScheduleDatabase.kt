@@ -290,7 +290,9 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
                 pending = state?.sync?.pending == true, confirming = v3AwaitingReadback(c.optJSONObject("pending")?.optString("phase")),
                 receipting = c.optJSONObject("pending")?.optString("phase") == "READBACK_CONFIRMED", conflict = c.has("conflict"),
                 recovery = mode == "RECOVERY_REQUIRED", transition = mode in listOf("MIGRATING", "CREATING", "JOINING"),
-                migrated = runCatching { v3().binding().has("migrationId") }.getOrDefault(false), bindingId = c.optJSONObject("binding")?.optString("datasetId"))
+                migrated = runCatching { v3().binding().has("migrationId") }.getOrDefault(false),
+                bindingId = c.optJSONObject("binding")?.optString("datasetId"), revision = state?.sync?.revision,
+                writeBlocked = mode in setOf("RECOVERY_REQUIRED", "MIGRATING", "JOINING") || dao.hasSyncRecord(200) || dao.hasSyncRecord(203))
         } else {
             val v2 = dao.hasSyncRecord(21) || dao.hasSyncRecord(23)
             val v1 = dao.hasSyncRecord(1) || dao.hasSyncRecord(4)
@@ -974,23 +976,32 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     }
 
     fun previewProductivityImport(expected: ProductivityVersion, additions: List<SharedRecord>,
-        callback: (Result<Unit>) -> Unit) = submit(callback) {
+        validateSource: () -> Unit) = workerCall {
         check(ActiveScheduleV3.active(database))
         val frame = v3().journal.snapshot()
         val state = productivityFrameState(frame, "local")
         requireProductivityVersion(expected, state, frame)
         SharedProductivity.importRecords(state, additions)
-        Unit
+        validateSource()
     }
 
-    fun importProductivity(expected: ProductivityVersion, additions: List<SharedRecord>, callback: (Result<Unit>) -> Unit) =
-        saveProductivity(expected, callback) { SharedProductivity.importRecords(it, additions) }
+    /** Worker-only. The caller may serialize the legacy Writer until this transaction finishes. */
+    fun importProductivity(expected: ProductivityVersion, additions: List<SharedRecord>, validateSource: () -> Unit) =
+        workerCall {
+            commitProductivity(expected) {
+                val candidate = SharedProductivity.importRecords(it, additions)
+                validateSource()
+                candidate
+            }
+        }
 
     fun editProductivity(expected: ProductivityVersion, edit: ProductivityEdit, callback: (Result<Unit>) -> Unit) =
         saveProductivity(expected, callback) { it.editProductivity(edit) }
 
     private fun saveProductivity(expected: ProductivityVersion, callback: (Result<Unit>) -> Unit,
-        edit: (ScheduleState) -> ScheduleState) = submit(callback) {
+        edit: (ScheduleState) -> ScheduleState) = submit(callback) { commitProductivity(expected, edit) }
+
+    private fun commitProductivity(expected: ProductivityVersion, edit: (ScheduleState) -> ScheduleState) {
         check(ActiveScheduleV3.active(database)) { "共享效率数据需要 DPV3/4" }
         try {
             sharedResult {
@@ -999,7 +1010,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
                     edit(before)
                 }
             }
-            runCatching { onProductivityCommitted?.invoke() }; Unit
+            runCatching { onProductivityCommitted?.invoke() }
         } finally { signalProductivity() }
     }
 

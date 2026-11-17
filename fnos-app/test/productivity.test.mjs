@@ -29,7 +29,7 @@ test('productivity canonical records, RAW, data hash and strict budgets match Ko
   assert.equal(businessHash(base), vector.businessHash);
   assert.deepEqual(view(base).memos, [memo, emptyMemo]);
   const registry = new Registry(sharedTypes);
-  for (const bad of [[...rows, rows[0]], rows.slice(1), rows.map(r => r.typeId === TASK ? { ...r, required: true } : r),
+  for (const bad of [[...rows, rows[0]], rows.slice(1), rows.map(r => r.typeId === TASK ? { ...r, required: false } : r),
     rows.map(r => r.typeId === MEMO ? { ...r, payload: Buffer.concat([r.payload, Buffer.of(0)]) } : r)]) {
     assert.throws(() => registry.validate(bad));
   }
@@ -39,7 +39,11 @@ test('productivity canonical records, RAW, data hash and strict budgets match Ko
   assert.throws(() => registry.validate(Array.from({ length: 129 }, () =>
     encodeProductivity({ ...list, id: randomUUID() }))));
   const oldAdapters = sharedTypes.filter(a => a.typeId.startsWith('course.'));
-  new Registry(oldAdapters).writable(rows);
+  const oldRegistry = new Registry(oldAdapters);
+  oldRegistry.validate(rows);
+  assert.throws(() => oldRegistry.writable(rows), /Unsupported required capability/);
+  oldRegistry.writable(rows.filter(r => r.typeId === MEMO));
+  assert.throws(() => registry.validate(rows.map(r => r.typeId === TASK ? { ...r, dependencies: [] } : r)));
   const oldEdit = { ...base, entries: [{id: 'x', title: '旧客户端新课程', day: 1, startMinute: 480, endMinute: 540, location: ''}] };
   assert.deepEqual(merge(base, oldEdit, base, null, new Set(), oldAdapters).state.sharedRecords, base.sharedRecords);
 });

@@ -37,6 +37,54 @@ class SyncV3EngineTest {
         a.settle(); assertEquals("CONFLICT", b.settle(1)); val conflict = b.journal.snapshot().getJSONObject("conflict")
         b.engine.resolve(conflict.getString("id"), ScheduleMerge.Choice.LOCAL); b.settle(); a.settle(); assertEquals("right", a.engine.local().entries.single { it.id == "a" }.title)
     }
+    @Test fun legacyWriterReadsRequiredTodoButCannotPublishOrphanAndCanWriteWithOnlyMemo() {
+        val remote = Remote()
+        val owner = client(remote, registry = SharedTypes.registry())
+        val memo = ProductivityRecord.Memo(id(), "备忘", "透明保留\n")
+        val memoRecord = SharedProductivity.encode(memo)
+        val binding = owner.engine.initialize(remote, ScheduleState(sharedRecords = listOf(memoRecord)))
+        owner.settle()
+        val old = client(remote, binding)
+        try {
+            old.settle()
+            old.engine.edit(old.engine.local().copy(entries = listOf(entry("legacy"))))
+            assertEquals("PUBLISHED", old.settle(1))
+            owner.settle()
+            assertEquals(listOf(memoRecord), owner.engine.local().sharedRecords)
+            val list = ProductivityRecord.TodoList(id(), "清单")
+            val task = ProductivityRecord.Task(id(), list.id, "原任务", false, 0)
+            owner.engine.edit { it.editProductivity(ProductivityEdit.Create(list)).editProductivity(ProductivityEdit.Create(task)) }
+            owner.settle()
+            old.settle()
+            val accepted = owner.engine.local()
+            assertEquals(accepted.sharedRecords, old.engine.local().sharedRecords)
+            val edit = assertThrows(IllegalArgumentException::class.java) {
+                old.engine.edit(old.engine.local().copy(entries = listOf(entry("unwritable"))))
+            }
+            assertTrue(edit.message.orEmpty().contains("Unsupported required capability"))
+
+            val parentBytes = remote.objects.getValue(owner.journal.controlSummary().getString("baselinePath"))
+            val parent = SyncV3Codec.decode(parentBytes)
+            fun publishBranch(state: ScheduleState) {
+                val branch = parent.copy(type = 3, objectId = id(), writerId = id(),
+                    refs = listOf(V3Ref(1, parent.type, parent.epochId, parent.epochNumber, parent.objectId, SyncV3Codec.hash(parentBytes))),
+                    state = state)
+                remote.putOnce(V3Paths.path(branch), SyncV3Codec.encode(branch))
+            }
+            publishBranch(accepted.editProductivity(ProductivityEdit.DeleteList(list.id, setOf(task.id))))
+            publishBranch(accepted.editProductivity(ProductivityEdit.Create(task.copy(id = id(), text = "并发新增"))))
+            val before = remote.puts
+            val merge = assertThrows(IllegalArgumentException::class.java) { old.settle() }
+            assertTrue(merge.message.orEmpty().contains("Unsupported required capability"))
+            assertEquals(before, remote.puts)
+            assertEquals(accepted.sharedRecords, old.engine.local().sharedRecords)
+            assertEquals("CONFLICT", owner.settle())
+            val keys = owner.journal.controlSummary().getJSONObject("conflict").getJSONArray("conflicts").getJSONObject(0).getJSONArray("keys")
+            assertEquals(3, keys.length())
+            assertEquals(before, remote.puts)
+        } finally { old.journal.close(); owner.journal.close() }
+    }
+
     private fun linkedRegistry() = SharedTypeRegistry(listOf(SharedCourseColor,object: SharedTypeAdapter {
         override val typeId="test.note";override val schemaVersion=1;override val maxPayload=32
         override fun validate(record:SharedRecord, records:List<SharedRecord>){require(record.payload.isNotEmpty())}

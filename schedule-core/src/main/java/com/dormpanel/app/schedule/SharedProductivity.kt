@@ -57,14 +57,15 @@ object SharedProductivity {
                 is ProductivityRecord.Memo -> { field(value.title, TITLE_BYTES); field(value.body, MAX_MEMO_BYTES, false); MEMO }
             }
         }
-        return SharedRecord(type, identity(value.id), 1, payload = bytes.toByteArray().toList())
+        return SharedRecord(type, identity(value.id), 1, required = type != MEMO,
+            dependencies = if (type == TASK) listOf(LIST) else emptyList(), payload = bytes.toByteArray().toList())
     }
 
     private val types = setOf(LIST, TASK, MEMO)
     fun supports(record: SharedRecord) = record.schemaVersion == 1 && record.typeId in types
 
     fun decode(record: SharedRecord): ProductivityRecord {
-        require(supports(record) && !record.required && record.dependencies.isEmpty())
+        require(supports(record))
         val id = identity(record.recordId)
         val result = DataInputStream(record.payload.toByteArray().inputStream()).use { input ->
             fun take(size: Int): ByteArray {
