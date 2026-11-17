@@ -62,6 +62,8 @@ data class ProductivityConflict(val token: String, val revision: Long, val rows:
 data class ProductivityView(val content: SharedProductivity.Content, val version: ProductivityVersion?,
     val writeBlock: String?, val conflict: ProductivityConflict?, val pending: Boolean)
 
+data class ProductivityBindingSnapshot(val version: ProductivityVersion, val records: List<SharedRecord>)
+
 internal fun productivityFrameState(frame: JSONObject, key: String): ScheduleState =
     requireNotNull(SyncV3Codec.decode(Base64.getDecoder().decode(frame.getString(key))).state)
 

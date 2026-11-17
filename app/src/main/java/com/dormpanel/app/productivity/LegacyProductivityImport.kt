@@ -29,6 +29,19 @@ object LegacyProductivityImport {
     class Checked internal constructor(internal val version: ProductivityVersion, internal val records: List<SharedRecord>,
         internal val file: File, internal val fingerprints: Map<Key, String>)
 
+    /** Evidence of a completed local import transaction. Source and target can change after commit. */
+    class Confirmed internal constructor(internal val checked: Checked)
+
+    sealed interface BindingValidation {
+        data class Verified(val version: ProductivityVersion) : BindingValidation
+        data object SourceChanged : BindingValidation
+        data class SourceUnavailable(val cause: Throwable) : BindingValidation
+        data class DatasetChanged(val actualDatasetId: String) : BindingValidation
+        data class TargetChanged(val recordKeys: Set<String>) : BindingValidation
+        data class TargetMissing(val recordKeys: Set<String>) : BindingValidation
+        data class TargetUnavailable(val cause: Throwable) : BindingValidation
+    }
+
     private fun <T> queued(callback: (Result<T>) -> Unit, action: () -> T) {
         ProductivityStores.legacyQueue.execute {
             val result = runCatching(action)
@@ -168,11 +181,13 @@ object LegacyProductivityImport {
         return Item(key, result.getOrDefault(emptyList()), result.exceptionOrNull()?.let { it.message ?: "导入数据无效" })
     }
 
-    private fun verify(file: File, expected: Map<Key, String>) {
+    private fun sourceMatches(file: File, expected: Map<Key, String>): Boolean {
         val current = read(file, expected.keys).associateBy { it.id }
-        check(expected.all { (key, hash) -> current[key.owner]?.let { fingerprint(it, key.kind) } == hash }) {
-            "所选本地效率数据已变化，请重新扫描"
-        }
+        return expected.all { (key, hash) -> current[key.owner]?.let { fingerprint(it, key.kind) } == hash }
+    }
+
+    private fun verify(file: File, expected: Map<Key, String>) {
+        check(sourceMatches(file, expected)) { "所选本地效率数据已变化，请重新扫描" }
     }
 
     fun check(store: RoomScheduleStore, version: ProductivityVersion, preview: Preview, selected: Set<Key>,
@@ -196,12 +211,41 @@ object LegacyProductivityImport {
     }
 
     /** The in-process source queue stays occupied until the target transaction returns. */
-    fun confirm(store: RoomScheduleStore, checked: Checked, callback: (Result<Unit>) -> Unit) =
+    fun confirm(store: RoomScheduleStore, checked: Checked, callback: (Result<Confirmed>) -> Unit) =
         queued(callback) {
             store.importProductivity(checked.version, checked.records) { verify(checked.file, checked.fingerprints) }
+            Confirmed(checked)
         }
 
-    /** Recheck before a later binding switch. External writers can commit after any individual check. */
-    fun validateSource(checked: Checked, callback: (Result<Unit>) -> Unit) =
-        queued(callback) { verify(checked.file, checked.fingerprints) }
+    /** Point-in-time local verification. Recheck against the active Store immediately before binding. */
+    fun validateBinding(store: RoomScheduleStore, confirmed: Confirmed, callback: (Result<BindingValidation>) -> Unit) =
+        queued(callback) {
+            val checked = confirmed.checked
+            val matches = runCatching { sourceMatches(checked.file, checked.fingerprints) }
+                .getOrElse { return@queued BindingValidation.SourceUnavailable(it) }
+            if (!matches) return@queued BindingValidation.SourceChanged
+            runCatching { validateTarget(store, checked) }.getOrElse { BindingValidation.TargetUnavailable(it) }
+        }
+
+    private fun validateTarget(store: RoomScheduleStore, checked: Checked): BindingValidation {
+        val snapshot = store.readProductivityBindingSnapshot()
+        if (snapshot.version.datasetId != checked.version.datasetId) {
+            return BindingValidation.DatasetChanged(snapshot.version.datasetId)
+        }
+        val expected = checked.records.associateBy { it.key }
+        val listIds = checked.records.filter { it.typeId == SharedProductivity.LIST }.map { it.recordId }.toSet()
+        val actual = snapshot.records.filter { record ->
+            if (record.key in expected) true
+            else if (record.typeId != SharedProductivity.TASK || listIds.isEmpty()) false
+            else {
+                check(SharedProductivity.supports(record)) { "共享任务版本未知，无法核对清单成员" }
+                (SharedProductivity.decode(record) as ProductivityRecord.Task).listId in listIds
+            }
+        }.associateBy { it.key }
+        val missing = expected.keys - actual.keys
+        if (missing.isNotEmpty()) return BindingValidation.TargetMissing(missing)
+        val changed = actual.keys.filterTo(linkedSetOf()) { actual[it] != expected[it] }
+        if (changed.isNotEmpty()) return BindingValidation.TargetChanged(changed)
+        return BindingValidation.Verified(snapshot.version)
+    }
 }

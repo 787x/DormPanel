@@ -968,6 +968,20 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
             !frame.has("baseline") || !ScheduleMerge.same(state, productivityFrameState(frame, "baseline")))
     }
 
+    /** Worker-only local snapshot for import binding checks. No network or business write. */
+    fun readProductivityBindingSnapshot(): ProductivityBindingSnapshot = workerCall {
+        check(ActiveScheduleV3.active(database)) { "没有活动共享目标" }
+        val runtime = v3()
+        val frame = runtime.journal.snapshot()
+        check(runtime.binding().optString("phase") == "ACTIVE" && frame.has("baseline")) { "共享目标尚未完成初始化" }
+        val state = productivityFrameState(frame, "local")
+        val blocked = productivityBlock(runtime, frame, state)
+        check(blocked == null) { requireNotNull(blocked) }
+        val types = setOf(SharedProductivity.LIST, SharedProductivity.TASK, SharedProductivity.MEMO)
+        ProductivityBindingSnapshot(requireNotNull(productivityVersion(frame, state)),
+            state.sharedRecords.orEmpty().filter { it.typeId in types })
+    }
+
     private fun requireProductivityVersion(expected: ProductivityVersion, state: ScheduleState,
         frame: org.json.JSONObject) {
         val blocked = productivityBlock(v3(), frame, state)

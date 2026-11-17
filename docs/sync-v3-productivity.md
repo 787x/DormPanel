@@ -44,7 +44,15 @@ PR87 审查草稿 `a6b8cb3` 的可选 Todo 字节仅用于早期隔离测试。s
 
 `check(store, version, preview, selected, callback)` 预检所选内容、全量 RAW 预算、目标版本及源指纹。取消时丢弃候选。确认期间，应用内旧 Store 的串行队列先完成已入队的写入，再等待共享事务结束；共享事务实际保存前复核目标版本与源指纹。源内容变化或 owner 被删除时要求重新扫描。重复确认过期候选会失败。重新预检同一批相同内容后确认，记录身份保持稳定。
 
-旧库与共享库仍是独立数据库。外部 SQLite 连接可以在最后一次只读核验后提交。导入确认只代表候选已提交到共享库。PR88 若增加绑定切换，须在切换前调用 `validateSource(checked, callback)`，复核当时共享目标仍含确认记录，并协调应用内旧写入准入。发现来源变化时保留旧绑定，重新扫描并让用户检查差异。
+### PR88 绑定前检查
+
+1. `confirm(store, checked, callback)` 成功返回 `Confirmed`，表示候选已提交到本机正式共享 Store。保留凭证，旧内容和卡片绑定继续可读。
+2. 持久化绑定前，用当前活动的 `RoomScheduleStore` 调用 `validateBinding(store, confirmed, callback)`。它在旧 Store 串行队列上重读所选源指纹，再取得本机 Writer 的有效快照。检查活动 datasetId、已导入记录的原始规范内容，以及选中清单的任务成员。其他课程、清单和备忘的修改无需匹配导入时的版本。
+3. `Verified(version)` 只表示此次读取时，所选源和本机共享目标与确认记录一致。PR88 应在实际持久化绑定的入口重新调用校验，通过后用当前数据集身份及记录 ID 保存卡片绑定。应用内协调旧写入和绑定操作的准入，避免把较早的校验结果用于晚到操作。卡片绑定持久化成功才表示切换已完成。
+
+`TargetChanged` 返回变化的记录键，包括选中清单下的新任务。保留原绑定，重新读取共享目标后可展示差异，并让用户明确选择连接现有内容。`TargetMissing` 返回缺失记录键。`DatasetChanged` 表示活动数据集与确认目标不一致，即使记录 ID 和内容碰巧相同也要停止。`SourceChanged` 要求重新扫描，`SourceUnavailable` 或 `TargetUnavailable` 表示本次读取得不到有效证据，包括共享目标读取失败、格式不支持、初始化未完成、冲突或恢复保护。上述分支均保留原绑定和两端内容。
+
+旧库、共享库和卡片绑定各自持久化。外部 SQLite 连接、同步接收或外部 Writer 可以在最后一次检查后提交。校验只针对本机已接收并可读的权威状态，无需触发 WebDAV。用户批准连接已变化内容时，PR88 应针对用户看到的最新目标及相同数据集重新检查，避免以旧导入凭证覆盖新内容。
 
 ## PR87 定向验证记录
 
@@ -68,3 +76,7 @@ WebDAV 往返使用隔离的 WsgiDAV 目录、合成凭据、API 28 testbed 和�
 - 使用新的隔离 DPV3/4 目录完成 Android Room 与主机 Node 的真实 WebDAV 往返。两端业务哈希均为 `977a1c8a46aea033eeaa3f26e11bbe0eba04455607fea40cc3579de9053bcfa7`。两阶段测试包含回读中断后重开、任务和备忘跨端更新及效率订阅。
 - 独立的 API 28 控制器测试通过。真实 WebDAV 上的两台隔离 Writer 编辑同一备忘，状态订阅收到待发布、冲突及解决后回执，课表完整刷新计数为 0。
 - 审查修复使用主机 Node 和 API 28 模拟器。实体 X08E、Phone 及 fnOS 实机 FPK 未重测。历史增长用例保留初版的基线记录。
+
+### 绑定检查补充验证
+
+X08E testbed APK 和测试 APK 构建通过。API 28 模拟器执行 `LegacyProductivityImportAndroidTest` 与 `ProductivityPersistenceTest`，共 3 项通过。隔离 Room 测试覆盖原样通过、目标任务正文及完成状态变化、备忘正文变化、所选清单新增任务、目标删除、同 ID 同内容的不同 datasetId、无关记录变化、源变化、两端读取异常和旧库逐行一致。测试仅用隔离 WebDAV 初始化两个目标，其余场景通过正式 Room 业务接口修改及读取本机状态。
