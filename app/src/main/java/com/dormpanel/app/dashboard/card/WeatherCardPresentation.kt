@@ -139,8 +139,28 @@ private val classicChineseConditions = buildMap {
     put("细雨", "Drizzle")
     put("冰雹", "Hail")
     put("雷阵雨伴冰雹", "Thundershowers with hail")
+    put("雷暴", "Thunderstorm")
     put("有风", "Windy")
 }
+
+// Whole descriptions that these specific codes refine. Similar-looking phrases and
+// conflicting intensities are deliberately excluded.
+private val classicRefinements = mapOf(
+    "clear" to setOf("100", "sunny"),
+    "rain" to setOf("300", "301", "302", "303", "304", "305", "306", "307", "308", "309",
+        "310", "311", "312", "313", "314", "315", "316", "317", "318", "350", "351", "pouring", "light rain", "lightning-rainy"),
+    "rain showers" to setOf("301", "302", "303", "304", "350", "351"),
+    "thundershowers" to setOf("303", "304"),
+    "thunderstorm" to setOf("302", "303", "304", "lightning-rainy"),
+    "rainstorm" to setOf("311", "312", "317", "318"),
+    "snow" to setOf("400", "401", "402", "403", "407", "408", "409", "410", "457"),
+    "rain and snow" to setOf("406", "456"),
+    "fog" to setOf("509", "510", "514", "515"),
+    "haze" to setOf("511", "512", "513"),
+    "duststorm" to setOf("508"),
+    "windy" to setOf("windy-variant"),
+    "cloudy" to setOf("windy-variant"),
+)
 
 private val unknownConditions = setOf("unknown", "unavailable", "n/a", "未知", "天气未知", "未知天气", "—", "-")
 private fun String?.validConditionText() = this?.takeIf {
@@ -150,16 +170,17 @@ private fun String?.validConditionText() = this?.takeIf {
 private fun classicCondition(code: String?, description: String?, daytime: Boolean?): String {
     val key = code?.trim()?.lowercase(Locale.ROOT)
     val coded = qWeatherConditions[key]
-    val text = description.validConditionText()
-    if (daytime == false && (key == "100" || key == "sunny" || key == "clear") &&
-        (text == null || text.trim() == "晴")) return "Clear night"
-    if (text != null) {
-        val translation = classicChineseConditions[text.trim()]
-        if (translation == null) return text
-        // An exact match can carry additional information in the code, e.g. 晴 with code 150.
-        if (text.trim() != coded?.chinese) return translation
-    }
-    return coded?.english ?: classicStateConditions[key] ?: "Unknown"
+    val codeName = coded?.english ?: classicStateConditions[key]
+    val precise = if (daytime == false && (codeName == "Sunny" || codeName == "Clear")) "Clear night" else codeName
+    val original = description.validConditionText() ?: return precise ?: "Unknown"
+    val translated = classicChineseConditions[original.trim()]
+    val plain = (translated ?: original.trim()).lowercase(Locale.ROOT)
+    if (precise == "Clear night" && (plain == "sunny" || plain == "clear")) return precise
+    // The daytime and nighttime icon codes can share the same source wording.
+    val daytimeName = coded?.let { classicChineseConditions[it.chinese] }
+    if (precise != null && (key in classicRefinements[plain].orEmpty() ||
+            (daytimeName != precise && plain.equals(daytimeName, ignoreCase = true)))) return precise
+    return translated ?: original
 }
 
 internal fun legacyConditionText(condition: String?): String? {

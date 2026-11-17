@@ -94,7 +94,7 @@ HA 当前天气从现有实体存储读取，并跟随原连接的状态事件�
 
 经典天气默认 4×3，可缩放至 2×1。单行显示当前温度和天气描述，两行起补充标题、温度区间和湿度。已绑定卡片优先显示别名，其次显示地点名称。来源失效时仍可使用已保存的地点名称。删除地点后，当前卡片视图会保留最后看到的名称并提示失效。默认天气使用 `Weather`。窄的多行卡片将温度和天气纵向排列。3×3 和 4×3 分别最多显示两列和三列文字预报，日期采用与新版相同的格式。显式选择的体感或风速补充在摘要中，来源链接、离线及过期等状态位于卡片底部。
 
-经典卡片的实时与预报天气描述尽量使用准确的英文。上游自带的有效英文原样显示，明确的中文词汇使用对应英文，复杂描述无法准确转换时保留原文。只有缺少有效描述时，才用已知代码补足天气文字。昼夜代码可以补足与其含义一致的描述。[和风天气现象](https://dev.qweather.com/en/docs/api/weather/weather-conditions/) · [HA 天气状态](https://www.home-assistant.io/integrations/weather/#condition-mapping)
+经典卡片的实时与预报天气描述尽量使用准确的英文。已知代码可以补足与其含义一致的宽泛描述，例如将「雨」细化为「大雨」，或补足冰雹和昼夜信息。描述更具体或与代码冲突时，以描述为准。明确的中文词汇使用对应英文，无法准确转换的描述保留原文。缺少有效描述时采用已知代码，两者都不可用时显示 `Unknown`。[和风天气现象](https://dev.qweather.com/en/docs/api/weather/weather-conditions/) · [HA 天气状态](https://www.home-assistant.io/integrations/weather/#condition-mapping)
 
 卡片配置存放于原 Dashboard Room 的 `configurationJson`。`weather` 对应新版样式和默认桌面的种子卡片，`weather_classic` 对应经典样式。两种类型共用版本 1 的配置，空对象表示默认天气。已绑定的配置保存 `version`、`placeId`、`source`，以及可选的 `displayName`、`metric`。来源引用沿用地点存储中的 `qw`、`qw-city` 和 `ha` 表示，写入时验证来源归属及地点是否已保存。
 
