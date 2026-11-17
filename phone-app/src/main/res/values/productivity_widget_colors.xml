@@ -1,0 +1,5 @@
+<resources>
+    <color name="productivity_widget_surface">#F3F6FC</color>
+    <color name="productivity_widget_text">#172033</color>
+    <color name="productivity_widget_muted">#44546B</color>
+</resources>

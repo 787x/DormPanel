@@ -185,8 +185,19 @@ class ProductivityWebDavAndroidTest {
             assertEquals("CONFLICT", store.synchronizeV3(account))
             reload()
             waitForStatus { it.conflict }
-            val token = store.v3Control()!!.getJSONObject("conflict").getString("id")
-            store.resolveV3(token, ScheduleMerge.Choice.LOCAL)
+            val current = await(store::loadProductivity).getOrThrow()
+            val conflict = requireNotNull(current.conflict)
+            val row = conflict.rows.single()
+            assertEquals(memo.body, (row.base as ProductivityRecord.Memo).body)
+            assertEquals("左边", (row.local as ProductivityRecord.Memo).body)
+            assertEquals("右边", (row.remote as ProductivityRecord.Memo).body)
+            val boundary = AndroidProductivity(context, store)
+            val version = requireNotNull(current.version)
+            assertTrue(await<Unit> { boundary.save(version, listOf(ProductivityEdit.EditMemo(memo.id, "禁止覆盖")), it) }.isFailure)
+            assertTrue(await<Unit> {
+                boundary.resolve(version, conflict.copy(token = "stale"), ScheduleMerge.Choice.LOCAL, it)
+            }.isFailure)
+            await<Unit> { boundary.resolve(version, conflict, ScheduleMerge.Choice.LOCAL, it) }.getOrThrow()
             settle(store)
             reload()
             waitForStatus { !it.conflict && !it.pending && initial.revision != it.revision }

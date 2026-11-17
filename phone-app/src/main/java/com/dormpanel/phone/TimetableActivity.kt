@@ -478,9 +478,9 @@ class TimetableActivity : AppCompatActivity() {
     private fun management() {
         if (source.applyingSnapshot) return
         swipeContent?.cancelMotion()
-        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）", "课表显示设置", "课程通知", "课程管理", "导出 ICS")) { _, i ->
+        AlertDialog.Builder(this).setTitle("本地数据管理").setItems(arrayOf("导入 ICS / 湖北大学 CSV、XLS", "导入来源（替换 / 删除）", "学期、教学周与节次", "WebDAV 共享课表（双向同步）", "课表显示设置", "课程通知", "课程管理", "导出 ICS", "Todo", "备忘")) { _, i ->
             if (i < 3 && source.error) { message(source.editBlockReason.orEmpty()); return@setItems }
-            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) }; 4 -> displaySettings(); 5 -> noticeSettings(); 6 -> editors.courseManagement(); 7 -> exportCalendar() }
+            when (i) { 0 -> chooseFile(null); 1 -> sources(); 2 -> termList(); 3 -> { sharedDialog = SharedScheduleDialog.show(this, source, sharedSync, false) }; 4 -> displaySettings(); 5 -> noticeSettings(); 6 -> editors.courseManagement(); 7 -> exportCalendar(); 8 -> startActivity(ProductivityActivity.intent(this, ProductivityKind.TODO)); 9 -> startActivity(ProductivityActivity.intent(this, ProductivityKind.MEMO)) }
         }.setNegativeButton("关闭", null).show()
     }
     private fun displaySettings() {

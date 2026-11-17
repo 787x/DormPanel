@@ -36,5 +36,29 @@
         <receiver android:name=".WeekCoursesWidgetProvider" android:exported="false" android:label="DormPanel · 一周课程">
 <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/><action android:name="android.intent.action.DATE_CHANGED"/><action android:name="android.intent.action.TIME_SET"/><action android:name="android.intent.action.TIMEZONE_CHANGED"/><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
 <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_week"/></receiver>
+        <activity android:name=".ProductivityActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".ProductivityWidgetClickActivity" android:exported="false"
+            android:excludeFromRecents="true" android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity android:name=".ProductivityWidgetConfiguration" android:exported="true">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_CONFIGURE"/></intent-filter>
+        </activity>
+        <service android:name=".ProductivityTaskService" android:permission="android.permission.BIND_REMOTEVIEWS" android:exported="false"/>
+        <receiver android:name=".TodoWidgetProvider" android:exported="false" android:label="DormPanel · 待办清单">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_productivity_todo"/>
+        </receiver>
+        <receiver android:name=".MemoWidgetProvider" android:exported="false" android:label="DormPanel · 备忘">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_productivity_memo"/>
+        </receiver>
     </application>
 </manifest>

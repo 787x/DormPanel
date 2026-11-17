@@ -341,7 +341,8 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
             s.dayAdjustments.isEmpty() && s.classOverrides.isEmpty() && s.customProfileKeys.isEmpty()) { "本地非空，禁止覆盖加入；本地修改保留" } }
     }
     fun previewUnboundV3Join(account:WebDavAccount,folder:String,descriptor:ByteArray):UnboundV3JoinPreview? {
-        val original=workerCall { requireEmptyUnboundJoin() }; val budget=V3Budget(); val remote=V3WebDavStore(account,folder,budget)
+        val original=workerCall { requireEmptyUnboundJoin() }; val budget=V3Budget()
+        val remote=V3WebDavStore(account,folder,budget,sharedFormat=SyncV3Codec.decode(descriptor).format == 4)
         val target=inspectUnboundTarget(remote,budget,descriptor,folder,account.username) ?: return null
         return UnboundV3JoinPreview(original,target)
     }
@@ -362,12 +363,14 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         return V3DatasetInspection.inspect(directory,writer,remote,budget,descriptor,folder)
     }
     fun joinVerifiedV3(preview:UnboundV3JoinPreview,account:WebDavAccount) {
-        val budget=V3Budget();val remote=V3WebDavStore(account,preview.target.folder,budget)
+        val budget=V3Budget(); val remote=V3WebDavStore(account,preview.target.folder,budget,
+            sharedFormat=preview.target.identity.format == 4)
         val target=inspectUnboundTarget(remote,budget,preview.target.descriptor,preview.target.folder,account.username)
         check(target!=null && target.snapshot.contentEquals(preview.target.snapshot)) { "目标预检尚未完成或已变化，请重新预览同一目标" }
         workerCall { v3().prepareVerifiedJoin(preview,ActiveScheduleV3.endpointKey(remote,account)) {
             check(SyncV3Codec.stateBytes(requireEmptyUnboundJoin()).contentEquals(SyncV3Codec.stateBytes(preview.original))) { "本地预览后变化，禁止覆盖加入" }
         } }
+        signalProductivity()
     }
     private fun inspectExistingTarget(source:ScheduleV3MigrationPreview,remote:V3ObjectStore,budget:V3Budget,descriptor:ByteArray,folder:String):VerifiedV3Snapshot? {
         val key=digest((folder+"\n"+SyncV3Codec.hash(descriptor)+"\n"+source.frame.baseline!!.datasetId+"\n"+source.sourceKey).toByteArray(Charsets.UTF_8))
@@ -461,7 +464,13 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     }
     fun synchronizeV3(account: WebDavAccount): String {
         val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
-        return try { runtime.synchronize(account) } finally { signalProductivity() }
+        productivitySyncs.incrementAndGet()
+        signalProductivitySync()
+        return try { runtime.synchronize(account) } finally {
+            productivitySyncs.decrementAndGet()
+            signalProductivitySync()
+            signalProductivity()
+        }
     }
     fun v3Account(settings:WebDavSettings):WebDavAccount = workerCall { v3().endpointAccount(settings) { requireNotNull(settings.account()) { "请配置 WebDAV 帐号" } } }
     private fun endpointSummary(job:org.json.JSONObject)=org.json.JSONObject().also { out ->
@@ -913,6 +922,18 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         sharedResult {v3().engine.setCourseColor(sourceId, seriesId, rgb, expectedHash)}
         onCommitted?.invoke(); Unit
     }
+    private val productivitySyncs = java.util.concurrent.atomic.AtomicInteger()
+    private val productivitySyncSignals = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+
+    private fun signalProductivitySync() {
+        productivitySyncSignals.forEach { listener -> handler.post { if (listener in productivitySyncSignals) listener() } }
+    }
+
+    fun observeProductivitySync(listener: () -> Unit): AutoCloseable {
+        productivitySyncSignals.add(listener)
+        return AutoCloseable { productivitySyncSignals.remove(listener) }
+    }
+
     private val productivitySignals = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
 
     private fun signalProductivity() { productivitySignals.forEach { listener -> handler.post { listener() } } }
@@ -936,6 +957,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     }
 
     private fun productivityBlock(runtime: ActiveScheduleV3, frame: org.json.JSONObject, state: ScheduleState): String? = when {
+        runtime.journal.meta.requiresReopen() -> "本地事务待恢复，请重开活动 Store"
         database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) || !runtime.localWritesAllowed() ->
             "本地 Writer 受保护，请检查恢复状态"
         frame.optJSONObject("binding")?.optInt("format") != 4 || state.sharedRecords == null -> "共享效率数据需要 DPV3/4"
@@ -944,6 +966,17 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         else -> runCatching { SharedTypes.registry().writable(state.sharedRecords) }.exceptionOrNull()?.let {
             it.message ?: "共享记录不可编辑"
         }
+    }
+
+    fun productivitySyncFacts(): SharedSchedulePresentation = workerCall {
+        if (!ActiveScheduleV3.active(database)) return@workerCall SharedSchedulePresentation()
+        val runtime = v3()
+        val control = runtime.journal.controlSummary()
+        val phase = control.optJSONObject("pending")?.optString("phase")
+        SharedSchedulePresentation(mode = SharedMode.V3, ready = true,
+            bindingId = control.optJSONObject("binding")?.optString("datasetId"),
+            confirming = v3AwaitingReadback(phase), receipting = phase == "READBACK_CONFIRMED",
+            recovery = runtime.journal.meta.requiresReopen(), busy = productivitySyncs.get() > 0)
     }
 
     fun loadProductivity(callback: (Result<ProductivityView>) -> Unit) = submit(callback) {
@@ -965,11 +998,17 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         }
         ProductivityView(SharedProductivity.project(state.sharedRecords.orEmpty()), productivityVersion(frame, state),
             productivityBlock(runtime, frame, state), conflict,
-            !frame.has("baseline") || !ScheduleMerge.same(state, productivityFrameState(frame, "baseline")))
+            !frame.has("baseline") || !ScheduleMerge.same(state, productivityFrameState(frame, "baseline")),
+            frame.optString("baselinePath").takeIf { it.isNotEmpty() }?.let { path ->
+                frame.optJSONObject("receipt")?.optString("path") == path ||
+                    frame.optJSONObject("joinReadback")?.optString("path") == path
+            } == true)
     }
 
     /** Worker-only local snapshot for import binding checks. No network or business write. */
-    fun readProductivityBindingSnapshot(): ProductivityBindingSnapshot = workerCall {
+    fun readProductivityBindingSnapshot(): ProductivityBindingSnapshot = workerCall { productivityBindingSnapshot() }
+
+    private fun productivityBindingSnapshot(): ProductivityBindingSnapshot {
         check(ActiveScheduleV3.active(database)) { "没有活动共享目标" }
         val runtime = v3()
         val frame = runtime.journal.snapshot()
@@ -978,7 +1017,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         val blocked = productivityBlock(runtime, frame, state)
         check(blocked == null) { requireNotNull(blocked) }
         val types = setOf(SharedProductivity.LIST, SharedProductivity.TASK, SharedProductivity.MEMO)
-        ProductivityBindingSnapshot(requireNotNull(productivityVersion(frame, state)),
+        return ProductivityBindingSnapshot(requireNotNull(productivityVersion(frame, state)),
             state.sharedRecords.orEmpty().filter { it.typeId in types })
     }
 
@@ -1010,7 +1049,42 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         }
 
     fun editProductivity(expected: ProductivityVersion, edit: ProductivityEdit, callback: (Result<Unit>) -> Unit) =
-        saveProductivity(expected, callback) { it.editProductivity(edit) }
+        editProductivity(expected, listOf(edit), callback)
+
+    fun editProductivity(expected: ProductivityVersion, edits: List<ProductivityEdit>, callback: (Result<Unit>) -> Unit,
+        validate: () -> Unit = {}) =
+        saveProductivity(expected, callback) { before ->
+            validate()
+            edits.fold(before) { state, edit -> state.editProductivity(edit) }
+        }
+
+    fun withProductivityBinding(expected: ProductivityVersion, persist: () -> Unit) = workerCall {
+        check(ActiveScheduleV3.active(database)) { "共享数据集已变化" }
+        synchronized(v3().journal) {
+            check(productivityBindingSnapshot().version == expected) { "共享目标已变化" }
+            persist()
+        }
+    }
+
+    fun resolveProductivityConflict(expected: ProductivityVersion, conflict: ProductivityConflict,
+        choice: ScheduleMerge.Choice) = workerCall {
+        check(ActiveScheduleV3.active(database))
+        val runtime = v3()
+        check(runtime.localWritesAllowed() && !database.dao().hasSyncRecord(200) && !database.dao().hasSyncRecord(203)) { "共享 Writer 受保护" }
+        val courseChanged = synchronized(runtime.journal) {
+            val frame = runtime.journal.snapshot()
+            val before = productivityFrameState(frame, "local")
+            check(productivityVersion(frame, before) == expected &&
+                frame.optJSONObject("conflict")?.optLong("revision") == conflict.revision) { "冲突版本已变化" }
+            sharedResult { runtime.engine.resolve(conflict.token, choice) }
+            before.copy(sharedRecords = null) != runtime.engine.local().copy(sharedRecords = null)
+        }
+        signalProductivity()
+        if (courseChanged) {
+            SharedScheduleViews.reloaded()
+            ScheduleCommitSignals.notifyChanged()
+        }
+    }
 
     private fun saveProductivity(expected: ProductivityVersion, callback: (Result<Unit>) -> Unit,
         edit: (ScheduleState) -> ScheduleState) = submit(callback) { commitProductivity(expected, edit) }

@@ -214,6 +214,13 @@ object SharedScheduleDialog {
             if (bound()) status.text = "已有活动绑定；请使用同步或显式迁移入口"
             else AlertDialog.Builder(context).setTitle("创建新的共享课表")
                 .setMessage("共享父目录：${locationText(sync.settings.folder)}\n\n将使用本机课程创建独立共享课表。若想接收其他设备的课程，请取消并选择加入已有共享课表。创建后会回读服务器确认；这不代表其他设备已接收。失败后会继续恢复同一候选。")
+                .setNeutralButton("使用 DPV3/4…") { _, _ ->
+                    if (active && connectionSaved()) AlertDialog.Builder(context).setTitle("创建独立 DPV3/4 数据集")
+                        .setMessage("共享父目录：${locationText(sync.settings.folder)}\n\n使用本机课表创建独立共享数据集，开放共享 Todo 与备忘。旧版客户端可能无法加入或编辑。已有 DPV3/4 数据集时，请选择加入。")
+                        .setNegativeButton("取消", null).setPositiveButton("创建 DPV3/4") { _, _ ->
+                            if (active && connectionSaved()) sync.createV3(confirmed, sharedFormat = true)
+                        }.show()
+                }
                 .setNegativeButton("取消", null).setPositiveButton("创建") { _, _ -> if (active && connectionSaved()) sync.createV3(confirmed) }.show()
         }
         button(SharedAction.MIGRATE_V3, "升级旧版共享课表（v2 → v3）") {
@@ -309,7 +316,7 @@ object SharedScheduleDialog {
                     if (active) {
                         if (found.v2 != null) showV2Preview(found.v2, confirmed)
                         else if (candidates.isNotEmpty()) AlertDialog.Builder(context).setTitle("选择要加入的课表（身份已核验）")
-                            .setItems(candidates.mapIndexed { index, item -> "共享课表 ${index + 1}\n识别码：${item.descriptor.datasetId}" }.toTypedArray()) { _, index ->
+                            .setItems(candidates.mapIndexed { index, item -> "共享课表 ${index + 1} · DPV3/${item.descriptor.format}\n识别码：${item.descriptor.datasetId}" }.toTypedArray()) { _, index ->
                                 verifyJoin(candidates[index], confirmed)
                             }.show()
                     }

@@ -6,6 +6,8 @@ import com.dormpanel.app.schedule.ScheduleCommitSignals
 class PhoneApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        PhoneProductivity.initialize(this)
+        ProductivityWidgets.request(this)
         ScheduleCommitSignals.changed = {
             TodayWidgetUpdates.request(this)
             CourseNotificationCoordinator.request(this)

@@ -147,6 +147,15 @@ class LegacyProductivityImportAndroidTest {
                     assertTrue(observed.toString(), observed is LegacyProductivityImport.BindingValidation.Verified)
                 }
                 assertVerified()
+                val beforeFailedBinding = load()
+                val denied = await<LegacyProductivityImport.BindingValidation> { callback ->
+                    LegacyProductivityImport.validateBinding(store, confirmed, callback) { version ->
+                        store.withProductivityBinding(version) { throw java.io.IOException("配置保存失败") }
+                    }
+                }
+                assertTrue(denied.exceptionOrNull() is java.io.IOException)
+                assertEquals(beforeFailedBinding, load())
+                assertVerified()
                 writeRows(owners[1])
                 writeRows(owners.first().copy(memo = "确认后的本地变化"))
                 assertEquals(LegacyProductivityImport.BindingValidation.SourceChanged, validate())

@@ -52,6 +52,10 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
         val target=preview.target; val state=requireNotNull(target.value.state)
         val descriptor=JSONObject().put("datasetId",target.identity.datasetId).put("descriptorPath",V3Paths.path(target.identity)).put("descriptorHash",SyncV3Codec.hash(target.descriptor))
         val mode=JSONObject().put("protocol","v3").put("folder",target.folder).put("intent","JOIN").put("phase","ACTIVE").put("endpointKey",accessKey)
+        if (target.identity.format == 4) {
+            descriptor.put("format", 4)
+            mode.put("format", 4)
+        }
         journal.localTransaction { frame ->
             check(!active(database) && !frame.has("binding"));validateBefore()
             val original=ScheduleSnapshotCodec.encode(ScheduleSnapshot(UUID.randomUUID().toString(),UUID.randomUUID().toString(),null,System.currentTimeMillis(),preview.original.copy(sync=null),1))
