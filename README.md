@@ -8,14 +8,6 @@ DormPanel 是一个面向 **小米 Redmi 小爱触屏音箱 Pro 8（X08E）** �
 
 [**下载最新版**](https://github.com/787x/DormPanel/releases) · [快速开始](#快速开始) · [功能介绍](#功能介绍) · [同步说明](#课程表与多端同步) · [项目文档](#更多文档)
 
-## 看看 DormPanel
-
-| X08E：两种天气卡片 | X08E：近日课程卡片 | Phone：一周课程小部件 |
-| --- | --- | --- |
-| ![X08E 上的新旧天气卡片](docs/verification/pr84-mixed-weather-cards.png) | ![X08E 近日课程卡片](docs/verification/pr74/review-fixes/pr74-review-schedule_recent-4x4-DARK-screen.png) | ![Phone 一周课程桌面小部件](docs/verification/pr72/miui-week-time-five-dark.png) |
-
-> 截图来自功能开发期间的隔离测试环境，展示的是实际界面，不代表设备默认配置或实时天气、课表数据。不同版本、卡片尺寸和主题下可能有所区别。
-
 ## 一分钟了解
 
 - **可编辑的横屏桌面**：像摆放积木一样添加、拖动、删除和调整卡片大小，按需要组合自己的床头或书桌信息屏。
