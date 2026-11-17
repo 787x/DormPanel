@@ -13,11 +13,16 @@ class CoreCardPresentationTest {
             override fun write(state: AppearanceState) = Unit
         })
         val registry = coreCardRegistry(FakeDashboardDataSource(), appearance)
-        assertEquals(listOf("clock", "weather", "weather_classic", "sensor", "light"), registry.providers.map { it.typeKey })
+        assertEquals(listOf("clock", WEATHER_CARD, COMPACT_WEATHER_CARD, CLASSIC_WEATHER_CARD, "sensor", "light"),
+            registry.providers.map { it.typeKey })
+        val compact = registry.provider(COMPACT_WEATHER_CARD)!!
+        assertEquals(CardSize(2, 3), compact.defaultSize)
+        assertEquals(listOf(CardSize(2, 3)), compact.sizePolicy.legalSizes(CardSize(8, 6)))
+        assertFalse(compact.sizePolicy.hasAlternative(compact.defaultSize, CardSize(8, 6)))
         val classic = registry.provider("weather_classic")!!
         assertEquals(CardSize(4, 3), classic.defaultSize)
         for (rows in 1..3) for (columns in 2..4) assertTrue(classic.sizePolicy.allows(CardSize(columns, rows)))
-        registry.providers.forEach {
+        registry.providers.filter { it != compact }.forEach {
             assertTrue(it.sizePolicy.allows(it.defaultSize))
             assertTrue(it.sizePolicy.allows(CardSize(2, 1)))
             assertTrue(it.sizePolicy.allows(CardSize(2, 2)))
@@ -39,10 +44,11 @@ class CoreCardPresentationTest {
         assertEquals(0, weatherPresentation(CardSize(4, 1)).forecastColumns)
         assertEquals(1, weatherPresentation(CardSize(2, 2)).forecastColumns)
         assertTrue(weatherPresentation(CardSize(2, 3)).stackedCurrent)
-        assertEquals(3, weatherPresentation(CardSize(2, 3)).forecastColumns)
+        assertEquals(2, weatherPresentation(CardSize(2, 3)).forecastColumns)
+        assertEquals(3, weatherPresentation(CardSize(2, 3), compactForecast = true).forecastColumns)
         assertEquals(0, classicWeatherPresentation(CardSize(2, 3)).forecastColumns)
         assertEquals(3, weatherPresentation(CardSize(4, 3)).forecastColumns)
-        assertEquals(2, weatherPresentation(CardSize(3, 3)).forecastColumns)
+        assertEquals(3, weatherPresentation(CardSize(3, 3)).forecastColumns)
         assertFalse(sensorPresentation(CardSize(2, 2)).sideBySide)
         assertTrue(sensorPresentation(CardSize(3, 2)).sideBySide)
         assertTrue(sensorPresentation(CardSize(3, 3)).status)

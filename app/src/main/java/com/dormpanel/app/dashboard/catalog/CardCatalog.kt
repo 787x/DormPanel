@@ -3,6 +3,7 @@ package com.dormpanel.app.dashboard.catalog
 import com.dormpanel.app.data.DashboardDataSource
 import com.dormpanel.app.data.DashboardData
 import com.dormpanel.app.dashboard.card.CLASSIC_WEATHER_CARD
+import com.dormpanel.app.dashboard.card.COMPACT_WEATHER_CARD
 import com.dormpanel.app.dashboard.card.WEATHER_CARD
 
 enum class CardCategory { INFORMATION, HOME, PRODUCTIVITY, SYSTEM, APPS }
@@ -26,16 +27,19 @@ interface CardCatalog {
 data class CatalogLabels(val clock: String, val clockDetail: String, val weather: String, val weatherDetail: String,
     val sensor: String, val light: String, val dimmableLight: String, val temperatureLight: String,
     val classicWeather: String, val classicWeatherDetail: String,
+    val compactWeather: String, val compactWeatherDetail: String,
 )
 
-internal fun weatherCandidates(weather: String, weatherDetail: String, classic: String, classicDetail: String) =
+internal fun weatherCandidates(weather: String, weatherDetail: String, classic: String, classicDetail: String,
+    compact: String, compactDetail: String) =
     listOf(
         CardAddCandidate(WEATHER_CARD, CardCategory.INFORMATION, WEATHER_CARD, weather, weatherDetail, "{}"),
+        CardAddCandidate(COMPACT_WEATHER_CARD, CardCategory.INFORMATION, COMPACT_WEATHER_CARD, compact, compactDetail, "{}"),
         CardAddCandidate(CLASSIC_WEATHER_CARD, CardCategory.INFORMATION, CLASSIC_WEATHER_CARD, classic, classicDetail, "{}"),
     )
 
 internal fun CatalogLabels.weatherCandidates() =
-    weatherCandidates(weather, weatherDetail, classicWeather, classicWeatherDetail)
+    weatherCandidates(weather, weatherDetail, classicWeather, classicWeatherDetail, compactWeather, compactWeatherDetail)
 
 /** Catalog is a projection of the current source, not a second device-state owner. */
 class SourceCardCatalog(private val source: DashboardDataSource, private val labels: CatalogLabels) : CardCatalog {

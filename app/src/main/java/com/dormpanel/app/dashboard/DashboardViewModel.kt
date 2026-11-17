@@ -25,6 +25,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         application.getString(R.string.card_sensor_description), application.getString(R.string.catalog_switch),
         application.getString(R.string.catalog_dimmable), application.getString(R.string.catalog_temperature),
         application.getString(R.string.card_weather_classic), application.getString(R.string.card_weather_classic_description),
+        application.getString(R.string.card_weather_compact), application.getString(R.string.card_weather_compact_description),
     ))
     val apps = com.dormpanel.app.apps.AppSources.create(application)
     val apkInstall = com.dormpanel.app.apps.ApkInstallController(application, apps)

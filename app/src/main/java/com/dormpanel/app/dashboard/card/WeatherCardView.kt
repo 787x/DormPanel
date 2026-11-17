@@ -21,6 +21,7 @@ internal class WeatherCardView(
     source: DashboardDataSource,
     repository: WeatherRepository? = null,
     clock: () -> Instant = Instant::now,
+    private val compactForecast: Boolean = false,
 ) : BaseWeatherCardView(context, appearance, source, repository, clock) {
     private val heading = text(19f).apply {
         gravity = Gravity.START or Gravity.CENTER_VERTICAL
@@ -62,7 +63,7 @@ internal class WeatherCardView(
         addView(forecast)
         addView(status)
     }
-    override val forecastColumns get() = weatherPresentation(card.size).forecastColumns
+    override val forecastColumns get() = weatherPresentation(card.size, compactForecast).forecastColumns
 
     override fun renderReadings(readings: WeatherCardReadings, metric: (WeatherCardMetric) -> String?) {
         heading.text = readings.title
@@ -153,7 +154,7 @@ internal class WeatherCardView(
         val tall = card.size.rowSpan == 3
         val compact = card.size.rowSpan == 1
         val stacked = weatherPresentation(card.size).stackedCurrent
-        val narrowForecast = stacked && key.forecasts == 3
+        val narrowForecast = compactForecast && key.forecasts == 3
         val inset = if (compact) 6.dp else 10.dp
         setPadding(14.dp, inset, 14.dp, inset)
         val available = (height - inset * 2).coerceAtLeast(0)
