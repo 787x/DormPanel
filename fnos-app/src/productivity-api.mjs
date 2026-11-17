@@ -1,10 +1,13 @@
 import { z } from 'zod';
+import { createHash, randomBytes } from 'node:crypto';
 import { ensure } from './protocol.mjs';
-import { LIST, TASK, MEMO } from './shared-productivity.mjs';
-import { productivityBlock } from './productivity.mjs';
+import { LIST, TASK, MEMO, decodeProductivity } from './shared-productivity.mjs';
+import { wireRecords } from './shared-records.mjs';
+import { productivityBlock, productivityConflict } from './productivity.mjs';
 
 export const productivityRoute = '/api/productivity';
 export const productivityEditRoute = '/api/productivity/edit';
+export const productivityCheckRoute = '/api/productivity/check';
 const id = z.string().length(36).regex(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/)
   .refine(value => value !== '00000000-0000-0000-0000-000000000000');
 const revision = z.number().int().nonnegative();
@@ -23,8 +26,10 @@ export const productivityReads = {
   'todo.task': { id },
   'memo.list': { ...page },
   'memo.get': { id },
-  'productivity.conflicts': { offset:page.offset },
+  'productivity.conflicts': { offset:revision.max(100000).default(0), scope:z.enum(['efficiency','all']).default('efficiency') },
 };
+const conflictToken = z.string().regex(/^[0-9a-f-]{36}:[0-9a-f]{64}$/);
+const choice = z.enum(['local','remote']);
 export const productivityWrites = {
   'todo.createList': { id, name:title },
   'todo.renameList': { id, name:title },
@@ -37,8 +42,10 @@ export const productivityWrites = {
   'memo.rename': { id, title },
   'memo.edit': { id, title:title.optional(), body:memo },
   'memo.delete': { id },
-  'productivity.resolve': { token:z.string().regex(/^[0-9a-f-]{36}:[0-9a-f]{64}$/), choice:z.enum(['local','remote']) },
+  'productivity.resolve': { token:conflictToken, choice },
 };
+const httpWrites = { ...productivityWrites,
+  'productivity.resolve': { ...productivityWrites['productivity.resolve'], review:z.literal('all').optional() } };
 
 function parse(variants, key, input, context) {
   const name = input[key];
@@ -51,12 +58,12 @@ export function parseProductivityRead(params) {
   const query = Object.fromEntries(params);
   ensure(params.size === Object.keys(query).length, '读取参数重复');
   for (const key of ['offset','limit']) if (query[key] !== undefined) {
-    ensure(/^\d{1,4}$/.test(query[key]), '分页参数无效');
+    ensure(/^\d{1,6}$/.test(query[key]), '分页参数无效');
     query[key] = Number(query[key]);
   }
   return parse(productivityReads, 'view', query, scope);
 }
-export const parseProductivityWrite = input => parse(productivityWrites, 'action', input, productivityWriteScope);
+export const parseProductivityWrite = input => parse(httpWrites, 'action', input, productivityWriteScope);
 
 function pageOf(rows, { offset, limit }) {
   return { rows:rows.slice(offset, offset + limit), total:rows.length, offset,
@@ -113,10 +120,73 @@ export function readProductivity(catalog, db, input) {
     case 'memo.list': return { ...result, ...pageOf(view.memos.map(({ body, ...row }) =>
       ({ ...row, preview:Array.from(body.slice(0, 320)).slice(0, 160).join('') })), input) };
     case 'memo.get': return { ...result, memo:view.memos.find(memo => memo.id === input.id) ?? null };
-    case 'productivity.conflicts': return { ...result,
-      ...pageOf(view.conflict?.rows ?? [], { offset:input.offset, limit:1 }),
-      token:view.conflict ? `${input.workspaceId}:${view.conflict.token}` : null };
+    case 'productivity.conflicts': {
+      const conflict = input.scope === 'all' ? productivityConflict(db.frame, true) : view.conflict;
+      return { ...result, ...pageOf(conflict?.rows ?? [], { offset:input.offset, limit:1 }),
+        token:conflict ? `${input.workspaceId}:${conflict.token}` : null,
+        groups:conflict?.groups ?? 0, hidden:conflict?.hidden ?? 0, unreadable:conflict?.unreadable ?? 0,
+        complete:conflict?.complete ?? false };
+    }
   }
+}
+
+const expectedFields = {
+  'todo.createList':['name'], 'todo.renameList':['name'],
+  'todo.createTask':['listId','text','completed'], 'todo.editTask':['text'], 'todo.setCompleted':['completed'],
+  'memo.create':['title','body'], 'memo.rename':['title'], 'memo.edit':['title','body'],
+};
+const digest = (salt, value) => createHash('sha256').update(salt).update(JSON.stringify(value)).digest('hex');
+
+export function productivityExpectation(rawInput) {
+  const input = parseProductivityWrite(rawInput);
+  const { action, id, taskIds, token, choice, version } = input;
+  if (token) return { action, token, choice, version };
+  if (!expectedFields[action]) return { action, id, ...(taskIds ? { taskIds } : {}) };
+  const salt = randomBytes(16).toString('hex');
+  const values = action === 'todo.createTask' ? { ...input, completed:false } : input;
+  const fields = Object.fromEntries(expectedFields[action].filter(key => values[key] !== undefined)
+    .map(key => [key, digest(salt, values[key])]));
+  return { action, id, salt, fields };
+}
+
+const hex = size => z.string().length(size).regex(/^[0-9a-f]+$/);
+const checkScope = z.strictObject({ workspaceId:id, datasetId:id, expectation:z.object({ action:z.string() }).passthrough() });
+export const parseProductivityCheck = input => checkScope.parse(input);
+
+export function checkProductivityExpectation(frame, workspaceId, expected) {
+  const { action } = expected;
+  if (action === 'productivity.resolve') {
+    const target = z.strictObject({ action:z.literal(action), token:conflictToken, choice, version:revision }).parse(expected);
+    const original = target.token.slice(37), current = frame.v3.conflict?.id, decision = frame.v3.decision;
+    ensure(target.token.startsWith(workspaceId+':'), '冲突与工作区不匹配');
+    const decisionState = current === original ? 'original' : current ? 'new' : 'absent';
+    const match = current === original ? false : decision?.id === original && frame.revision > target.version
+      ? target.choice === decision.choice : null;
+    return { match, decisionState, recordedChoice:decision?.id === original ? decision.choice : null };
+  }
+  ensure(Object.hasOwn(productivityWrites, action), '未知共享效率操作');
+  const fields = expectedFields[action];
+  const isListDelete = action === 'todo.deleteList';
+  const shape = { action:z.literal(action), id,
+    ...(fields ? { salt:hex(32), fields:z.strictObject(Object.fromEntries(fields.map(key =>
+      [key, action === 'memo.edit' && key === 'title' ? hex(64).optional() : hex(64)]))) } : {}),
+    ...(isListDelete ? { taskIds:productivityWrites[action].taskIds } : {}) };
+  const target = z.strictObject(shape).parse(expected);
+  const type = action.startsWith('memo.') ? MEMO : action.endsWith('List') ? LIST : TASK;
+  const rows = wireRecords(frame.local.sharedRecords);
+  const record = rows.find(row => row.typeId === type && row.recordId === target.id);
+  if (isListDelete) {
+    const taskIds = new Set(target.taskIds);
+    const tasks = rows.filter(row => row.typeId === TASK).map(decodeProductivity);
+    const remainingTasks = tasks.filter(task => task.listId === target.id || taskIds.has(task.id)).length;
+    return { match:!record && remainingTasks === 0, exists:!!record, remainingTasks };
+  }
+  if (!fields) return { match:!record, exists:!!record };
+  if (!record) return { match:false, exists:false };
+  const value = decodeProductivity(record);
+  const compared = Object.fromEntries(Object.entries(target.fields).map(([key, hash]) =>
+    [key, digest(target.salt, value[key]) === hash]));
+  return { match:Object.values(compared).every(Boolean), exists:true, compared };
 }
 
 export function validateProductivityContext(catalog, db, input, { decision = false } = {}) {

@@ -19,6 +19,31 @@ const rejected = result => {
   assert.equal(result.data.writeApplied, false);
 };
 
+test('只读核对校验数据集、目标字段与清单删除的全部原任务', async t => {
+  const f = await productivityFixture(t);
+  const list = randomUUID(), other = randomUUID(), task = randomUUID();
+  const verify = async (action, input) => {
+    const result = await f.post('/api/productivity/check', { ...f.ctx(), action, ...input });
+    assert.equal(result.status, 200, JSON.stringify(result.data));
+    const { workspaceId, datasetId } = f.ctx();
+    return (scope = { workspaceId, datasetId }) => f.post('/api/productivity/check', { ...scope, expectation:result.data });
+  };
+  applied(await f.edit('todo.createList', { id:list, name:'第一个清单' }));
+  applied(await f.edit('todo.createList', { id:other, name:'第二个清单' }));
+  applied(await f.edit('todo.createTask', { id:task, listId:list, text:'旧任务' }));
+  const completed = await verify('todo.setCompleted', { id:task, completed:true });
+  assert.deepEqual((await completed()).data.compared, { completed:false });
+  applied(await f.edit('todo.setCompleted', { id:task, completed:true }));
+  assert.equal((await completed()).data.match, true);
+  assert.equal((await completed({ workspaceId:f.ctx().workspaceId, datasetId:randomUUID() })).status, 400);
+  const deleted = await verify('todo.deleteList', { id:list, taskIds:[task] });
+  applied(await f.edit('todo.deleteList', { id:list, taskIds:[task] }));
+  assert.equal((await deleted()).data.match, true);
+  applied(await f.edit('todo.createTask', { id:task, listId:other, text:'另一个清单中的原任务 ID' }));
+  const mismatched = (await deleted()).data;
+  assert.deepEqual([mismatched.match, mismatched.exists, mismatched.remainingTasks], [false, false, 1]);
+});
+
 test('HTTP 效率 CRUD、分页、文本预算、权限和完整删除范围', async t => {
   const f = await productivityFixture(t), { edit, read, ctx } = f;
   const list = randomUUID(), other = randomUUID(), a = randomUUID(), b = randomUUID(), m = randomUUID(), n = randomUUID();

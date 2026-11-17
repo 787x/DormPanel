@@ -31,7 +31,7 @@ function updateBody(raw, next, pasted) {
     raw.slice(rawOffset(before.length-suffix));
 }
 
-export function installProductivity({ host, get, post, el, button, confirmAction, sync, sources, reload, obsoleteView, canWrite }) {
+export function installProductivity({ host, get, post, el, button, confirmAction, sync, sources, openConflictReview, reload, obsoleteView, canWrite }) {
   let mode, scope, epoch = 0, models = {};
   const model = () => models[mode] ??= { offset:0, taskOffset:0, conflictOffset:0 };
   const read = (view, params = {}) => get(route + '?' + new URLSearchParams({ view, ...params }));
@@ -73,7 +73,7 @@ export function installProductivity({ host, get, post, el, button, confirmAction
           if (selected.memo) detail = selected;
         }
       }
-      const conflicts = list.conflictCount
+      const conflicts = list.conflict && list.availability === 'ready'
         ? await read('productivity.conflicts', { offset:state.conflictOffset }) : null;
       if (ticket !== epoch) return;
       if (conflicts && !sameContext(list, conflicts)) throw Error('冲突版本已变化，请重新读取');
@@ -181,32 +181,93 @@ export function installProductivity({ host, get, post, el, button, confirmAction
     return form;
   }
 
-  function renderConflicts(list, conflicts, state) {
-    const panel = el('section', null, 'panel');
-    panel.append(el('h3', '共享效率冲突'), el('p', '决定覆盖本次同步中的全部冲突组，包括其他业务记录；独立修改仍保留。'));
+  function conflictRows(panel, conflicts) {
+    const sides = [['base','共同基线'],['local','fnOS 本机'],['remote','远端方案']];
+    const types = { 'todo.list':'Todo 清单', 'todo.task':'Todo 任务', 'memo.text':'备忘', 'class':'课程',
+      'event':'事件', 'source':'导入来源', 'date':'日期调整', 'edit':'课程覆盖', 'term':'学期',
+      'course.color':'课程颜色', 'course.schedule':'课程时段' };
+    const fields = { 'todo.list':[['name','名称']], 'memo.text':[['title','标题'],['body','正文']],
+      'todo.task':[['listId','所属清单（listId）'],['position','顺序（position）'],
+        ['completed','完成状态（completed）'],['text','任务正文（text）']] };
     for (const row of conflicts.rows) {
-      const record = row.local ?? row.remote ?? row.base;
-      panel.append(el('h4', { 'todo.list':'Todo 清单', 'todo.task':'Todo 任务', 'memo.text':'备忘' }[record.typeId]));
+      panel.append(el('h4', `关联组 ${row.group} · ${types[row.typeId] ?? '未知记录'}`),
+        el('p', `${row.typeId} / ${row.recordId}`));
+      if (row.parts) panel.append(el('p', `记录内容分段 ${row.part} / ${row.parts}`));
       const group = el('div', null, 'productivity-conflict');
-      for (const [key, label] of [['base','共同基线'],['local','fnOS 本机'],['remote','远端方案']]) {
+      for (const [key, label] of sides) {
         const side = row[key], column = el('div');
-        column.append(el('strong', label), side ? el('pre', side.name ?? side.text ?? `${side.title}\n\n${side.body}`)
-          : el('p', row.unknownSides?.includes(key) ? '该侧记录版本无法读取' : '不存在'));
-        if (side && 'completed' in side) column.append(el('small', side.completed ? '已完成' : '未完成'));
+        column.append(el('strong', label));
+        if (row.unknownSides.includes(key)) column.append(el('p', '该侧记录无法完整读取'));
+        else if (side === null) column.append(el('p', '不存在'));
+        else if (!fields[row.typeId]) column.append(el('pre', row.parts ? side : JSON.stringify(side, null, 2)));
+        else for (const [field, name] of fields[row.typeId]) {
+          const changed = new Set(sides.map(([s]) => row[s]?.[field])).size > 1;
+          column.append(el('small', name, changed ? 'warning' : undefined),
+            el('pre', field === 'completed' ? (side[field] ? '已完成' : '未完成') : String(side[field])));
+        }
         group.append(column);
       }
       panel.append(group);
     }
-    panel.append(el('p', `关联记录 ${conflicts.offset+1} / ${conflicts.total}`),
-      pageButtons(conflicts, 1, offset => { state.conflictOffset = offset; return refresh(); }));
+    if (conflicts.rows.length) panel.append(el('p', `关联记录 ${conflicts.offset+1} / ${conflicts.total}`));
+  }
+
+  function decisionButtons(panel, enabled, decide) {
     for (const [choice, label] of [['local','采用本机冲突方案'],['remote','采用远端冲突方案']]) {
-      panel.append(writable(button(label, async () => {
+      panel.append(writable(button(label, () => decide(choice, label)), enabled));
+    }
+  }
+
+  function renderConflicts(list, conflicts, state) {
+    const panel = el('section', null, 'panel');
+    panel.append(el('h3', '共享效率冲突'));
+    conflictRows(panel, conflicts);
+    panel.append(pageButtons(conflicts, 1, offset => { state.conflictOffset = offset; return refresh(); }));
+    if (!conflicts.complete || conflicts.total !== 1) {
+      panel.append(el('p', conflicts.hidden ? '此页未展示课程等其他业务记录。请检查完整范围后决定。'
+        : '请检查全部关联记录后决定。'), button('查看完整共享冲突', openConflictReview));
+    } else {
+      panel.append(el('p', '决定应用于本次全部冲突组，独立修改仍保留。'));
+      decisionButtons(panel, !list.contextBlock && canWrite(), async (choice, label) => {
         const ticket = epoch;
         if (await confirmAction(`${label}？此次决定应用于全部冲突组。`, label) && ticket === epoch)
           await apply(list, { action:'productivity.resolve', token:conflicts.token, choice });
-      }), !list.contextBlock && canWrite()));
+      });
     }
     return panel;
+  }
+
+  async function reviewConflicts(form, panel, close) {
+    let initial, request = 0;
+    const examined = new Set();
+    async function page(offset) {
+      const ticket = ++request;
+      const current = await read('productivity.conflicts', { scope:'all', offset });
+      if (!form.current() || ticket !== request) return;
+      initial ??= current;
+      if (!sameContext(initial, current) || initial.token !== current.token) {
+        panel.replaceChildren(el('p', '冲突版本已变化，请关闭后重新打开。'));
+        return;
+      }
+      if (!current.conflict) {
+        panel.replaceChildren(el('p', '当前没有共享冲突。'));
+        return;
+      }
+      if (current.rows.length) examined.add(offset);
+      panel.replaceChildren(el('p', `本次决定覆盖全部 ${current.groups} 个冲突组。独立修改仍保留。`));
+      conflictRows(panel, current);
+      panel.append(pageButtons(current, 1, page));
+      if (!current.complete) panel.append(el('p', '有记录无法完整展示。当前无法提交决定。'));
+      else if (examined.size !== current.total) panel.append(el('p', `请逐页检查关联记录（${examined.size} / ${current.total}）。`));
+      decisionButtons(panel, current.complete && examined.size === current.total && !current.contextBlock && canWrite(),
+        async (choice, label) => {
+          if (!await confirmAction(`${label}？此次决定应用于全部冲突组。`, label) || !form.current() || ticket !== request) return;
+          close();
+          await post(editRoute, { ...context(current), action:'productivity.resolve', token:current.token, choice, review:'all' });
+          await reload();
+        });
+    }
+    await page(0);
   }
 
   function render() {
@@ -294,5 +355,5 @@ export function installProductivity({ host, get, post, el, button, confirmAction
       event.preventDefault(); event.returnValue = '';
     }
   });
-  return { open, leave, hasDraft:() => Object.values(models).some(state => state.draft?.changed) };
+  return { open, leave, reviewConflicts, hasDraft:() => Object.values(models).some(state => state.draft?.changed) };
 }

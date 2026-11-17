@@ -35,7 +35,7 @@ function unlockControls(buttons) {
   for(const b of buttons)if(disabledBeforeJob.has(b)){b.disabled=disabledBeforeJob.get(b);disabledBeforeJob.delete(b);}
 }
 let historyJobId=0, backupJobId=0;
-let activeProtocol = 'v2', viewEpoch = 0, currentPage = 'dashboard';
+let activeProtocol = 'v2', activeDescriptorFormat, viewEpoch = 0, currentPage = 'dashboard';
 let historyPreview = null, historyScope = null, historyEligible = false, historyBusy = false, backupBusy = false;
 let historyReadEpoch = 0, historyOutputEpoch = 0;
 class StaleResponse extends Error {}
@@ -108,6 +108,7 @@ async function load() {
     if (workspaceId !== s.workspaceId || loadedVersion !== s.version) { invalidateHistory(); invalidateBackup(); }
     workspaceId = s.workspaceId;
     activeProtocol = s.protocol ?? 'v2';
+    activeDescriptorFormat = s.descriptor?.format;
     catalogVersion = s.catalogVersion;
     token = s.csrf;
     version = s.version; loadedVersion=s.version;
@@ -299,25 +300,26 @@ async function get(path,{pageSensitive=true}={}) {
 }
 let activeWrite=null, unresolvedWrite=null, lastWrite=null, pendingCreatedWorkspace=null;
 const productivityEditPath = '/api/productivity/edit';
+const productivityCheckPath = '/api/productivity/check';
 const productivityIntentKey = 'dormpanel.productivity-intent';
 function rememberProductivityWrite(op) {
   try {
     if (!op) sessionStorage.removeItem(productivityIntentKey);
     else {
-      const { workspaceId, workspaceName, datasetId, action, productivityQuery } = op;
-      sessionStorage.setItem(productivityIntentKey, JSON.stringify({ workspaceId, workspaceName, datasetId, action, productivityQuery }));
+      const { workspaceId, datasetId, expectation } = op;
+      sessionStorage.setItem(productivityIntentKey, JSON.stringify({ workspaceId, datasetId, expectation }));
     }
   } catch { /* The in-page fence is still active when storage is unavailable. */ }
 }
 try {
   const intent = JSON.parse(sessionStorage.getItem(productivityIntentKey));
-  if (intent?.workspaceId && intent.datasetId && intent.productivityQuery) {
-    unresolvedWrite = { ...intent, path:productivityEditPath, label:'共享效率操作', phase:'uncertain',
+  if (intent?.workspaceId && intent.datasetId && (intent.expectation || intent.productivityQuery)) {
+    unresolvedWrite = { ...intent, workspaceName:intent.workspaceId, path:productivityEditPath, label:'共享效率操作', phase:'uncertain',
       message:'页面已重新打开。上次共享效率请求的结果需要先只读核对。' };
   }
 } catch { /* No recoverable tab-local intent. */ }
 const productivity = installProductivity({ host:$('productivity'), get, post, el, button, confirmAction,
-  sync:() => runSync({}), sources:() => showSources(true), reload:load, obsoleteView,
+  sync:() => runSync({}), sources:() => showSources(true), openConflictReview:showProductivityConflicts, reload:load, obsoleteView,
   canWrite:() => !activeWrite && !unresolvedWrite && !switching,
 });
 function renderCreationStatus() {
@@ -341,7 +343,8 @@ function writeLabel(path,data) {
 }
 function renderWriteStatus() {
   const op=activeWrite??unresolvedWrite??lastWrite,host=$('writeStatus');host.hidden=!op;renderCreationStatus();if(!op)return;
-  host.replaceChildren(el('strong',op.label+' · '+op.workspaceName),el('p',op.message));
+  const scopeName = management?.workspaces.find(workspace => workspace.id === op.workspaceId)?.name ?? op.workspaceName;
+  host.replaceChildren(el('strong',op.label+' · '+scopeName),el('p',op.message));
   if(op.evidence)host.append(el('p',op.evidence));
   if(op.phase!=='running')host.append(button('重新读取操作状态',async()=>{
     await reconcileWrite(op);
@@ -350,14 +353,45 @@ function renderWriteStatus() {
   }));
   if(op.phase==='uncertain' && op.evidenceReady && unresolvedWrite===op)host.append(button('已核对结果，解除操作保护（不重发）',async()=>{
     if(unresolvedWrite!==op || activeWrite)return;
+    if (op.path === productivityEditPath) {
+      const seen = op.evidence;
+      await reconcileWrite(op);
+      if (!op.evidenceReady || unresolvedWrite !== op || seen !== op.evidence) { renderWriteStatus(); return; }
+    }
     unresolvedWrite=null;invalidateHistory();invalidateBackup();
     if (op.path === productivityEditPath) rememberProductivityWrite(null);
     op.message='结果仍不确定；已由用户结束本次核对，没有重发原请求。请根据当前课程和恢复信息继续。';
     await refreshAfterWrite(op);renderWriteStatus();
   }));
 }
-async function authority(path) {
-  const response=await fetch(base+path),value=await response.json();if(!response.ok)throw Error(value.error??'状态读取失败');return value;
+async function authority(path, input) {
+  const request = input === undefined ? undefined : { method:'POST',
+    headers:{ 'Content-Type':'application/json', 'X-DormPanel-CSRF':token },
+    body:JSON.stringify(input), signal:AbortSignal.timeout(20000) };
+  const response=await fetch(base+path, request),value=await response.json();if(!response.ok)throw Error(value.error??'状态读取失败');return value;
+}
+async function reconcileProductivity(op) {
+  const scope = { workspaceId:op.workspaceId, datasetId:op.datasetId };
+  if (!op.expectation) {
+    const state = await authority('/api/productivity?' + new URLSearchParams({ workspaceId:op.workspaceId, ...op.productivityQuery }));
+    if (state.workspaceId !== op.workspaceId || state.datasetId !== op.datasetId || state.availability !== 'ready' ||
+        state.writeInFlight || state.recovery) throw Error('原工作区暂不可核对');
+    return `原工作区当前版本 ${state.version}。旧请求缺少目标摘要，暂时无法比对，请查看当前记录并手动核对。`;
+  }
+  const result = await authority(productivityCheckPath, { ...scope, expectation:op.expectation });
+  if (result.workspaceId !== scope.workspaceId || result.datasetId !== scope.datasetId ||
+      !Number.isSafeInteger(result.version) || ![true,false,null].includes(result.match)) throw Error('权威结果未能验证');
+  const names = { title:'标题', body:'正文', text:'任务正文', name:'名称', listId:'所属清单', completed:'完成状态' };
+  const details = [];
+  if (result.exists !== undefined) details.push(result.exists ? '目标记录存在' : '目标记录不存在');
+  if (result.compared) details.push(...Object.entries(result.compared).map(([key, matched]) => `${names[key]} ${matched ? '一致' : '不同'}`));
+  if (result.remainingTasks !== undefined) details.push(`原范围或清单下仍有 ${result.remainingTasks} 项任务`);
+  if (result.decisionState) details.push({ original:'原冲突仍存在', new:'已发现新的冲突', absent:'当前无共享冲突' }[result.decisionState],
+    result.recordedChoice ? '已记录原冲突的决定：'+(result.recordedChoice === 'local' ? '本机' : '远端') : '未能核实原冲突的决定');
+  const match = result.match === null ? '暂时无法核对原决定是否生效'
+    : result.match ? '当前状态符合请求目标' : '当前状态不符合请求目标';
+  if (op.phase === 'uncertain') details.push('以上是当前状态，原请求的执行结果仍不确定。');
+  return [`原工作区当前版本 ${result.version}`, match, ...details].join(' · ');
 }
 async function reconcileWrite(op) {
   op.evidenceReady=false;
@@ -369,13 +403,7 @@ async function reconcileWrite(op) {
     }
     if(op.path==='/api/courses/save'&&op.courseKey){const result=await authority('/api/courses?'+new URLSearchParams({workspaceId:op.workspaceId,key:op.courseKey,limit:100}));op.evidence='已只读核对完整业务哈希 '+result.businessHash+' · 版本 '+result.version+(result.businessHash===op.expectedHash?' · 与本次候选一致':' · 与候选不同，需核对最终记录');op.evidenceReady=true;return;}
     if (op.path === productivityEditPath) {
-      const result = await authority('/api/productivity?' + new URLSearchParams({ workspaceId:op.workspaceId, ...op.productivityQuery }));
-      if (result.writeInFlight || result.recovery) throw Error('工作区仍在执行操作或等待恢复');
-      if (result.availability !== 'ready' || result.datasetId !== op.datasetId) throw Error('原共享数据集未能验证');
-      const record = result.list ?? result.task ?? result.memo;
-      op.evidence = `已只读核对原工作区版本 ${result.version}。\x20` +
-        (op.productivityQuery.id ? (record ? '目标记录存在，请核对当前值。' : '目标记录当前不存在。') :
-          (result.conflict ? '仍有共享冲突。' : '当前没有共享冲突。'));
+      op.evidence = await reconcileProductivity(op);
       op.evidenceReady = true;
       return;
     }
@@ -392,7 +420,7 @@ async function reconcileWrite(op) {
     if(maintenance.restoreGuard || maintenance.restorePoisoned)op.evidence+='；恢复保护尚未解除，请继续恢复检查';
     if(maintenance.lastRestore)op.evidence+='；最近一条恢复记录：'+(maintenance.lastRestore.ok?'完成':'未完成')+'（'+new Date(maintenance.lastRestore.restoredAt).toLocaleString()+'，此记录不单独证明本请求结果）';
     op.evidenceReady=true;
-  } catch(error) {op.evidence='权威状态暂不可读：'+error.message+'。保留请求结果，使用“重新读取操作状态”重试，不自动重发写请求。';}
+  } catch(error) {op.evidence='暂时无法核对权威状态：'+error.message+'。保留请求结果，使用“重新读取操作状态”重试，不自动重发写请求。';}
 }
 async function refreshAfterWrite(op) {
   // Refresh only the still-selected scope, using authoritative identity for catalog replacement.
@@ -411,17 +439,23 @@ async function post(path, data = {}) {
   // Revoking a view's restore capability must not cancel an already dispatched restore.
   if(path==='/api/backups/cancel' && [activeWrite,unresolvedWrite,lastWrite].some(op=>op?.path==='/api/backups/restore' && op.restoreToken===data.token))return {};
   const op=readOnly?null:{path,courseKey:data.courseKey,expectedHash:data.previewHash,workspaceId:scope,workspaceName:management?.workspaces.find(w=>w.id===scope)?.name??scope,label:writeLabel(path,data),action:data.action,targetId:data.targetId,restoreToken:path==='/api/backups/restore'?data.token:null,phase:'running',message:'请求已发出，正在执行；切换页面不会取消。请等待结果，期间不提交其他写操作。'};
-  if (path === productivityEditPath) {
-    op.datasetId = data.datasetId;
-    const view = data.action.startsWith('memo.') ? 'memo.get' : data.action.endsWith('Task') || data.action === 'todo.setCompleted'
-      ? 'todo.task' : data.action.endsWith('List') ? 'todo.get' : 'productivity.conflicts';
-    op.productivityQuery = { view, ...(data.id ? { id:data.id } : {}) };
-    rememberProductivityWrite(op);
-  }
+  if (path === productivityEditPath) op.message = '正在准备写入目标摘要。';
   if(op){activeWrite=op;lastWrite=op;renderWriteStatus();}
   let response,value,failure;
+  const request = {workspaceId:scope,version,catalogVersion,...data};
+  let dispatched = false;
   try {
-    response=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json','X-DormPanel-CSRF':token},body:JSON.stringify({workspaceId:scope,version,catalogVersion,...data}),
+    if (path === productivityEditPath) {
+      op.datasetId = data.datasetId;
+      op.expectation = await authority(productivityCheckPath, request);
+      if (scope !== workspaceId || pageTicket !== viewEpoch || modelTicket !== loadEpoch ||
+          formTicket !== null && formTicket !== editorEpoch) throw new StaleResponse('页面或工作区已变化，原请求尚未发出');
+      rememberProductivityWrite(op);
+      op.message = '写入已提交给服务器处理，请等待回执。切换页面不会撤销该写入。';
+      renderWriteStatus();
+    }
+    dispatched = true;
+    response=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json','X-DormPanel-CSRF':token},body:JSON.stringify(request),
       ...(path === productivityEditPath ? { signal:AbortSignal.timeout(20000) } : {}) });
     value=await response.json();
     if(!response.ok)failure=Error(value.error??'服务器返回失败');
@@ -430,10 +464,10 @@ async function post(path, data = {}) {
   const draftWrite=!!op && (path==='/api/courses/save'||['/api/edit','/api/import/confirm'].includes(path) && formTicket!==null && localEditorContext);
   const detached=scope!==workspaceId || pageTicket!==viewEpoch || modelTicket!==loadEpoch || formTicket!==null && formTicket!==editorEpoch;
   if(op) {
-    const rejected=failure && value?.writeApplied===false;
-    const correctable=rejected && response.status===400;
+    const rejected=failure && (!dispatched || value?.writeApplied===false);
+    const correctable=rejected && response?.status===400;
     if(draftWrite && failure)failure.draftInvalid=!correctable;
-    op.phase=!response || !value || failure && !rejected && path === productivityEditPath?'uncertain':rejected?'rejected':failure?'failed':'completed';
+    op.phase=rejected?'rejected':!response || !value || failure && path === productivityEditPath?'uncertain':failure?'failed':'completed';
     op.message=op.phase==='uncertain'?'没有取得完整回执，结果不确定；这不表示操作取消或未写入。原请求不会自动重发。':failure?'服务器返回失败：'+failure.message+'。可能已有部分进度，请核对权威状态。':'服务器已返回成功响应；请求处理完成，具体保存、发布和恢复状态以核对结果为准。';
     if(rejected)op.message=draftWrite?(correctable?'服务器已拒绝，本次未提交修改。草稿已保留，可纠正输入后重试。':'服务器已拒绝，本次未提交修改；原提交资格已失效，草稿保留供核对。'):'服务器已拒绝，本次未执行请求：'+failure.message;
     if (!failure && path === productivityEditPath) op.message = value.dirty ? '已保存到 fnOS 本机，待发布。' : '已保存到 fnOS 本机。';
@@ -443,7 +477,7 @@ async function post(path, data = {}) {
     renderWriteStatus();
     // Keep the global write fence until reconciliation and the current model refresh finish.
     const switching=path==='/api/manage' && data.action==='workspace.switch';
-    if(detached || failure && !correctable || switching || ['/api/history/rollback','/api/backups/restore','/api/migration'].includes(path))await reconcileWrite(op);
+    if(dispatched && (detached || failure && !correctable || switching || ['/api/history/rollback','/api/backups/restore','/api/migration'].includes(path)))await reconcileWrite(op);
     if(switching && !op.evidenceReady){op.confirmationPending=true;unresolvedWrite=op;op.message+=' 活动课程表尚未确认，请只读核对，不能重发切换。';}
     if(op.phase==='uncertain')unresolvedWrite=op;
     else if (path === productivityEditPath) rememberProductivityWrite(null);
@@ -955,7 +989,11 @@ async function importFile() {
     (input) => post("/api/import/confirm", input),
   );
 }
+function showProductivityConflicts() {
+  dialog('完整共享冲突', form => productivity.reviewConflicts(form, $('fields'), () => $('editor').close()), null);
+}
 async function showConflicts() {
+  if (activeDescriptorFormat === 4) return showProductivityConflicts();
   try {
     const c = await get("/api/conflicts");
     if (c.workspaceId !== workspaceId) return;

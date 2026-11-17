@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
 import { expect } from 'playwright/test';
 import { productivityFixture } from '../test-fixtures/productivity-fixture.mjs';
+import { TASK, decodeProductivity, encodeProductivity } from '../src/shared-productivity.mjs';
+import { durableRecords, wireRecords } from '../src/shared-records.mjs';
 
 let browser;
 before(async () => { browser = await chromium.launch({ channel:process.env.BROWSER_CHANNEL ?? (process.platform === 'win32' ? 'msedge' : 'chromium') }); });
@@ -141,7 +143,7 @@ test('网页显示备忘三方内容、保护和实际决定范围', async t => 
     await expect(page.locator('.productivity-conflict pre').filter({ hasText:value })).toHaveCount(1);
   }
   await expect(page.getByRole('button', { name:'编辑备忘' })).toBeDisabled();
-  await expect(page.getByText(/全部冲突组，包括其他业务记录/)).toBeVisible();
+  await expect(page.getByText(/决定应用于本次全部冲突组/)).toBeVisible();
   if (process.env.PR89_SCREENSHOTS) await page.screenshot({ path:process.env.PR89_SCREENSHOTS+'/fnos-conflict.png', fullPage:true });
   await click('采用远端冲突方案');
   await f.sync(); // 另一次检查使网页之前的 revision 过期
@@ -152,6 +154,159 @@ test('网页显示备忘三方内容、保护和实际决定范围', async t => 
   await expect(page.getByRole('heading', { name:'共享效率冲突' })).toHaveCount(0);
   assert.equal((await f.read('memo.get', { id })).data.memo.body, '远端正文');
   assert.deepEqual(errors, []);
+});
+
+test('混合冲突须检查完整范围，任务三方显示归属、顺序与原文', async t => {
+  const f = await productivityFixture(t, { proxy:true });
+  const peer = await productivityFixture(t, { format:0, transport:f.transport });
+  const memoId = randomUUID(), taskId = randomUUID();
+  const lists = [randomUUID(), randomUUID(), randomUUID()];
+  const text = '  相同正文\r\n\r\n🙂  ';
+  const edit = async (target, action, input) => {
+    const result = await target.edit(action, input);
+    assert.equal(result.status, 200, JSON.stringify(result.data));
+  };
+  const course = async (target, title) => {
+    const result = await target.post('/api/edit', { ...target.ctx(), operation:{
+      kind:'entry', action:'upsert', value:{ id:'mixed-course', title, day:1, startMinute:480, endMinute:540, location:'' },
+    } });
+    assert.equal(result.status, 200, JSON.stringify(result.data));
+  };
+  const moveTask = (target, listId, position) => target.app.db.tx(frame => {
+    const rows = wireRecords(frame.local.sharedRecords);
+    const index = rows.findIndex(row => row.typeId === TASK && row.recordId === taskId);
+    rows[index] = encodeProductivity({ ...decodeProductivity(rows[index]), listId, position });
+    frame.local.sharedRecords = durableRecords(rows);
+  });
+  for (const [index, id] of lists.entries()) await edit(f, 'todo.createList', { id, name:'清单 '+index });
+  await edit(f, 'todo.createTask', { id:taskId, listId:lists[0], text });
+  await edit(f, 'memo.create', { id:memoId, title:'混合备忘', body:'基线备忘' });
+  await course(f, '基线课程');
+  await f.settle();
+  assert.equal((await peer.joinDataset()).status, 200);
+  await peer.settle();
+  for (const [index, target] of [f, peer].entries()) {
+    const side = index === 0 ? '本机' : '远端';
+    await edit(target, 'memo.edit', { id:memoId, body:side+'备忘' });
+    await course(target, side+'课程');
+    await moveTask(target, lists[index+1], (index+1)*4);
+  }
+  await peer.settle();
+  assert((await f.settle()).conflict);
+  const partial = (await f.read('productivity.conflicts')).data;
+  assert.equal(partial.hidden, 1);
+  assert.equal((await f.edit('productivity.resolve', { token:partial.token, choice:'remote' })).data.writeApplied, false);
+  assert.equal((await f.post('/api/resolve', { ...f.ctx(), token:partial.token, choice:'remote' })).status, 400);
+  const { page, errors } = await pageFor(t, f);
+  await page.locator('#memoPage').click();
+  await expect(page.getByText(/此页未展示课程等其他业务记录/)).toBeVisible();
+  await expect(page.getByRole('button', { name:'采用远端冲突方案' })).toHaveCount(0);
+  await page.getByRole('button', { name:'查看完整共享冲突' }).click();
+  const dialog = page.locator('#editor');
+  const decide = dialog.getByRole('button', { name:'采用远端冲突方案' });
+  const scopes = [];
+  for (let n = 0; n < 3; n++) {
+    await expect(dialog.getByText(`关联记录 ${n+1} / 3`)).toBeVisible();
+    const label = await dialog.locator('h4').textContent();
+    scopes.push(label);
+    if (label.endsWith('课程')) {
+      for (const value of ['基线课程','本机课程','远端课程'])
+        await expect(dialog.locator('pre').filter({ hasText:value })).toBeVisible();
+    } else if (label.endsWith('Todo 任务')) {
+      await expect(dialog.getByText(`todo.task / ${taskId}`)).toBeVisible();
+      const columns = dialog.locator('.productivity-conflict > div');
+      for (let side = 0; side < 3; side++) {
+        const values = await columns.nth(side).locator('pre').allTextContents();
+        assert.deepEqual(values, [lists[side], String(side*4), '未完成', text]);
+      }
+    } else {
+      for (const value of ['基线备忘','本机备忘','远端备忘'])
+        await expect(dialog.locator('pre').filter({ hasText:value })).toBeVisible();
+    }
+    if (n < 2) {
+      await expect(decide).toBeDisabled();
+      await dialog.getByRole('button', { name:'下一页' }).click();
+    }
+  }
+  assert.equal(new Set(scopes).size, 3);
+  await expect(decide).toBeEnabled();
+  await decide.click();
+  await page.locator('#feedbackAccept').click();
+  await expect(page.locator('#writeStatus')).toContainText('已保存到 fnOS 本机');
+  assert.equal(f.app.db.frame.local.entries[0].title, '远端课程');
+  assert.equal((await f.read('memo.get', { id:memoId })).data.memo.body, '远端备忘');
+  assert.equal((await f.read('todo.task', { id:taskId })).data.task.listId, lists[2]);
+  assert.deepEqual(errors, []);
+});
+
+for (const committed of [false, true]) test(`备忘修改丢失回执，${committed ? '当前正文匹配' : '当前正文仍旧'}`, async t => {
+  const f = await productivityFixture(t, { proxy:true });
+  const id = randomUUID(), oldBody = '旧正文\r\n', body = '敏感目标正文🙂\n\n ';
+  assert.equal((await f.edit('memo.create', { id, title:'核对备忘', body:oldBody })).status, 200);
+  const { page, errors } = await pageFor(t, f);
+  let writes = 0;
+  await page.route('**/api/productivity/edit', async route => {
+    writes++;
+    if (committed) assert.equal((await route.fetch()).status(), 200);
+    await route.fulfill({ status:502, json:{ error:'回执模拟丢失' } });
+  });
+  const click = name => page.getByRole('button', { name, exact:true }).click();
+  await click('备忘'); await click('编辑备忘');
+  await page.getByLabel(/备忘正文/).fill(body);
+  await click('保存本机');
+  const status = page.locator('#writeStatus');
+  const result = committed ? '当前状态符合请求目标' : '当前状态不符合请求目标';
+  await expect(status).toContainText(result);
+  await expect(status).toContainText(committed ? '正文 一致' : '正文 不同');
+  await expect(status).toContainText('原请求的执行结果仍不确定');
+  const intent = await page.evaluate(() => sessionStorage.getItem('dormpanel.productivity-intent'));
+  assert(!intent.includes('敏感目标正文') && !intent.includes('核对备忘'));
+  await page.reload();
+  await click('重新读取操作状态');
+  await expect(status).toContainText(result);
+  assert.equal(writes, 1);
+  assert.equal((await f.read('memo.get', { id })).data.memo.body, committed ? body.replaceAll('\n', '\r\n') : oldBody);
+  await click('已核对结果，解除操作保护（不重发）');
+  assert.equal(writes, 1);
+  assert.deepEqual(errors, []);
+});
+
+test('服务端事务尚未结束时继续保护，重开页面也不重发', async t => {
+  const f = await productivityFixture(t, { proxy:true });
+  const id = randomUUID();
+  assert.equal((await f.edit('memo.create', { id, title:'正在写入的备忘', body:'旧值' })).status, 200);
+  const { page } = await pageFor(t, f);
+  const db = f.app.db;
+  await db.queue;
+  let release, writes = 0, upstream;
+  db.queue = new Promise(resolve => { release = resolve; });
+  try {
+    await page.route('**/api/productivity/edit', async route => {
+      writes++;
+      upstream = route.fetch();
+      await expect.poll(() => db.writing).toBeGreaterThan(0);
+      await route.fulfill({ status:502, json:{ error:'回执模拟丢失' } });
+    });
+    const click = name => page.getByRole('button', { name, exact:true }).click();
+    await click('备忘'); await click('编辑备忘');
+    await page.getByLabel(/备忘正文/).fill('待提交的新值');
+    await click('保存本机');
+    await expect(page.locator('#writeStatus')).toContainText('工作区仍在执行操作');
+    await page.reload();
+    await click('重新读取操作状态');
+    await expect(page.locator('#writeStatus')).toContainText('暂时无法核对权威状态');
+    await expect(page.getByRole('button', { name:/解除操作保护/ })).toHaveCount(0);
+    await click('备忘');
+    await expect(page.getByRole('button', { name:'新建备忘' })).toBeDisabled();
+    release();
+    assert.equal((await upstream).status(), 200);
+    await click('重新读取操作状态');
+    await expect(page.locator('#writeStatus')).toContainText('当前状态符合请求目标');
+    assert.equal(writes, 1);
+  } finally {
+    release();
+    await upstream?.catch(() => {});
+  }
 });
 
 test('切换工作区后丢弃旧 Todo 读取结果', async t => {

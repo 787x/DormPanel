@@ -22,9 +22,10 @@ import { date, ensure, zone } from "./protocol.mjs";
 import { projectWeek, monday, addDays } from "./projection.mjs";
 import { mergePlan } from "./merge.mjs";
 import { previewImport, commitImport } from "./import.mjs";
-import { editProductivity } from './productivity.mjs';
-import { productivityRoute, productivityEditRoute, parseProductivityRead, parseProductivityWrite,
-  productivityStatus, readProductivity, validateProductivityContext, productivityEdit } from './productivity-api.mjs';
+import { editProductivity, productivityConflict } from './productivity.mjs';
+import { productivityRoute, productivityEditRoute, productivityCheckRoute, parseProductivityRead, parseProductivityWrite,
+  productivityStatus, readProductivity, validateProductivityContext, productivityEdit,
+  productivityExpectation, parseProductivityCheck, checkProductivityExpectation } from './productivity-api.mjs';
 
 export const PREFIX = "/app/dormpanel-schedule-manager";
 export function validatePageOrigin(req, value) {
@@ -178,7 +179,7 @@ export async function createApp({
           '/api/history/archive-restore', '/api/history/cleanup-preview', '/api/history/cleanup', '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
           "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore", "/api/backups/cancel",
           "/api/edit", "/api/courses/preview", "/api/courses/save",
-          productivityEditRoute,
+          productivityEditRoute, productivityCheckRoute,
           "/api/refresh",
           "/api/sync",
           "/api/resolve",
@@ -202,7 +203,23 @@ export async function createApp({
           send(403, { error: "CSRF 或同源校验失败", ...productivityRejection });
           return;
         }
+        if (path === productivityEditRoute) { writing = true; writes++; }
         const rawInput = await body(req);
+        if (path === productivityCheckRoute) {
+          // Read-only POST keeps the original text and check data out of URLs.
+          if (!Object.hasOwn(rawInput, 'expectation')) {
+            send(200, productivityExpectation(rawInput)); return;
+          }
+          const { workspaceId, datasetId, expectation } = parseProductivityCheck(rawInput);
+          ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
+          const db = await catalog.load(workspaceId);
+          const status = productivityStatus(catalog, db, workspaceId);
+          ensure(!writes && !db.writing && !historyLock && !catalog.busy.has(workspaceId) &&
+            !catalog.configuring && !status.recovery, '工作区仍在执行操作或等待恢复');
+          ensure(status.availability === 'ready' && status.datasetId === datasetId, '原共享数据集未能验证');
+          send(200, { workspaceId, datasetId, version:status.version,
+            ...checkProductivityExpectation(db.frame, workspaceId, expectation) }); return;
+        }
         const input = path === productivityEditRoute ? parseProductivityWrite(rawInput) : rawInput;
         if (path === '/api/connections/browse') {
           ensure(!internal && !catalog.maintenance, '仅管理员页面可浏览；恢复期间请稍后重试');
@@ -238,7 +255,7 @@ export async function createApp({
           ensure(!input.bind && !input.create, '发现不可同时创建或绑定');
           send(200, await catalog.discover(input.workspaceId, input.targetConnectionId)); return;
         }
-        writing = true; writes++;
+        if (!writing) { writing = true; writes++; }
         ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
         ensure(!historyLock, '历史操作进行中，请稍后重试');
         if (path.startsWith('/api/backups/')) {
@@ -346,6 +363,8 @@ export async function createApp({
           if (decision) {
             const token = db.conflictToken();
             ensure(token && input.token === `${workspaceId}:${token}`, '冲突 token 已失效或工作区不匹配');
+            if (!internal) ensure(productivityConflict(db.frame, input.review === 'all')?.complete,
+              '当前范围未完整展示冲突，请查看完整冲突后决定');
             productivityPersistenceStarted = true;
             await network(engine => engine.resolve(input.choice, token, input.version));
           } else {
@@ -381,6 +400,7 @@ export async function createApp({
           if (input.discover && db.activeV3) { send(200, result); return; }
         }
         else if (path === "/api/resolve") {
+          ensure(internal || db.frame.v3?.binding?.format !== 4, '请使用完整共享冲突检查入口');
           ensure(input.token === `${workspaceId}:${db.conflictToken()}` && db.conflictToken(), '冲突 token 已失效或工作区不匹配');
           await network((engine) =>
             engine.resolve(input.choice, db.conflictToken(), input.version),
@@ -461,7 +481,8 @@ export async function createApp({
         const input = parseProductivityRead(u.searchParams);
         ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
         const db = await catalog.load(input.workspaceId);
-        send(200, { ...readProductivity(catalog, db, input), writeInFlight: writes > 0 || db.writing > 0 });
+        const result = readProductivity(catalog, db, input);
+        send(200, { ...(input.scope === 'all' ? publicValue(result) : result), writeInFlight: writes > 0 || db.writing > 0 });
         return;
       }
       if (path.startsWith('/api/') && !['/api/export/ics', '/api/courses', '/api/maintenance', '/api/agent', '/api/import/rows', '/api/schedule/range', '/api/migration', '/api/history', '/api/history/space', '/api/history/eligibility', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {

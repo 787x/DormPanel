@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { productivityFixture } from '../test-fixtures/productivity-fixture.mjs';
 import { businessHash } from '../src/v3-protocol.mjs';
+import { productivityConflict } from '../src/productivity.mjs';
+import { encodeProductivity, MEMO } from '../src/shared-productivity.mjs';
+import { durableRecords } from '../src/shared-records.mjs';
+import { emptyState } from '../src/merge.mjs';
 
 test('双 Writer 独立合并、关联删除冲突、三方内容和过期决定', async t => {
   const url = process.env.PR89_CONFLICT_DAV_URL;
@@ -59,7 +63,17 @@ test('双 Writer 独立合并、关联删除冲突、三方内容和过期决定
   await save(remote, 'memo.edit', { id:memo, body:'远端正文\r\n🙂' });
   conflict = await showConflict();
   assert.deepEqual(['base','local','remote'].map(side => conflict.rows[0][side].body), ['共同基线\r\n','本机正文\n','远端正文\r\n🙂']);
+  const target = { ...local.ctx(), action:'productivity.resolve', token:conflict.token, choice:'remote' };
+  const expectation = await local.post('/api/productivity/check', target);
+  assert.equal(expectation.status, 200);
+  const verify = () => local.post('/api/productivity/check', {
+    workspaceId:target.workspaceId, datasetId:target.datasetId, expectation:expectation.data,
+  });
+  assert.deepEqual((await verify()).data.decisionState, 'original');
+  assert.equal((await verify()).data.match, false);
   await save(local, 'productivity.resolve', { token:conflict.token, choice:'remote' });
+  assert.equal((await verify()).data.recordedChoice, 'remote');
+  assert.equal((await verify()).data.match, true);
   await converge();
 
   await save(local, 'memo.delete', { id:memo });
@@ -80,4 +94,37 @@ test('双 Writer 独立合并、关联删除冲突、三方内容和过期决定
   assert.deepEqual((await local.read('todo.get', { id:list })).data.taskIds, [taskA, taskB, newTask]);
   console.log(JSON.stringify({ transport:url ? 'WebDAV' : 'fixture', datasetId:local.ctx().datasetId,
     businessHash:businessHash(local.app.db.frame.local) }));
+});
+
+test('完整范围保留未知 schema、真正不存在及未展示的业务组', () => {
+  const id = randomUUID(), key = `shared:${MEMO}/${id}`;
+  const encoded = encodeProductivity({ typeId:MEMO, id, title:'标题', body:'正文' });
+  const base = { ...emptyState(), sharedRecords:durableRecords([encoded]) };
+  const local = { ...base, sharedRecords:[] };
+  const remote = { ...base, sharedRecords:durableRecords([{ ...encoded, schemaVersion:2 }]) };
+  const frame = { v3:{ conflict:{ id:'fixture', conflicts:[{ keys:[key] }, { keys:['class:removed'] }], base, local, remote } } };
+  const partial = productivityConflict(frame), full = productivityConflict(frame, true);
+  assert.equal(partial.hidden, 1);
+  assert.equal(full.rows.length, 2);
+  assert.equal(full.groups, 2);
+  assert.equal(full.complete, false);
+  assert.equal(full.rows[0].local, null);
+  assert.deepEqual(full.rows[0].unknownSides, ['remote']);
+  assert.equal(full.rows[1].typeId, 'class');
+  assert.deepEqual(full.rows[1].unknownSides, []);
+});
+
+test('完整范围分页保留大型课程记录的全部可见内容', () => {
+  const state = title => ({ ...emptyState(), entries:[{
+    id:'long', title, day:1, startMinute:480, endMinute:540, location:'',
+  }] });
+  const title = '课程"🙂\n'.repeat(20000);
+  const conflict = { id:'fixture', conflicts:[{ keys:['class:long'] }],
+    base:state('共同基线'), local:state(title), remote:state(title.toUpperCase()) };
+  const result = productivityConflict({ v3:{ conflict } }, true);
+  assert.equal(result.complete, true);
+  assert(result.rows.length > 1);
+  assert.deepEqual(result.rows.map(row => row.part), result.rows.map((_, index) => index+1));
+  assert.equal(JSON.parse(result.rows.map(row => row.local).join('')).title, title);
+  assert(result.rows.every(row => Buffer.byteLength(JSON.stringify(row)) < 1024 * 1024));
 });
