@@ -229,7 +229,7 @@ internal object ProductivityWidgets {
             remote.setTextViewText(R.id.productivity_status, "剩余 ${tasks.count { !it.completed }} 项 · $status")
         } else remote.setTextViewText(R.id.productivity_status, status)
         remote.setOnClickPendingIntent(R.id.productivity_title, if (target == null || record == null) configure(app, id)
-            else open(app, kind, id, target))
+            else open(app, kind, id, target, editMemo = kind == ProductivityKind.MEMO))
         remote.setOnClickPendingIntent(R.id.productivity_refresh, PendingIntent.getBroadcast(app, id,
             Intent(REFRESH).setComponent(provider(app, kind)).setData(uri("refresh", id)), immutable))
         when (kind) {

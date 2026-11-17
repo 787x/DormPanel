@@ -265,6 +265,27 @@ class PhoneProductivityAndroidTest {
             assertFalse(load(dataset).pending)
             assertTrue(load(dataset).content.tasks.single { it.id == oldTask.id }.completed)
             assertEquals(localContent, load(null))
+
+            // The widget host Activity is closed. Receive another Writer's change through WebDAV.
+            val peerDatabase = androidx.room.Room.databaseBuilder(context, ScheduleDatabase::class.java,
+                "pr88-widget-peer-${AndroidProductivity.id()}.db").build()
+            val peer = RoomScheduleStore(peerDatabase, profiles = TermScheduleProfileStore(context))
+            try {
+                var preview: UnboundV3JoinPreview? = null
+                repeat(8) { if (preview == null) preview = peer.previewUnboundV3Join(account, url, descriptor) }
+                peer.joinVerifiedV3(requireNotNull(preview), account)
+                val incoming = tasks.first { it.text == "预约自习室" }
+                val peerVersion = await(peer::loadProductivity).getOrThrow().version!!
+                await<Unit> { peer.editProductivity(peerVersion, ProductivityEdit.SetTaskCompleted(incoming.id, true), it) }.getOrThrow()
+                settle(peer, account)
+                assertFalse(load(dataset).content.tasks.single { it.id == incoming.id }.completed)
+                settle(store, account)
+                waitFor {
+                    ProductivityWidgets.rows(todoId)?.tasks?.singleOrNull { it.id == incoming.id }?.completed == true
+                }
+            } finally {
+                peer.close()
+            }
             if (InstrumentationRegistry.getArguments().getString("pr88KeepWidgets") == "true") {
                 context.getFileStreamPath("pr88-widget-fixture").writeText(ids.joinToString(",") + "\n$dataset")
                 retain = true
