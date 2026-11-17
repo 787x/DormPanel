@@ -115,7 +115,7 @@ object ScheduleStores {
         overrideFactory?.let { return it(context).also { store -> (store as? RoomScheduleStore)?.attachProfileStore(profiles) } }
         val store = production ?: RoomScheduleStore(
             database(context), profiles = profiles, onCommitted = { ScheduleSyncJobs.schedule(context.applicationContext); ScheduleCommitSignals.notifyChanged() }, keepOpen = true,
-            reopenDatabase={database(context)}).also { production = it }
+            reopenDatabase={database(context)}, onProductivityCommitted = { ScheduleSyncJobs.schedule(context.applicationContext) }).also { production = it }
         store.attachProfileStore(profiles); return store
     }
 }
@@ -125,7 +125,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     private val closeDatabase: Boolean = true, private var profiles: TermScheduleProfileStore? = null,
     private val afterSnapshotRows: (() -> Unit)? = null, private val onCommitted: (() -> Unit)? = null,
     private val keepOpen: Boolean = false, private val reopenDatabase:(()->ScheduleDatabase)?=null,
-    private val v3Fault:((String)->Unit)?=null) : ScheduleStore, ScheduleSyncStore, ScheduleV2Store {
+    private val v3Fault:((String)->Unit)?=null, private val onProductivityCommitted: (() -> Unit)? = null) : ScheduleStore, ScheduleSyncStore, ScheduleV2Store {
     init { profiles?.sharedStore = this }
     fun attachProfileStore(store: TermScheduleProfileStore) { profiles = store; store.sharedStore = this }
     private val handler = Handler(Looper.getMainLooper())
@@ -318,7 +318,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
     fun reopenV3Store() = workerCall {
         check(ActiveScheduleV3.active(database)); val factory=requireNotNull(reopenDatabase) { "此存储请通过重启进程重新打开；数据与绑定保留" }
         activeV3?.close(); database.close()
-        activeV3=null; database=factory(); v3().journal.meta.assertWritable(); v3().state()
+        activeV3=null; database=factory(); v3().journal.meta.assertWritable(); v3().state(); signalProductivity()
         Unit
     }
     fun previewV3Migration(remote: CommitStore, sourceFolder: String): ScheduleV3MigrationPreview {
@@ -455,10 +455,11 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         val extended = sharedFormat || descriptor?.let { SyncV3Codec.decode(it).format == 4 } == true
         val seed = if (descriptor == null) original else ScheduleState()
         v3().prepare(if (extended) seed.copy(sharedRecords = emptyList()) else seed, folder, descriptor)
+        signalProductivity()
     }
     fun synchronizeV3(account: WebDavAccount): String {
         val runtime = workerCall { check(ActiveScheduleV3.active(database)); v3() }
-        return runtime.synchronize(account)
+        return try { runtime.synchronize(account) } finally { signalProductivity() }
     }
     fun v3Account(settings:WebDavSettings):WebDavAccount = workerCall { v3().endpointAccount(settings) { requireNotNull(settings.account()) { "请配置 WebDAV 帐号" } } }
     private fun endpointSummary(job:org.json.JSONObject)=org.json.JSONObject().also { out ->
@@ -492,9 +493,9 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         val proof = if(runtime.binding().has("migrationId")) ScheduleV3MigrationPreview.restore(runtime.migrationEvidence()) else null
         return try { runtime.synchronize(remote, publication, budget, if (source == null || proof == null) null else ({
             ScheduleV3Migration.unchanged(proof, ScheduleV3Migration.inspect(proof.frame, proof.hashes, source, proof.sourceFolder, proof.transactionId))
-        })) } finally { ScheduleCommitSignals.notifyChanged() }
+        })) } finally { signalProductivity(); ScheduleCommitSignals.notifyChanged() }
     }
-    fun resolveV3(token: String, choice: ScheduleMerge.Choice) = workerCall { check(ActiveScheduleV3.active(database)); v3().engine.resolve(token, choice).also { ScheduleCommitSignals.notifyChanged() } }
+    fun resolveV3(token: String, choice: ScheduleMerge.Choice) = workerCall { check(ActiveScheduleV3.active(database)); v3().engine.resolve(token, choice).also { signalProductivity(); ScheduleCommitSignals.notifyChanged() } }
     override fun syncFrame(): ScheduleSyncFrame = blocking {
         ScheduleSyncFrame(decoded(1), fullState(), decoded(4), decoded(3), decoded(5)?.state)
     }
@@ -910,6 +911,98 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         sharedResult {v3().engine.setCourseColor(sourceId, seriesId, rgb, expectedHash)}
         onCommitted?.invoke(); Unit
     }
+    private val productivitySignals = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+
+    private fun signalProductivity() { productivitySignals.forEach { listener -> handler.post { listener() } } }
+
+    /** Main-thread subscription. Reads are driven by Writer invalidation and stop at close. */
+    fun observeProductivity(listener: (Result<ProductivityView>) -> Unit): AutoCloseable {
+        var disposed = false
+        var last: Result<ProductivityView>? = null
+        val refresh: () -> Unit = {
+            if (!disposed) loadProductivity { result ->
+                if (!disposed && (last == null || last?.getOrNull() != result.getOrNull() ||
+                        last?.exceptionOrNull()?.message != result.exceptionOrNull()?.message)) {
+                    last = result
+                    listener(result)
+                }
+            }
+        }
+        productivitySignals.add(refresh)
+        handler.post { refresh() }
+        return AutoCloseable { disposed = true; productivitySignals.remove(refresh) }
+    }
+
+    private fun productivityBlock(runtime: ActiveScheduleV3, frame: org.json.JSONObject, state: ScheduleState): String? = when {
+        database.dao().hasSyncRecord(200) || database.dao().hasSyncRecord(203) || !runtime.localWritesAllowed() ->
+            "本地 Writer 受保护，请检查恢复状态"
+        frame.optJSONObject("binding")?.optInt("format") != 4 || state.sharedRecords == null -> "共享效率数据需要 DPV3/4"
+        !frame.has("baselinePath") -> "请先完成共享数据集初始化或加入验证"
+        frame.has("conflict") -> "请先处理共享数据冲突"
+        else -> runCatching { SharedTypes.registry().writable(state.sharedRecords) }.exceptionOrNull()?.let {
+            it.message ?: "共享记录不可编辑"
+        }
+    }
+
+    fun loadProductivity(callback: (Result<ProductivityView>) -> Unit) = submit(callback) {
+        if (!ActiveScheduleV3.active(database)) return@submit ProductivityView(
+            SharedProductivity.project(emptyList()), null, "共享效率数据需要 DPV3/4", null, false)
+        val runtime = v3()
+        val frame = runtime.journal.snapshot()
+        val state = productivityFrameState(frame, "local")
+        val conflict = frame.optJSONObject("conflict")?.let { value ->
+            val groups = value.getJSONArray("conflicts")
+            val keys = (0 until groups.length()).flatMap { index ->
+                val row = groups.getJSONObject(index)
+                val members = row.optJSONArray("keys")
+                if (members == null) listOf(row.getString("key")) else (0 until members.length()).map(members::getString)
+            }.toSet()
+            ProductivityConflict(value.getString("id"), value.getLong("revision"),
+                SharedProductivity.conflictRows(keys, productivityFrameState(value, "base"),
+                    productivityFrameState(value, "local"), productivityFrameState(value, "remote")))
+        }
+        ProductivityView(SharedProductivity.project(state.sharedRecords.orEmpty()), productivityVersion(frame, state),
+            productivityBlock(runtime, frame, state), conflict,
+            !frame.has("baseline") || !ScheduleMerge.same(state, productivityFrameState(frame, "baseline")))
+    }
+
+    private fun requireProductivityVersion(expected: ProductivityVersion, state: ScheduleState,
+        frame: org.json.JSONObject) {
+        val blocked = productivityBlock(v3(), frame, state)
+        check(blocked == null) { requireNotNull(blocked) }
+        check(expected == productivityVersion(frame, state)) { "共享数据已变化，请重新读取" }
+    }
+
+    fun previewProductivityImport(expected: ProductivityVersion, additions: List<SharedRecord>,
+        callback: (Result<Unit>) -> Unit) = submit(callback) {
+        check(ActiveScheduleV3.active(database))
+        val frame = v3().journal.snapshot()
+        val state = productivityFrameState(frame, "local")
+        requireProductivityVersion(expected, state, frame)
+        SharedProductivity.importRecords(state, additions)
+        Unit
+    }
+
+    fun importProductivity(expected: ProductivityVersion, additions: List<SharedRecord>, callback: (Result<Unit>) -> Unit) =
+        saveProductivity(expected, callback) { SharedProductivity.importRecords(it, additions) }
+
+    fun editProductivity(expected: ProductivityVersion, edit: ProductivityEdit, callback: (Result<Unit>) -> Unit) =
+        saveProductivity(expected, callback) { it.editProductivity(edit) }
+
+    private fun saveProductivity(expected: ProductivityVersion, callback: (Result<Unit>) -> Unit,
+        edit: (ScheduleState) -> ScheduleState) = submit(callback) {
+        check(ActiveScheduleV3.active(database)) { "共享效率数据需要 DPV3/4" }
+        try {
+            sharedResult {
+                v3().engine.edit { before ->
+                    requireProductivityVersion(expected, before, v3().journal.snapshot())
+                    edit(before)
+                }
+            }
+            runCatching { onProductivityCommitted?.invoke() }; Unit
+        } finally { signalProductivity() }
+    }
+
     fun putSharedRecords(records: List<SharedRecord>, expectedHash: String, callback: (Result<Unit>) -> Unit) = submit(callback) {
         check(ActiveScheduleV3.active(database) && v3().localWritesAllowed())
         sharedResult {
@@ -988,6 +1081,7 @@ class RoomScheduleStore(private var database: ScheduleDatabase,
         if (keepOpen) return // One process-owned Room/Writer shared by Activities and JobService.
         if (closed) return
         closed = true
+        productivitySignals.clear()
         executor.execute { try { activeV3?.close() } finally { if (closeDatabase) database.close() } }; executor.shutdown()
     }
 }

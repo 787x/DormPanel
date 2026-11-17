@@ -8,6 +8,8 @@
 
 Accepted writes drain before the productivity database closes. Store admission/close share a lock, and both the store and source ignore late completions after close. Failed initial loading disables commands rather than overwriting unavailable data. Storage failures are shown on the card.
 
+PR87 为旧 Todo/Memo 提供按 owner 的只读扫描、预览及显式导入接口。共享数据由正式 Sync v3 Writer 保存。见 [共享效率规范](sync-v3-productivity.md#x08e-旧数据导入)。
+
 ## Interaction
 
 All three cards support 2×1, 2×2 (default), and 3×2. Compact cards summarize; normal and larger cards expose progressively more text. Todo previews prioritize incomplete items in insertion order; completed items remain accessible in the editor. Tasks can be added, toggled, edited and deleted. Blank task text is rejected; surrounding whitespace is normalized.

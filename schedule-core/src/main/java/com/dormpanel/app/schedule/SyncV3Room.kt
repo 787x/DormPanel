@@ -36,7 +36,7 @@ class V3RoomAdapter(directory: File, databaseFactory: () -> V3RoomDatabase, writ
     val journal = V3Journal(directory, sqlFactory = { file ->
         database = databaseFactory(); val configured = requireNotNull(database.openHelper.databaseName)
         check(File(configured).isAbsolute && File(configured).canonicalFile == file.canonicalFile) { "v3 Room and metadata must share one database" }; V3RoomSql(database)
-    }, mirrorLocal = { frame ->
+    }, mirrorLocal = { _, frame ->
         writable(); val state = requireNotNull(SyncV3Codec.decode(Base64.getDecoder().decode(frame.getString("local"))).state)
         val dao = database.dao(); dao.clearOverrides(); dao.clearDays(); dao.clearEvents(); dao.clearEntries(); dao.clearSources()
         state.events.forEach { dao.put(EventRow(it.id, it.title, it.start, it.end, it.note)) }

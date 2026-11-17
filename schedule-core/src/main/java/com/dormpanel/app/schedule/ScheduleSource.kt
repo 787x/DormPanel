@@ -89,12 +89,32 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     internal fun pauseForSync() { applyingSnapshot = true; refresh() }
     fun reload(callback: (Result<Unit>) -> Unit = {}) {
         if (closed) { callback(Result.failure(IllegalStateException("Schedule source closed"))); return }
+        val wasApplying = applyingSnapshot
         applyingSnapshot = true
         store.load { result ->
-            result.onSuccess { state = ordered(if (it.sync == null) it.copy(profiles = effectiveProfiles(it.sources)) else it); ready = true; error = false }.onFailure { error = true }
-            applyingSnapshot = false; refresh(); callback(result.map { })
+            var productivityOnly = false
+            result.onSuccess { loaded ->
+                productivityOnly = !wasApplying && ready && !error && productivityOnlyChange(state, loaded)
+                state = if (productivityOnly) state.copy(sync = loaded.sync, sharedRecords = loaded.sharedRecords)
+                    else ordered(if (loaded.sync == null) loaded.copy(profiles = effectiveProfiles(loaded.sources)) else loaded)
+                ready = true
+                error = false
+            }.onFailure { error = true }
+            applyingSnapshot = false
+            if (!productivityOnly) refresh()
+            callback(result.map { })
         }
     }
+
+    private fun productivityOnlyChange(before: ScheduleState, after: ScheduleState): Boolean {
+        if (before.sync == null || before.sync.datasetId != after.sync?.datasetId) return false
+        val previous = before.sharedRecords ?: return false
+        val next = after.sharedRecords ?: return false
+        if (previous.filter(SharedProductivity::supports).toSet() == next.filter(SharedProductivity::supports).toSet()) return false
+        return ScheduleMerge.same(before.copy(sharedRecords = previous.filterNot(SharedProductivity::supports)),
+            after.copy(sharedRecords = next.filterNot(SharedProductivity::supports)))
+    }
+
     /** Error-only UI admission; no view callback or remote action is captured here. */
     fun retryLocalRead(): Boolean {
         if (closed || !error || applyingSnapshot || retryingLocalRead) return false

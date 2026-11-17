@@ -71,7 +71,7 @@ Phone SharedColorMigration.preview 只读取 PR68 已确认设置（包含不确
 
 源数据集、历史、绑定和未发布编辑均留在源 Store。源 Writer 之后的发布不会自动进入新数据集，也不能当作其已停写；需要再次审查/迁移。不得把本接口用于不经确认的日用升级。正式设备绑定没有自动迁移入口。
 
-新建隔离业务 Store 可通过 RoomScheduleStore.prepareV3(..., sharedFormat=true) 或 fnOS activeV3.initializeSharedDataset(expectedRevision) 显式启用。新建目标后需显式选择该目标；现有数据集不会自动升级。Todo、Memo、偏好、附件等类型均未启用同步。
+新建隔离业务 Store 可通过 RoomScheduleStore.prepareV3(..., sharedFormat=true) 或 fnOS activeV3.initializeSharedDataset(expectedRevision) 显式启用。新建目标后需显式选择该目标；现有数据集不会自动升级。Todo 和备忘已通过可选记录类型接入，见 [类型规范及业务接口](sync-v3-productivity.md)。
 
 ## PR69 审查修复：接纳、颜色迁移与可信源
 

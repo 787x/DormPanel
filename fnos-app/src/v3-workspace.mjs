@@ -36,7 +36,7 @@ export async function openV3Workspace(directory, writable, installationIdentity 
         finally { if (isLocalTransaction) meta.budget = previous; }
       } };
     const workspace = await Workspace.open(store, null); ensure(!workspace.frame.datasetId, 'v3 adapter refuses production v2 workspace');
-    workspace.guard = writable; const engineFrames = new WeakSet();
+    workspace.guard = () => meta.assertWritable(); const engineFrames = new WeakSet();
     workspace.mutationGuard = (previous, next) => {
       writable(); const internal = engineFrames.delete(next);
       if(!internal && !same(previous.local,next.local) && previous.local.sharedRecords!==undefined){

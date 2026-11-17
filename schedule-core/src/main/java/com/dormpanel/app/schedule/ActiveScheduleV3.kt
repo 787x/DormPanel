@@ -16,8 +16,10 @@ internal class ActiveScheduleV3(private val database: ScheduleDatabase,
         fun endpointKey(remote:V3WebDavStore,account:WebDavAccount)=digest(("WebDAV\n"+remote.endpointIdentity()+"\n"+account.username+(account.certificatePem?.let { "\n"+WebDavTls.fingerprint(it) } ?: "")).toByteArray(Charsets.UTF_8))
     }
     val directory = File(requireNotNull(database.openHelper.writableDatabase.path) + ".sync-v3")
-    val journal = V3Journal(directory, { V3RoomSql(database, false) }, { frame ->
-        mirror(requireNotNull(SyncV3Codec.decode(Base64.getDecoder().decode(frame.getString("local"))).state))
+    val journal = V3Journal(directory, { V3RoomSql(database, false) }, { before, after ->
+        val next = productivityFrameState(after, "local")
+        val previous = if (before.has("local")) productivityFrameState(before, "local") else null
+        if (next.copy(sharedRecords = null) != previous?.copy(sharedRecords = null)) mirror(next)
     })
     init {
         try { if(active(database)) {
