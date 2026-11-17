@@ -14,7 +14,7 @@ internal data class WeatherSky(val symbol: WeatherSymbol, val description: Strin
 internal data class WeatherLine(val label: String, val sky: WeatherSky, val temperature: String?, val rain: String?,
     val secondaryDate: String? = null)
 
-internal fun sky(code: String?, description: String? = null, daytime: Boolean? = null): WeatherSky {
+internal fun sky(code: String?, description: String? = null, daytime: Boolean? = null, classic: Boolean = false): WeatherSky {
     val night = daytime == false
     val partly = if (night) WeatherSymbol.PARTLY_NIGHT else WeatherSymbol.PARTLY
     val value = when (code?.lowercase(Locale.ROOT)) {
@@ -35,7 +35,157 @@ internal fun sky(code: String?, description: String? = null, daytime: Boolean? =
         "windy", "windy-variant" -> WeatherSky(WeatherSymbol.WIND, "有风")
         else -> WeatherSky(WeatherSymbol.UNKNOWN, if (code.isNullOrBlank()) "天气未知" else "未知天气")
     }
-    return value.copy(description = description?.takeIf { it.isNotBlank() } ?: value.description)
+    val text = if (classic) classicCondition(code, description, daytime)
+        else description?.takeIf { it.isNotBlank() } ?: value.description
+    return value.copy(description = text)
+}
+
+// Exact descriptions are independent of the broad glyph groups used by the modern card.
+// See QWeather's Weather Conditions and HA's Weather condition mapping.
+private data class ClassicCondition(val english: String, val chinese: String)
+
+private val qWeatherConditions = mapOf(
+    "100" to ClassicCondition("Sunny", "晴"),
+    "101" to ClassicCondition("Cloudy", "多云"),
+    "102" to ClassicCondition("Few clouds", "少云"),
+    "103" to ClassicCondition("Partly cloudy", "晴间多云"),
+    "104" to ClassicCondition("Overcast", "阴"),
+    "150" to ClassicCondition("Clear night", "晴"),
+    "151" to ClassicCondition("Cloudy at night", "多云"),
+    "152" to ClassicCondition("Few clouds at night", "少云"),
+    "153" to ClassicCondition("Partly cloudy at night", "晴间多云"),
+    "154" to ClassicCondition("Overcast at night", "阴"),
+    "300" to ClassicCondition("Rain showers", "阵雨"),
+    "301" to ClassicCondition("Heavy rain showers", "强阵雨"),
+    "302" to ClassicCondition("Thundershowers", "雷阵雨"),
+    "303" to ClassicCondition("Heavy thundershowers", "强雷阵雨"),
+    "304" to ClassicCondition("Thundershowers with hail", "雷阵雨伴有冰雹"),
+    "305" to ClassicCondition("Light rain", "小雨"),
+    "306" to ClassicCondition("Moderate rain", "中雨"),
+    "307" to ClassicCondition("Heavy rain", "大雨"),
+    "308" to ClassicCondition("Extreme rain", "极端降雨"),
+    "309" to ClassicCondition("Drizzle", "毛毛雨/细雨"),
+    "310" to ClassicCondition("Rainstorm", "暴雨"),
+    "311" to ClassicCondition("Heavy rainstorm", "大暴雨"),
+    "312" to ClassicCondition("Severe rainstorm", "特大暴雨"),
+    "313" to ClassicCondition("Freezing rain", "冻雨"),
+    "314" to ClassicCondition("Light to moderate rain", "小到中雨"),
+    "315" to ClassicCondition("Moderate to heavy rain", "中到大雨"),
+    "316" to ClassicCondition("Heavy rain to rainstorm", "大到暴雨"),
+    "317" to ClassicCondition("Rainstorm to heavy rainstorm", "暴雨到大暴雨"),
+    "318" to ClassicCondition("Heavy to severe rainstorm", "大暴雨到特大暴雨"),
+    "350" to ClassicCondition("Rain showers at night", "阵雨"),
+    "351" to ClassicCondition("Heavy rain showers at night", "强阵雨"),
+    "399" to ClassicCondition("Rain", "雨"),
+    "400" to ClassicCondition("Light snow", "小雪"),
+    "401" to ClassicCondition("Moderate snow", "中雪"),
+    "402" to ClassicCondition("Heavy snow", "大雪"),
+    "403" to ClassicCondition("Snowstorm", "暴雪"),
+    "404" to ClassicCondition("Sleet", "雨夹雪"),
+    "405" to ClassicCondition("Rain and snow", "雨雪天气"),
+    "406" to ClassicCondition("Rain and snow showers", "阵雨夹雪"),
+    "407" to ClassicCondition("Snow flurries", "阵雪"),
+    "408" to ClassicCondition("Light to moderate snow", "小到中雪"),
+    "409" to ClassicCondition("Moderate to heavy snow", "中到大雪"),
+    "410" to ClassicCondition("Heavy snow to snowstorm", "大到暴雪"),
+    "456" to ClassicCondition("Rain and snow showers at night", "阵雨夹雪"),
+    "457" to ClassicCondition("Snow flurries at night", "阵雪"),
+    "499" to ClassicCondition("Snow", "雪"),
+    "500" to ClassicCondition("Mist", "薄雾"),
+    "501" to ClassicCondition("Fog", "雾"),
+    "502" to ClassicCondition("Haze", "霾"),
+    "503" to ClassicCondition("Blowing sand", "扬沙"),
+    "504" to ClassicCondition("Blowing dust", "浮尘"),
+    "507" to ClassicCondition("Duststorm", "沙尘暴"),
+    "508" to ClassicCondition("Severe duststorm", "强沙尘暴"),
+    "509" to ClassicCondition("Dense fog", "浓雾"),
+    "510" to ClassicCondition("Very dense fog", "强浓雾"),
+    "511" to ClassicCondition("Moderate haze", "中度霾"),
+    "512" to ClassicCondition("Heavy haze", "重度霾"),
+    "513" to ClassicCondition("Severe haze", "严重霾"),
+    "514" to ClassicCondition("Heavy fog", "大雾"),
+    "515" to ClassicCondition("Extremely dense fog", "特强浓雾"),
+    "900" to ClassicCondition("Hot", "热"),
+    "901" to ClassicCondition("Cold", "冷"),
+)
+
+private val classicStateConditions = mapOf(
+    "clear-night" to "Clear night",
+    "cloudy" to "Cloudy",
+    "fog" to "Fog",
+    "hail" to "Hail",
+    "lightning" to "Thunderstorm",
+    "lightning-rainy" to "Thunderstorm with rain",
+    "partlycloudy" to "Partly cloudy",
+    "pouring" to "Heavy rain",
+    "rainy" to "Rain",
+    "snowy" to "Snow",
+    "snowy-rainy" to "Rain and snow",
+    "sunny" to "Sunny",
+    "windy" to "Windy",
+    "windy-variant" to "Windy and cloudy",
+    "exceptional" to "Exceptional weather",
+    // Historical Demo values also arrive in the condition field.
+    "clear" to "Clear",
+    "light rain" to "Light rain",
+    "partly cloudy" to "Partly cloudy",
+)
+
+private val classicChineseConditions = buildMap {
+    // Day and night codes can share the same Chinese text. Text alone never implies night.
+    qWeatherConditions.values.forEach { putIfAbsent(it.chinese, it.english) }
+    put("晴夜", "Clear night")
+    put("毛毛雨", "Drizzle")
+    put("细雨", "Drizzle")
+    put("冰雹", "Hail")
+    put("雷阵雨伴冰雹", "Thundershowers with hail")
+    put("雷暴", "Thunderstorm")
+    put("有风", "Windy")
+}
+
+// Whole descriptions that these specific codes refine. Similar-looking phrases and
+// conflicting intensities are deliberately excluded.
+private val classicRefinements = mapOf(
+    "clear" to setOf("100", "sunny"),
+    "rain" to setOf("300", "301", "302", "303", "304", "305", "306", "307", "308", "309",
+        "310", "311", "312", "313", "314", "315", "316", "317", "318", "350", "351", "pouring", "light rain", "lightning-rainy"),
+    "rain showers" to setOf("301", "302", "303", "304", "350", "351"),
+    "thundershowers" to setOf("303", "304"),
+    "thunderstorm" to setOf("302", "303", "304", "lightning-rainy"),
+    "rainstorm" to setOf("311", "312", "317", "318"),
+    "snow" to setOf("400", "401", "402", "403", "407", "408", "409", "410", "457"),
+    "rain and snow" to setOf("406", "456"),
+    "fog" to setOf("509", "510", "514", "515"),
+    "haze" to setOf("511", "512", "513"),
+    "duststorm" to setOf("508"),
+    "windy" to setOf("windy-variant"),
+    "cloudy" to setOf("windy-variant"),
+)
+
+private val unknownConditions = setOf("unknown", "unavailable", "n/a", "未知", "天气未知", "未知天气", "—", "-")
+private fun String?.validConditionText() = this?.takeIf {
+    it.any(Char::isLetter) && it.trim().lowercase(Locale.ROOT) !in unknownConditions
+}
+
+private fun classicCondition(code: String?, description: String?, daytime: Boolean?): String {
+    val key = code?.trim()?.lowercase(Locale.ROOT)
+    val coded = qWeatherConditions[key]
+    val codeName = coded?.english ?: classicStateConditions[key]
+    val precise = if (daytime == false && (codeName == "Sunny" || codeName == "Clear")) "Clear night" else codeName
+    val original = description.validConditionText() ?: return precise ?: "Unknown"
+    val translated = classicChineseConditions[original.trim()]
+    val plain = (translated ?: original.trim()).lowercase(Locale.ROOT)
+    if (precise == "Clear night" && (plain == "sunny" || plain == "clear")) return precise
+    // The daytime and nighttime icon codes can share the same source wording.
+    val daytimeName = coded?.let { classicChineseConditions[it.chinese] }
+    if (precise != null && (key in classicRefinements[plain].orEmpty() ||
+            (daytimeName != precise && plain.equals(daytimeName, ignoreCase = true)))) return precise
+    return translated ?: original
+}
+
+internal fun legacyConditionText(condition: String?): String? {
+    val key = condition?.trim()?.lowercase(Locale.ROOT)
+    return condition.validConditionText()?.takeUnless { key in classicStateConditions }
 }
 
 internal fun weatherSourceName(source: WeatherSourceRef) = when (source) {
@@ -87,7 +237,7 @@ internal fun WeatherSnapshot?.today(now: Instant): WeatherForecast? {
 }
 
 internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeToday: Boolean = true,
-    forCard: Boolean = false): List<WeatherLine> {
+    forCard: Boolean = false, classic: Boolean = false): List<WeatherLine> {
     val snapshot = this ?: return emptyList()
     val today = now.atZone(zone).toLocalDate()
     val homeAssistant = source is WeatherSourceRef.HomeAssistant
@@ -117,7 +267,9 @@ internal fun WeatherSnapshot?.forecastLines(now: Instant, limit: Int, includeTod
             if (query.block == WeatherBlock.DAILY) item.conditions.cardRange() else conditions.cardTemperature()
         } else if (query.block == WeatherBlock.DAILY) range(item.conditions.minTemperature, item.conditions.maxTemperature, "°")
         else conditions.temperature.value("°")
-        WeatherLine(label, sky(conditions.code, conditions.description, daytime), temperature,
+        val textConditions = if (classic && query.block == WeatherBlock.DAILY &&
+            item.conditions.description.validConditionText() != null) item.conditions else conditions
+        WeatherLine(label, sky(textConditions.code, textConditions.description, daytime, classic), temperature,
             conditions.precipitationProbability.value("%")?.let { "降水 $it" },
             date?.takeIf { forCard && query.block == WeatherBlock.DAILY }?.let(::dateLabel))
     }.take(limit).toList()
@@ -180,7 +332,7 @@ internal fun WeatherConditions.metric(metric: WeatherCardMetric, temperatureUnit
 }
 
 internal fun LegacyWeather.lines(now: Instant, limit: Int, forCard: Boolean = false,
-    zone: ZoneId = ZoneId.systemDefault(), includeToday: Boolean = true): List<WeatherLine> {
+    zone: ZoneId = ZoneId.systemDefault(), includeToday: Boolean = true, classic: Boolean = false): List<WeatherLine> {
     val today = now.atZone(zone).toLocalDate()
     return forecast.asSequence().mapNotNull {
         val start = Instant.ofEpochMilli(it.timeEpochMillis)
@@ -200,7 +352,7 @@ internal fun LegacyWeather.lines(now: Instant, limit: Int, forCard: Boolean = fa
             }
         }
         if (!forCard && entityId != null && date < today) return@mapNotNull null
-        WeatherLine(label, sky(it.condition, daytime = it.isDaytime),
+        WeatherLine(label, sky(it.condition, if (classic) legacyConditionText(it.condition) else null, it.isDaytime, classic),
             when {
                 forecastType != "daily" -> it.forecastTemperature.value(temperatureUnit)
                 forCard -> cardRange(it.low, it.high, temperatureUnit)

@@ -5,15 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CardCatalogTest {
-    private val labels = CatalogLabels("Clock", "Local", "Weather", "Sample", "Climate", "Switch", "Dimmer", "Warmth")
+    private val labels = CatalogLabels("Clock", "Local", "Weather", "Sample", "Climate", "Switch", "Dimmer", "Warmth",
+        "Classic weather", "Text forecast")
     @Test fun `catalog exposes static information and actual individual source devices`() {
         val catalog = SourceCardCatalog(FakeDashboardDataSource(), labels)
-        assertEquals(2, catalog.candidates.count { it.category == CardCategory.INFORMATION })
+        val information = catalog.candidates.filter { it.category == CardCategory.INFORMATION }
+        assertEquals(listOf("clock", "weather", "weather_classic"), information.map { it.providerType })
+        assertEquals(listOf("Clock", "Weather", "Classic weather"), information.map { it.displayName })
         assertEquals(6, catalog.candidates.count { it.category == CardCategory.HOME })
         assertEquals("{\"lightId\":\"bedside\"}", catalog.candidates.first { it.displayName == "Bedside light" }.configurationJson)
         assertEquals("{\"lightId\":\"ceiling\"}", catalog.candidates.first { it.displayName == "Ceiling light" }.configurationJson)
         assertEquals("{\"sensorId\":\"desk\"}", catalog.candidates.first { it.displayName == "Desk climate" }.configurationJson)
-        assertEquals(8, catalog.candidates.map { it.candidateId }.distinct().size)
+        assertEquals(9, catalog.candidates.map { it.candidateId }.distinct().size)
     }
     @Test fun `discovery updates catalog but ordinary state changes do not rebuild picker`() {
         val source = MutableSource()

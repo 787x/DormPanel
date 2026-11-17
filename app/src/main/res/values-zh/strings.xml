@@ -1,1 +1,8 @@
-<resources><string name="schedule_today">今日课程</string><string name="schedule_recent">近日课程</string></resources>
+<resources>
+    <string name="schedule_today">今日课程</string>
+    <string name="schedule_recent">近日课程</string>
+    <string name="card_weather">天气</string>
+    <string name="card_weather_description">当前天气和预报</string>
+    <string name="card_weather_classic">经典天气</string>
+    <string name="card_weather_classic_description">温度、湿度和文字预报</string>
+</resources>

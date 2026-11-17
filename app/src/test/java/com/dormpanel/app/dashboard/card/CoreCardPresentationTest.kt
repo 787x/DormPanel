@@ -13,7 +13,10 @@ class CoreCardPresentationTest {
             override fun write(state: AppearanceState) = Unit
         })
         val registry = coreCardRegistry(FakeDashboardDataSource(), appearance)
-        assertEquals(listOf("clock", "weather", "sensor", "light"), registry.providers.map { it.typeKey })
+        assertEquals(listOf("clock", "weather", "weather_classic", "sensor", "light"), registry.providers.map { it.typeKey })
+        val classic = registry.provider("weather_classic")!!
+        assertEquals(CardSize(4, 3), classic.defaultSize)
+        for (rows in 1..3) for (columns in 2..4) assertTrue(classic.sizePolicy.allows(CardSize(columns, rows)))
         registry.providers.forEach {
             assertTrue(it.sizePolicy.allows(it.defaultSize))
             assertTrue(it.sizePolicy.allows(CardSize(2, 1)))

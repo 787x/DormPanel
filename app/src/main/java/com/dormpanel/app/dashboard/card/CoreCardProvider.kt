@@ -30,9 +30,23 @@ class WeatherCardProvider(
     private val appearance: AppearanceController,
     private val repository: com.dormpanel.app.weather.WeatherRepository? = null,
 ) : ProductionCardProvider(
-    "weather", R.string.card_weather, R.string.card_weather_description, CardSize(4, 3),
+    WEATHER_CARD, R.string.card_weather, R.string.card_weather_description, CardSize(4, 3),
 ) {
     override fun createView(context: Context): View = WeatherCardView(context, appearance, source, repository)
+}
+
+internal const val WEATHER_CARD = "weather"
+internal const val CLASSIC_WEATHER_CARD = "weather_classic"
+internal fun String.isWeatherCard() = this == WEATHER_CARD || this == CLASSIC_WEATHER_CARD
+
+private class ClassicWeatherCardProvider(
+    private val source: DashboardDataSource,
+    private val appearance: AppearanceController,
+    private val repository: com.dormpanel.app.weather.WeatherRepository?,
+) : ProductionCardProvider(
+    CLASSIC_WEATHER_CARD, R.string.card_weather_classic, R.string.card_weather_classic_description, CardSize(4, 3),
+) {
+    override fun createView(context: Context): View = ClassicWeatherCardView(context, appearance, source, repository)
 }
 
 class SensorCardProvider(private val source: DashboardDataSource, private val appearance: AppearanceController) : ProductionCardProvider(
@@ -53,5 +67,6 @@ fun coreCardRegistry(
     weather: com.dormpanel.app.weather.WeatherRepository? = null,
 ) = DashboardCardRegistry(listOf(
     ClockCardProvider(appearance), WeatherCardProvider(source, appearance, weather),
+    ClassicWeatherCardProvider(source, appearance, weather),
     SensorCardProvider(source, appearance), LightCardProvider(source, appearance),
 ))

@@ -11,6 +11,7 @@ import com.dormpanel.app.dashboard.persistence.DashboardStore
 import com.dormpanel.app.dashboard.persistence.QuarantinedCard
 import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
 import com.dormpanel.app.dashboard.card.canSave
+import com.dormpanel.app.dashboard.card.isWeatherCard
 import java.util.UUID
 import com.dormpanel.app.dashboard.catalog.CardAddCandidate
 
@@ -56,7 +57,7 @@ class DashboardStateHolder(
     fun add(candidate: CardAddCandidate): LayoutMutationResult {
         val provider = registry.provider(candidate.providerType)
             ?: return LayoutMutationResult.Failure(LayoutFailureReason.UNKNOWN_PROVIDER, state.cards)
-        if (provider.typeKey == "weather" && !validWeatherConfiguration(candidate.configurationJson)) {
+        if (provider.typeKey.isWeatherCard() && !validWeatherConfiguration(candidate.configurationJson)) {
             return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_CONFIGURATION, state.cards)
         }
         val newCard = PlacedCard(
@@ -73,7 +74,7 @@ class DashboardStateHolder(
     fun updateConfiguration(cardId: String, configurationJson: String): LayoutMutationResult {
         val card = state.cards.firstOrNull { it.id == cardId }
             ?: return LayoutMutationResult.Failure(LayoutFailureReason.CARD_NOT_FOUND, state.cards)
-        if (card.providerType != "weather" || !validWeatherConfiguration(configurationJson)) {
+        if (!card.providerType.isWeatherCard() || !validWeatherConfiguration(configurationJson)) {
             return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_CONFIGURATION, state.cards)
         }
         if (closed) return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_EXISTING_LAYOUT, state.cards)

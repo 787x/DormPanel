@@ -50,8 +50,11 @@ sealed interface WeatherCardConfiguration {
     }
 }
 
+internal fun WeatherCardConfiguration.Bound.savedPlace(places: WeatherPlaceStore?) =
+    places?.get(placeId)?.takeUnless { places.isTemporary(placeId) }
+
 internal fun WeatherCardConfiguration.Bound.place(places: WeatherPlaceStore?) =
-    places?.get(placeId)?.takeIf { !places.isTemporary(placeId) && source in it.sources }
+    savedPlace(places)?.takeIf { source in it.sources }
 
 internal fun WeatherCardConfiguration.canSave(places: WeatherPlaceStore?) = when (this) {
     WeatherCardConfiguration.Default -> true

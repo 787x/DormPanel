@@ -2,6 +2,8 @@ package com.dormpanel.app.dashboard.catalog
 
 import com.dormpanel.app.data.DashboardDataSource
 import com.dormpanel.app.data.DashboardData
+import com.dormpanel.app.dashboard.card.CLASSIC_WEATHER_CARD
+import com.dormpanel.app.dashboard.card.WEATHER_CARD
 
 enum class CardCategory { INFORMATION, HOME, PRODUCTIVITY, SYSTEM, APPS }
 
@@ -22,14 +24,25 @@ interface CardCatalog {
 }
 
 data class CatalogLabels(val clock: String, val clockDetail: String, val weather: String, val weatherDetail: String,
-    val sensor: String, val light: String, val dimmableLight: String, val temperatureLight: String)
+    val sensor: String, val light: String, val dimmableLight: String, val temperatureLight: String,
+    val classicWeather: String, val classicWeatherDetail: String,
+)
+
+internal fun weatherCandidates(weather: String, weatherDetail: String, classic: String, classicDetail: String) =
+    listOf(
+        CardAddCandidate(WEATHER_CARD, CardCategory.INFORMATION, WEATHER_CARD, weather, weatherDetail, "{}"),
+        CardAddCandidate(CLASSIC_WEATHER_CARD, CardCategory.INFORMATION, CLASSIC_WEATHER_CARD, classic, classicDetail, "{}"),
+    )
+
+internal fun CatalogLabels.weatherCandidates() =
+    weatherCandidates(weather, weatherDetail, classicWeather, classicWeatherDetail)
 
 /** Catalog is a projection of the current source, not a second device-state owner. */
 class SourceCardCatalog(private val source: DashboardDataSource, private val labels: CatalogLabels) : CardCatalog {
     override val candidates: List<CardAddCandidate>
         get() = buildList {
             add(CardAddCandidate("clock", CardCategory.INFORMATION, "clock", labels.clock, labels.clockDetail, "{}"))
-            add(CardAddCandidate("weather", CardCategory.INFORMATION, "weather", labels.weather, labels.weatherDetail, "{}"))
+            addAll(labels.weatherCandidates())
             source.state.sensors.values.forEach {
                 add(CardAddCandidate("sensor:${it.id}", CardCategory.HOME, "sensor", it.name, labels.sensor, entityConfiguration("sensorId", it.id)))
             }

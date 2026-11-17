@@ -211,7 +211,7 @@ class DashboardPageView @JvmOverloads constructor(
     private fun showAddCardDialog() {
         picker?.dismiss()
         picker = CardPickerDialog(context, catalog, appearance) { candidate ->
-            if (candidate.providerType == "weather" && backend != null) {
+            if (candidate.providerType.isWeatherCard() && backend != null) {
                 selectWeather(WeatherCardConfiguration.Default) { weather, config ->
                     if (addCard(candidate.copy(configurationJson = config))) {
                         weather.dismiss()
@@ -237,7 +237,7 @@ class DashboardPageView @JvmOverloads constructor(
     private fun openWeather(action: WeatherCardNavigation) {
         if (editing || !isAttachedToWindow) return
         val backend = backend ?: return
-        val card = stateHolder.state.cards.firstOrNull { it.id == action.cardId && it.providerType == "weather" } ?: return
+        val card = stateHolder.state.cards.firstOrNull { it.id == action.cardId && it.providerType.isWeatherCard() } ?: return
         val configuration = WeatherCardConfiguration.decode(card.configurationJson)
         val binding = configuration as? WeatherCardConfiguration.Bound
         if (action.placeId != binding?.placeId || action.source != binding?.source) return
