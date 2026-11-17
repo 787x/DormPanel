@@ -174,7 +174,7 @@ class AppendOnlyScheduleSync(private val local: ScheduleV2Store, backend: Commit
             val candidate = ScheduleCommit(baseline.datasetId, UUID.randomUUID().toString(), frame.writerId, tips, frame.local)
             local.v2Stage(ScheduleCommitCodec.encode(candidate))
         }
-        return ScheduleSyncEngine.Outcome("有待上传修改 · 等待下次有界同步")
+        return ScheduleSyncEngine.Outcome("有待上传修改 · 等待下次有界同步", waitingToPublish = true)
     }
 }
 

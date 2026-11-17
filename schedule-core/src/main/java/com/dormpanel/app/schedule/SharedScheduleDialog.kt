@@ -67,7 +67,8 @@ object SharedScheduleDialog {
             status.text = ui.summary()
             for ((id, view) in registered) {
                 view.visibility = if (id in ui.primary) android.view.View.VISIBLE else android.view.View.GONE
-                view.isEnabled = id in ui.actions && !sync.busy && (id in setOf(SharedAction.DETAILS, SharedAction.RECOVER) || source.ready && !source.applyingSnapshot && !source.error)
+                view.isEnabled = if (id == SharedAction.SYNC) sync.canSync else
+                    id in ui.actions && !sync.busy && (id in setOf(SharedAction.DETAILS, SharedAction.RECOVER) || source.ready && !source.applyingSnapshot && !source.error)
                 if (id == SharedAction.SYNC) view.text = if (ui.transition) "继续处理未完成操作" else "立即同步"
             }
             for (view in connectionViews) view.visibility = if (connectionVisible && !bound()) android.view.View.VISIBLE else android.view.View.GONE
@@ -458,9 +459,16 @@ object SharedScheduleDialog {
         val previous = sync.changed
         val listener: () -> Unit = { previous?.invoke(); refresh() }
         sync.changed = listener
+        val syncAvailability: (SharedSyncUpdate) -> Unit = { registered[SharedAction.SYNC]?.isEnabled = sync.canSync }
+        sync.addSyncListener(syncAvailability)
         val dialog = AlertDialog.Builder(context).setTitle("共享课表")
             .setView(ScrollView(context).apply { addView(fields) }).setNegativeButton("关闭", null).create()
-        dialog.setOnDismissListener { active = false; folderDialog?.dismiss(); previewDialog?.dismiss(); if (sync.changed === listener) sync.changed = previous; password?.text?.clear() }
+        dialog.setOnDismissListener {
+            active = false; folderDialog?.dismiss(); previewDialog?.dismiss()
+            sync.removeSyncListener(syncAvailability)
+            if (sync.changed === listener) sync.changed = previous
+            password?.text?.clear()
+        }
         dialog.show()
         dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         return dialog

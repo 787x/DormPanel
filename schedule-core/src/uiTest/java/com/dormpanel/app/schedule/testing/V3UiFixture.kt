@@ -11,10 +11,12 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 
 /** Shared by the two real Activity test APKs. All DBs and preferences are random. */
-class V3UiFixture(private val context: Context, private val initialReadFailure: Boolean = false) : AutoCloseable {
+class V3UiFixture(private val context: Context, private val initialReadFailure: Boolean = false,
+    private val v3Fault: ((String) -> Unit)? = null) : AutoCloseable {
     val server = MockWebServer()
     val files = linkedMapOf<String, ByteArray>()
     val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+    @Volatile var interceptRequest: ((RecordedRequest) -> MockResponse?)? = null
     private val databases = mutableListOf<ScheduleDatabase>()
     private var initialRepair: (() -> Unit)? = null
     fun repairInitialReadFailure() { requireNotNull(initialRepair).invoke(); initialRepair = null }
@@ -35,7 +37,7 @@ class V3UiFixture(private val context: Context, private val initialReadFailure: 
     init {
         check(context.packageName.endsWith(".testbed")) { "UI verification requires isolated testbed applicationId" }
         server.dispatcher = object : Dispatcher() {
-            override fun dispatch(request: RecordedRequest): MockResponse = synchronized(files) {
+            override fun dispatch(request: RecordedRequest): MockResponse = interceptRequest?.invoke(request) ?: synchronized(files) {
                 requests += "${request.method} ${request.path}"
                 val path = request.path!!.substringBefore('?')
                 when (request.method) {
@@ -65,7 +67,7 @@ class V3UiFixture(private val context: Context, private val initialReadFailure: 
         ScheduleStores.overrideFactory = { c ->
             val executor = Executors.newSingleThreadExecutor().also { executors += it }
             val db = Room.databaseBuilder(c, ScheduleDatabase::class.java, "$namespace.db").build().also { databases += it }
-            RoomScheduleStore(db, executor, profiles = TermScheduleProfileStore(c)).also { store ->
+            RoomScheduleStore(db, executor, profiles = TermScheduleProfileStore(c), v3Fault = v3Fault).also { store ->
                 if (initialReadFailure) {
                     val root = ScheduleCommit(UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString(), emptyList(),
                         ScheduleState(entries = listOf(TimetableEntry("stable-first", "首次读取后可见课程", 1, 480, 530, ""))))
