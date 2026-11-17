@@ -160,6 +160,29 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     private var viewedV2Conflict: String? = null
     var changed: (() -> Unit)? = null
     var presentation = SharedSchedulePresentation(); private set
+    enum class SyncUpdate { STATE, SUCCEEDED, FAILED }
+    private val syncListeners = linkedSetOf<(SyncUpdate) -> Unit>()
+    private var foregroundSync = false
+    private var syncConnectionAvailable = false
+    val syncing get() = foregroundSync || ScheduleSyncJobs.running
+    val canSync get() = !closed && !busy && !syncing && syncConnectionAvailable && settings.folder.isNotBlank() &&
+        source.ready && !source.error && !source.applyingSnapshot && SharedAction.SYNC in presentation.actions
+
+    fun addSyncListener(listener: (SyncUpdate) -> Unit) { if (!closed) syncListeners.add(listener) }
+    fun removeSyncListener(listener: (SyncUpdate) -> Unit) { syncListeners.remove(listener) }
+    private fun dispatchSyncUpdate(update: SyncUpdate = SyncUpdate.STATE) {
+        if (!closed) syncListeners.toList().forEach { it(update) }
+    }
+    private val backgroundSyncChanged: () -> Unit = { dispatchSyncUpdate() }
+    private fun presentationChanged() {
+        changed?.invoke()
+        dispatchSyncUpdate()
+    }
+    private fun finishSync(success: Boolean) {
+        if (!foregroundSync) return
+        foregroundSync = false
+        dispatchSyncUpdate(if (success) SyncUpdate.SUCCEEDED else SyncUpdate.FAILED)
+    }
     private var presentationGeneration = 0
     private var operationScope: String? = null
     private var inspectingJoin = false
@@ -188,27 +211,36 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     fun connectionSaved() {
         confirmationRejected = false
         settings.invalidateCheck()
+        syncConnectionAvailable = false
         presentation = presentation.copy(result = "UNCHECKED", lastSuccess = 0, confirmationRejected = false)
-        changed?.invoke(); refreshPresentation()
+        presentationChanged(); refreshPresentation()
     }
     fun refreshPresentation() {
         if (closed) return
         val read = source.loadState
-        if (presentation.localRead != read) { presentation = presentation.copy(localRead = read); changed?.invoke() }
+        if (presentation.localRead != read) { presentation = presentation.copy(localRead = read); presentationChanged() }
         val generation = ++presentationGeneration
         val pending = source.state.sync?.pending == true
         worker.execute {
+            var configured = false
             val facts = runCatching {
-                if (!source.ready && !source.error) SharedSchedulePresentation() else source.syncStore?.sharedPresentation(settings.folder.isNotBlank() && accounts.account() != null)
-                    ?: SharedSchedulePresentation(mode = SharedMode.UNKNOWN, ready = true)
+                if (!source.ready && !source.error) SharedSchedulePresentation() else {
+                    configured = settings.folder.isNotBlank() && accounts.account() != null
+                    source.syncStore?.sharedPresentation(configured) ?: SharedSchedulePresentation(mode = SharedMode.UNKNOWN, ready = true)
+                }
             }.getOrElse { SharedSchedulePresentation(mode = SharedMode.UNKNOWN, ready = source.ready || source.error) }
             main.post { if (!closed && generation == presentationGeneration) {
-                val checked = settings.checkFor(runCatching { checkScope() }.getOrNull())
+                val scope = runCatching { checkScope() }.getOrNull()
+                val available = scope != null || facts.mode == SharedMode.V3 && facts.transition && configured
+                val availabilityChanged = available != syncConnectionAvailable
+                syncConnectionAvailable = available
+                val checked = settings.checkFor(scope)
                 val next = facts.copy(mode = if (facts.mode in setOf(SharedMode.UNBOUND, SharedMode.UNCONFIGURED) && (settings.publishedRevision != null || settings.pendingRevision != null)) SharedMode.V1 else facts.mode,
                     confirming = facts.confirming || settings.pendingRevision != null, pending = facts.pending || pending, busy = busy,
                     localRead = source.loadState, confirmationRejected = confirmationRejected,
                     result = if (facts.result == "PARTIAL" && checked.first !in setOf("NETWORK", "ERROR")) facts.result else checked.first, lastSuccess = checked.second)
-                if (next != presentation) { presentation = next; changed?.invoke() }
+                if (next != presentation) { presentation = next; presentationChanged() }
+                else if (availabilityChanged) dispatchSyncUpdate()
             } }
         }
     }
@@ -235,11 +267,12 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     }
     init {
         source.localCommitted = localListener; source.subscribe(readyListener); SharedScheduleViews.add(source)
+        ScheduleSyncJobs.addListener(backgroundSyncChanged)
         main.post { readyListener() }
     }
     private fun notifyChanged() { if (!closed) {
         val next = presentation.copy(busy = busy, localRead = source.loadState, confirmationRejected = confirmationRejected)
-        if (next != presentation) { presentation = next; changed?.invoke() }
+        if (next != presentation) { presentation = next; presentationChanged() }
         refreshPresentation()
     } }
     private fun account() = accounts.account() ?: throw WebDavException("WebDAV credentials unavailable; configure account")
@@ -247,7 +280,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         if (error is SharedConfirmationRejected) {
             // Admission refusal is not a server check or a damaged local transaction.
             confirmationRejected = true; status = error.message.orEmpty(); busy = false
-            notifyChanged(); return
+            finishSync(false); notifyChanged(); return
         }
         settings.recordCheck(operationScope, when (error) {
             is ScheduleHistoryPending -> "DISCOVERING"
@@ -273,21 +306,24 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         if (savedConflict) status = "存在冲突 · $status"
         settings.result(status); busy = false
         if (source.ready && source.syncStore != null) source.reload { notifyChanged() }
+        finishSync(false)
         notifyChanged()
         if (presentation.bound && settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
     }
-    private fun <T> run(task: () -> T, joinInspection: Boolean = false, done: (T) -> Unit) {
+    private fun <T> run(task: () -> T, joinInspection: Boolean = false, syncing: Boolean = false, done: (T) -> Unit) {
         if (busy || closed) return
         confirmationRejected = false
         inspectingJoin = joinInspection
+        foregroundSync = syncing
         busy = true; status = "正在检查远端版本"; notifyChanged()
         worker.execute {
             operationScope = runCatching { checkScope() }.getOrNull()
             val result = runCatching(task); main.post { if (!closed) result.onSuccess(done).onFailure(::failure) }
         }
     }
-    private fun complete(message: String, verified: Boolean = true) {
-        settings.result(message, verified); status = message; busy = false; notifyChanged()
+    private fun complete(message: String, verified: Boolean = true, syncSucceeded: Boolean = verified) {
+        settings.result(message, verified); status = message; busy = false
+        finishSync(syncSucceeded); notifyChanged()
     }
     private fun v2Local(): ScheduleV2Store = requireNotNull(source.syncStore) as ScheduleV2Store
     private fun v2Remote(account: WebDavAccount = account(), folder: String = settings.folder): WebDavCommitStore {
@@ -375,7 +411,12 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
             }
         }
     }) { source.reload { complete(if (cancel) "已取消准备；原数据与证据保留" else "Android 本机换库验收完成；恢复新库正常同步，其他设备由管理员验收", false); sync() } }
-    fun sync() { settings.resetRetries(); synchronize(false) }
+    /** Returns whether this call started a new operation. */
+    fun sync(): Boolean {
+        val wasBusy = busy
+        settings.resetRetries(); synchronize(false)
+        return !wasBusy && foregroundSync
+    }
     fun publish(confirmed: SharedConfirmation? = null) { settings.resetRetries(); synchronize(true, confirmed) }
     fun createV3(confirmed: SharedConfirmation? = null) = activateV3(null, confirmed)
     fun reopenV3Store() = run({ synchronized(SharedScheduleRunLock) { SharedScheduleViews.changing { source.syncStore!!.reopenV3Store() } } }) {
@@ -490,12 +531,13 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
                 val account = source.syncStore!!.v3Account(accounts)
                 operationScope = sharedCheckScope(account, source.syncStore!!.v3EndpointFolder())
                 source.syncStore!!.synchronizeV3(account)
-            } }) { result ->
+            } }, syncing = true) { result ->
                 SharedScheduleViews.reloaded()
                 savedConflict = result == "CONFLICT"
                 source.reload { loaded -> loaded.onSuccess {
-                    settings.recordCheck(operationScope, result, result in listOf("OBSERVED", "PUBLISHED"))
-                    complete(v3StatusMessage(result), result in listOf("OBSERVED","PUBLISHED"))
+                    val verified = result in listOf("OBSERVED", "PUBLISHED")
+                    settings.recordCheck(operationScope, result, verified)
+                    complete(v3StatusMessage(result), verified, verified && source.state.sync?.pending == false)
                     if (result in listOf("BUDGET", "DISCOVERING", "ROTATED") && settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
                 }.onFailure(::failure) }
             }
@@ -517,7 +559,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
             }
             val outcome = AppendOnlyScheduleSync(changingStore(), v2Remote()).synchronize(if (create) settings.datasetId else null)
             outcome to v2Local().v2Frame().baseline?.state
-        } }) { (outcome, baseline) -> finishV2(outcome, baseline) }
+        } }, syncing = !create) { (outcome, baseline) -> finishV2(outcome, baseline) }
     }
     fun endpointPreview(candidate:WebDavAccount,folder:String,done:(org.json.JSONObject)->Unit) = endpointOperation(done) {
         source.syncStore!!.previewV3Endpoint(candidate,transport.folder(candidate,folder),accounts)
@@ -543,8 +585,9 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         source.reload { result -> result.onSuccess {
             val dirty = baseline != null && !ScheduleMerge.same(baseline, source.state)
             val message = if (dirty && outcome.conflicts.isEmpty()) "本地已保存 · 待发布" else outcome.message
-            complete(message, !dirty && outcome.conflicts.isEmpty() && outcome.message.startsWith("已检查观察到的版本"))
-            if (dirty && outcome.conflicts.isEmpty() && outcome.message.startsWith("已检查观察到的版本")) {
+            val verified = outcome.checkState == "VERIFIED" && outcome.conflicts.isEmpty()
+            complete(message, !dirty && verified)
+            if (dirty && verified) {
                 ScheduleSyncJobs.schedule(context)
                 main.removeCallbacks(automatic); main.postDelayed(automatic, 1500)
             } else if (outcome.conflicts.isEmpty() && (dirty || outcome.message.startsWith("有待上传") || outcome.message.contains("暂不可验证"))) {
@@ -583,6 +626,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     fun diagnose() = run({ AppendOnlyWebDavDiagnostic.run(account(), settings.folder) }) { complete(it, false) }
     fun close() {
         closed = true; changed = null; source.localCommitted = null; source.unsubscribe(readyListener)
+        ScheduleSyncJobs.removeListener(backgroundSyncChanged); syncListeners.clear()
         SharedScheduleViews.remove(source)
         main.removeCallbacks(automatic); worker.shutdown()
     }

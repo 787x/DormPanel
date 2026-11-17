@@ -133,6 +133,7 @@ class MainActivity : AppCompatActivity() {
             webDavSettings = dashboardViewModel.webDav.settings,
             webDavSync = dashboardViewModel.webDav,
             scheduleViewport = dashboardViewModel.scheduleViewport,
+            sharedSchedule = dashboardViewModel.sharedSchedule,
             onReturnHome = ::returnHome,
             onPageGestureClaimed = {
                 swipeGestureDetector.cancel()

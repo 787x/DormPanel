@@ -11,6 +11,15 @@ import java.util.concurrent.Executors
 /** One coalesced, network-constrained job, no periodic polling or permanent service. */
 object ScheduleSyncJobs {
     private const val ID = 3201
+    // Job lifecycle and observers are main-thread confined.
+    private var activeJobs = 0
+    private val listeners = linkedSetOf<() -> Unit>()
+    internal val running get() = activeJobs > 0
+    internal fun addListener(listener: () -> Unit) { listeners.add(listener) }
+    internal fun removeListener(listener: () -> Unit) { listeners.remove(listener) }
+    internal fun started() { if (++activeJobs == 1) listeners.toList().forEach { it() } }
+    internal fun finished() { if (--activeJobs == 0) listeners.toList().forEach { it() } }
+
     fun schedule(context: Context, delay: Long = 1500) {
         // Test namespaces must never schedule a service against the real application database.
         if (SharedScheduleSettings.overrideNamespace != null || ScheduleStores.overrideFactory != null) return
@@ -28,10 +37,12 @@ class ScheduleSyncJobService : JobService() {
     @Volatile private var stopped = false
     override fun onStartJob(params: JobParameters): Boolean {
         stopped = false
+        ScheduleSyncJobs.started()
         worker.execute {
             var retry = false
             var checkScope: String? = null
-            val store = ScheduleStores.create(this)
+            val store = runCatching { ScheduleStores.create(this) }
+                .onFailure { mainExecutor.execute { ScheduleSyncJobs.finished() } }.getOrThrow()
             try {
                 val settings = SharedScheduleSettings(this)
                 if (store is RoomScheduleStore && store.isV3()) {
@@ -83,9 +94,13 @@ class ScheduleSyncJobService : JobService() {
                 retry = settings.retryAllowed()
                 settings.result(if (retry) "离线 / 同步失败，等待重试；本地修改已保留" else "同步失败；自动重试已暂停，请立即同步检查。所有本地修改已保留")
             } finally {
-                store.close()
-                SharedScheduleViews.reloaded()
-                if (!stopped) jobFinished(params, retry)
+                try {
+                    store.close()
+                    SharedScheduleViews.reloaded()
+                    if (!stopped) jobFinished(params, retry)
+                } finally {
+                    mainExecutor.execute { ScheduleSyncJobs.finished() }
+                }
             }
         }
         return true

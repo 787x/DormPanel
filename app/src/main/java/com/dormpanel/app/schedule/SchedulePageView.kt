@@ -10,6 +10,7 @@ import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.core.view.doOnPreDraw
 import com.dormpanel.app.appearance.*
+import com.dormpanel.app.schedule.SharedScheduleController.SyncUpdate
 import com.dormpanel.app.ui.PageInteraction
 import java.time.*
 import java.time.format.DateTimeFormatter
@@ -19,7 +20,8 @@ import java.time.format.TextStyle
 class SchedulePageView(context: Context, private val source: ScheduleSource, private val session: ScheduleSession,
     private val appearance: AppearanceController, private val returnHome: () -> Unit,
     private val importTimetable: () -> Unit = {}, private val receiveTimetable: () -> Unit = {},
-    private val manageTimetables: () -> Unit = {}, private val viewport: ScheduleViewport = ScheduleViewport()) : LinearLayout(context), PageInteraction, AppearanceAware {
+    private val manageTimetables: () -> Unit = {}, private val viewport: ScheduleViewport = ScheduleViewport(),
+    private val sharedSchedule: SharedScheduleController? = null) : LinearLayout(context), PageInteraction, AppearanceAware {
     private val editors = ScheduleEditors(context, source, appearance)
     private val display = ScheduleDisplay(this, source, ::render)
     private var visible = false
@@ -34,6 +36,22 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     private val displayCache=X08eDisplayCache()
     private var paintedTheme=appearance.state.themeMode
     private var settingsDialog: androidx.appcompat.app.AlertDialog? = null
+    private var syncButton: Button? = null
+    private var awaitingSyncResult = false
+    private var syncFeedback: SyncUpdate? = null
+    private val clearSyncSuccess = Runnable {
+        syncFeedback = null
+        updateSyncButton(appearance.state)
+    }
+    private val syncListener: (SyncUpdate) -> Unit = { update ->
+        if (sharedSchedule?.syncing == true && syncFeedback == SyncUpdate.SUCCEEDED) resetSyncFeedback()
+        if (awaitingSyncResult && update != SyncUpdate.STATE) {
+            awaitingSyncResult = false
+            syncFeedback = update
+            if (update == SyncUpdate.SUCCEEDED) postDelayed(clearSyncSuccess, 3_000)
+        }
+        updateSyncButton(appearance.state)
+    }
     private fun tr(zh: String, en: String) = context.scheduleText(zh, en)
     private fun scroll(key: String, content: View, body: TimetableBody, initial: Int = 0, minuteAt: ((Int) -> Float)? = null) = ScrollView(context).apply {
         isFillViewport = false; addView(content)
@@ -48,14 +66,49 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     }
     init { orientation = VERTICAL; setPadding(context.dp(20), context.dp(10), context.dp(20), context.dp(10)); render() }
     override fun shouldObservePageSwipe(event: MotionEvent) = false
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); display.visibility(isShown) }
-    override fun onDetachedFromWindow() { displayCache.clear(); swipeContent?.cancelMotion(); display.visibility(false); settingsDialog?.dismiss(); editors.close(); super.onDetachedFromWindow() }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        sharedSchedule?.addSyncListener(syncListener)
+        sharedSchedule?.refreshPresentation()
+        display.visibility(isShown)
+    }
+    override fun onDetachedFromWindow() {
+        sharedSchedule?.removeSyncListener(syncListener)
+        resetSyncFeedback()
+        displayCache.clear(); swipeContent?.cancelMotion(); display.visibility(false); settingsDialog?.dismiss(); editors.close()
+        super.onDetachedFromWindow()
+    }
     override fun onVisibilityAggregated(isVisible: Boolean) { super.onVisibilityAggregated(isVisible); visible = isVisible; if(!isVisible) displayCache.clear(); display.visibility(isVisible) }
     override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); if(visibility!=VISIBLE) displayCache.clear(); display.visibility(visible && visibility == VISIBLE) }
     private fun button(text: String, action: () -> Unit) = context.scheduleButton(text, action)
+    private fun resetSyncFeedback() {
+        removeCallbacks(clearSyncSuccess)
+        awaitingSyncResult = false
+        syncFeedback = null
+    }
+    private fun updateSyncButton(state: AppearanceState) {
+        val button = syncButton ?: return
+        val syncing = sharedSchedule?.syncing == true
+        val feedback = syncFeedback.takeUnless { syncing }
+        button.isEnabled = sharedSchedule?.canSync == true
+        val label = when {
+            syncing -> tr("同步中", "Syncing")
+            feedback == SyncUpdate.SUCCEEDED -> tr("成功", "Success")
+            feedback == SyncUpdate.FAILED -> tr("失败", "Failed")
+            else -> tr("同步", "Sync")
+        }
+        if (button.text != label) button.text = label
+        val palette = PanelPalette.forMode(state.themeMode)
+        val dark = state.themeMode == ThemeMode.DARK
+        button.setTextColor(when (feedback) {
+            SyncUpdate.SUCCEEDED -> if (dark) 0xFF81E8A0.toInt() else 0xFF146C35.toInt()
+            SyncUpdate.FAILED -> if (dark) 0xFFFFA6A0.toInt() else 0xFFAE2222.toInt()
+            else -> if (button.isEnabled) palette.text else palette.secondary
+        })
+    }
     private fun render() = renderPage(null)
     private fun renderPage(promoted: TimetableBody?) {
-        weekRange=null
+        weekRange=null; syncButton=null
         if(promoted==null) displayCache.invalidate()
         currentBody?.active = false; currentBody = null
         swipeContent?.cancelMotion(); swipeContent = null
@@ -64,7 +117,10 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         val header = LinearLayout(context)
         header.addView(context.scheduleLabel(tr("日历与课表", "Schedule"), 26f), LayoutParams(0, context.dp(56), 1f))
         ScheduleMode.entries.forEach { mode ->
-            val button = button(if (mode == ScheduleMode.CALENDAR) tr("日历", "Calendar") else tr("课表", "Timetable")) { session.mode = mode; render() }
+            val button = button(if (mode == ScheduleMode.CALENDAR) tr("日历", "Calendar") else tr("课表", "Timetable")) {
+                if (mode == ScheduleMode.CALENDAR) resetSyncFeedback()
+                session.mode = mode; render()
+            }
             header.addView(button)
             accents += { if (session.mode == mode) button.setTextColor(PanelPalette.forMode(appearance.state.themeMode).accent) }
         }
@@ -146,22 +202,46 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     private fun timetable(promoted: TimetableBody?) {
         warmDisplayData()
         val actions = LinearLayout(context)
+        fun actionButton(text: String, action: () -> Unit) = button(text, action).apply {
+            minWidth = context.dp(48)
+            minimumWidth = context.dp(48)
+            setPadding(context.dp(10), paddingTop, context.dp(10), paddingBottom)
+        }
         if (style.layout == X08eScheduleLayout.CLASSIC) {
-            actions.addView(button(tr("+ 添加课程", "+ Add class")) { editors.entry() }.apply { isEnabled = source.editable })
-            actions.addView(button(tr("导入课表", "Import timetable"), importTimetable).apply { isEnabled = source.editable })
-            actions.addView(button(tr("接收课表", "Receive from phone/computer"), receiveTimetable).apply { isEnabled = source.editable })
-            actions.addView(button(tr("课表管理", "Sources"), manageTimetables).apply { isEnabled = source.ready })
-        } else actions.addView(button(tr("课表管理", "Manage")) {
+            actions.addView(actionButton(tr("+ 添加课程", "+ Add class")) { editors.entry() }.apply { isEnabled = source.editable })
+            actions.addView(actionButton(tr("导入课表", "Import timetable"), importTimetable).apply { isEnabled = source.editable })
+            actions.addView(actionButton(tr("接收课表", "Receive timetable"), receiveTimetable).apply { isEnabled = source.editable })
+            actions.addView(actionButton(tr("课表管理", "Sources"), manageTimetables).apply { isEnabled = source.ready })
+        } else actions.addView(actionButton(tr("课表管理", "Manage")) {
             val options = arrayOf(tr("添加课程", "Add class"), tr("导入课表", "Import timetable"), tr("接收课表", "Receive timetable"), tr("来源与同步", "Sources and sync"))
             settingsDialog = androidx.appcompat.app.AlertDialog.Builder(context).setTitle(tr("课表管理", "Manage timetable"))
                 .setItems(options) { _, i -> when(i) { 0 -> if (source.editable) editors.entry(); 1 -> if (source.editable) importTimetable(); 2 -> if (source.editable) receiveTimetable(); else -> manageTimetables() } }
                 .setNegativeButton(tr("关闭", "Close"), null).show().also { it.matchActivityBrightness(); applyAppearanceTree(it.window!!.decorView, appearance.state) }
         })
-        actions.addView(button("‹") { session.weekStart = session.weekStart.minusWeeks(1); render() }.apply { contentDescription = tr("上一周", "Previous week") })
-        weekRange=context.scheduleLabel("${session.weekStart} – ${session.weekStart.plusDays(6)}",18f)
-        actions.addView(weekRange,LayoutParams(0,context.dp(52),1f))
-        actions.addView(button("›") { session.weekStart = session.weekStart.plusWeeks(1); render() }.apply { contentDescription = tr("下一周", "Next week") })
-        actions.addView(button(tr("本周", "This week")) { session.today(source.clock); render() })
+        syncButton = actionButton(tr("同步", "Sync")) {
+            val controller = sharedSchedule ?: return@actionButton
+            if (isAttachedToWindow && controller.canSync && controller.sync()) {
+                resetSyncFeedback()
+                awaitingSyncResult = true
+                updateSyncButton(appearance.state)
+            }
+        }.apply {
+            tag = "timetable-sync"
+            // Keep the week range stable as the status label changes.
+            val longest = listOf(tr("同步中", "Syncing"), tr("成功", "Success"), tr("失败", "Failed")).maxOf(paint::measureText)
+            minimumWidth = maxOf(minimumWidth, kotlin.math.ceil(longest).toInt() + paddingLeft + paddingRight)
+            minimumHeight = context.dp(48)
+        }
+        actions.addView(syncButton)
+        actions.addView(actionButton("‹") { session.weekStart = session.weekStart.minusWeeks(1); render() }.apply { contentDescription = tr("上一周", "Previous week") })
+        val range = context.scheduleLabel("${session.weekStart} – ${session.weekStart.plusDays(6)}", 18f).apply {
+            tag = "timetable-week-range"
+            minimumHeight = context.dp(52)
+        }
+        weekRange = range
+        actions.addView(range, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        actions.addView(actionButton("›") { session.weekStart = session.weekStart.plusWeeks(1); render() }.apply { contentDescription = tr("下一周", "Next week") })
+        actions.addView(actionButton(tr("本周", "This week")) { session.today(source.clock); render() })
         addView(actions)
         val body = promoted ?: buildTimetable(session.weekStart)
         val swipe = TimetableSwipeLayout(context) { direction ->
@@ -360,6 +440,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
             if (includeContent || child !== swipeContent) applyAppearanceTree(child, state)
         }
         accents.forEach { it() }
+        updateSyncButton(state)
         settingsDialog?.window?.decorView?.let { applyAppearanceTree(it, state) }
     }
 }
