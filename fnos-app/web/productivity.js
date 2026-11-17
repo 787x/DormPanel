@@ -104,14 +104,14 @@ export function installProductivity({ host, get, post, el, button, confirmAction
       if (!canWrite()) throw Error('请先等待写入结束或核对上一次结果');
       if (!sameContext(snapshot, state.data?.list)) throw Error('草稿版本已过期，请重新读取');
       if (draft) draft.sending = true;
-      const result = await post(editRoute, { ...context(snapshot), ...request });
+      await post(editRoute, { ...context(snapshot), ...request });
       if (draft && state.draft === draft) delete state.draft;
       if (current()) {
         if (request.action === 'todo.createList' || request.action === 'memo.create') {
           state.selected = request.id;
           state.taskOffset = 0;
         }
-        state.message = result.dirty ? '已保存到 fnOS 本机，待发布。' : '已保存到 fnOS 本机。';
+        state.message = '';
       }
       if (mode && state === model()) await reload();
     } catch (error) {
@@ -214,8 +214,12 @@ export function installProductivity({ host, get, post, el, button, confirmAction
     const { list, detail, conflicts } = state.data ?? {};
     const actions = el('nav');
     actions.append(button('重新读取', refresh), button('检查并同步', sync), button('课程表与共享', sources));
-    const message = el('p', state.message); message.setAttribute('role', 'status');
-    host.replaceChildren(actions, message);
+    host.replaceChildren(actions);
+    if (state.message) {
+      const message = el('p', state.message);
+      message.setAttribute('role', 'status');
+      host.append(message);
+    }
     if (!list) {
       if (state.draft) host.append(editor(state, false));
       return;

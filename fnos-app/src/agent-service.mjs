@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { randomBytes, createHmac, randomUUID } from 'node:crypto';
 import { operations, describeOperations, findOperation, VERSION, BUDGET, errorValue, redact } from './operations.mjs';
+import { productivityEditRoute } from './productivity-api.mjs';
 const DAY = 86400000;
 const canonical = value => JSON.stringify(value && typeof value === 'object' ? Array.isArray(value) ? value.map(v => JSON.parse(canonical(v))) : Object.fromEntries(Object.keys(value).sort().map(k => [k, JSON.parse(canonical(value[k]))])) : value);
 const fail = code => { throw Object.assign(new Error(code), { agentCode:code }); };
@@ -182,4 +183,3 @@ export class AgentService {
     return server;
   }
 }
-import { productivityEditRoute } from './productivity-api.mjs';

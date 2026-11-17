@@ -8,6 +8,7 @@ import { productivityFixture } from './productivity-fixture.mjs';
 import { businessHash } from '../src/v3-protocol.mjs';
 
 const url = process.env.PR89_DAV_URL;
+const resume = process.env.PR89_RESUME === '1';
 const x08e = process.env.PR89_X08E_SERIAL, phone = process.env.PR89_PHONE_SERIAL;
 assert.match(url ?? '', /^http:\/\/127[.]0[.]0[.]1:[0-9]+\/pr89-[0-9a-f-]{36}\/$/);
 assert(x08e && phone && x08e !== phone);
@@ -24,7 +25,7 @@ const appTest = appName+'.ProductivitySharedCardTest', phoneTest = 'com.dormpane
 async function installedPackage(endpoint) {
   const base = new URL(endpoint);
   assert.equal(base.hostname, '127.0.0.1');
-  assert.equal(base.pathname, '/app/dormpanel-pr89/');
+  assert.match(base.pathname, /^\/app\/dormpanel-pr89[a-z]?\/$/);
   const request = async (path, input) => {
     const response = await fetch(new URL(path, base), input === undefined ? {} : {
       method:'POST', headers:{ 'X-DormPanel-CSRF':csrf, 'Content-Type':'application/json' },
@@ -45,11 +46,17 @@ async function installedPackage(endpoint) {
   const remote = new URL(url);
   remote.host = process.env.PR89_FPK_DAV_HOST;
   assert.match(remote.hostname, /^192[.]168[.]3[.]\d+$/);
-  const { connectionId } = await manage({ action:'connection.save', name, type:'webdav', url:remote.href,
-    username:'fixture', password:'fixture', allowInsecureHttp:true });
-  const { workspaceId } = await manage({ action:'workspace.add', name, connectionId, protocol:'v3' });
-  await manage({ action:'workspace.switch', targetId:workspaceId });
-  assert.equal(state.workspaceId, workspaceId);
+  if (resume) {
+    assert.equal(state.workspaceName, name);
+    assert(state.datasetId);
+  } else {
+    const { connectionId } = await manage({ action:'connection.save', name, type:'webdav', url:remote.href,
+      username:'fixture', password:'fixture', allowInsecureHttp:true });
+    const { workspaceId } = await manage({ action:'workspace.add', name, connectionId, protocol:'v3' });
+    await manage({ action:'workspace.switch', targetId:workspaceId });
+    assert.equal(state.workspaceId, workspaceId);
+  }
+  const { workspaceId } = state;
   const read = (view, params = {}) => request('api/productivity?' + new URLSearchParams({ workspaceId, view, ...params }));
   const perform = async (path, input) => {
     const result = await request(path, { ...ctx(), ...input });
@@ -80,33 +87,40 @@ async function installedPackage(endpoint) {
 }
 
 test('X08E 卡片 → fnOS HTTP → Phone 原生 Widget → fnOS 与 X08E', { timeout:300000 }, async t => {
+  assert(!resume || process.env.PR89_FPK_HTTP, '只可从原隔离 FPK 工作区继续验收');
   const f = process.env.PR89_FPK_HTTP ? await installedPackage(process.env.PR89_FPK_HTTP) : await productivityFixture(t, { url });
   const port = new URL(url).port;
   for (const serial of [x08e, phone]) await adb(serial, 'reverse', 'tcp:'+port, 'tcp:'+port);
   await adb(phone, 'shell', 'cmd', 'appwidget', 'grantbind', '--package', phoneName+'.pr89testbed', '--user', '0');
-  await instrument(x08e, appName, appTest, 'pr88Url', 'importConnectAndReturnToLegacy');
-  const joined = await f.joinDataset();
-  assert.equal(joined.status, 200, JSON.stringify(joined.data));
-  await f.settle();
-  const list = (await f.read('todo.lists')).data.rows[0];
+  if (!resume) {
+    await instrument(x08e, appName, appTest, 'pr88Url', 'importConnectAndReturnToLegacy');
+    const joined = await f.joinDataset();
+    assert.equal(joined.status, 200, JSON.stringify(joined.data));
+    await f.settle();
+  }
+  const list = (await f.read('todo.lists')).data.rows.find(row => row.total >= 12);
   const tasks = (await f.read('todo.tasks', { id:list.id })).data.rows;
-  assert.equal(tasks.length, 12);
+  assert.equal(tasks.length, resume ? 13 : 12);
   assert.equal(tasks[0].text, '检查 WebDAV 回执');
   assert(tasks[0].completed);
-  const memoId = (await f.read('memo.list')).data.rows[0].id;
-  const before = (await f.read('memo.get', { id:memoId })).data.memo;
-  assert.match(before.body, /^周五宿舍检查\n记得带钥匙\r\n/);
-  const taskId = randomUUID(), body = '  fnOS 编辑\r\n第二行🙂\n  ';
-  const task = await f.edit('todo.createTask', { id:taskId, listId:list.id, text:'fnOS 新增的共享任务' });
-  assert.equal(task.data.writeApplied, true, JSON.stringify(task.data));
-  assert.equal(task.data.remoteConfirmed, false);
-  assert.equal(task.data.dirty, true);
-  const memo = await f.edit('memo.edit', { id:memoId, title:'fnOS 编辑的共享备忘', body });
-  assert.equal(memo.data.localSaved, true, JSON.stringify(memo.data));
+  const body = '  fnOS 编辑\r\n第二行🙂\n  ';
+  const memos = (await f.read('memo.list')).data.rows;
+  const memoId = (resume ? memos.find(row => row.title === 'fnOS 编辑的共享备忘') : memos[0]).id;
+  const taskId = resume ? tasks.find(task => task.text === 'fnOS 新增的共享任务' && !task.completed).id : randomUUID();
+  if (!resume) {
+    const before = (await f.read('memo.get', { id:memoId })).data.memo;
+    assert.match(before.body, /^周五宿舍检查\n记得带钥匙\r\n/);
+    const task = await f.edit('todo.createTask', { id:taskId, listId:list.id, text:'fnOS 新增的共享任务' });
+    assert.equal(task.data.writeApplied, true, JSON.stringify(task.data));
+    assert.equal(task.data.remoteConfirmed, false);
+    assert.equal(task.data.dirty, true);
+    const memo = await f.edit('memo.edit', { id:memoId, title:'fnOS 编辑的共享备忘', body });
+    assert.equal(memo.data.localSaved, true, JSON.stringify(memo.data));
+  }
   const published = await f.settle();
   assert.equal(published.remoteConfirmed, true);
   assert.equal(published.otherDevicesReceived, 'unknown');
-  await instrument(phone, phoneName, phoneTest, 'pr88Url', 'joinSharedEditAndOperateRealWidgetInstances');
+  await instrument(phone, phoneName, phoneTest, 'pr89Url', 'receivesFnOsAndClicksWidget');
   await f.settle();
   assert.equal((await f.read('todo.task', { id:taskId })).data.task.completed, true);
   assert.equal((await f.read('memo.get', { id:memoId })).data.memo.body, body);

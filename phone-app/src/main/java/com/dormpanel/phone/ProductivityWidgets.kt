@@ -234,6 +234,8 @@ internal object ProductivityWidgets {
         val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 150)
         val layout = if (kind == ProductivityKind.TODO) R.layout.productivity_todo_widget else R.layout.productivity_memo_widget
         val remote = RemoteViews(app.packageName, layout)
+        val previousRows = rows[id]
+        var legacyTodoAdapter = false
         val status = errors[id] ?: when {
             bound.isFailure -> "本机绑定读取失败"
             target == null -> "选择显示内容"
@@ -269,8 +271,11 @@ internal object ProductivityWidgets {
             }
             ProductivityKind.TODO -> {
                 val ordered = tasks.sortedBy { it.completed }
-                if (record != null && version != null && binding != null) {
-                    rows[id] = Rows(binding.encode(), version, ordered, view.writeBlock == null)
+                val snapshot = if (record != null && version != null && binding != null) {
+                    Rows(binding.encode(), version, ordered, view.writeBlock == null)
+                } else null
+                if (snapshot != null) {
+                    rows[id] = snapshot
                 } else rows.remove(id)
                 remote.setViewVisibility(R.id.productivity_tasks, if (record == null) View.GONE else View.VISIBLE)
                 // RemoteViews sends this Activity PendingIntent with the host's user-interaction grant.
@@ -278,12 +283,39 @@ internal object ProductivityWidgets {
                     .setData(uri("row", id)).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
                 remote.setPendingIntentTemplate(R.id.productivity_tasks, PendingIntent.getActivity(app, id, template,
                     PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0))
-                remote.setRemoteAdapter(R.id.productivity_tasks, Intent(app, ProductivityTaskService::class.java)
-                    .setData(uri("tasks", id)))
+                // Publish the header and rows in one RemoteViews on modern hosts. Keep
+                // large lists on the lazy adapter to bound the direct Binder payload.
+                if (Build.VERSION.SDK_INT >= 31 && ordered.size <= 128 &&
+                    ordered.sumOf { it.text.length } <= 32_768) {
+                    val items = RemoteViews.RemoteCollectionItems.Builder().setViewTypeCount(1)
+                    if (snapshot != null) ordered.forEachIndexed { index, task ->
+                        items.addItem(index.toLong(), taskRow(app, snapshot, task))
+                    }
+                    remote.setRemoteAdapter(R.id.productivity_tasks, items.build())
+                } else {
+                    legacyTodoAdapter = true
+                    remote.setRemoteAdapter(R.id.productivity_tasks,
+                        Intent(app, ProductivityTaskService::class.java).setData(uri("tasks", id)))
+                }
             }
         }
         manager.updateAppWidget(id, remote)
-        if (kind == ProductivityKind.TODO) manager.notifyAppWidgetViewDataChanged(id, R.id.productivity_tasks)
+        if (legacyTodoAdapter && previousRows != rows[id]) {
+            manager.notifyAppWidgetViewDataChanged(id, R.id.productivity_tasks)
+        }
+    }
+
+    fun taskRow(app: Context, rows: Rows, task: ProductivityRecord.Task): RemoteViews {
+        val action = Intent().putExtra("binding", rows.binding).putExtra("task", task.id)
+            .putExtra("revision", rows.version.revision).putExtra("hash", rows.version.businessHash)
+        return RemoteViews(app.packageName, R.layout.productivity_task_widget_row).apply {
+            setTextViewText(R.id.productivity_task, task.text)
+            setTextViewText(R.id.productivity_check, if (task.completed) "☑" else "☐")
+            setContentDescription(R.id.productivity_check, if (task.completed) "取消完成" else "标为完成")
+            if (rows.writable) setOnClickFillInIntent(R.id.productivity_check,
+                Intent(action).putExtra("completed", !task.completed))
+            setOnClickFillInIntent(R.id.productivity_task, action)
+        }
     }
 
     private fun configure(app: Context, id: Int) = PendingIntent.getActivity(app, id,
@@ -409,16 +441,7 @@ class ProductivityTaskService : RemoteViewsService() {
             override fun getViewAt(position: Int): RemoteViews? {
                 val rows = state ?: return null
                 val task = rows.tasks.getOrNull(position) ?: return null
-                val action = Intent().putExtra("binding", rows.binding).putExtra("task", task.id)
-                    .putExtra("revision", rows.version.revision).putExtra("hash", rows.version.businessHash)
-                return RemoteViews(app.packageName, R.layout.productivity_task_widget_row).apply {
-                    setTextViewText(R.id.productivity_task, task.text)
-                    setTextViewText(R.id.productivity_check, if (task.completed) "☑" else "☐")
-                    setContentDescription(R.id.productivity_check, if (task.completed) "取消完成" else "标为完成")
-                    if (rows.writable) setOnClickFillInIntent(R.id.productivity_check,
-                        Intent(action).putExtra("completed", !task.completed))
-                    setOnClickFillInIntent(R.id.productivity_task, action)
-                }
+                return ProductivityWidgets.taskRow(app, rows, task)
             }
         }
     }

@@ -46,9 +46,18 @@ test('双 Writer 独立合并、关联删除冲突、三方内容和过期决定
     assert.equal((await local.edit('productivity.resolve', { token, choice:'remote' }, { ...local.ctx(), version:response.version-1 })).data.writeApplied, false);
     return { token, rows };
   }
+  await save(local, 'todo.editTask', { id:taskA, text:'同一任务的本机修改' });
+  await save(remote, 'todo.editTask', { id:taskA, text:'同一任务的远端修改' });
+  let conflict = await showConflict();
+  assert.deepEqual(['base','local','remote'].map(side => conflict.rows[0][side].text),
+    ['甲本机编辑','同一任务的本机修改','同一任务的远端修改']);
+  await save(local, 'productivity.resolve', { token:conflict.token, choice:'local' });
+  await converge();
+  assert.equal((await remote.read('todo.task', { id:taskA })).data.task.text, '同一任务的本机修改');
+
   await save(local, 'memo.edit', { id:memo, body:'本机正文\n' });
   await save(remote, 'memo.edit', { id:memo, body:'远端正文\r\n🙂' });
-  let conflict = await showConflict();
+  conflict = await showConflict();
   assert.deepEqual(['base','local','remote'].map(side => conflict.rows[0][side].body), ['共同基线\r\n','本机正文\n','远端正文\r\n🙂']);
   await save(local, 'productivity.resolve', { token:conflict.token, choice:'remote' });
   await converge();

@@ -25,7 +25,7 @@ dialog{background:#121d29;color:inherit;border:1px solid #365068;border-radius:1
 #productivity button { max-width:100%; white-space:normal; overflow-wrap:anywhere; }
 #productivity button[aria-pressed=true] { outline:2px solid currentColor; outline-offset:-2px; }
 .productivity-form label { display:block; margin-bottom:.8rem; }
-.productivity-form input, .productivity-form textarea { box-sizing:border-box; display:block; width:100%; resize:vertical; }
+.productivity-form textarea { box-sizing:border-box; display:block; width:100%; min-height:0; resize:vertical; font:inherit; }
 #productivity pre { max-height:22rem; overflow:auto; }
 .productivity-conflict { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.8rem; }
 @media (max-width:690px) {

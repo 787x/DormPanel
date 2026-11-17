@@ -153,3 +153,31 @@ test('网页显示备忘三方内容、保护和实际决定范围', async t => 
   assert.equal((await f.read('memo.get', { id })).data.memo.body, '远端正文');
   assert.deepEqual(errors, []);
 });
+
+test('切换工作区后丢弃旧 Todo 读取结果', async t => {
+  const f = await productivityFixture(t, { proxy:true });
+  assert.equal((await f.edit('todo.createList', { id:randomUUID(), name:'旧工作区清单' })).status, 200);
+  const original = f.ctx().workspaceId;
+  const next = await f.createWorkspace('第二个独立工作区');
+  await f.app.catalog.manage({ ...f.ctx(), action:'workspace.switch', targetId:original });
+  const { page, errors } = await pageFor(t, f);
+  let arrived, release;
+  const dispatched = new Promise(resolve => { arrived = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  await page.route(url => url.searchParams.get('view') === 'todo.lists' &&
+    url.searchParams.get('workspaceId') === original, async route => {
+    const response = await route.fetch();
+    arrived();
+    await hold;
+    await route.fulfill({ response });
+  }, { times:1 });
+  await page.locator('#todoPage').click();
+  await dispatched;
+  await page.locator('#workspaceSelect').selectOption(next);
+  await expect(page.locator('#currentContext')).toContainText('第二个独立工作区');
+  release();
+  await page.locator('#todoPage').click();
+  await expect(page.getByText(/尚未完成共享数据集初始化或加入验证/)).toBeVisible();
+  await expect(page.getByText('旧工作区清单')).toHaveCount(0);
+  assert.deepEqual(errors, []);
+});

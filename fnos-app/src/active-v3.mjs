@@ -56,17 +56,22 @@ export async function openActiveV3(catalog, id, create = false) {
     async synchronize(options = {}) {
       const budget = new Budget();
       const sharedJoin = options.bind && !journal.value.binding && options.descriptorFormat === 4;
-      const remote = remoteV3(catalog, id, budget, sharedJoin);
+      let remote = remoteV3(catalog, id, budget, sharedJoin);
       ensure(!options.discover, '只读发现必须使用 Catalog.discover，禁止进入编辑事务');
       const current = journal.value;
       if (options.bind && current.binding) ensure(options.descriptorPath === current.binding.descriptorPath && options.descriptorHash === current.binding.descriptorHash, '已有活动数据集，禁止隐式换库');
       if (!current.binding && options.bind) {
         ensure(same(current.local, emptyState()) && !current.pending && !current.conflict, '本地非空或有恢复状态，禁止覆盖绑定；请保留原工作区并新建空工作区加入');
         ensure(options.descriptorPath && /^[0-9a-f]{64}$/.test(options.descriptorHash ?? ''), '请选择已验证的 v3 Descriptor 身份');
-        const bytes = await remote.read(options.descriptorPath);
+        let bytes = await remote.read(options.descriptorPath);
+        if (!bytes && options.descriptorFormat === undefined) {
+          remote = remoteV3(catalog, id, budget, true);
+          bytes = await remote.read(options.descriptorPath);
+        }
         ensure(bytes && sha(bytes) === options.descriptorHash, 'v3 Descriptor 身份变化');
         const descriptor = match(options.descriptorPath, bytes); ensure(descriptor.type === 1, '不是 Descriptor');
-        ensure((descriptor.format ?? 3) === (options.descriptorFormat ?? 3), 'Descriptor 格式不匹配');
+        ensure(options.descriptorFormat === undefined || (descriptor.format ?? 3) === options.descriptorFormat, 'Descriptor 格式不匹配');
+        if (descriptor.format === 4 && !sharedJoin) remote = remoteV3(catalog, id, budget, true);
         const identities = await catalog.identities();
         ensure(!catalog.manifest.workspaces.some(w => w.id !== id && identities.get(w.id) === descriptor.datasetId), '数据集已绑定其他工作区');
         // Existing courses are retained in their original workspace; joining starts empty.
