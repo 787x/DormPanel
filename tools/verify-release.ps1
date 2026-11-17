@@ -1,10 +1,11 @@
 param(
-    [string]$Directory = (Join-Path $PSScriptRoot '..\artifacts\release\android-v0.1.11'),
+    [string]$Directory,
     [string]$BuildToolsDirectory,
     [switch]$AndroidOnly
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-validation.ps1')
+if (-not $Directory) { $Directory = Join-Path $PSScriptRoot "..\artifacts\release\$releaseCandidate" }
 Assert-ReleaseDirectory $Directory (Get-AndroidReleaseTools $BuildToolsDirectory)
 if (-not $AndroidOnly) { Assert-HaReleaseArchive (Join-Path $Directory "DormPanel-HA-$haReleaseVersion.zip") (Join-Path $PSScriptRoot '..\homeassistant\custom_components\dormpanel')
 }
