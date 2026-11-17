@@ -1,0 +1,8 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+    <TextView android:id="@+id/productivity_check" android:layout_width="48dp" android:layout_height="48dp"
+        android:gravity="center" android:textSize="21sp" android:textColor="@color/productivity_widget_text" />
+    <TextView android:id="@+id/productivity_task" android:layout_width="0dp" android:layout_weight="1"
+        android:layout_height="48dp" android:gravity="center_vertical" android:textSize="14sp"
+        android:maxLines="2" android:ellipsize="end" android:textColor="@color/productivity_widget_text" />
+</LinearLayout>

@@ -1,0 +1,8 @@
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="150dp" android:minHeight="112dp"
+    android:minResizeWidth="110dp" android:minResizeHeight="92dp"
+    android:targetCellWidth="3" android:targetCellHeight="2"
+    android:initialLayout="@layout/productivity_memo_widget"
+    android:configure="com.dormpanel.phone.ProductivityWidgetConfiguration"
+    android:widgetFeatures="reconfigurable" android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="0" android:widgetCategory="home_screen" />

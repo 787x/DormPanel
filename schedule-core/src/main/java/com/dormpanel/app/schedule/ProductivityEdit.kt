@@ -60,7 +60,8 @@ internal fun ScheduleState.editProductivity(edit: ProductivityEdit): ScheduleSta
 data class ProductivityVersion(val datasetId: String, val revision: Long, val businessHash: String)
 data class ProductivityConflict(val token: String, val revision: Long, val rows: List<SharedProductivity.ConflictRow>)
 data class ProductivityView(val content: SharedProductivity.Content, val version: ProductivityVersion?,
-    val writeBlock: String?, val conflict: ProductivityConflict?, val pending: Boolean)
+    val writeBlock: String?, val conflict: ProductivityConflict?, val pending: Boolean,
+    val baselineReadback: Boolean = false)
 
 data class ProductivityBindingSnapshot(val version: ProductivityVersion, val records: List<SharedRecord>)
 

@@ -438,7 +438,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         return foregroundSync != null
     }
     fun publish(confirmed: SharedConfirmation? = null) { settings.resetRetries(); synchronize(true, confirmed) }
-    fun createV3(confirmed: SharedConfirmation? = null) = activateV3(null, confirmed)
+    fun createV3(confirmed: SharedConfirmation? = null, sharedFormat: Boolean = false) = activateV3(confirmed, sharedFormat)
     fun reopenV3Store() = run({ synchronized(SharedScheduleRunLock) { SharedScheduleViews.changing { source.syncStore!!.reopenV3Store() } } }) {
         source.reload { complete("活动 v3 Store 已从同一数据库恢复；课程、候选与绑定保留",false) }
     }
@@ -471,11 +471,11 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     fun joinV3(preview:UnboundV3JoinPreview, confirmed: SharedConfirmation? = null) = run({
         synchronized(SharedScheduleRunLock) { requireAction(SharedAction.JOIN, confirmed); source.syncStore!!.joinVerifiedV3(preview,account()) }
     }) { source.reload { settings.recordCheck(operationScope, "VERIFIED", true); complete("已加入指定 v3 身份；目标快照经精确回读，本地已保存",true); refreshAndSync() } }
-    private fun activateV3(descriptor: ByteArray?, confirmed: SharedConfirmation?) = run({
+    private fun activateV3(confirmed: SharedConfirmation?, sharedFormat: Boolean) = run({
         synchronized(SharedScheduleRunLock) {
             requireAction(SharedAction.CREATE, confirmed)
             check(settings.publishedRevision == null && settings.pendingRevision == null) { "已有 v1 绑定，禁止隐式切换" }
-            requireNotNull(source.syncStore).prepareV3(transport.folder(account(), settings.folder), descriptor)
+            requireNotNull(source.syncStore).prepareV3(transport.folder(account(), settings.folder), sharedFormat = sharedFormat)
         }
     }) { source.reload { complete("v3 本地绑定意图已保存；等待远端验证", false); refreshAndSync() } }
     data class V3Candidate(val descriptor: V3Object, val bytes: ByteArray, val hash: String)
@@ -489,12 +489,18 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     private fun readV3Candidates(account: WebDavAccount = account(), folder: String = settings.folder, directories: Set<String>? = null): List<V3Candidate> {
         val target = transport.folder(account, folder)
         operationScope = sharedCheckScope(account, target)
-        if (protocolFolder(target, "v3") !in (directories ?: sharedDirectories(account, target))) return emptyList()
-        val remote = V3WebDavStore(account, target, V3Budget())
-        return remote.list("").flatMap { scope ->
-            if (!scope.matches(Regex("dataset-[0-9a-f-]{36}/"))) emptyList() else remote.list(scope).filter { it.substringAfterLast('/').startsWith("descriptor-") }.map { path ->
-                val raw = requireNotNull(remote.read(path)); val d = V3Paths.match(path, raw); require(d.type == 1)
-                V3Candidate(d, raw, SyncV3Codec.hash(raw))
+        val available = directories ?: sharedDirectories(account, target)
+        val budget = V3Budget()
+        return listOf("v3" to 3, "v3-shared" to 4).flatMap { (directory, format) ->
+            if (protocolFolder(target, directory) !in available) return@flatMap emptyList()
+            val remote = V3WebDavStore(account, target, budget, sharedFormat = format == 4)
+            remote.list("").filter { it.matches(Regex("dataset-[0-9a-f-]{36}/")) }.flatMap { scope ->
+                remote.list(scope).filter { it.substringAfterLast('/').startsWith("descriptor-") }.map { path ->
+                    val raw = requireNotNull(remote.read(path))
+                    val descriptor = V3Paths.match(path, raw)
+                    require(descriptor.type == 1 && descriptor.format == format)
+                    V3Candidate(descriptor, raw, SyncV3Codec.hash(raw))
+                }
             }
         }
     }

@@ -1,0 +1,21 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:paddingStart="12dp" android:paddingEnd="12dp"
+    android:background="@drawable/productivity_widget_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="48dp"
+        android:gravity="center_vertical" android:orientation="horizontal">
+        <TextView android:id="@+id/productivity_title" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1" android:maxLines="1"
+            android:gravity="center_vertical" android:ellipsize="end" android:textSize="17sp"
+            android:textStyle="bold" android:textColor="@color/productivity_widget_text" />
+        <TextView android:id="@+id/productivity_refresh" android:layout_width="48dp"
+            android:layout_height="match_parent" android:gravity="center" android:text="↻"
+            android:contentDescription="刷新" android:textSize="20sp" android:textColor="@color/productivity_widget_text" />
+    </LinearLayout>
+    <TextView android:id="@+id/productivity_status" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:maxLines="2" android:ellipsize="end"
+        android:textSize="12sp" android:textColor="@color/productivity_widget_muted" />
+    <TextView android:id="@+id/productivity_body" android:layout_width="match_parent"
+        android:layout_height="0dp" android:layout_weight="1" android:ellipsize="end"
+        android:paddingTop="4dp" android:textSize="15sp" android:textColor="@color/productivity_widget_text" />
+</LinearLayout>

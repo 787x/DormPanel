@@ -31,7 +31,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val apkInstall = com.dormpanel.app.apps.ApkInstallController(application, apps)
     val productivity = ProductivitySource(ProductivityStores.create(application), AndroidProductivityClock)
     val termProfiles = TermScheduleProfileStore(application)
+    private val productivityBindings = ProductivityBindings(application, "dashboard-productivity-bindings")
     val schedule = ScheduleSource(ScheduleStores.create(application, termProfiles), profileResolver = termProfiles::get)
+    private val productivityData = AndroidProductivity(application, schedule.syncStore)
     val haRelay = HaScheduleRelayController(dataSource.ha.relayChannel, dataSource.relayIdentity,
         dataSource.relayHttp, { dataSource.relayStatus = it }, apkInstall,
         appVersion = {
@@ -45,7 +47,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
     val scheduleViewport = com.dormpanel.app.schedule.ScheduleViewport()
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance, dataSource.weatherRepository).providers +
-        com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance) } +
+        com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance, productivityData, productivityBindings) } +
         listOf("calendar", "timetable").map { ScheduleCardProvider(it, schedule, appearance) } +
         listOf(false, true).map { CourseListCardProvider(it, schedule, appearance) })
     val catalog: CardCatalog = CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps), ProductivityCatalog(application), ScheduleCatalog(application))

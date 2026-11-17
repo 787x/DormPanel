@@ -12,6 +12,7 @@ import com.dormpanel.app.appearance.*
 import com.dormpanel.app.dashboard.card.*
 import com.dormpanel.app.dashboard.catalog.*
 import com.dormpanel.app.dashboard.model.*
+import com.dormpanel.app.schedule.*
 import java.util.Locale
 
 class ProductivityCatalog(context: Context) : CardCatalog {
@@ -23,7 +24,8 @@ class ProductivityCatalog(context: Context) : CardCatalog {
     override fun removeListener(listener: (List<CardAddCandidate>) -> Unit) = Unit
 }
 class ProductivityCardProvider(override val typeKey: String, private val source: ProductivitySource,
-    private val appearance: AppearanceController) : DashboardCardProvider {
+    private val appearance: AppearanceController, private val data: AndroidProductivity,
+    private val bindings: ProductivityBindings) : DashboardCardProvider {
     override val displayMetadata = CardDisplayMetadata(typeKey, "", when (typeKey) {
         "todo" -> R.string.productivity_todo; "memo" -> R.string.productivity_memo; else -> R.string.productivity_timer
     }, R.string.productivity_local)
@@ -33,13 +35,14 @@ class ProductivityCardProvider(override val typeKey: String, private val source:
         ExplicitCardSizePolicy(listOf(CardSize(2, 1), CardSize(2, 2), CardSize(3, 2)))
     }
     override val defaultSize = CardSize(2, 2)
-    override fun createView(context: Context): View = ProductivityCardView(context, appearance, source, typeKey)
+    override fun createView(context: Context): View = ProductivityCardView(context, appearance, source, typeKey, data, bindings)
     override fun bind(view: View, card: PlacedCard, interactions: CardInteractionScope) = (view as ProductivityCardView).bind(card, interactions)
 }
 
 @SuppressLint("ViewConstructor")
 class ProductivityCardView(context: Context, appearance: AppearanceController, private val source: ProductivitySource,
-    private val kind: String) : DashboardCardView(context, appearance) {
+    private val kind: String, private val data: AndroidProductivity,
+    private val bindings: ProductivityBindings) : DashboardCardView(context, appearance) {
     private val heading = label(20f)
     private val body = label(22f)
     private val detail = label(16f, true)
@@ -48,6 +51,100 @@ class ProductivityCardView(context: Context, appearance: AppearanceController, p
     private val reset = Button(context).apply { textSize = 16f }
     private var subscribedOwner: String? = null
     private var visible = false
+    private val productivityKind get() = if (kind == "todo") ProductivityKind.TODO else ProductivityKind.MEMO
+    private var binding: Result<String?> = Result.success(null)
+    private var changingSource = false
+    private var sharedTarget: ProductivityTarget? = null
+    private var shared: Result<ProductivityView>? = null
+    private var sharedSubscription: AutoCloseable? = null
+    private var syncSubscription: AutoCloseable? = null
+    private var facts: SharedSchedulePresentation? = null
+    private val sharedDialogs = linkedSetOf<android.app.AlertDialog>()
+
+    override fun onBound(previous: PlacedCard?) {
+        if (previous?.id != card.id) {
+            changingSource = false
+            readBinding()
+        }
+        if (!interactions.enabled || previous?.id != card.id) sharedDialogs.toList().forEach { it.dismiss() }
+    }
+
+    private fun readBinding() {
+        if (kind == "timer") return
+        binding = runCatching { bindings.get(card.id) }
+        resetShared()
+    }
+
+    private fun resetShared() {
+        sharedSubscription?.close()
+        sharedSubscription = null
+        syncSubscription?.close()
+        syncSubscription = null
+        sharedTarget = null
+        shared = null
+        facts = null
+    }
+
+    private fun bindShared(target: ProductivityTarget) {
+        if (sharedTarget == target) return
+        resetShared()
+        sharedTarget = target
+        fun readFacts() {
+            data.syncFacts { result ->
+                if (sharedTarget == target && isAttachedToWindow) {
+                    facts = result.getOrNull()?.takeIf { it.bindingId == target.datasetId }
+                    refresh()
+                }
+            }
+        }
+        sharedSubscription = data.observe(target.datasetId) {
+            shared = it
+            refresh()
+            readFacts()
+        }
+        syncSubscription = data.observeSync { readFacts() }
+    }
+
+    private fun track(dialog: android.app.AlertDialog) {
+        decorateShared(dialog)
+        sharedDialogs.add(dialog)
+        dialog.setOnDismissListener { sharedDialogs.remove(dialog) }
+    }
+
+    private fun decorateShared(dialog: android.app.AlertDialog) {
+        dialog.matchActivityBrightness()
+        dialog.window?.decorView?.let {
+            it.setBackgroundColor(PanelPalette.forMode(appearance.state.themeMode).surface)
+            applyAppearanceTree(it, appearance.state)
+        }
+    }
+
+    override fun secondaryAction() {
+        if (kind == "timer" || !interactions.enabled || changingSource) return
+        dialogs.toList().forEach { it.dismiss() }
+        val owner = card.id
+        val expected = binding.getOrElse {
+            track(context.productivityMessage("读取失败", it.message.orEmpty()))
+            return
+        }
+        ProductivityCardBinding(context, data, bindings, owner, productivityKind, expected,
+            { isAttachedToWindow && card.id == owner && interactions.enabled }, ::track,
+            { pending ->
+                if (card.id == owner) {
+                    changingSource = pending
+                    if (pending) {
+                        dialogs.toList().forEach { it.dismiss() }
+                        sharedDialogs.toList().forEach { it.dismiss() }
+                    } else if (isAttachedToWindow) {
+                        readBinding()
+                        refresh()
+                    }
+                }
+            }) {
+            val mode = if (binding.getOrNull() == null) "已切回本机" else "已切换到共享"
+            Toast.makeText(context, mode, Toast.LENGTH_SHORT).show()
+        }.open()
+    }
     private val dialogs = mutableListOf<AlertDialog>()
     private var updateDialog: (() -> Unit)? = null
     private val listener: () -> Unit = { refresh(); updateDialog?.invoke() }
@@ -63,12 +160,19 @@ class ProductivityCardView(context: Context, appearance: AppearanceController, p
         reset.setOnClickListener { if (interactions.enabled) { interactions.claimGesture(); source.resetTimer(card.id) } }
     }
     private fun subscribe() {
-        if (!isBound || !isAttachedToWindow || subscribedOwner == card.id) return
+        if (!isBound || !isAttachedToWindow) return
+        if (binding.isFailure || binding.getOrNull() != null) {
+            subscribedOwner?.let { source.unsubscribe(it, listener) }
+            subscribedOwner = null
+            return
+        }
+        if (subscribedOwner == card.id) return
         subscribedOwner?.let { source.unsubscribe(it, listener) }
         subscribedOwner = card.id; source.subscribe(card.id, listener)
     }
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); subscribe(); refresh() }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); if (isBound) readBinding(); subscribe(); refresh() }
     override fun onDetachedFromWindow() {
+        resetShared(); sharedDialogs.toList().forEach { it.dismiss() }
         ticker.stop(); subscribedOwner?.let { source.unsubscribe(it, listener) }; subscribedOwner = null
         dialogs.toList().forEach { it.dismiss() }; updateDialog = null
         super.onDetachedFromWindow()
@@ -89,8 +193,14 @@ class ProductivityCardView(context: Context, appearance: AppearanceController, p
     }
     override fun render() {
         subscribe(); ticker.stop()
+        if (binding.isFailure || binding.getOrNull() != null) {
+            renderShared()
+            return
+        }
         val state = source.state(card.id)
         val large = card.size.rowSpan > 1
+        heading.maxLines = 2
+        detail.maxLines = 2
         heading.setText(when (kind) { "todo" -> R.string.productivity_todo; "memo" -> R.string.productivity_memo; else -> R.string.productivity_timer })
         body.textSize = if (kind == "timer") 32f else 20f
         if (kind != "todo") body.maxLines = if (!large) 1 else if (card.size.columnSpan >= 3) 5 else 3
@@ -99,7 +209,7 @@ class ProductivityCardView(context: Context, appearance: AppearanceController, p
             "todo" -> {
                 val incomplete = state.todos.filterNot { it.completed }
                 body.text = incomplete.joinToString("\n") { "• ${it.text}" }.ifEmpty { context.getString(R.string.productivity_todo_empty) }
-                detail.text = resources.getQuantityString(R.plurals.productivity_remaining, incomplete.size, incomplete.size)
+                detail.text = resources.getQuantityString(R.plurals.productivity_remaining, incomplete.size, incomplete.size) + " · 仅本机"
             }
             "memo" -> body.text = state.memo.ifEmpty { context.getString(R.string.productivity_memo_empty) }
             else -> {
@@ -116,8 +226,54 @@ class ProductivityCardView(context: Context, appearance: AppearanceController, p
         applyAppearanceTree(controls, appearance.state)
         describe(heading.text, body.text, detail.text)
     }
+    private fun renderShared() {
+        val target = ProductivityTarget.decode(binding.getOrNull())
+        if (target != null && visible && isAttachedToWindow && windowVisibility == VISIBLE) bindShared(target)
+        else resetShared()
+        val view = shared?.getOrNull()
+        val record = view?.let { productivityKind.records(it.content).firstOrNull { entry -> entry.id == target?.recordId } }
+        val tasks = if (record is ProductivityRecord.TodoList) view.content.tasks(record.id).filterNot { it.completed } else emptyList()
+        heading.text = record?.title ?: productivityKind.label
+        heading.maxLines = 1
+        body.textSize = 20f
+        if (kind == "memo") body.maxLines = if (card.size.rowSpan == 1) 1 else 3
+        body.text = when (record) {
+            is ProductivityRecord.TodoList -> tasks.take(24).joinToString("\n") { "• ${it.text}" }.ifEmpty { "没有待办任务" }
+            is ProductivityRecord.Memo -> record.body.ifEmpty { "空备忘" }
+            else -> ""
+        }
+        detail.show(true)
+        detail.maxLines = if (card.size.rowSpan == 1) 1 else 2
+        detail.text = when {
+            target == null -> "读取数据来源失败"
+            shared?.isFailure == true -> shared?.exceptionOrNull()?.message ?: "本机读取失败"
+            view == null -> "正在读取共享内容…"
+            record == null -> "共享目标已删除或不可用"
+            else -> (if (kind == "todo") "剩余 ${tasks.size} 项 · " else "") + view.status(false, facts)
+        }
+        controls.show(false)
+        describe(heading.text, body.text, detail.text)
+    }
+
     override fun primaryAction() {
-        if (!interactions.enabled || !source.ready) return
+        if (!interactions.enabled || changingSource) return
+        if (binding.isFailure) { secondaryAction(); return }
+        val target = ProductivityTarget.decode(binding.getOrNull())
+        if (target != null) {
+            val owner = card.id
+            val panel = ProductivityPanel(context, data, productivityKind, target.datasetId, target.recordId,
+                fixed = true, sourceAction = ::secondaryAction, decorate = ::decorateShared,
+                decorateContent = { applyAppearanceTree(it, appearance.state) },
+                validate = { check(bindings.get(owner) == target.encode()) { "卡片数据来源已变化" } })
+            val dialog = android.app.AlertDialog.Builder(context).setTitle(productivityKind.label)
+                .setView(panel.view).setNegativeButton("关闭", null).show()
+            decorateShared(dialog)
+            sharedDialogs.add(dialog)
+            dialog.setOnDismissListener { panel.close(); sharedDialogs.remove(dialog) }
+            panel.start()
+            return
+        }
+        if (binding.getOrNull() != null || !source.ready) return
         when (kind) { "todo" -> todoDialog(); "memo" -> memoDialog(); else -> timerDialog() }
     }
     override fun applyAppearance(state: AppearanceState) { super.applyAppearance(state); applyAppearanceTree(controls, state) }
@@ -146,14 +302,21 @@ class ProductivityCardView(context: Context, appearance: AppearanceController, p
         dialog.window?.decorView?.let { it.setBackgroundColor(PanelPalette.forMode(appearance.state.themeMode).surface); applyAppearanceTree(it, appearance.state) }
         return dialog
     }
+    private fun sourceButton() = Button(context).apply {
+        text = "数据来源 · 仅本机"
+        minHeight = 48.dp
+        setOnClickListener { secondaryAction() }
+    }
+
     private fun memoDialog() {
         val edit = input(source.state(card.id).memo, true)
-        val content = column().apply { addView(edit); addView(button(R.string.productivity_clear) { edit.setText("") }) }
+        val content = column().apply { addView(edit); addView(button(R.string.productivity_clear) { edit.setText("") }); addView(sourceButton()) }
         show(R.string.productivity_memo, content) { source.saveMemo(card.id, edit.text.toString()) }
     }
     private fun todoDialog() {
         val content = column(); val edit = input(); edit.setHint(R.string.productivity_task_hint)
         val tasks = column()
+        content.addView(sourceButton())
         content.addView(edit); content.addView(button(R.string.productivity_add) { source.addTodo(card.id, edit.text.toString()); edit.setText("") })
         content.addView(ScrollView(context).apply { addView(tasks) }, LayoutParams(LayoutParams.MATCH_PARENT, 260.dp))
         val update: () -> Unit = {

@@ -53,6 +53,11 @@ object LegacyProductivityImport {
     fun scan(context: Context, callback: (Result<Scan>) -> Unit) =
         scan(context.getDatabasePath("productivity.db"), callback)
 
+    fun scan(context: Context, key: Key, callback: (Result<Scan>) -> Unit) = queued(callback) {
+        val file = context.getDatabasePath("productivity.db").canonicalFile
+        Scan(file, read(file, setOf(key)))
+    }
+
     internal fun scan(file: File, callback: (Result<Scan>) -> Unit) = queued(callback) {
         val origin = file.canonicalFile
         Scan(origin, read(origin))
@@ -219,12 +224,19 @@ object LegacyProductivityImport {
 
     /** Point-in-time local verification. Recheck against the active Store immediately before binding. */
     fun validateBinding(store: RoomScheduleStore, confirmed: Confirmed, callback: (Result<BindingValidation>) -> Unit) =
+        validateBinding(store, confirmed, callback) {}
+
+    /** Persist while further writes through the legacy queue are still fenced. */
+    fun validateBinding(store: RoomScheduleStore, confirmed: Confirmed, callback: (Result<BindingValidation>) -> Unit,
+        persist: (ProductivityVersion) -> Unit) =
         queued(callback) {
             val checked = confirmed.checked
             val matches = runCatching { sourceMatches(checked.file, checked.fingerprints) }
                 .getOrElse { return@queued BindingValidation.SourceUnavailable(it) }
             if (!matches) return@queued BindingValidation.SourceChanged
-            runCatching { validateTarget(store, checked) }.getOrElse { BindingValidation.TargetUnavailable(it) }
+            val validation = runCatching { validateTarget(store, checked) }.getOrElse { BindingValidation.TargetUnavailable(it) }
+            if (validation is BindingValidation.Verified) persist(validation.version)
+            validation
         }
 
     private fun validateTarget(store: RoomScheduleStore, checked: Checked): BindingValidation {
