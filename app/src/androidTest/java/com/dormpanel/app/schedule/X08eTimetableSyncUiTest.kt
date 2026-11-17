@@ -1,5 +1,8 @@
 package com.dormpanel.app.schedule
 
+import android.app.job.JobInfo
+import android.app.job.JobScheduler
+import android.content.ComponentName
 import android.content.res.Configuration
 import android.os.SystemClock
 import android.view.ContextThemeWrapper
@@ -37,7 +40,104 @@ class X08eTimetableSyncUiTest {
     private lateinit var vm: DashboardViewModel
 
     private fun button() = requireNotNull(page.findViewWithTag<Button>("timetable-sync"))
-    private fun waitFor(scenario: ActivityScenario<MainActivity>, condition: () -> Boolean) {
+
+    private fun exerciseBackgroundJob(scenario: ActivityScenario<MainActivity>, fixture: V3UiFixture) {
+        val scheduler = context.getSystemService(JobScheduler::class.java)
+        var jobId = 8500
+        fun startJob() {
+            jobId++
+            val job = JobInfo.Builder(jobId, ComponentName(context, ScheduleSyncJobService::class.java))
+                .setOverrideDeadline(100).build()
+            assertEquals(JobScheduler.RESULT_SUCCESS, scheduler.schedule(job))
+        }
+        val normalFactory = ScheduleStores.overrideFactory
+        val activeStore = requireNotNull(vm.schedule.syncStore)
+        // Like the production process-owned Store, a Job borrows this isolated Store.
+        val borrowedStore = object : ScheduleStore by activeStore,
+            ScheduleSyncStore by activeStore, ScheduleV2Store by activeStore {
+            override fun close() = Unit
+        }
+        try {
+            ScheduleStores.overrideFactory = { borrowedStore }
+            val requestEntered = CountDownLatch(1)
+            val resume = CountDownLatch(1)
+            fixture.interceptRequest = {
+                requestEntered.countDown()
+                check(resume.await(15, TimeUnit.SECONDS))
+                null
+            }
+            try {
+                startJob()
+                if (!requestEntered.await(15, TimeUnit.SECONDS)) scenario.onActivity {
+                    error("后台请求未启动 · ${button().text} · ${vm.sharedSchedule.settings.lastResult} · ${scheduler.getPendingJob(jobId)}")
+                }
+                scenario.onActivity {
+                    assertEquals("同步中", button().text.toString())
+                    assertFalse(button().isEnabled)
+                }
+            } finally {
+                fixture.interceptRequest = null
+                resume.countDown()
+            }
+            waitFor(scenario, "后台成功") { button().text == "成功" && !vm.sharedSchedule.syncing }
+            waitFor(scenario, "系统已结束成功 Job") { scheduler.getPendingJob(jobId) == null }
+
+            fixture.interceptRequest = { MockResponse().setResponseCode(401) }
+            startJob()
+            waitFor(scenario, "后台认证失败") { button().text == "失败" && !vm.sharedSchedule.syncing }
+            scheduler.cancel(jobId)
+            fixture.interceptRequest = null
+
+            ScheduleStores.overrideFactory = { throw IllegalStateException("隔离测试：Store 初始化失败") }
+            scenario.onActivity { install(it); assertEquals("同步", button().text.toString()) }
+            startJob()
+            waitFor(scenario, "后台 Store 初始化失败") { button().text == "失败" && !vm.sharedSchedule.syncing }
+            scheduler.cancel(jobId)
+
+            val opening = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            ScheduleStores.overrideFactory = {
+                opening.countDown()
+                check(release.await(15, TimeUnit.SECONDS))
+                borrowedStore
+            }
+            val before = fixture.requests.size
+            try {
+                startJob()
+                assertTrue(opening.await(10, TimeUnit.SECONDS))
+                waitFor(scenario, "被取消前的后台 Job") { button().text == "同步中" }
+                scheduler.cancel(jobId)
+                scheduler.cancel(jobId)
+                waitFor(scenario, "系统已取消 Job") { scheduler.getPendingJob(jobId) == null }
+            } finally {
+                release.countDown()
+            }
+            waitFor(scenario, "取消后回到空闲") { button().text == "同步" && !vm.sharedSchedule.syncing }
+            assertEquals(before, fixture.requests.size)
+
+            val openingOlderJob = CountDownLatch(1)
+            val finishOlderJob = CountDownLatch(1)
+            ScheduleStores.overrideFactory = {
+                openingOlderJob.countDown()
+                check(finishOlderJob.await(15, TimeUnit.SECONDS))
+                error("隔离测试：较早启动的 Job 晚于手动同步失败")
+            }
+            try {
+                startJob()
+                assertTrue(openingOlderJob.await(10, TimeUnit.SECONDS))
+                scenario.onActivity { assertTrue(vm.sharedSchedule.sync()) }
+                waitFor(scenario, "手动结束而旧 Job 仍运行") { !vm.sharedSchedule.busy && vm.sharedSchedule.syncing }
+            } finally {
+                finishOlderJob.countDown()
+            }
+            waitFor(scenario, "旧 Job 结束后显示手动成功") { button().text == "成功" && !vm.sharedSchedule.syncing }
+        } finally {
+            scheduler.cancel(jobId)
+            ScheduleStores.overrideFactory = normalFactory
+            fixture.interceptRequest = null
+        }
+    }
+    private fun waitFor(scenario: ActivityScenario<MainActivity>, expected: String = "同步按钮状态", condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 20_000
         do {
             var ready = false
@@ -46,7 +146,7 @@ class X08eTimetableSyncUiTest {
             Thread.sleep(50)
         } while (SystemClock.elapsedRealtime() < deadline)
         scenario.onActivity {
-            error("同步按钮状态未就绪 · ${button().text} · ${vm.sharedSchedule.presentation} · ${vm.sharedSchedule.status}")
+            error("$expected 未就绪 · ${button().text} · ${vm.sharedSchedule.presentation} · ${vm.sharedSchedule.status}")
         }
     }
     private fun install(activity: MainActivity, fontScale: Float = 1f, locale: Locale = Locale.SIMPLIFIED_CHINESE) {
@@ -158,24 +258,33 @@ class X08eTimetableSyncUiTest {
                     waitFor(scenario) { button().text == "成功" }
 
                     fixture.interceptRequest = { MockResponse().setResponseCode(401) }
-                    scenario.onActivity { button().performClick() }
+                    scenario.onActivity { SharedScheduleDialog.show(it, vm.schedule, vm.sharedSchedule, true) }
+                    onView(withText("立即同步")).perform(scrollTo(), click())
                     waitFor(scenario) { button().text == "失败" && button().isEnabled }
                     Thread.sleep(3_100) // The prior success reset must leave the newer failure intact.
                     scenario.onActivity {
                         page.applyAppearance(vm.appearance.state.copy(themeMode = ThemeMode.DARK))
                         assertEquals("失败", button().text.toString())
                         assertEquals(0xFFFFA6A0.toInt(), button().currentTextColor)
-                        install(it)
-                        assertEquals("同步", button().text.toString())
                     }
                     fixture.interceptRequest = null
-                    scenario.onActivity { SharedScheduleDialog.show(it, vm.schedule, vm.sharedSchedule, true) }
-                    val before = fixture.requests.size
                     onView(withText("立即同步")).perform(scrollTo(), click())
-                    waitFor(scenario) { fixture.requests.size > before && !vm.sharedSchedule.busy }
-                    scenario.onActivity { assertEquals("同步", button().text.toString()) }
+                    waitFor(scenario) { button().text == "成功" }
                     onView(withText("关闭")).perform(click())
-
+                    fixture.interceptRequest = { MockResponse().setResponseCode(401) }
+                    scenario.onActivity { button().performClick() }
+                    waitFor(scenario) { button().text == "失败" && button().isEnabled }
+                    fixture.interceptRequest = null
+                    scenario.onActivity { SharedScheduleDialog.show(it, vm.schedule, vm.sharedSchedule, true) }
+                    onView(withText("立即同步")).perform(scrollTo(), click())
+                    waitFor(scenario) { button().text == "成功" }
+                    onView(withText("关闭")).perform(click())
+                    scenario.onActivity {
+                        val detached = button()
+                        install(it)
+                        assertFalse(detached.isAttachedToWindow)
+                        assertEquals("同步", button().text.toString())
+                    }
                     failCommitReceipt.set(true)
                     val saveFailed = CountDownLatch(1)
                     store.put(TimetableEntry("pr85-recovery", "隔离恢复测试", 1, 480, 530)) {
@@ -228,14 +337,19 @@ class X08eTimetableSyncUiTest {
                 assertTrue(fixture.requests.isEmpty())
                 scenario.onActivity { button().performClick() }
                 waitFor(scenario) { button().text == "成功" }
+                exerciseBackgroundJob(scenario, fixture)
+                waitFor(scenario, "后台收尾后重新读取本机课表") { button().isEnabled }
 
                 // A newly observed but unverifiable commit leaves an otherwise healthy v2 check partial.
                 val unreadable = "/dormpanel-sync-v2/commit-${UUID.randomUUID()}.dpc"
                 synchronized(fixture.files) { fixture.files[unreadable] = byteArrayOf(1) }
                 scenario.onActivity { button().performClick() }
-                waitFor(scenario) { button().text == "失败" && vm.sharedSchedule.presentation.result == "PARTIAL" }
+                waitFor(scenario, "v2 部分完成") {
+                    button().text == "待继续" && vm.sharedSchedule.presentation.result == "PARTIAL"
+                }
                 scenario.onActivity {
                     assertTrue(button().isEnabled)
+                    assertEquals(PanelPalette.forMode(vm.appearance.state.themeMode).secondary, button().currentTextColor)
                     assertTrue(vm.sharedSchedule.presentation.lastSuccess > 0)
                 }
             }

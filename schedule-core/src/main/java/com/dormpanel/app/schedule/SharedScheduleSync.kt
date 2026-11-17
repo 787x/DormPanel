@@ -160,28 +160,29 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     private var viewedV2Conflict: String? = null
     var changed: (() -> Unit)? = null
     var presentation = SharedSchedulePresentation(); private set
-    enum class SyncUpdate { STATE, SUCCEEDED, FAILED }
-    private val syncListeners = linkedSetOf<(SyncUpdate) -> Unit>()
-    private var foregroundSync = false
+    private val syncListeners = linkedSetOf<(SharedSyncUpdate) -> Unit>()
+    private var foregroundSync: Long? = null
     private var syncConnectionAvailable = false
-    val syncing get() = foregroundSync || ScheduleSyncJobs.running
+    val latestSyncId get() = ScheduleSyncJobs.latestRunId
+    val syncing get() = foregroundSync != null || ScheduleSyncJobs.latestRunning != null
     val canSync get() = !closed && !busy && !syncing && syncConnectionAvailable && settings.folder.isNotBlank() &&
-        source.ready && !source.error && !source.applyingSnapshot && SharedAction.SYNC in presentation.actions
+        source.ready && !source.error && !source.applyingSnapshot && !presentation.conflict &&
+        SharedAction.SYNC in presentation.actions
 
-    fun addSyncListener(listener: (SyncUpdate) -> Unit) { if (!closed) syncListeners.add(listener) }
-    fun removeSyncListener(listener: (SyncUpdate) -> Unit) { syncListeners.remove(listener) }
-    private fun dispatchSyncUpdate(update: SyncUpdate = SyncUpdate.STATE) {
+    fun addSyncListener(listener: (SharedSyncUpdate) -> Unit) { if (!closed) syncListeners.add(listener) }
+    fun removeSyncListener(listener: (SharedSyncUpdate) -> Unit) { syncListeners.remove(listener) }
+    private fun dispatchSyncUpdate(update: SharedSyncUpdate = SharedSyncUpdate.State) {
         if (!closed) syncListeners.toList().forEach { it(update) }
     }
-    private val backgroundSyncChanged: () -> Unit = { dispatchSyncUpdate() }
+    private val backgroundSyncChanged: (SharedSyncUpdate) -> Unit = { dispatchSyncUpdate(it) }
     private fun presentationChanged() {
         changed?.invoke()
         dispatchSyncUpdate()
     }
-    private fun finishSync(success: Boolean) {
-        if (!foregroundSync) return
-        foregroundSync = false
-        dispatchSyncUpdate(if (success) SyncUpdate.SUCCEEDED else SyncUpdate.FAILED)
+    private fun finishSync(result: SharedSyncResult?) {
+        val id = foregroundSync ?: return
+        foregroundSync = null
+        dispatchSyncUpdate(SharedSyncUpdate.Finished(id, result))
     }
     private var presentationGeneration = 0
     private var operationScope: String? = null
@@ -280,7 +281,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         if (error is SharedConfirmationRejected) {
             // Admission refusal is not a server check or a damaged local transaction.
             confirmationRejected = true; status = error.message.orEmpty(); busy = false
-            finishSync(false); notifyChanged(); return
+            finishSync(null); notifyChanged(); return
         }
         settings.recordCheck(operationScope, when (error) {
             is ScheduleHistoryPending -> "DISCOVERING"
@@ -306,7 +307,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         if (savedConflict) status = "存在冲突 · $status"
         settings.result(status); busy = false
         if (source.ready && source.syncStore != null) source.reload { notifyChanged() }
-        finishSync(false)
+        finishSync(error.syncFailureResult())
         notifyChanged()
         if (presentation.bound && settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
     }
@@ -314,16 +315,18 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         if (busy || closed) return
         confirmationRejected = false
         inspectingJoin = joinInspection
-        foregroundSync = syncing
-        busy = true; status = "正在检查远端版本"; notifyChanged()
+        foregroundSync = if (syncing) ScheduleSyncJobs.nextRunId() else null
+        busy = true; status = "正在检查远端版本"
+        foregroundSync?.let { dispatchSyncUpdate(SharedSyncUpdate.Started(it)) }
+        notifyChanged()
         worker.execute {
             operationScope = runCatching { checkScope() }.getOrNull()
             val result = runCatching(task); main.post { if (!closed) result.onSuccess(done).onFailure(::failure) }
         }
     }
-    private fun complete(message: String, verified: Boolean = true, syncSucceeded: Boolean = verified) {
+    private fun complete(message: String, verified: Boolean = true, syncResult: SharedSyncResult? = null) {
         settings.result(message, verified); status = message; busy = false
-        finishSync(syncSucceeded); notifyChanged()
+        finishSync(syncResult); notifyChanged()
     }
     private fun v2Local(): ScheduleV2Store = requireNotNull(source.syncStore) as ScheduleV2Store
     private fun v2Remote(account: WebDavAccount = account(), folder: String = settings.folder): WebDavCommitStore {
@@ -415,7 +418,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     fun sync(): Boolean {
         val wasBusy = busy
         settings.resetRetries(); synchronize(false)
-        return !wasBusy && foregroundSync
+        return !wasBusy && foregroundSync != null
     }
     fun publish(confirmed: SharedConfirmation? = null) { settings.resetRetries(); synchronize(true, confirmed) }
     fun createV3(confirmed: SharedConfirmation? = null) = activateV3(null, confirmed)
@@ -537,7 +540,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
                 source.reload { loaded -> loaded.onSuccess {
                     val verified = result in listOf("OBSERVED", "PUBLISHED")
                     settings.recordCheck(operationScope, result, verified)
-                    complete(v3StatusMessage(result), verified, verified && source.state.sync?.pending == false)
+                    complete(v3StatusMessage(result), verified, v3SyncResult(result, source.state.sync?.pending != false))
                     if (result in listOf("BUDGET", "DISCOVERING", "ROTATED") && settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
                 }.onFailure(::failure) }
             }
@@ -586,11 +589,11 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
             val dirty = baseline != null && !ScheduleMerge.same(baseline, source.state)
             val message = if (dirty && outcome.conflicts.isEmpty()) "本地已保存 · 待发布" else outcome.message
             val verified = outcome.checkState == "VERIFIED" && outcome.conflicts.isEmpty()
-            complete(message, !dirty && verified)
+            complete(message, !dirty && verified, outcome.v2SyncResult(dirty || source.state.sync?.pending == true))
             if (dirty && verified) {
                 ScheduleSyncJobs.schedule(context)
                 main.removeCallbacks(automatic); main.postDelayed(automatic, 1500)
-            } else if (outcome.conflicts.isEmpty() && (dirty || outcome.message.startsWith("有待上传") || outcome.message.contains("暂不可验证"))) {
+            } else if (outcome.conflicts.isEmpty() && (dirty || outcome.waitingToPublish || outcome.checkState == "PARTIAL")) {
                 if (settings.retryAllowed()) ScheduleSyncJobs.schedule(context, 30_000)
                 else { status += " · 自动重试已暂停"; settings.result(status); notifyChanged() }
             }

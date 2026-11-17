@@ -10,7 +10,6 @@ import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.core.view.doOnPreDraw
 import com.dormpanel.app.appearance.*
-import com.dormpanel.app.schedule.SharedScheduleController.SyncUpdate
 import com.dormpanel.app.ui.PageInteraction
 import java.time.*
 import java.time.format.DateTimeFormatter
@@ -37,18 +36,23 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     private var paintedTheme=appearance.state.themeMode
     private var settingsDialog: androidx.appcompat.app.AlertDialog? = null
     private var syncButton: Button? = null
-    private var awaitingSyncResult = false
-    private var syncFeedback: SyncUpdate? = null
-    private val clearSyncSuccess = Runnable {
-        syncFeedback = null
-        updateSyncButton(appearance.state)
-    }
-    private val syncListener: (SyncUpdate) -> Unit = { update ->
-        if (sharedSchedule?.syncing == true && syncFeedback == SyncUpdate.SUCCEEDED) resetSyncFeedback()
-        if (awaitingSyncResult && update != SyncUpdate.STATE) {
-            awaitingSyncResult = false
-            syncFeedback = update
-            if (update == SyncUpdate.SUCCEEDED) postDelayed(clearSyncSuccess, 3_000)
+    private var latestSync = 0L
+    private var syncFeedback: SharedSyncResult? = null
+    private var clearSyncSuccess: Runnable? = null
+    private val syncListener: (SharedSyncUpdate) -> Unit = { update ->
+        when (update) {
+            is SharedSyncUpdate.Started -> {
+                if (update.id > latestSync) {
+                    latestSync = update.id
+                    resetSyncFeedback()
+                }
+            }
+            is SharedSyncUpdate.Finished -> {
+                if (update.id == latestSync && session.mode == ScheduleMode.TIMETABLE) {
+                    syncFeedback = update.result
+                }
+            }
+            SharedSyncUpdate.State -> Unit
         }
         updateSyncButton(appearance.state)
     }
@@ -68,6 +72,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     override fun shouldObservePageSwipe(event: MotionEvent) = false
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        latestSync = sharedSchedule?.latestSyncId ?: 0L
         sharedSchedule?.addSyncListener(syncListener)
         sharedSchedule?.refreshPresentation()
         display.visibility(isShown)
@@ -82,27 +87,40 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); if(visibility!=VISIBLE) displayCache.clear(); display.visibility(visible && visibility == VISIBLE) }
     private fun button(text: String, action: () -> Unit) = context.scheduleButton(text, action)
     private fun resetSyncFeedback() {
-        removeCallbacks(clearSyncSuccess)
-        awaitingSyncResult = false
+        clearSyncSuccess?.let(::removeCallbacks)
+        clearSyncSuccess = null
         syncFeedback = null
     }
     private fun updateSyncButton(state: AppearanceState) {
         val button = syncButton ?: return
         val syncing = sharedSchedule?.syncing == true
         val feedback = syncFeedback.takeUnless { syncing }
+        if (feedback == SharedSyncResult.SUCCEEDED && clearSyncSuccess == null) {
+            val id = latestSync
+            val reset = Runnable {
+                if (latestSync == id) {
+                    resetSyncFeedback()
+                    updateSyncButton(appearance.state)
+                }
+            }
+            clearSyncSuccess = reset
+            postDelayed(reset, 3_000)
+        }
         button.isEnabled = sharedSchedule?.canSync == true
-        val label = when {
-            syncing -> tr("同步中", "Syncing")
-            feedback == SyncUpdate.SUCCEEDED -> tr("成功", "Success")
-            feedback == SyncUpdate.FAILED -> tr("失败", "Failed")
-            else -> tr("同步", "Sync")
+        val label = if (syncing) tr("同步中", "Syncing") else when (feedback) {
+            SharedSyncResult.SUCCEEDED -> tr("成功", "Success")
+            SharedSyncResult.FAILED -> tr("失败", "Failed")
+            SharedSyncResult.CONTINUE -> tr("待继续", "Pending")
+            SharedSyncResult.NEEDS_ACTION -> tr("需处理", "Review")
+            null -> tr("同步", "Sync")
         }
         if (button.text != label) button.text = label
         val palette = PanelPalette.forMode(state.themeMode)
         val dark = state.themeMode == ThemeMode.DARK
         button.setTextColor(when (feedback) {
-            SyncUpdate.SUCCEEDED -> if (dark) 0xFF81E8A0.toInt() else 0xFF146C35.toInt()
-            SyncUpdate.FAILED -> if (dark) 0xFFFFA6A0.toInt() else 0xFFAE2222.toInt()
+            SharedSyncResult.SUCCEEDED -> if (dark) 0xFF81E8A0.toInt() else 0xFF146C35.toInt()
+            SharedSyncResult.FAILED -> if (dark) 0xFFFFA6A0.toInt() else 0xFFAE2222.toInt()
+            SharedSyncResult.CONTINUE, SharedSyncResult.NEEDS_ACTION -> palette.secondary
             else -> if (button.isEnabled) palette.text else palette.secondary
         })
     }
@@ -220,11 +238,7 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         })
         syncButton = actionButton(tr("同步", "Sync")) {
             val controller = sharedSchedule ?: return@actionButton
-            if (isAttachedToWindow && controller.canSync && controller.sync()) {
-                resetSyncFeedback()
-                awaitingSyncResult = true
-                updateSyncButton(appearance.state)
-            }
+            if (isAttachedToWindow && controller.canSync) controller.sync()
         }.apply {
             tag = "timetable-sync"
             // Keep the week range stable as the status label changes.
