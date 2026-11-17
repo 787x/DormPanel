@@ -14,7 +14,7 @@ abstract class ProductionCardProvider(
     override val defaultSize: CardSize,
 ) : DashboardCardProvider {
     override val displayMetadata = CardDisplayMetadata("", "", name, description)
-    override val sizePolicy = RangeCardSizePolicy(CardSize(2, 1), CardSize(4, 3))
+    override val sizePolicy: CardSizePolicy = RangeCardSizePolicy(CardSize(2, 1), CardSize(4, 3))
     override fun bind(view: View, card: PlacedCard, interactions: CardInteractionScope) =
         (view as DashboardCardView).bind(card, interactions)
 }
@@ -36,8 +36,20 @@ class WeatherCardProvider(
 }
 
 internal const val WEATHER_CARD = "weather"
+internal const val COMPACT_WEATHER_CARD = "weather_compact_2x3"
 internal const val CLASSIC_WEATHER_CARD = "weather_classic"
-internal fun String.isWeatherCard() = this == WEATHER_CARD || this == CLASSIC_WEATHER_CARD
+internal fun String.isWeatherCard() = this == WEATHER_CARD || this == COMPACT_WEATHER_CARD || this == CLASSIC_WEATHER_CARD
+
+private class CompactWeatherCardProvider(
+    private val source: DashboardDataSource,
+    private val appearance: AppearanceController,
+    private val repository: com.dormpanel.app.weather.WeatherRepository?,
+) : ProductionCardProvider(
+    COMPACT_WEATHER_CARD, R.string.card_weather_compact, R.string.card_weather_compact_description, CardSize(2, 3),
+) {
+    override val sizePolicy = ExplicitCardSizePolicy(listOf(defaultSize))
+    override fun createView(context: Context): View = WeatherCardView(context, appearance, source, repository, compactForecast = true)
+}
 
 private class ClassicWeatherCardProvider(
     private val source: DashboardDataSource,
@@ -67,6 +79,7 @@ fun coreCardRegistry(
     weather: com.dormpanel.app.weather.WeatherRepository? = null,
 ) = DashboardCardRegistry(listOf(
     ClockCardProvider(appearance), WeatherCardProvider(source, appearance, weather),
+    CompactWeatherCardProvider(source, appearance, weather),
     ClassicWeatherCardProvider(source, appearance, weather),
     SensorCardProvider(source, appearance), LightCardProvider(source, appearance),
 ))

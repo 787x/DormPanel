@@ -27,12 +27,15 @@ fun clockPresentation(size: CardSize) = ClockPresentation(
 )
 
 data class WeatherPresentation(val stackedCurrent: Boolean, val summary: Boolean, val forecastColumns: Int)
-fun weatherPresentation(size: CardSize) = WeatherPresentation(
+fun weatherPresentation(size: CardSize) = weatherPresentation(size, compactForecast = false)
+
+internal fun weatherPresentation(size: CardSize, compactForecast: Boolean) = WeatherPresentation(
     stackedCurrent = size.columnSpan == 2 && size.rowSpan == 3,
     summary = size.rowSpan >= 2,
-    forecastColumns = when (size.rowSpan) {
-        1 -> 0
-        2 -> 1
+    forecastColumns = when {
+        size.rowSpan == 1 -> 0
+        size.rowSpan == 2 -> 1
+        size.rowSpan == 3 && (compactForecast || size.columnSpan == 3) -> 3
         else -> maxOf(2, size.columnSpan - 1)
     },
 )

@@ -11,7 +11,8 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private val projector: HaProjector = DefaultHaProjector,
     private val memory: LightControlMemory = LightControlMemory(),
     private val weatherCards: List<CardAddCandidate> =
-        weatherCandidates("Weather", "Preferred HA weather", "Classic weather", "Temperature and text forecast"),
+        weatherCandidates("Weather", "Preferred HA weather", "Classic weather", "Temperature and text forecast",
+            "2×3 Compact weather", "Current weather and up to three forecasts"),
 ) : DashboardDataSource, HomeControlSource {
     val store = HaEntityStore()
     var settings = HaConnectionSettings(); private set
