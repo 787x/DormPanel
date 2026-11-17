@@ -277,7 +277,12 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
         else if (!closed && source.ready && !source.error && !initialChecked) { initialChecked = true; refreshAndSync() }
         else if (!closed) { if (!busy) status = settings.lastResult; notifyChanged() }
     }
+    private val syncReloadListener: () -> Unit = {
+        if (!busy) status = settings.lastResult
+        refreshPresentation()
+    }
     init {
+        source.subscribeSyncReload(syncReloadListener)
         source.localCommitted = localListener; source.subscribe(readyListener); SharedScheduleViews.add(source)
         ScheduleSyncJobs.addListener(backgroundSyncChanged)
         main.post { readyListener() }
@@ -549,7 +554,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
                 val code = store.synchronizeV3(account)
                 code to v3SyncResult(code) { store.sharedPresentation(true) }
             } }, syncing = true) { (result, feedback) ->
-                SharedScheduleViews.reloaded()
+                SharedScheduleViews.reloaded(except = source)
                 savedConflict = result == "CONFLICT"
                 source.reload { loaded -> loaded.onSuccess {
                     val verified = result in listOf("OBSERVED", "PUBLISHED")
@@ -643,7 +648,7 @@ class SharedScheduleController(context: Context, private val source: ScheduleSou
     }
     fun diagnose() = run({ AppendOnlyWebDavDiagnostic.run(account(), settings.folder) }) { complete(it, false) }
     fun close() {
-        closed = true; changed = null; source.localCommitted = null; source.unsubscribe(readyListener)
+        closed = true; changed = null; source.localCommitted = null; source.unsubscribe(readyListener); source.unsubscribeSyncReload(syncReloadListener)
         ScheduleSyncJobs.removeListener(backgroundSyncChanged); syncListeners.clear()
         SharedScheduleViews.remove(source)
         main.removeCallbacks(automatic); worker.shutdown()

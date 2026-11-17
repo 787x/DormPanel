@@ -19,7 +19,8 @@ data class SharedSchedulePresentation(
     val result: String = "UNCHECKED", val lastSuccess: Long = 0,
     val busy: Boolean = false, val ready: Boolean = false,
     val localRead: SharedLocalRead = if (ready) SharedLocalRead.LOADED else SharedLocalRead.LOADING,
-    val bindingId: String? = null, val confirmationRejected: Boolean = false
+    val bindingId: String? = null, val confirmationRejected: Boolean = false,
+    val revision: String? = null, val writeBlocked: Boolean = false
 ) {
     val bound get() = mode in setOf(SharedMode.V1, SharedMode.V2, SharedMode.V3)
     val actions: Set<SharedAction> get() = buildSet {

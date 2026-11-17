@@ -89,12 +89,36 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     internal fun pauseForSync() { applyingSnapshot = true; refresh() }
     fun reload(callback: (Result<Unit>) -> Unit = {}) {
         if (closed) { callback(Result.failure(IllegalStateException("Schedule source closed"))); return }
+        val wasApplying = applyingSnapshot
         applyingSnapshot = true
         store.load { result ->
-            result.onSuccess { state = ordered(if (it.sync == null) it.copy(profiles = effectiveProfiles(it.sources)) else it); ready = true; error = false }.onFailure { error = true }
-            applyingSnapshot = false; refresh(); callback(result.map { })
+            if (closed) {
+                callback(Result.failure(IllegalStateException("Schedule source closed")))
+                return@load
+            }
+            var unchangedCourses = false
+            result.onSuccess { loaded ->
+                unchangedCourses = !wasApplying && ready && !error && sameSharedCourses(state, loaded)
+                state = if (unchangedCourses) state.copy(sync = loaded.sync, sharedRecords = loaded.sharedRecords)
+                    else ordered(if (loaded.sync == null) loaded.copy(profiles = effectiveProfiles(loaded.sources)) else loaded)
+                ready = true
+                error = false
+            }.onFailure { error = true }
+            applyingSnapshot = false
+            if (unchangedCourses) syncListeners.toList().forEach { if (it in syncListeners) it() } else refresh()
+            callback(result.map { })
         }
     }
+
+    private fun sameSharedCourses(before: ScheduleState, after: ScheduleState): Boolean {
+        if (before.sync == null || before.sync.datasetId != after.sync?.datasetId) return false
+        if (before.invalidRecords != after.invalidRecords || before.sources.toSet() != after.sources.toSet()) return false
+        val previous = before.sharedRecords ?: return false
+        val next = after.sharedRecords ?: return false
+        return ScheduleMerge.same(before.copy(sharedRecords = previous.filterNot(SharedProductivity::supports)),
+            after.copy(sharedRecords = next.filterNot(SharedProductivity::supports)))
+    }
+
     /** Error-only UI admission; no view callback or remote action is captured here. */
     fun retryLocalRead(): Boolean {
         if (closed || !error || applyingSnapshot || retryingLocalRead) return false
@@ -134,6 +158,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
     val loadState get() = when { error -> SharedLocalRead.FAILED; !ready -> SharedLocalRead.LOADING; else -> SharedLocalRead.LOADED }
     private var closed = false
     private val listeners = linkedSetOf<() -> Unit>()
+    private val syncListeners = linkedSetOf<() -> Unit>()
     init {
         store.load { result -> if (!closed) {
             result.onSuccess { loaded ->
@@ -148,8 +173,11 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
         } }
     }
     fun subscribe(listener: () -> Unit) { if (!closed) listeners.add(listener) }
+    /** Status-only reloads still require a fresh Writer presentation. Full refresh uses subscribe(). */
+    internal fun subscribeSyncReload(listener: () -> Unit) { if (!closed) syncListeners.add(listener) }
+    internal fun unsubscribeSyncReload(listener: () -> Unit) { syncListeners.remove(listener) }
     fun unsubscribe(listener: () -> Unit) { listeners.remove(listener) }
-    fun refresh() { if (!closed) listeners.toList().forEach { it() } }
+    fun refresh() { if (!closed) listeners.toList().forEach { if (it in listeners) it() } }
     private fun effectiveProfiles(sources: List<ImportSource>) = sources.mapNotNull { item ->
         item.resolvedTermKey()?.let { term -> profileResolver(term)?.let { term to it } }
     }.toMap()
@@ -299,7 +327,7 @@ class ScheduleSource(private val store: ScheduleStore, val clock: ScheduleClock 
             callback(result)
         } }
     }
-    fun close() { if (!closed) { closed = true; listeners.clear(); store.close() } }
+    fun close() { if (!closed) { closed = true; listeners.clear(); syncListeners.clear(); store.close() } }
 }
 
 enum class ScheduleMode { CALENDAR, TIMETABLE }

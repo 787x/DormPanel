@@ -1,3 +1,4 @@
+import { editProductivity, productivityBlock, productivityView } from './productivity.mjs';
 import {validateLinkedCourseOverrides} from './projection.mjs';
 import {legacyKey} from './shared-course-colors.mjs';
 import {businessHash} from './v3-protocol.mjs';
@@ -141,6 +142,17 @@ export class Workspace {
     });
     this.queue = task.finally(() => { this.writing--; }).catch(() => {});
     return task;
+  }
+  productivity() { return productivityView(this.frame, () => this.guard?.()); }
+  saveProductivity(edit, { datasetId, revision }, validateContext = () => {}) {
+    ensure(Number.isSafeInteger(revision) && typeof datasetId === 'string', '必须提供当前共享数据集及 revision');
+    return this.tx(frame => {
+      validateContext();
+      ensure(frame.v3?.binding?.datasetId === datasetId, '活动数据集已变化');
+      const blocked = productivityBlock(frame);
+      ensure(!blocked, blocked);
+      frame.local = editProductivity(frame.local, edit);
+    }, revision);
   }
   courseSchedules() { return scheduleSlots(this.frame.local); }
   courseEditCandidate(state,edit) {

@@ -41,7 +41,7 @@ internal object V3Atomic {
 /** Separate isolated state adapter: course state, capture and receipt share one atomic document.
  * Existing Room/v2 bindings are not touched. PR55 must supply the production Room adapter. */
 class V3Journal(val directory: File, sqlFactory: ((File) -> V3SqlPort)? = null,
-    private val mirrorLocal: ((JSONObject) -> Unit)? = null, requireExisting:Boolean=false) : AutoCloseable {
+    private val mirrorLocal: ((JSONObject, JSONObject) -> Unit)? = null, requireExisting:Boolean=false) : AutoCloseable {
     internal val networkGate = Any()
     val meta = V3Metadata(directory, sqlFactory, requireExisting)
     var prepareReceipt: ((JSONObject) -> Unit)? = null
@@ -69,7 +69,7 @@ class V3Journal(val directory: File, sqlFactory: ((File) -> V3SqlPort)? = null,
                 if (format == 4) next.put("version",3)
             }
             require(!next.has("history") && !next.has("discovery")) { "v3 cumulative metadata must use paged index" }
-            if (next.optString("local") != frame.optString("local")) mirrorLocal?.invoke(next)
+            if (next.optString("local") != frame.optString("local")) mirrorLocal?.invoke(frame, next)
             meta.put("state", "frame", next)
         }; frame = next
     }

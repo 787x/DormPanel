@@ -25,8 +25,8 @@ class FakeRemote {
     assert(children.size <= 256); return [...children].sort();
   }
 }
-async function client(binding, remote) {
-  const root = await dir(), journal = new V3Journal(root); await journal.open(); const engine = new V3Engine(journal, randomUUID());
+async function client(binding, remote, registry) {
+  const root = await dir(), journal = new V3Journal(root); await journal.open(); const engine = new V3Engine(journal, randomUUID(), registry);
   if (binding) { const { decode } = await import('../src/v3-protocol.mjs'); await engine.bind(decode(await remote.read(binding.descriptorPath)), binding.descriptorHash); }
   const c = { root, journal, engine }; c.round = () => { const budget = new Budget(); return c.engine.round(remote, new IndexedV3Cache(root, budget), budget, { discoverySteps: 32 }); }; return c;
 }
@@ -307,4 +307,46 @@ test('weekday-only inherited linked preview and formal transaction reject fallba
  const moved=projectWeek(saved.state,'2026-09-07').find(r=>r.seriesId===row.seriesId);assert.equal(moved.academicDate,'2026-09-10');assert.equal(moved.teacher,'Kept teacher');assert.equal(moved.location,'Kept room');
  assert.deepEqual(saved.state.imported,before.local.imported);assert.deepEqual(saved.state.entries,before.local.entries);assert.deepEqual(saved.state.sharedRecords.find(r=>r.typeId==='test.note'),before.local.sharedRecords[0]);
  await a.journal.close();const reopened=await openV3Workspace(root,()=>{},identity);assert.equal(businessHash(reopened.workspace.frame.local),saved.businessHash);await reopened.journal.close();
+});
+
+test('old DPV3/4 Writer reads required Todo and rejects orphan publication, while memo stays writable', async t => {
+  const { encodeProductivity, LIST, TASK, MEMO } = await import('../src/shared-productivity.mjs');
+  const { editProductivity } = await import('../src/productivity.mjs');
+  const { decode } = await import('../src/v3-protocol.mjs');
+  const remote = new FakeRemote(), owner = await client(null, remote);
+  t.after(() => owner.journal.close());
+  const memo = encodeProductivity({ typeId: MEMO, id: randomUUID(), title: '备忘', body: '透明保留\n' });
+  const binding = await owner.engine.initialize(remote, { ...emptyState(), sharedRecords: durableRecords([memo]) });
+  await settle(owner);
+  const old = await client(binding, remote, new Registry([courseColor]));
+  t.after(() => old.journal.close());
+  await settle(old);
+  await old.engine.edit({ ...old.journal.value.local, entries: [entry('legacy')] });
+  assert.equal((await old.round()).status, 'PUBLISHED');
+  await settle(owner);
+  assert.deepEqual(owner.journal.value.local.sharedRecords, durableRecords([memo]));
+
+  const list = { typeId: LIST, id: randomUUID(), name: '清单' };
+  const task = { typeId: TASK, id: randomUUID(), listId: list.id, text: '原任务', position: 0, completed: false };
+  const apply = (state, value) => editProductivity(state, { action: 'create', value });
+  await owner.engine.edit(apply(apply(owner.journal.value.local, list), task));
+  await settle(owner);
+  await settle(old);
+  const accepted = owner.journal.value.local;
+  assert.deepEqual(old.journal.value.local.sharedRecords, accepted.sharedRecords);
+  await assert.rejects(old.engine.edit({ ...accepted, entries: [entry('unwritable')] }), /Unsupported required capability/);
+
+  const bytes = await remote.read(owner.journal.value.baselinePath), parent = decode(bytes);
+  for (const state of [editProductivity(accepted, { action: 'deleteList', id: list.id, taskIds: [task.id] }),
+    apply(accepted, { ...task, id: randomUUID(), text: '并发新增' })]) {
+    const branch = { ...parent, type: 3, writerId: randomUUID(), objectId: randomUUID(), refs: [reference(parent, sha(bytes), 1)], state };
+    await remote.putOnce(objectPath(branch), encode(branch));
+  }
+  const before = remote.puts;
+  await assert.rejects(settle(old), /Unsupported required capability/);
+  assert.equal(remote.puts, before);
+  assert.deepEqual(old.journal.value.local.sharedRecords, accepted.sharedRecords);
+  assert.equal((await settle(owner)).status, 'CONFLICT');
+  assert.equal(owner.journal.value.conflict.conflicts[0].keys.length, 3);
+  assert.equal(remote.puts, before);
 });
