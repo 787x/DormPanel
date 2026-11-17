@@ -18,11 +18,16 @@ export function productivityView(frame, guard) {
   let writeBlock = productivityBlock(frame);
   try { guard?.(); } catch (error) { writeBlock = error.message; }
   const c = frame.v3?.conflict;
-  const conflict = c ? {
-    token: c.id, revision: frame.revision,
-    rows: productivityConflictRows(new Set(c.conflicts.flatMap(row => row.keys ?? [row.key])),
-      [c.base, c.local, c.remote].map(state => wireRecords(state.sharedRecords ?? []))),
-  } : null;
+  let conflict = null;
+  if (c) {
+    const labels = ['base','local','remote'];
+    const sides = labels.map(label => wireRecords(c[label].sharedRecords ?? []));
+    const opaque = sides.map(rows => new Set(rows.filter(row => !supportedProductivity(row))
+      .map(row => `shared:${row.typeId}/${row.recordId}`)));
+    const keys = new Set(c.conflicts.flatMap(row => row.keys ?? [row.key]));
+    conflict = { token:c.id, revision:frame.revision, rows:productivityConflictRows(keys, sides)
+      .map(row => ({ ...row, unknownSides:labels.filter((_, index) => opaque[index].has(row.key)) })) };
+  }
   return {
     ...projectProductivity(wireRecords(frame.local.sharedRecords ?? [])),
     datasetId: frame.v3?.binding?.datasetId ?? null,
@@ -56,7 +61,7 @@ export function editProductivity(state, edit) {
     case 'editTask': next = put({ ...read(TASK, edit.id), text: edit.text }); break;
     case 'setTaskCompleted': next = put({ ...read(TASK, edit.id), completed: edit.completed }); break;
     case 'renameMemo': next = put({ ...read(MEMO, edit.id), title: edit.title }); break;
-    case 'editMemo': next = put({ ...read(MEMO, edit.id), body: edit.body }); break;
+    case 'editMemo': next = put({ ...read(MEMO, edit.id), ...(edit.title === undefined ? {} : { title:edit.title }), body: edit.body }); break;
     case 'deleteTask': next = remove(TASK); break;
     case 'deleteMemo': next = remove(MEMO); break;
     case 'deleteList': {

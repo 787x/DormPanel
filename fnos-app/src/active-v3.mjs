@@ -42,13 +42,21 @@ export async function openActiveV3(catalog, id, create = false) {
     bindingIdentity() { const b=workspace.frame.v3?.binding; return b ? structuredClone(b) : null; },
     migrationHeader(id) { return readLocal(()=>journal.meta.get('hostMigrationHeader',id)); },
     history(input = {}) { return readLocal(() => new V3Maintenance(catalog,id).list(input)); },
-    async initializeSharedDataset(expectedRevision) {
+    async initializeSharedDataset(expectedRevision, { emptyTarget = false } = {}) {
       writable();ensure(expectedRevision===workspace.frame.revision&&!journal.value.binding,'版本过期或已有绑定；请使用独立目标');
       const budget=new Budget(),remote=remoteV3Connection(catalog,catalog.row(id).connectionId,budget,true);
+      if (emptyTarget) {
+        ensure(same(journal.value.local, emptyState()), '请选择独立的空白工作区，保留现有课表');
+        ensure((await remote.list('', { allowMissingRoot:true })).length === 0, '远端目录已有共享数据，请使用独立空目录或加入已有数据');
+        writable();
+        ensure(expectedRevision === workspace.frame.revision, '工作区版本过期，请重新读取');
+      }
       return engine.initialize(remote,{...journal.value.local,sharedRecords:[]});
     },
     async synchronize(options = {}) {
-      const budget = new Budget(), remote = remoteV3(catalog, id, budget);
+      const budget = new Budget();
+      const sharedJoin = options.bind && !journal.value.binding && options.descriptorFormat === 4;
+      const remote = remoteV3(catalog, id, budget, sharedJoin);
       ensure(!options.discover, '只读发现必须使用 Catalog.discover，禁止进入编辑事务');
       const current = journal.value;
       if (options.bind && current.binding) ensure(options.descriptorPath === current.binding.descriptorPath && options.descriptorHash === current.binding.descriptorHash, '已有活动数据集，禁止隐式换库');
@@ -58,6 +66,7 @@ export async function openActiveV3(catalog, id, create = false) {
         const bytes = await remote.read(options.descriptorPath);
         ensure(bytes && sha(bytes) === options.descriptorHash, 'v3 Descriptor 身份变化');
         const descriptor = match(options.descriptorPath, bytes); ensure(descriptor.type === 1, '不是 Descriptor');
+        ensure((descriptor.format ?? 3) === (options.descriptorFormat ?? 3), 'Descriptor 格式不匹配');
         const identities = await catalog.identities();
         ensure(!catalog.manifest.workspaces.some(w => w.id !== id && identities.get(w.id) === descriptor.datasetId), '数据集已绑定其他工作区');
         // Existing courses are retained in their original workspace; joining starts empty.
@@ -115,9 +124,9 @@ export function readV3WorkspaceIdentity(directory,writerId) {
   } finally { db.close(); }
 }
 
-export function remoteV3(catalog, id, budget) {
+export function remoteV3(catalog, id, budget, sharedJoin = false) {
   const row = catalog.row(id); ensure(row.connectionId, '请先添加连接并创建工作区');
-  return remoteV3Connection(catalog,row.connectionId,budget,catalog.workspaces.get(id)?.frame.v3?.binding?.format===4);
+  return remoteV3Connection(catalog,row.connectionId,budget,sharedJoin || catalog.workspaces.get(id)?.frame.v3?.binding?.format===4);
 }
 export function remoteV3Connection(catalog,connectionId,budget,sharedFormat=false) {
   const c = catalog.connection(connectionId);
@@ -128,7 +137,7 @@ export function remoteV3Connection(catalog,connectionId,budget,sharedFormat=fals
 /** Bounded read-only identity discovery. No unique-candidate auto binding. */
 export async function discoverV3(remote) {
   const candidates = [];
-  for (const scope of await remote.list('')) {
+  for (const scope of await remote.list('', { allowMissingRoot:true })) {
     if (!/^dataset-[0-9a-f-]{36}\/$/.test(scope)) continue;
     const datasetId = scope.slice(8, -1); datasetScope(datasetId);
     for (const path of await remote.list(scope)) {
@@ -136,7 +145,7 @@ export async function discoverV3(remote) {
       try {
         const bytes = await remote.read(path); ensure(bytes, 'Descriptor 缺失');
         const descriptor = match(path, bytes); ensure(descriptor.type === 1 && descriptor.datasetId === datasetId);
-        candidates.push({ datasetId, descriptorPath: path, descriptorHash: sha(bytes), state: 'DESCRIPTOR_VERIFIED', historyVerified: false });
+        candidates.push({ datasetId, descriptorPath: path, descriptorHash: sha(bytes), descriptorFormat:descriptor.format ?? 3, state: 'DESCRIPTOR_VERIFIED', historyVerified: false });
       } catch { candidates.push({ datasetId, descriptorPath: path, state: 'UNVERIFIABLE', historyVerified: false }); }
     }
   }

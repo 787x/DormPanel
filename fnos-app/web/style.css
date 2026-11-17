@@ -17,3 +17,17 @@ dialog{background:#121d29;color:inherit;border:1px solid #365068;border-radius:1
 .course-manager{width:min(1100px,94vw);max-height:90vh}.course-manager label{display:inline-flex;gap:.5em;margin:.5em;flex-wrap:wrap}.course-manager input{max-width:100%}.slot-card{border:1px solid #64748b;border-radius:12px;padding:1em;margin:1em 0}.week-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(65px,1fr));max-height:240px;overflow:auto}.course-manager h3,.course-manager p{overflow-wrap:anywhere}@media(max-width:600px){.course-manager label{display:flex}.course-manager input{width:100%}.week-picker input{width:auto}}
 
 .course-review{overflow-wrap:anywhere;scroll-margin:1em}.course-review details{margin:.75em 0;border:1px solid #365068;border-radius:8px;padding:.6em}.course-review summary{cursor:pointer;min-height:32px;line-height:1.6}.course-review pre{white-space:pre-wrap;overflow-wrap:anywhere}.course-review-actions{position:sticky;bottom:0;background:#121d29;padding:.7em 0;border-top:1px solid #365068}.course-review-actions button{max-width:100%;white-space:normal;min-height:44px}
+.productivity-layout { display:grid; grid-template-columns:minmax(13rem, 1fr) minmax(0, 2.6fr); gap:1rem; align-items:start; }
+.productivity-layout > *, .productivity-conflict > * { min-width:0; }
+.productivity-item { padding:.65rem 0; border-top:1px solid var(--line, #aaa6); }
+.productivity-item p, .productivity-item small, #productivity pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+.productivity-item small, .productivity-form small { display:block; }
+#productivity button { max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+#productivity button[aria-pressed=true] { outline:2px solid currentColor; outline-offset:-2px; }
+.productivity-form label { display:block; margin-bottom:.8rem; }
+.productivity-form input, .productivity-form textarea { box-sizing:border-box; display:block; width:100%; resize:vertical; }
+#productivity pre { max-height:22rem; overflow:auto; }
+.productivity-conflict { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.8rem; }
+@media (max-width:690px) {
+  .productivity-layout, .productivity-conflict { grid-template-columns:minmax(0,1fr); }
+}

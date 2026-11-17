@@ -312,7 +312,13 @@ export class Catalog {
     this.row(id);
     const { discoverV3, remoteV3Connection } = await import('./active-v3.mjs');
     const { Budget } = await import('./v3-store.mjs');
-    return discoverV3(remoteV3Connection(this, connectionId ?? this.row(id).connectionId, new Budget()));
+    const budget = new Budget(), connection = connectionId ?? this.row(id).connectionId;
+    const legacy = await discoverV3(remoteV3Connection(this, connection, budget));
+    const shared = await discoverV3(remoteV3Connection(this, connection, budget, true));
+    const unique = new Map([...legacy.candidates, ...shared.candidates].map(candidate => [
+      `${candidate.descriptorPath}:${candidate.descriptorHash ?? 'unverified'}`, candidate,
+    ]));
+    return { ...legacy, candidates:[...unique.values()] };
   }
   async network(id, action, { probeIdentity = true } = {}) {
     ensure(!this.configuring && !this.maintenance && !this.manifest.transition, '正在保存配置或等待恢复');

@@ -293,8 +293,10 @@ class PhoneProductivityAndroidTest {
     @Test fun joinSharedEditAndOperateRealWidgetInstances() {
         val url = InstrumentationRegistry.getArguments().getString("pr88Url")
         assumeNotNull(url)
-        check(context.packageName.endsWith(".pr88testbed"))
-        check(Regex("http://127[.]0[.]0[.]1:[0-9]+/pr88-[0-9a-f-]{36}/").matches(requireNotNull(url)))
+        val pr89 = context.packageName.endsWith(".pr89testbed")
+        check(pr89 || context.packageName.endsWith(".pr88testbed"))
+        val prefix = if (pr89) "pr89" else "pr88"
+        check(Regex("http://127[.]0[.]0[.]1:[0-9]+/$prefix-[0-9a-f-]{36}/").matches(requireNotNull(url)))
         val store = requireNotNull(data.shared)
         val account = WebDavAccount(url, "fixture", "fixture")
         val remote = V3WebDavStore(account, url, V3Budget(), sharedFormat = true)
@@ -309,6 +311,9 @@ class PhoneProductivityAndroidTest {
         val shared = await(store::loadProductivity).getOrThrow()
         val dataset = shared.version!!.datasetId
         val x08eList = shared.content.lists.single { shared.content.tasks(it.id).any { t -> t.text == "整理下周课表" } }
+        val fnosTask = if (pr89) shared.content.tasks(x08eList.id).single { it.text == "fnOS 新增的共享任务" } else null
+        val fnosMemo = if (pr89) shared.content.memos.single { it.title == "fnOS 编辑的共享备忘" } else null
+        if (fnosMemo != null) assertEquals("  fnOS 编辑\r\n第二行🙂\n  ", fnosMemo.body)
 
         PhoneProductivity.bindings.set(PhoneProductivity.MODE, PhoneProductivity.LOCAL)
         val list = ProductivityRecord.TodoList(AndroidProductivity.id(), "开学准备")
@@ -382,7 +387,8 @@ class PhoneProductivityAndroidTest {
         try {
             val todoId = bind(0, ProductivityKind.TODO, list)
             val anotherTodo = bind(1, ProductivityKind.TODO, x08eList)
-            val memoId = bind(2, ProductivityKind.MEMO, memo)
+            val displayedMemo = fnosMemo ?: memo
+            val memoId = bind(2, ProductivityKind.MEMO, displayedMemo)
             waitFor {
                 ProductivityWidgets.rows(todoId)?.tasks?.size == 7 &&
                     ProductivityWidgets.rows(anotherTodo)?.tasks?.any { it.text == "整理下周课表" } == true
@@ -411,6 +417,7 @@ class PhoneProductivityAndroidTest {
                 lateinit var holder: LinearLayout
                 lateinit var todo: android.appwidget.AppWidgetHostView
                 lateinit var memoWidget: android.appwidget.AppWidgetHostView
+                var fnosTodo: android.appwidget.AppWidgetHostView? = null
                 scenario.onActivity { activity ->
                     holder = LinearLayout(activity).apply {
                         orientation = LinearLayout.VERTICAL
@@ -436,7 +443,7 @@ class PhoneProductivityAndroidTest {
                     }
                     try {
                         waitText(list.name)
-                        waitText(memo.title)
+                        waitText(displayedMemo.title)
                     } catch (error: Exception) {
                         screenshot("phone-widgets-diagnostic")
                         throw error
@@ -458,6 +465,37 @@ class PhoneProductivityAndroidTest {
                 waitText(next.text)
                 onView(allOf(withId(R.id.productivity_check), hasSibling(withText(next.text)), isDisplayed())).perform(click())
                 waitFor { load(dataset).content.tasks.single { it.id == next.id }.completed }
+                if (fnosTask != null) {
+                    val remaining = load(dataset).content.tasks(x08eList.id).count { !it.completed }
+                    scenario.onActivity { activity ->
+                        holder.removeAllViews()
+                        fnosTodo = host.createView(activity, anotherTodo, manager.getAppWidgetInfo(anotherTodo))
+                        holder.addView(fnosTodo, LinearLayout.LayoutParams(-1, -1))
+                    }
+                    waitFor {
+                        var ready = false
+                        scenario.onActivity {
+                            val listView = fnosTodo?.findViewById<android.widget.ListView>(R.id.productivity_tasks)
+                            ready = (listView?.count ?: 0) >= shared.content.tasks(x08eList.id).size &&
+                                fnosTodo?.findViewById<TextView>(R.id.productivity_status)?.text?.contains("剩余 $remaining 项") == true
+                        }
+                        ready
+                    }
+                    androidx.test.espresso.Espresso.onData(org.hamcrest.Matchers.anything())
+                        .inAdapterView(withId(R.id.productivity_tasks))
+                        .atPosition(shared.content.tasks(x08eList.id).indexOf(fnosTask))
+                        .onChildView(withId(R.id.productivity_check)).perform(click())
+                    waitFor { load(dataset).content.tasks(x08eList.id).single { it.id == fnosTask.id }.completed }
+                    waitFor {
+                        var refreshed = false
+                        scenario.onActivity {
+                            refreshed = fnosTodo?.findViewById<TextView>(R.id.productivity_status)?.text
+                                ?.contains("剩余 ${remaining - 1} 项") == true
+                        }
+                        refreshed
+                    }
+                    println("PR89_WIDGET_COUNT=$remaining->${remaining - 1}")
+                }
             }
             assertTrue(load(dataset).pending)
             settle(store, account)
@@ -485,6 +523,7 @@ class PhoneProductivityAndroidTest {
             } finally {
                 peer.close()
             }
+            if (pr89) println("PR89_PHONE_HASH=${load(dataset).version!!.businessHash}")
             if (InstrumentationRegistry.getArguments().getString("pr88KeepWidgets") == "true") {
                 context.getFileStreamPath("pr88-widget-fixture").writeText(ids.joinToString(",") + "\n$dataset")
                 retain = true

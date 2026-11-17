@@ -29,8 +29,9 @@ class ProductivitySharedCardTest {
     @Test fun importConnectAndReturnToLegacy() {
         val url = InstrumentationRegistry.getArguments().getString("pr88Url")
         assumeNotNull(url)
-        check(context.packageName == "com.dormpanel.app.testbed")
-        check(Regex("http://127[.]0[.]0[.]1:[0-9]+/pr88-[0-9a-f-]{36}/").matches(requireNotNull(url)))
+        check(context.packageName in setOf("com.dormpanel.app.testbed", "com.dormpanel.app.pr89testbed"))
+        val prefix = if (context.packageName.endsWith(".pr89testbed")) "pr89" else "pr88"
+        check(Regex("http://127[.]0[.]0[.]1:[0-9]+/$prefix-[0-9a-f-]{36}/").matches(requireNotNull(url)))
         val account = WebDavAccount(url, "fixture", "fixture")
         val store = ScheduleStores.create(context) as RoomScheduleStore
         if (!store.isV3()) store.prepareV3(url, sharedFormat = true)
@@ -137,6 +138,20 @@ class ProductivitySharedCardTest {
         val phoneList = view.content.lists.single { it.name == "开学准备" }
         assertTrue(view.content.tasks(phoneList.id).single { it.text == "确认实验室开放时间" }.completed)
         assertEquals("离线修改\n原样保留", view.content.memos.single { it.title == "宿舍检查" }.body)
+    }
+
+    @Test fun receivesFnOsEditAndPhoneWidget() {
+        val url = InstrumentationRegistry.getArguments().getString("pr89Url")
+        assumeNotNull(url)
+        check(context.packageName.endsWith(".pr89testbed"))
+        check(Regex("http://127[.]0[.]0[.]1:[0-9]+/pr89-[0-9a-f-]{36}/").matches(requireNotNull(url)))
+        val store = ScheduleStores.create(context) as RoomScheduleStore
+        settle(store, WebDavAccount(url, "fixture", "fixture"))
+        val view = load(store)
+        val task = view.content.lists.flatMap { view.content.tasks(it.id) }.single { it.text == "fnOS 新增的共享任务" }
+        assertTrue(task.completed)
+        assertEquals("  fnOS 编辑\r\n第二行🙂\n  ", view.content.memos.single { it.title == "fnOS 编辑的共享备忘" }.body)
+        println("PR89_X08E_HASH=${view.version!!.businessHash}")
     }
 
     private fun checkPreview(vararg fragments: String) {
