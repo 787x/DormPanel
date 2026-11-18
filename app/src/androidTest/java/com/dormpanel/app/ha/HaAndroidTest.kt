@@ -24,6 +24,7 @@ import org.junit.Test
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
 
 class HaAndroidTest {
     @get:org.junit.Rule val dashboardPersistence = com.dormpanel.app.IsolatedDashboardRule()
@@ -37,6 +38,9 @@ class HaAndroidTest {
         val peer = AtomicReference<WebSocket>()
         val subscription = AtomicReference<Int>()
         val token = "a".repeat(32)
+        val probeAttempts = AtomicInteger()
+        val registrationAttempts = AtomicInteger()
+        val subscriptionAttempts = AtomicInteger()
         fun report(): JSONObject = checkNotNull(reports.poll(8, TimeUnit.SECONDS)) { "Missing native state report" }
         fun command(id: String, field: String, value: Any): JSONObject {
             val event = JSONObject().put("version", 1).put("session", token).put("command_id", id)
@@ -58,7 +62,19 @@ class HaAndroidTest {
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         val message = JSONObject(text)
                         val id = message.optInt("id")
-                        val result: Any = when (message.getString("type")) {
+                        val type = message.getString("type")
+                        val firstFailure = when (type) {
+                            "dormpanel/control_protocol" -> probeAttempts.incrementAndGet() == 1
+                            "dormpanel/register" -> registrationAttempts.incrementAndGet() == 1
+                            "dormpanel/control_subscribe" -> subscriptionAttempts.incrementAndGet() == 1
+                            else -> false
+                        }
+                        if (firstFailure) {
+                            webSocket.send(JSONObject().put("id", id).put("type", "result").put("success", false)
+                                .put("error", JSONObject().put("code", if (type == "dormpanel/register") "unknown_command" else "not_loaded")).toString())
+                            return
+                        }
+                        val result: Any = when (type) {
                             "auth" -> { webSocket.send("""{"type":"auth_ok"}"""); return }
                             "get_states" -> org.json.JSONArray()
                             "dormpanel/control_protocol" -> JSONObject().put("version", 1)
@@ -84,6 +100,9 @@ class HaAndroidTest {
                             HaConnectionSettings(BackendMode.HOME_ASSISTANT, endpoint), "test")
                     }
                     val first = report()
+                    assertEquals(2, probeAttempts.get())
+                    assertEquals(2, registrationAttempts.get())
+                    assertEquals(2, subscriptionAttempts.get())
                     assertEquals(10, first.getJSONObject("values").length())
                     assertFalse(first.getBoolean("mute_available"))
                     assertFalse(Settings.System.canWrite(context))

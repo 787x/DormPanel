@@ -8,8 +8,6 @@ import com.dormpanel.app.dashboard.card.coreCardRegistry
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.PreferencesAppearanceStore
 import com.dormpanel.app.dashboard.persistence.DashboardStores
-import com.dormpanel.app.ha.HaConnectionState
-import com.dormpanel.app.ha.HaStatus
 import com.dormpanel.app.ha.NativeDeviceControls
 import com.dormpanel.app.productivity.*
 import com.dormpanel.app.schedule.*
@@ -38,10 +36,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val schedule = ScheduleSource(ScheduleStores.create(application, termProfiles), profileResolver = termProfiles::get)
     private val productivityData = AndroidProductivity(application, schedule.syncStore)
     private val nativeControls = NativeDeviceControls(dataSource.ha.relayChannel, dataSource.scheduler,
-        dataSource.relayIdentity::credentials, deviceControls, appearance, startupPolicy)
-    private val nativeConnectionListener: (HaStatus) -> Unit = {
-        if (it.state != HaConnectionState.CONNECTED) nativeControls.disconnect()
-    }
+        dataSource.relayIdentity::credentials, deviceControls, appearance, startupPolicy,
+        onSessionAvailable = { dataSource.ha.enableLegacyControls(!it) })
     val haRelay = HaScheduleRelayController(dataSource.ha.relayChannel, dataSource.relayIdentity,
         dataSource.relayHttp, { dataSource.relayStatus = it }, apkInstall,
         appVersion = {
@@ -50,7 +46,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             }.getOrNull() ?: "unknown"
         },
         profiles = termProfiles,
-        onRegistered = { if (dataSource.ha.nativeControlSupported) nativeControls.connect() })
+        onRegistered = nativeControls::registered,
+        onRegistrationFailed = { dataSource.ha.enableLegacyControls(true) },
+        isLegacyServer = { dataSource.ha.nativeControlSupported == false })
     val webDav = WebDavSyncController(application, schedule, profiles = termProfiles)
     val sharedSchedule = SharedScheduleController(application, schedule, accounts = webDav.settings)
     val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
@@ -67,7 +65,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     init {
-        dataSource.ha.addStatusListener(nativeConnectionListener)
+        dataSource.ha.onNativeProtocolSupported = nativeControls::protocolSupported
         termProfiles.editable = { schedule.editable }
         // Reconcile any PackageInstaller session interrupted by process death
         // before the live HA relay callback was registered. Recovered terminal
@@ -98,7 +96,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     override fun onCleared() {
-        dataSource.ha.removeStatusListener(nativeConnectionListener)
+        dataSource.ha.onNativeProtocolSupported = null
         nativeControls.close()
         sharedSchedule.close()
         webDav.close()

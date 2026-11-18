@@ -25,6 +25,9 @@ class NativeDeviceControlsTest {
         var onResult: ((JSONObject) -> Unit)? = null
         var rejectNextReport = false
         var remainingMs = 5000
+        var subscriptions = 0
+        var cancellations = 0
+        private val disconnectListeners = linkedSetOf<() -> Unit>()
         override fun request(message: JSONObject, callback: (JSONObject) -> Unit): Boolean {
             if (message.getString("type") == "dormpanel/control_admit") {
                 callback(JSONObject().put("success", true).put("result", JSONObject().put("remaining_ms", remainingMs)))
@@ -44,12 +47,16 @@ class NativeDeviceControlsTest {
             assertEquals("secret", message.getString("device_secret"))
             this.onResult = onResult
             this.onEvent = onEvent
-            return { this.onEvent = null; this.onResult = null }
+            subscriptions++
+            return { cancellations++; this.onEvent = null; this.onResult = null }
         }
         override fun addReadyListener(listener: () -> Unit) = Unit
         override fun removeReadyListener(listener: () -> Unit) = Unit
+        override fun addDisconnectListener(listener: () -> Unit) { disconnectListeners += listener }
+        override fun removeDisconnectListener(listener: () -> Unit) { disconnectListeners -= listener }
         override fun addEventListener(listener: (JSONObject) -> Unit) = Unit
         override fun removeEventListener(listener: (JSONObject) -> Unit) = Unit
+        fun disconnect() = disconnectListeners.toList().forEach { it() }
         fun confirm() {
             while (callbacks.isNotEmpty()) callbacks.removeFirst()(JSONObject().put("success", true))
         }
@@ -99,14 +106,20 @@ class NativeDeviceControlsTest {
                 return true
             }
         })
-        val adapter = NativeDeviceControls(channel, scheduler, { "screen" to "secret" }, device, appearance, startup) { 1000 }
+        val availability = mutableListOf<Boolean>()
+        val adapter = NativeDeviceControls(channel, scheduler, { "screen" to "secret" }, device, appearance, startup,
+            now = { 1000 }, onSessionAvailable = { availability += it })
         var token = "a".repeat(32)
         private var seq = 0
         fun connect() {
-            adapter.connect()
-            channel.onResult!!.invoke(JSONObject().put("success", true)
-                .put("result", JSONObject().put("version", 1).put("session", token)))
+            adapter.protocolSupported()
+            adapter.registered()
+            channel.onResult!!.invoke(sessionReply())
         }
+        fun sessionReply() = JSONObject().put("success", true)
+            .put("result", JSONObject().put("version", 1).put("session", token))
+        fun failReport(code: String = "timeout") =
+            channel.callbacks.removeFirst()(JSONObject().put("success", false).put("error", JSONObject().put("code", code)))
         fun command(field: String, value: Any, installation: String = "screen"): JSONObject {
             val command = JSONObject().put("version", 1).put("installation_id", installation)
                 .put("session", token).put("command_id", (++seq).toString(16).padStart(32, '0'))
@@ -180,7 +193,7 @@ class NativeDeviceControlsTest {
         f.device.exitBlackout()
         oldReceiver(duplicated)
         assertFalse(f.values().getBoolean("blackout"))
-        f.adapter.disconnect()
+        f.channel.disconnect()
         oldReceiver(duplicated)
         assertNull(f.channel.onEvent)
         f.appearance.update(AppearanceState(ThemeMode.LIGHT, .8f))
@@ -196,17 +209,113 @@ class NativeDeviceControlsTest {
         f.channel.rejectNextReport = true
         f.connect()
         assertTrue(f.channel.reports.isEmpty())
-        f.scheduler.advance(180)
+        f.scheduler.advance(1000)
         assertEquals(1, f.channel.reports.size)
         f.channel.confirm()
         f.channel.rejectNextReport = true
         f.command("blackout", true)
         f.device.exitBlackout()
         f.device.setKeepAwake(true)
-        f.scheduler.advance(180)
+        f.scheduler.advance(1000)
         assertEquals(2, f.channel.reports.size)
         assertFalse(f.channel.reports.last().has("command_id"))
         assertFalse(f.values().getBoolean("blackout"))
         assertTrue(f.values().getBoolean("keep_awake"))
+    }
+
+    @Test fun subscriptionRecoversAfterFailureAndMalformedReplyOnCurrentConnection() {
+        val f = Fixture()
+        f.adapter.protocolSupported()
+        assertEquals(0, f.channel.subscriptions)
+        f.adapter.registered()
+        val failed = f.channel.onResult!!
+        failed(JSONObject().put("success", false))
+        assertEquals(1, f.channel.cancellations)
+        failed(f.sessionReply())
+        assertTrue(f.channel.reports.isEmpty())
+        f.scheduler.advance(1000)
+        f.channel.onResult!!.invoke(JSONObject().put("success", true))
+        f.scheduler.advance(1999)
+        assertEquals(2, f.channel.subscriptions)
+        f.scheduler.advance(1)
+        f.channel.onResult!!.invoke(f.sessionReply())
+        f.adapter.registered()
+        assertEquals(3, f.channel.subscriptions)
+        assertEquals(listOf(false, false, true), f.availability)
+        assertEquals(10, f.values().length())
+    }
+
+    @Test fun repeatedReportFailuresRecoverWithoutLocalChangesAndStopAfterConfirmation() {
+        for (failures in 2..3) {
+            val f = Fixture()
+            f.connect()
+            repeat(failures) { attempt ->
+                f.failReport()
+                val delay = reconnectDelay(attempt)
+                f.scheduler.advance(delay - 1)
+                assertEquals(attempt + 1, f.channel.reports.size)
+                f.scheduler.advance(1)
+            }
+            assertEquals(failures + 1, f.channel.reports.size)
+            assertEquals(10, f.values().length())
+            f.channel.confirm()
+            f.scheduler.advance(60_000)
+            assertEquals(failures + 1, f.channel.reports.size)
+        }
+    }
+
+    @Test fun invalidSessionRecoversIndependentlyAndIgnoresOldCallbacks() {
+        val f = Fixture()
+        val other = Fixture()
+        f.connect()
+        other.connect()
+        other.channel.confirm()
+        val oldReply = f.channel.callbacks.first()
+        val oldEvent = f.channel.onEvent!!
+        f.failReport("offline")
+        f.device.setBrightness(37)
+        f.token = "b".repeat(32)
+        f.scheduler.advance(1000)
+        f.channel.onResult!!.invoke(f.sessionReply())
+        oldReply(JSONObject().put("success", true))
+        oldEvent(JSONObject().put("version", 1).put("installation_id", "screen").put("session", "a".repeat(32))
+            .put("command_id", "1".repeat(32)).put("field", "display_brightness").put("value", 90))
+        assertEquals(37, f.values().getInt("display_brightness"))
+        assertEquals(f.token, f.channel.reports.last().getString("session"))
+        assertEquals(2, f.channel.reports.size)
+        assertEquals(1, other.channel.subscriptions)
+        assertEquals(1, other.channel.reports.size)
+        f.failReport("offline")
+        f.channel.disconnect()
+        f.scheduler.advance(60_000)
+        assertEquals(2, f.channel.subscriptions)
+    }
+
+    @Test fun delayedOlderReportCannotReplaceNewerConfirmedReceiptAndRetriesOnlyLatestValues() {
+        val f = Fixture()
+        f.connect()
+        val initial = f.channel.callbacks.removeFirst()
+        f.command("display_brightness", 45)
+        f.channel.confirm()
+        initial(JSONObject().put("success", true))
+        f.device.setBrightness(45)
+        f.scheduler.advance(180)
+        assertEquals(2, f.channel.reports.size)
+
+        f.device.setBrightness(51)
+        f.scheduler.advance(180)
+        f.failReport()
+        f.device.setBrightness(52)
+        f.device.setBrightness(53)
+        f.scheduler.advance(1000)
+        assertEquals(53, f.values().getInt("display_brightness"))
+        f.failReport()
+        f.device.setBrightness(54)
+        f.device.setBrightness(55)
+        f.scheduler.advance(2000)
+        assertEquals(listOf(50, 45, 51, 53, 55), f.channel.reports.map {
+            it.getJSONObject("values").getInt("display_brightness")
+        })
+        assertEquals(1, f.channel.reports.count { it.has("command_id") })
     }
 }

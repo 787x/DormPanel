@@ -19,6 +19,7 @@ internal class NativeDeviceControls(
     private val appearance: AppearanceController,
     private val startup: StartupPolicy,
     private val now: () -> Long = SystemClock::elapsedRealtime,
+    private val onSessionAvailable: (Boolean) -> Unit = {},
 ) {
     companion object {
         const val VERSION = 1
@@ -27,48 +28,95 @@ internal class NativeDeviceControls(
     }
 
     private var unsubscribe: (() -> Unit)? = null
+    private var sessionRetry: (() -> Unit)? = null
+    private var sessionFailures = 0
+    private var protocolSupported = false
+    private var registered = false
     private var scheduledReport: (() -> Unit)? = null
-    private var reportInFlight = false
+    private var reportInFlight: Long? = null
     private var dirty = false
-    private var retryAvailable = true
+    private var reportFailures = 0
+    private var reportSequence = 0L
+    private var confirmedSequence = 0L
+    private var confirmedSnapshot: String? = null
     private var session: String? = null
     private var admitting: String? = null
     private var generation = 0
-    private var lastSent: String? = null
     private val executed = linkedMapOf<String, String?>()
     private val deviceListener: (DeviceControlState) -> Unit = { stateChanged() }
     private val appearanceListener: (AppearanceState) -> Unit = { stateChanged() }
     private val startupListener: (Boolean) -> Unit = { stateChanged() }
+    private val disconnectListener: () -> Unit = { disconnect() }
 
     init {
         device.addListener(deviceListener)
         appearance.addListener(appearanceListener)
         startup.addListener(startupListener)
+        channel.addDisconnectListener(disconnectListener)
     }
 
-    fun connect() {
-        disconnect()
+    fun protocolSupported() {
+        protocolSupported = true
+        connectIfReady()
+    }
+
+    fun registered() {
+        registered = true
+        connectIfReady()
+    }
+
+    private fun connectIfReady() {
+        if (!protocolSupported || !registered || !channel.ready || unsubscribe != null || sessionRetry != null) return
         val epoch = generation
         val (installation, secret) = credentials()
         val request = JSONObject().put("type", "dormpanel/control_subscribe")
             .put("version", VERSION).put("installation_id", installation).put("device_secret", secret)
-        unsubscribe = channel.subscribe(request, onResult = { reply ->
-            if (epoch == generation && reply.optBoolean("success")) {
-                val result = reply.optJSONObject("result")
-                val token = result?.optString("session").orEmpty()
-                if (result?.optInt("version") == VERSION && identifier.matches(token)) {
-                    device.refreshSystemBrightness()
-                    device.refreshAudio()
-                    session = token
-                    report(installation)
-                }
+        val cancel = channel.subscribe(request, onResult = { reply ->
+            if (epoch != generation || session != null) return@subscribe
+            val result = reply.optJSONObject("result")
+            val token = result?.opt("session")
+            if (!reply.optBoolean("success") || result?.opt("version") != VERSION ||
+                token !is String || !identifier.matches(token)) {
+                recoverSession()
+                return@subscribe
             }
+            device.refreshSystemBrightness()
+            device.refreshAudio()
+            session = token
+            sessionFailures = 0
+            onSessionAvailable(true)
+            report(installation)
         }, onEvent = { command ->
             if (epoch == generation && session != null) execute(installation, command)
         })
+        if (epoch != generation) cancel?.invoke()
+        else if (cancel == null) recoverSession()
+        else unsubscribe = cancel
     }
 
     fun disconnect() {
+        protocolSupported = false
+        registered = false
+        sessionRetry?.invoke()
+        sessionRetry = null
+        sessionFailures = 0
+        clearSession()
+    }
+
+    private fun recoverSession() {
+        clearSession()
+        if (!channel.ready) return
+        onSessionAvailable(false)
+        val epoch = generation
+        sessionRetry = scheduler.after(reconnectDelay(sessionFailures)) {
+            if (epoch != generation) return@after
+            sessionRetry = null
+            connectIfReady()
+        }
+        sessionFailures = (sessionFailures + 1).coerceAtMost(4)
+    }
+
+    private fun clearSession() {
         generation++
         session = null
         admitting = null
@@ -76,15 +124,18 @@ internal class NativeDeviceControls(
         unsubscribe = null
         scheduledReport?.invoke()
         scheduledReport = null
-        reportInFlight = false
+        reportInFlight = null
         dirty = false
-        retryAvailable = true
+        reportFailures = 0
+        reportSequence = 0
+        confirmedSequence = 0
+        confirmedSnapshot = null
         executed.clear()
-        lastSent = null
     }
 
     fun close() {
         disconnect()
+        channel.removeDisconnectListener(disconnectListener)
         device.removeListener(deviceListener)
         appearance.removeListener(appearanceListener)
         startup.removeListener(startupListener)
@@ -93,15 +144,17 @@ internal class NativeDeviceControls(
     private fun stateChanged() {
         if (session == null) return
         dirty = true
-        retryAvailable = true
         scheduleReport()
     }
 
     private fun scheduleReport() {
-        if (!dirty || reportInFlight || scheduledReport != null) return
-        scheduledReport = scheduler.after(180) {
+        if (!dirty || reportInFlight != null || scheduledReport != null) return
+        val delay = if (reportFailures == 0) 180L else reconnectDelay(reportFailures - 1)
+        val epoch = generation
+        scheduledReport = scheduler.after(delay) {
+            if (epoch != generation) return@after
             scheduledReport = null
-            report(credentials().first)
+            if (dirty) report(credentials().first)
         }
     }
 
@@ -126,38 +179,43 @@ internal class NativeDeviceControls(
             .put("mute_available", current.muteAvailable)
         val snapshot = payload.toString()
         dirty = false
-        if (commandId == null && snapshot == lastSent) return
+        if (commandId == null && reportSequence == confirmedSequence && snapshot == confirmedSnapshot) return
+        val sequence = ++reportSequence
         if (commandId != null) {
             payload.put("command_id", commandId)
             if (error != null) payload.put("error", error)
         } else {
-            reportInFlight = true
+            reportInFlight = sequence
         }
         val epoch = generation
-        val sent = channel.request(payload) { result ->
-            if (epoch != generation) return@request
-            if (commandId == null) reportInFlight = false
+        var completed = false
+        val finish: (JSONObject) -> Unit = finish@{ result ->
+            if (epoch != generation || completed) return@finish
+            completed = true
+            if (reportInFlight == sequence) reportInFlight = null
             when {
-                result.optBoolean("success") -> scheduleReport()
-                result.optJSONObject("error")?.optString("code") == "offline" -> disconnect()
-                else -> recoverSnapshot(snapshot)
+                result.optBoolean("success") -> {
+                    if (sequence > confirmedSequence) {
+                        confirmedSequence = sequence
+                        confirmedSnapshot = snapshot
+                    }
+                    if (sequence == reportSequence) reportFailures = 0
+                }
+                sequence > confirmedSequence && result.optJSONObject("error")?.optString("code") == "offline" -> {
+                    recoverSession()
+                    return@finish
+                }
+                sequence == reportSequence -> {
+                    // A failed receipt leaves its actual snapshot pending, never the command.
+                    dirty = true
+                    reportFailures = (reportFailures + 1).coerceAtMost(5)
+                    scheduledReport?.invoke()
+                    scheduledReport = null
+                }
             }
+            scheduleReport()
         }
-        if (sent) {
-            lastSent = snapshot
-        } else {
-            if (commandId == null) reportInFlight = false
-            recoverSnapshot(snapshot)
-        }
-    }
-
-    private fun recoverSnapshot(snapshot: String) {
-        if (snapshot == lastSent) lastSent = null
-        if (retryAvailable) {
-            retryAvailable = false
-            dirty = true
-        }
-        scheduleReport()
+        if (!channel.request(payload, finish)) finish(JSONObject().put("success", false))
     }
 
     private fun execute(installation: String, command: JSONObject) {
@@ -179,6 +237,10 @@ internal class NativeDeviceControls(
         if (!channel.request(request) { result ->
             if (epoch != generation || admitting != id) return@request
             admitting = null
+            if (result.optJSONObject("error")?.optString("code") == "offline") {
+                recoverSession()
+                return@request
+            }
             if (!result.optBoolean("success")) return@request
             val remaining = result.optJSONObject("result")?.optLong("remaining_ms") ?: 0
             // Bound the permit from local send time, including the full round trip.

@@ -10,6 +10,8 @@ interface HaRelayChannel {
     fun subscribe(message: JSONObject, onResult: (JSONObject) -> Unit, onEvent: (JSONObject) -> Unit): (() -> Unit)? = null
     fun addReadyListener(listener: () -> Unit)
     fun removeReadyListener(listener: () -> Unit)
+    fun addDisconnectListener(listener: () -> Unit) = Unit
+    fun removeDisconnectListener(listener: () -> Unit) = Unit
     fun addEventListener(listener: (JSONObject) -> Unit)
     fun removeEventListener(listener: (JSONObject) -> Unit)
 }

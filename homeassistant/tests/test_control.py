@@ -125,6 +125,30 @@ class ControlTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ControlError, "permission"):
             await task
 
+    async def test_session_replacement_rejects_old_receipts_and_preserves_other_device(self):
+        controls = self.relay.controls
+        await self.setup_screen()
+        await self.setup_screen("other")
+        old, _, events = self.set_up_session()
+        other, _, other_events = self.set_up_session("other")
+        self.report(old)
+        self.report(other, name="other", values={**self.values, "media_volume": 80})
+        command = asyncio.create_task(controls.execute("screen", "theme", "light"))
+        stale = await asyncio.wait_for(events.get(), 1)
+        controls.admit("screen", old.token, old.connection, stale["command_id"])
+        new, _, new_events = self.set_up_session()
+        with self.assertRaisesRegex(ControlError, "offline"):
+            await command
+        with self.assertRaisesRegex(ControlError, "offline"):
+            self.report(old, command_id=stale["command_id"], values={**self.values, "theme": "light"})
+        self.assertFalse(controls.public_state("screen")["online"])
+        self.report(new, values={**self.values, "display_brightness": 39})
+        self.assertEqual(controls.public_state("screen")["values"]["display_brightness"], 39)
+        self.assertTrue(controls.public_state("other")["online"])
+        self.assertEqual(controls.public_state("other")["values"]["media_volume"], 80)
+        self.assertTrue(new_events.empty())
+        self.assertTrue(other_events.empty())
+
     async def test_timeout_disconnect_and_reload(self):
         controls = self.relay.controls
         await self.setup_screen()
