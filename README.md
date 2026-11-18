@@ -92,7 +92,7 @@ X08E 天气功能可以选择 **和风天气（QWeather）**或 **Home Assistant
 
 一般的 HA 灯光/传感器控制不要求先安装此自定义集成；上述中继功能则需要它。更多信息见 [Home Assistant 接入](docs/PR4-home-assistant.md)、[完整家居控制](docs/PR5-home-control.md)及 [XLS 中继](docs/pr52-ha-xls.md)。
 
-当前源码支持 X08E 原生 HA 设备和控制实体，可直接用于仪表盘与自动化。已有 Helper 绑定用于兼容旧版 HA 集成。安装、升级、Lovelace 概览卡片和文件传输步骤见 [DormPanel HA 管理指南](docs/ha-dormpanel-management.md)。
+当前源码支持从 HA 侧边栏和 Lovelace 的 `custom:dormpanel-overview` 卡片切换设备、直接操作 X08E 的 10 项原生设置，并查看设备的实际状态与文件传输记录。原生实体也可用于仪表盘和自动化，无需创建 Helper；已有 Helper 绑定可用于兼容旧版 HA 集成。安装、升级和操作步骤见 [DormPanel HA 管理指南](docs/ha-dormpanel-management.md)。
 
 ### 4. X08E 控制中心与系统共存
 
