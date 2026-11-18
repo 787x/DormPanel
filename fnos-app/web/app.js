@@ -1,4 +1,5 @@
 import {installCourseManagement} from './course-management.js';
+import {installProductivity} from './productivity.js';
 import { scheduleStatus } from './sync-status.js';
 import { notifyUser, confirmAction, requestText } from './feedback.js';
 const $ = (id) => document.getElementById(id),
@@ -34,7 +35,7 @@ function unlockControls(buttons) {
   for(const b of buttons)if(disabledBeforeJob.has(b)){b.disabled=disabledBeforeJob.get(b);disabledBeforeJob.delete(b);}
 }
 let historyJobId=0, backupJobId=0;
-let activeProtocol = 'v2', viewEpoch = 0, currentPage = 'dashboard';
+let activeProtocol = 'v2', activeDescriptorFormat, viewEpoch = 0, currentPage = 'dashboard';
 let historyPreview = null, historyScope = null, historyEligible = false, historyBusy = false, backupBusy = false;
 let historyReadEpoch = 0, historyOutputEpoch = 0;
 class StaleResponse extends Error {}
@@ -75,10 +76,12 @@ function navigate(page) {
   unlockControls([...$('history').querySelectorAll('button'),...$('backups').querySelectorAll('button')]);
   invalidateHistory();invalidateBackup();
   currentPage = page;
+  productivity.leave();
+  if (page === 'todo' || page === 'memo') void productivity.open(page, workspaceId);
   for (const id of ['dashboard','dataSources','history','backups']) $(id).hidden = id !== page;
   $('dashboardActions').hidden = page !== 'dashboard';
-  $('pageTitle').textContent = {dashboard:'课程表',dataSources:'课程表与共享',history:'历史版本',backups:'备份与维护'}[page];
-  for (const [id,target] of [['schedulePage','dashboard'],['sourcesPage','dataSources'],['historyPage','history'],['backupsPage','backups']]) {
+  $('pageTitle').textContent = {dashboard:'课程表',dataSources:'课程表与共享',history:'历史版本',backups:'备份与维护',todo:'Todo',memo:'备忘'}[page];
+  for (const [id,target] of [['schedulePage','dashboard'],['sourcesPage','dataSources'],['historyPage','history'],['backupsPage','backups'],['todoPage','todo'],['memoPage','memo']]) {
     $(id).setAttribute('aria-current', target === page ? 'page' : 'false');
   }
   window.scrollTo(0,0);
@@ -105,9 +108,11 @@ async function load() {
     if (workspaceId !== s.workspaceId || loadedVersion !== s.version) { invalidateHistory(); invalidateBackup(); }
     workspaceId = s.workspaceId;
     activeProtocol = s.protocol ?? 'v2';
+    activeDescriptorFormat = s.descriptor?.format;
     catalogVersion = s.catalogVersion;
     token = s.csrf;
     version = s.version; loadedVersion=s.version;
+    if (!switching && (currentPage === 'todo' || currentPage === 'memo')) void productivity.open(currentPage, workspaceId);
     $("status").textContent = scheduleStatus(s);
     $('managerStatus').textContent = $('status').textContent;
     $('currentContext').textContent = `${s.workspaceName ?? management?.workspaces.find(w=>w.id===workspaceId)?.name ?? '当前课程表'} · ${scheduleStatus(s)}`;
@@ -294,6 +299,29 @@ async function get(path,{pageSensitive=true}={}) {
   return v;
 }
 let activeWrite=null, unresolvedWrite=null, lastWrite=null, pendingCreatedWorkspace=null;
+const productivityEditPath = '/api/productivity/edit';
+const productivityCheckPath = '/api/productivity/check';
+const productivityIntentKey = 'dormpanel.productivity-intent';
+function rememberProductivityWrite(op) {
+  try {
+    if (!op) sessionStorage.removeItem(productivityIntentKey);
+    else {
+      const { workspaceId, datasetId, expectation } = op;
+      sessionStorage.setItem(productivityIntentKey, JSON.stringify({ workspaceId, datasetId, expectation }));
+    }
+  } catch { /* The in-page fence is still active when storage is unavailable. */ }
+}
+try {
+  const intent = JSON.parse(sessionStorage.getItem(productivityIntentKey));
+  if (intent?.workspaceId && intent.datasetId && (intent.expectation || intent.productivityQuery)) {
+    unresolvedWrite = { ...intent, workspaceName:intent.workspaceId, path:productivityEditPath, label:'共享效率操作', phase:'uncertain',
+      message:'页面已重新打开。上次共享效率请求的结果需要先只读核对。' };
+  }
+} catch { /* No recoverable tab-local intent. */ }
+const productivity = installProductivity({ host:$('productivity'), get, post, el, button, confirmAction,
+  sync:() => runSync({}), sources:() => showSources(true), openConflictReview:showProductivityConflicts, reload:load, obsoleteView,
+  canWrite:() => !activeWrite && !unresolvedWrite && !switching,
+});
 function renderCreationStatus() {
   const host=$('creationStatus'),created=pendingCreatedWorkspace;host.hidden=!created;if(!created)return;
   host.replaceChildren(el('strong','课程表已建立：'+created.name),el('p',created.active?'已核对为当前活动课程表。共享数据的创建或加入仍需单独确认。':created.message??'已保留课程表及连接，尚未确认已切换。可使用下方入口切换，不会再次创建。'));
@@ -310,11 +338,13 @@ function postSemantics(path,data) {
     || path==='/api/endpoint' && data.action==='status' ? 'read' : 'write';
 }
 function writeLabel(path,data) {
+  if (path === productivityEditPath) return '共享效率操作';
   return ({'/api/edit':'保存课程编辑','/api/sync':'检查并同步','/api/history/rollback':'历史回退','/api/backups/restore':'恢复应用备份','/api/backups/create':'创建应用备份','/api/migration':'迁移操作','/api/endpoint':'端点操作','/api/manage':'课程表与连接配置','/api/import/confirm':'导入课程','/api/resolve':'解决冲突'}[path]??'历史维护')+(data.action?' · '+data.action:'');
 }
 function renderWriteStatus() {
   const op=activeWrite??unresolvedWrite??lastWrite,host=$('writeStatus');host.hidden=!op;renderCreationStatus();if(!op)return;
-  host.replaceChildren(el('strong',op.label+' · '+op.workspaceName),el('p',op.message));
+  const scopeName = management?.workspaces.find(workspace => workspace.id === op.workspaceId)?.name ?? op.workspaceName;
+  host.replaceChildren(el('strong',op.label+' · '+scopeName),el('p',op.message));
   if(op.evidence)host.append(el('p',op.evidence));
   if(op.phase!=='running')host.append(button('重新读取操作状态',async()=>{
     await reconcileWrite(op);
@@ -323,13 +353,45 @@ function renderWriteStatus() {
   }));
   if(op.phase==='uncertain' && op.evidenceReady && unresolvedWrite===op)host.append(button('已核对结果，解除操作保护（不重发）',async()=>{
     if(unresolvedWrite!==op || activeWrite)return;
+    if (op.path === productivityEditPath) {
+      const seen = op.evidence;
+      await reconcileWrite(op);
+      if (!op.evidenceReady || unresolvedWrite !== op || seen !== op.evidence) { renderWriteStatus(); return; }
+    }
     unresolvedWrite=null;invalidateHistory();invalidateBackup();
+    if (op.path === productivityEditPath) rememberProductivityWrite(null);
     op.message='结果仍不确定；已由用户结束本次核对，没有重发原请求。请根据当前课程和恢复信息继续。';
     await refreshAfterWrite(op);renderWriteStatus();
   }));
 }
-async function authority(path) {
-  const response=await fetch(base+path),value=await response.json();if(!response.ok)throw Error(value.error??'状态读取失败');return value;
+async function authority(path, input) {
+  const request = input === undefined ? undefined : { method:'POST',
+    headers:{ 'Content-Type':'application/json', 'X-DormPanel-CSRF':token },
+    body:JSON.stringify(input), signal:AbortSignal.timeout(20000) };
+  const response=await fetch(base+path, request),value=await response.json();if(!response.ok)throw Error(value.error??'状态读取失败');return value;
+}
+async function reconcileProductivity(op) {
+  const scope = { workspaceId:op.workspaceId, datasetId:op.datasetId };
+  if (!op.expectation) {
+    const state = await authority('/api/productivity?' + new URLSearchParams({ workspaceId:op.workspaceId, ...op.productivityQuery }));
+    if (state.workspaceId !== op.workspaceId || state.datasetId !== op.datasetId || state.availability !== 'ready' ||
+        state.writeInFlight || state.recovery) throw Error('原工作区暂不可核对');
+    return `原工作区当前版本 ${state.version}。旧请求缺少目标摘要，暂时无法比对，请查看当前记录并手动核对。`;
+  }
+  const result = await authority(productivityCheckPath, { ...scope, expectation:op.expectation });
+  if (result.workspaceId !== scope.workspaceId || result.datasetId !== scope.datasetId ||
+      !Number.isSafeInteger(result.version) || ![true,false,null].includes(result.match)) throw Error('权威结果未能验证');
+  const names = { title:'标题', body:'正文', text:'任务正文', name:'名称', listId:'所属清单', completed:'完成状态' };
+  const details = [];
+  if (result.exists !== undefined) details.push(result.exists ? '目标记录存在' : '目标记录不存在');
+  if (result.compared) details.push(...Object.entries(result.compared).map(([key, matched]) => `${names[key]} ${matched ? '一致' : '不同'}`));
+  if (result.remainingTasks !== undefined) details.push(`原范围或清单下仍有 ${result.remainingTasks} 项任务`);
+  if (result.decisionState) details.push({ original:'原冲突仍存在', new:'已发现新的冲突', absent:'当前无共享冲突' }[result.decisionState],
+    result.recordedChoice ? '已记录原冲突的决定：'+(result.recordedChoice === 'local' ? '本机' : '远端') : '未能核实原冲突的决定');
+  const match = result.match === null ? '暂时无法核对原决定是否生效'
+    : result.match ? '当前状态符合请求目标' : '当前状态不符合请求目标';
+  if (op.phase === 'uncertain') details.push('以上是当前状态，原请求的执行结果仍不确定。');
+  return [`原工作区当前版本 ${result.version}`, match, ...details].join(' · ');
 }
 async function reconcileWrite(op) {
   op.evidenceReady=false;
@@ -340,6 +402,11 @@ async function reconcileWrite(op) {
       op.observedWorkspaceId=m.activeId;op.evidence='已读取服务端活动课程表：'+m.workspaces.find(w=>w.id===m.activeId).name;op.evidenceReady=true;return;
     }
     if(op.path==='/api/courses/save'&&op.courseKey){const result=await authority('/api/courses?'+new URLSearchParams({workspaceId:op.workspaceId,key:op.courseKey,limit:100}));op.evidence='已只读核对完整业务哈希 '+result.businessHash+' · 版本 '+result.version+(result.businessHash===op.expectedHash?' · 与本次候选一致':' · 与候选不同，需核对最终记录');op.evidenceReady=true;return;}
+    if (op.path === productivityEditPath) {
+      op.evidence = await reconcileProductivity(op);
+      op.evidenceReady = true;
+      return;
+    }
     // Restores and migrations may change the active catalog identity. Discover it read-only.
     const globalChange=op.path==='/api/backups/restore' || op.path==='/api/migration';
     const query=new URLSearchParams({date:$('date').value,zone:$('zone').value,origin:location.origin,...(!globalChange?{workspaceId:op.workspaceId}:{})});
@@ -353,7 +420,7 @@ async function reconcileWrite(op) {
     if(maintenance.restoreGuard || maintenance.restorePoisoned)op.evidence+='；恢复保护尚未解除，请继续恢复检查';
     if(maintenance.lastRestore)op.evidence+='；最近一条恢复记录：'+(maintenance.lastRestore.ok?'完成':'未完成')+'（'+new Date(maintenance.lastRestore.restoredAt).toLocaleString()+'，此记录不单独证明本请求结果）';
     op.evidenceReady=true;
-  } catch(error) {op.evidence='权威状态暂不可读：'+error.message+'。保留请求结果，使用“重新读取操作状态”重试，不自动重发写请求。';}
+  } catch(error) {op.evidence='暂时无法核对权威状态：'+error.message+'。保留请求结果，使用“重新读取操作状态”重试，不自动重发写请求。';}
 }
 async function refreshAfterWrite(op) {
   // Refresh only the still-selected scope, using authoritative identity for catalog replacement.
@@ -372,31 +439,48 @@ async function post(path, data = {}) {
   // Revoking a view's restore capability must not cancel an already dispatched restore.
   if(path==='/api/backups/cancel' && [activeWrite,unresolvedWrite,lastWrite].some(op=>op?.path==='/api/backups/restore' && op.restoreToken===data.token))return {};
   const op=readOnly?null:{path,courseKey:data.courseKey,expectedHash:data.previewHash,workspaceId:scope,workspaceName:management?.workspaces.find(w=>w.id===scope)?.name??scope,label:writeLabel(path,data),action:data.action,targetId:data.targetId,restoreToken:path==='/api/backups/restore'?data.token:null,phase:'running',message:'请求已发出，正在执行；切换页面不会取消。请等待结果，期间不提交其他写操作。'};
+  if (path === productivityEditPath) op.message = '正在准备写入目标摘要。';
   if(op){activeWrite=op;lastWrite=op;renderWriteStatus();}
   let response,value,failure;
+  const request = {workspaceId:scope,version,catalogVersion,...data};
+  let dispatched = false;
   try {
-    response=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json','X-DormPanel-CSRF':token},body:JSON.stringify({workspaceId:scope,version,catalogVersion,...data})});
+    if (path === productivityEditPath) {
+      op.datasetId = data.datasetId;
+      op.expectation = await authority(productivityCheckPath, request);
+      if (scope !== workspaceId || pageTicket !== viewEpoch || modelTicket !== loadEpoch ||
+          formTicket !== null && formTicket !== editorEpoch) throw new StaleResponse('页面或工作区已变化，原请求尚未发出');
+      rememberProductivityWrite(op);
+      op.message = '写入已提交给服务器处理，请等待回执。切换页面不会撤销该写入。';
+      renderWriteStatus();
+    }
+    dispatched = true;
+    response=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json','X-DormPanel-CSRF':token},body:JSON.stringify(request),
+      ...(path === productivityEditPath ? { signal:AbortSignal.timeout(20000) } : {}) });
     value=await response.json();
     if(!response.ok)failure=Error(value.error??'服务器返回失败');
+    if(path === productivityEditPath && response.ok && value?.writeApplied !== true)failure=Error('服务器未返回完整保存回执');
   } catch(error) {failure=error;}
   const draftWrite=!!op && (path==='/api/courses/save'||['/api/edit','/api/import/confirm'].includes(path) && formTicket!==null && localEditorContext);
   const detached=scope!==workspaceId || pageTicket!==viewEpoch || modelTicket!==loadEpoch || formTicket!==null && formTicket!==editorEpoch;
   if(op) {
-    const rejected=failure && value?.writeApplied===false;
-    const correctable=rejected && response.status===400;
+    const rejected=failure && (!dispatched || value?.writeApplied===false);
+    const correctable=rejected && response?.status===400;
     if(draftWrite && failure)failure.draftInvalid=!correctable;
-    op.phase=!response || !value?'uncertain':rejected?'rejected':failure?'failed':'completed';
+    op.phase=rejected?'rejected':!response || !value || failure && path === productivityEditPath?'uncertain':failure?'failed':'completed';
     op.message=op.phase==='uncertain'?'没有取得完整回执，结果不确定；这不表示操作取消或未写入。原请求不会自动重发。':failure?'服务器返回失败：'+failure.message+'。可能已有部分进度，请核对权威状态。':'服务器已返回成功响应；请求处理完成，具体保存、发布和恢复状态以核对结果为准。';
     if(rejected)op.message=draftWrite?(correctable?'服务器已拒绝，本次未提交修改。草稿已保留，可纠正输入后重试。':'服务器已拒绝，本次未提交修改；原提交资格已失效，草稿保留供核对。'):'服务器已拒绝，本次未执行请求：'+failure.message;
+    if (!failure && path === productivityEditPath) op.message = value.dirty ? '已保存到 fnOS 本机，待发布。' : '已保存到 fnOS 本机。';
     if(!failure && path==='/api/manage' && data.action==='workspace.add' && value.workspaceId){
       pendingCreatedWorkspace={id:value.workspaceId,name:data.name,active:false};renderCreationStatus();
     }
     renderWriteStatus();
     // Keep the global write fence until reconciliation and the current model refresh finish.
     const switching=path==='/api/manage' && data.action==='workspace.switch';
-    if(detached || failure && !correctable || switching || ['/api/history/rollback','/api/backups/restore','/api/migration'].includes(path))await reconcileWrite(op);
+    if(dispatched && (detached || failure && !correctable || switching || ['/api/history/rollback','/api/backups/restore','/api/migration'].includes(path)))await reconcileWrite(op);
     if(switching && !op.evidenceReady){op.confirmationPending=true;unresolvedWrite=op;op.message+=' 活动课程表尚未确认，请只读核对，不能重发切换。';}
     if(op.phase==='uncertain')unresolvedWrite=op;
+    else if (path === productivityEditPath) rememberProductivityWrite(null);
     if(failure || detached || switching){
       invalidateHistory();invalidateBackup();
       if(draftWrite && failure && !detached){
@@ -404,6 +488,9 @@ async function post(path, data = {}) {
       }else if(!switching || op.evidenceReady)await refreshAfterWrite(op);
     }
     activeWrite=null;renderWriteStatus();
+    if (path === productivityEditPath && (failure || detached) && (currentPage === 'todo' || currentPage === 'memo')) {
+      void productivity.open(currentPage, workspaceId);
+    }
     if(detached)throw new DetachedWriteResult(op.message);
     if(switching && op.confirmationPending)throw Error(op.message);
   }
@@ -902,7 +989,11 @@ async function importFile() {
     (input) => post("/api/import/confirm", input),
   );
 }
+function showProductivityConflicts() {
+  dialog('完整共享冲突', form => productivity.reviewConflicts(form, $('fields'), () => $('editor').close()), null);
+}
 async function showConflicts() {
+  if (activeDescriptorFormat === 4) return showProductivityConflicts();
   try {
     const c = await get("/api/conflicts");
     if (c.workspaceId !== workspaceId) return;
@@ -1022,10 +1113,10 @@ $("bind").onclick = () => sharingAction(async () => {
       if(scope!==workspaceId || page!==viewEpoch)throw new StaleResponse();
       const candidates = discovery.candidates.filter(c => c.state === 'DESCRIPTOR_VERIFIED');
       if (!candidates.length) return notifyUser('没有可加入的已验证共享课表。未执行绑定，也没有创建新的共享数据；请检查连接目录或重试发现。');
-      const candidate = await chooseOption('选择已验证的共享课表（加入后继续验证历史）',candidates.map(c=>({label:'共享课表 '+c.datasetId.slice(0,8),value:c})));
+      const candidate = await chooseOption('选择已验证的共享课表（加入后继续验证历史）',candidates.map(c=>({label:'共享课表 '+c.datasetId.slice(0,8)+(c.descriptorFormat===4?' · 支持 Todo 和备忘':''),value:c})));
       if(!candidate)return;
       if (await confirmAction(`确认加入 ${candidate.datasetId}？本地必须为空；已有课程不会自动清空。`, '加入此共享课表'))
-        await runSync({ workspaceId, version, bind:true, descriptorPath:candidate.descriptorPath, descriptorHash:candidate.descriptorHash });
+        await runSync({ workspaceId, version, bind:true, descriptorPath:candidate.descriptorPath, descriptorHash:candidate.descriptorHash, descriptorFormat:candidate.descriptorFormat });
     } catch (e) { if (!obsoleteView(e)) await notifyUser(e.message); }
     return;
   }
@@ -1080,7 +1171,15 @@ async function loadManagement(epoch = loadEpoch) {
       await manageAction({ ...context, action: 'workspace.remove', targetId: w.id, targetVersion: w.version, confirm: name });
     }));
     if (w.id === workspaceId) {
-      if (c && !w.datasetId) row.append(el('p', '尚未加入或创建共享数据；本地课程保留。'), button('加入已有共享课表…', () => $('bind').onclick()), button('创建新的共享课表…', () => $('create').onclick()));
+      if (c && !w.datasetId) {
+        row.append(el('p', '尚未加入或创建共享数据；本地课程保留。'), button('加入已有共享课表…', () => $('bind').onclick()), button('创建新的共享课表…', () => $('create').onclick()));
+        if (w.protocol === 'v3') row.append(button('创建支持 Todo 和备忘的共享数据…', () => sharingAction(async () => {
+          const scope = { workspaceId, version, catalogVersion, datasetId:null };
+          const ticket = viewEpoch;
+          if (await confirmAction('在当前空白工作区和独立空目录创建 DPV3/4。已有课表及旧共享数据保留在原处。', '创建共享数据') && ticket === viewEpoch)
+            await runSync({ ...scope, createShared:true });
+        })));
+      }
       if (!c) row.append(button('开启共享 / 添加连接', () => $('addLocal').click()));
       row.append(button('查看课程', () => navigate('dashboard')));
       if (w.conflict) row.append(button('查看和处理冲突', showConflicts));
@@ -1154,7 +1253,11 @@ async function manageAction(input) {
 async function switchWorkspace(id) {
   if (!id || id === workspaceId || switching) return;
   if(activeWrite || unresolvedWrite){$('workspaceSelect').value=workspaceId;renderWriteStatus();return;}
+  if (productivity.hasDraft() && !await confirmAction('当前工作区有共享效率草稿。放弃草稿并切换工作区？', '放弃并切换')) {
+    $('workspaceSelect').value=workspaceId;return;
+  }
   switching = true; isolateEditing();invalidateHistory(); invalidateBackup(); ++viewEpoch; $('workspaceSelect').disabled = true;
+  productivity.leave();
   for (const id of ['dashboard', 'dashboardActions', 'dataSources','history','backups']) $(id).inert = true;
   $('editor').close();
   try {
@@ -1334,6 +1437,8 @@ function connectionDialog(type, c = null) {
 $('workspaceSelect').onchange = () => switchWorkspace($('workspaceSelect').value);
 function showSources(open) { navigate(open ? 'dataSources' : 'dashboard'); }
 $('sourcesPage').onclick = () => showSources(true);
+$('todoPage').onclick = () => navigate('todo');
+$('memoPage').onclick = () => navigate('memo');
 $('schedulePage').onclick = () => navigate('dashboard');
 async function createWorkspace(c) {
   let creationForm;
@@ -1841,6 +1946,7 @@ $('historyFilters').onsubmit=event=>{
 $('maintenancePage').onclick=async()=>{await $('historyPage').onclick();$('advancedHistory').open=true;$('advancedHistory').scrollIntoView();};
 navigate('dashboard');
 await load();
+renderWriteStatus();
 
 installCourseManagement({context:()=>({workspaceId,version,catalogVersion,datasetId:local?.datasetId??null,epoch:loadEpoch,view:viewEpoch}),get,post,load,requireEditing,confirmAction,notifyUser});
 

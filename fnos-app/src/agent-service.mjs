@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { randomBytes, createHmac, randomUUID } from 'node:crypto';
 import { operations, describeOperations, findOperation, VERSION, BUDGET, errorValue, redact } from './operations.mjs';
+import { productivityEditRoute } from './productivity-api.mjs';
 const DAY = 86400000;
 const canonical = value => JSON.stringify(value && typeof value === 'object' ? Array.isArray(value) ? value.map(v => JSON.parse(canonical(v))) : Object.fromEntries(Object.keys(value).sort().map(k => [k, JSON.parse(canonical(value[k]))])) : value);
 const fail = code => { throw Object.assign(new Error(code), { agentCode:code }); };
@@ -64,7 +65,9 @@ export class AgentService {
           const targetInput = target.schema.parse(input.input);
           if (this.state.approvals.length >= 32) fail('LIMIT');
           if (!/^\d{13}-[0-9a-f-]{36}$/.test(input.targetOperationId)) fail('VALIDATION');
-          const approval = { id:randomUUID(), operation:target.name, operationId:input.targetOperationId, digest:this.digest({ operation:target.name, input:targetInput, operationId:input.targetOperationId }), summary:{ parameters:redact(Object.fromEntries(Object.entries(targetInput).filter(([k]) => !['password','token','base64'].includes(k)))), preview:redact(await this.approvalSummary(target.name, targetInput)) }, expires:now + 10 * 60000 };
+          const parameters = Object.fromEntries(Object.entries(targetInput).filter(([k]) =>
+            !['password','token','base64'].includes(k) && !(target.name === 'todo.deleteList' && k === 'taskIds')));
+          const approval = { id:randomUUID(), operation:target.name, operationId:input.targetOperationId, digest:this.digest({ operation:target.name, input:targetInput, operationId:input.targetOperationId }), summary:{ parameters:redact(parameters), preview:redact(await this.approvalSummary(target.name, targetInput)) }, expires:now + 10 * 60000 };
           if (Buffer.byteLength(JSON.stringify(approval)) > 16384) fail('LIMIT');
           this.state.approvals.push(approval); await this.save();
           return { ok:true, data:{ approvalId:approval.id, expires:approval.expires, next:'请管理员在 fnOS 管理网页核对操作摘要并批准；重试执行时带 approvalId' } };
@@ -85,7 +88,8 @@ export class AgentService {
         await this.save(); intentSaved = true;
         let result;
         try { result = await this.perform(op, input); }
-        catch (e) { result = { ok:false, error:errorValue(e, e.agentCode) }; }
+        catch (e) { result = { ok:false, error:op.route === productivityEditRoute || op.name === 'conflicts.resolve'
+          ? errorValue(null, 'UNKNOWN') : errorValue(e, e.agentCode) }; }
         result.operationId = operationId;
         receipt.result = result;
         // 回执持久化上限；大预览通过读取工具重新取得。
@@ -121,6 +125,13 @@ export class AgentService {
     let data = { ...input, ...op.fixed };
     if (op.edit) { data.operation = { ...input.edit, ...op.edit }; delete data.edit; }
     const result = await this.dispatch(method, op.route, data);
+    if (op.route === productivityEditRoute || op.name === 'conflicts.resolve' && result.status !== 200 &&
+        Object.hasOwn(result.data, 'writeApplied')) {
+      if (result.status === 200) return { ok:true, data:result.data };
+      const writeApplied = result.data.writeApplied === false ? false : null;
+      return { ok:false, writeApplied, error:writeApplied === false
+        ? errorValue(new Error(result.data.error)) : errorValue(null, 'UNKNOWN') };
+    }
     if (result.status !== 200) return { ok:false, error:errorValue(new Error(result.data.error)) };
     data = result.data;
     const page = rows => {

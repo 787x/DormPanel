@@ -1,9 +1,81 @@
 import { ensure } from './protocol.mjs';
 import { stateBytes } from './v3-protocol.mjs';
-import { Registry, durableRecords, wireRecords } from './shared-records.mjs';
+import { Registry, courseColor, durableRecords, wireRecords } from './shared-records.mjs';
 import { sharedTypes } from './shared-types.mjs';
+import { records } from './merge.mjs';
+import { decodeSchedule } from './shared-course-schedule.mjs';
 import { LIST, TASK, MEMO, decodeProductivity, encodeProductivity, projectProductivity,
-  productivityConflictRows, supportedProductivity } from './shared-productivity.mjs';
+  supportedProductivity } from './shared-productivity.mjs';
+
+const conflictSides = ['base','local','remote'];
+const efficiencyTypes = [LIST, TASK, MEMO];
+const scheduleTypes = ['class','event','date','edit','source','term'];
+
+function reviewPages(row) {
+  // Escape-sensitive limits apply to serialized JSON, including imported sources
+  // whose related occurrences can span many pages.
+  const text = conflictSides.map(side => JSON.stringify(row[side], (key, value) =>
+    key === 'locator' ? undefined : typeof value === 'bigint' ? value.toString() : value, 2));
+  const size = 64 * 1024;
+  const count = Math.ceil(Math.max(...text.map(value => value.length)) / size);
+  if (count <= 1) return [row];
+  const boundary = (value, i) => /[\uDC00-\uDFFF]/.test(value.charAt(i)) ? i-1 : i;
+  return Array.from({ length:count }, (_, page) => {
+    const fragment = { ...row, part:page+1, parts:count };
+    for (const [index, side] of conflictSides.entries()) {
+      const value = text[index];
+      fragment[side] = row[side] === null ? null :
+        value.slice(boundary(value, page*size), boundary(value, (page+1)*size));
+    }
+    return fragment;
+  });
+}
+
+export function productivityConflict(frame, full = false) {
+  const conflict = frame.v3?.conflict;
+  if (!conflict) return null;
+  const groups = conflict.conflicts;
+  const indexes = conflictSides.map(side => records(conflict[side]));
+  const rows = [];
+  let hidden = 0, unreadable = 0;
+  for (const [group, entry] of groups.entries()) {
+    const keys = entry.keys?.length ? entry.keys : [entry.key ?? 'unknown:'];
+    for (const key of keys) {
+      const separator = typeof key === 'string' ? key.indexOf(':') : -1;
+      const prefix = separator > 0 ? key.slice(0, separator) : 'unknown';
+      const [sharedType, recordId, extra] = prefix === 'shared' ? key.slice(7).split('/') : [];
+      const validKey = prefix === 'shared' ? !!recordId && extra === undefined : separator > 0 && key.length > separator+1;
+      const typeId = sharedType ?? prefix;
+      const efficiency = efficiencyTypes.includes(sharedType);
+      if (!efficiency && !full) { hidden++; continue; }
+      const row = { group:group+1, key, typeId, recordId:recordId ?? (validKey ? key.slice(separator+1) : '无法识别'), unknownSides:[] };
+      for (const [index, side] of conflictSides.entries()) {
+        const value = indexes[index].get(key);
+        try {
+          if (!validKey || !efficiency && !scheduleTypes.includes(prefix) && !['course.schedule','course.color'].includes(sharedType))
+            throw Error('Unsupported conflict record');
+          if (!value) row[side] = null;
+          else if (efficiency) row[side] = decodeProductivity(wireRecords([value])[0]);
+          else if (sharedType === 'course.schedule') row[side] = decodeSchedule(value);
+          else if (sharedType === 'course.color') {
+            const color = wireRecords([value])[0];
+            ensure(color.schemaVersion === courseColor.schemaVersion, '颜色记录版本无法读取');
+            courseColor.validate(color);
+            row[side] = { rgb:color.payload[0] === 0 ? null : color.payload.readUIntBE(1, 3) };
+          } else row[side] = value;
+        } catch {
+          row[side] = null;
+          row.unknownSides.push(side);
+        }
+      }
+      if (row.unknownSides.length) unreadable++;
+      if (full && !efficiency) for (const page of reviewPages(row)) rows.push(page);
+      else rows.push(row);
+    }
+  }
+  return { token:conflict.id, revision:frame.revision, groups:groups.length,
+    rows, hidden, unreadable, complete:rows.length > 0 && rows.length <= 100001 && hidden === 0 && unreadable === 0 };
+}
 
 export function productivityBlock(frame) {
   if (frame.v3?.binding?.format !== 4 || !frame.local.sharedRecords) return '共享效率数据需要 DPV3/4';
@@ -17,16 +89,10 @@ export function productivityBlock(frame) {
 export function productivityView(frame, guard) {
   let writeBlock = productivityBlock(frame);
   try { guard?.(); } catch (error) { writeBlock = error.message; }
-  const c = frame.v3?.conflict;
-  const conflict = c ? {
-    token: c.id, revision: frame.revision,
-    rows: productivityConflictRows(new Set(c.conflicts.flatMap(row => row.keys ?? [row.key])),
-      [c.base, c.local, c.remote].map(state => wireRecords(state.sharedRecords ?? []))),
-  } : null;
   return {
     ...projectProductivity(wireRecords(frame.local.sharedRecords ?? [])),
     datasetId: frame.v3?.binding?.datasetId ?? null,
-    revision: frame.revision, writeBlock, conflict,
+    revision: frame.revision, writeBlock, conflict:productivityConflict(frame),
   };
 }
 
@@ -56,7 +122,7 @@ export function editProductivity(state, edit) {
     case 'editTask': next = put({ ...read(TASK, edit.id), text: edit.text }); break;
     case 'setTaskCompleted': next = put({ ...read(TASK, edit.id), completed: edit.completed }); break;
     case 'renameMemo': next = put({ ...read(MEMO, edit.id), title: edit.title }); break;
-    case 'editMemo': next = put({ ...read(MEMO, edit.id), body: edit.body }); break;
+    case 'editMemo': next = put({ ...read(MEMO, edit.id), ...(edit.title === undefined ? {} : { title:edit.title }), body: edit.body }); break;
     case 'deleteTask': next = remove(TASK); break;
     case 'deleteMemo': next = remove(MEMO); break;
     case 'deleteList': {

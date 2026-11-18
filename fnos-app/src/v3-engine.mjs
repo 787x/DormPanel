@@ -126,9 +126,10 @@ export class V3Engine {
     }
     await this.journal.transaction(s => { s.rotation = null; });
   }
-  async resolve(id, choice) {
+  async resolve(id, choice, validateContext = () => {}) {
     ensure(['local', 'remote'].includes(choice));
     await this.journal.transaction(s => {
+      validateContext();
       const c = s.conflict; ensure(c?.id === id && c.revision === s.revision, 'v3 stale conflict decision');
       const keys = new Set(c.conflicts.flatMap(v => v.keys));
       const resolved = this.merge(c.base, c.local, c.remote, choice, keys);

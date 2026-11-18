@@ -22,6 +22,10 @@ import { date, ensure, zone } from "./protocol.mjs";
 import { projectWeek, monday, addDays } from "./projection.mjs";
 import { mergePlan } from "./merge.mjs";
 import { previewImport, commitImport } from "./import.mjs";
+import { editProductivity } from './productivity.mjs';
+import { productivityRoute, productivityEditRoute, productivityCheckRoute, parseProductivityRead, parseProductivityWrite,
+  productivityStatus, readProductivity, validateProductivityContext, productivityEdit,
+  productivityExpectation, parseProductivityCheck, checkProductivityExpectation, validateSharedDecision } from './productivity-api.mjs';
 
 export const PREFIX = "/app/dormpanel-schedule-manager";
 export function validatePageOrigin(req, value) {
@@ -126,6 +130,7 @@ export async function createApp({
   const history = new HistoryManager(catalog);
   const tokens = new Map(),
     previews = new Map();
+  const conflictReviewKey = randomBytes(32);
   const userToken = (user, origin = null) => {
     const key = user + "\n" + (origin ?? "");
     if (!tokens.has(key)) {
@@ -138,6 +143,9 @@ export async function createApp({
   let agents;
   const handle = async (req, res, internal = false) => {
     requests++; let writing = false, requestPath, coursePersistenceStarted=false;
+    let productivityPersistenceStarted = false, sharedDecision = false;
+    const productivityWrite = req.method === 'POST' && req.url.split('?')[0] === PREFIX + productivityEditRoute;
+    const productivityRejection = productivityWrite ? { writeApplied:false } : {};
     const send = (status, value, type = "application/json; charset=utf-8") => {
       res.writeHead(status, {
         "Content-Type": type,
@@ -154,7 +162,7 @@ export async function createApp({
       try {
         user = internal ? 'agent-package-os' : authorize(req);
       } catch {
-        send(403, { error: "需要管理员身份及私有 Socket 访问路径" });
+        send(403, { error: "需要管理员身份及私有 Socket 访问路径", ...productivityRejection });
         return;
       }
       ensure(
@@ -172,6 +180,7 @@ export async function createApp({
           '/api/history/archive-restore', '/api/history/cleanup-preview', '/api/history/cleanup', '/api/history/check', '/api/history/preview', '/api/history/rollback', '/api/history/archive', '/api/history/compact',
           "/api/backups/create", "/api/backups/list", "/api/backups/verify", "/api/backups/restore", "/api/backups/cancel",
           "/api/edit", "/api/courses/preview", "/api/courses/save",
+          productivityEditRoute, productivityCheckRoute,
           "/api/refresh",
           "/api/sync",
           "/api/resolve",
@@ -192,10 +201,27 @@ export async function createApp({
             req.headers.origin ?? null,
           );
         } catch {
-          send(403, { error: "CSRF 或同源校验失败" });
+          send(403, { error: "CSRF 或同源校验失败", ...productivityRejection });
           return;
         }
-        const input = await body(req);
+        if (path === productivityEditRoute) { writing = true; writes++; }
+        const rawInput = await body(req);
+        if (path === productivityCheckRoute) {
+          // Read-only POST keeps the original text and check data out of URLs.
+          if (!Object.hasOwn(rawInput, 'expectation')) {
+            send(200, productivityExpectation(rawInput)); return;
+          }
+          const { workspaceId, datasetId, expectation } = parseProductivityCheck(rawInput);
+          ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
+          const db = await catalog.load(workspaceId);
+          const status = productivityStatus(catalog, db, workspaceId);
+          ensure(!writes && !db.writing && !historyLock && !catalog.busy.has(workspaceId) &&
+            !catalog.configuring && !status.recovery, '工作区仍在执行操作或等待恢复');
+          ensure(status.availability === 'ready' && status.datasetId === datasetId, '原共享数据集未能验证');
+          send(200, { workspaceId, datasetId, version:status.version,
+            ...checkProductivityExpectation(db.frame, workspaceId, expectation) }); return;
+        }
+        const input = path === productivityEditRoute ? parseProductivityWrite(rawInput) : rawInput;
         if (path === '/api/connections/browse') {
           ensure(!internal && !catalog.maintenance, '仅管理员页面可浏览；恢复期间请稍后重试');
           const old = input.connectionId ? catalog.connection(input.connectionId) : null;
@@ -230,7 +256,7 @@ export async function createApp({
           ensure(!input.bind && !input.create, '发现不可同时创建或绑定');
           send(200, await catalog.discover(input.workspaceId, input.targetConnectionId)); return;
         }
-        writing = true; writes++;
+        if (!writing) { writing = true; writes++; }
         ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
         ensure(!historyLock, '历史操作进行中，请稍后重试');
         if (path.startsWith('/api/backups/')) {
@@ -243,6 +269,7 @@ export async function createApp({
         }
         const workspaceId = input.workspaceId;
         const db = await catalog.load(workspaceId);
+        sharedDecision = path === '/api/resolve' && db.frame.v3?.binding?.format === 4;
         if (
           !Number.isSafeInteger(input.version) ||
           input.version !== db.frame.revision
@@ -331,6 +358,24 @@ export async function createApp({
             send(200, publicValue({ ...result, version: db.frame.revision })); return;
           } finally { historyLock = false; }
         }
+        else if (path === productivityEditRoute || sharedDecision) {
+          if (sharedDecision || input.action === 'productivity.resolve') {
+            const decision = sharedDecision ? parseProductivityWrite({ action:'productivity.resolve', ...input }) : input;
+            ensure(decision.action === 'productivity.resolve', '未知共享冲突决定');
+            const validateContext = () => validateSharedDecision(catalog, db, decision, conflictReviewKey);
+            const token = validateContext();
+            productivityPersistenceStarted = true;
+            // A decision is local. Recheck the same scope inside the Writer transaction.
+            await db.activeV3.resolve(decision.choice, token, decision.version, validateContext);
+          } else {
+            const validateContext = () => validateProductivityContext(catalog, db, input);
+            validateContext();
+            const edit = productivityEdit(db, input);
+            productivityPersistenceStarted = true;
+            await db.saveProductivity(edit, { datasetId:input.datasetId, revision:input.version }, validateContext);
+          }
+          send(200, { ...productivityStatus(catalog, db, workspaceId), localSaved:true, writeApplied:true }); return;
+        }
         else if (path.startsWith('/api/courses/')) {
           const validateCourseContext=()=>{ensure(input.datasetId===db.frame.datasetId&&input.catalogVersion===catalog.manifest.revision&&workspaceId===catalog.manifest.activeId,'课程管理身份或版本过期');db.assertWritable?.();ensure(!catalog.restoreGuards[workspaceId]&&!db.frame.conflict,'恢复保护或冲突期间禁止课程管理写入');};validateCourseContext();
           const edit=courseEditSchema.parse(input.edit),preview=previewCourse(db,edit,input.version);
@@ -341,10 +386,18 @@ export async function createApp({
         }
         else if (path === "/api/edit") await db.edit(input.operation, input.version);
         else if (path === "/api/refresh" || path === "/api/sync") {
+          if (input.createShared === true) {
+            ensure(path === '/api/sync' && db.activeV3 && workspaceId === catalog.manifest.activeId &&
+              input.catalogVersion === catalog.manifest.revision && input.datasetId === null && !db.frame.datasetId &&
+              !input.bind && !input.create && !catalog.restoreGuards[workspaceId], '只能在当前未绑定的独立工作区创建共享效率数据');
+            await network(engine => engine.initializeSharedDataset(input.version, { emptyTarget:true }));
+            send(200, { ok:true, version:db.frame.revision, datasetId:db.frame.datasetId });
+            return;
+          }
           const result = await network(engine => engine.synchronize({
             bind: input.bind === true,
             create: input.create === true,
-            ...(db.activeV3 ? { discover: input.discover === true, descriptorPath: input.descriptorPath, descriptorHash: input.descriptorHash } : {}),
+            ...(db.activeV3 ? { discover: input.discover === true, descriptorPath: input.descriptorPath, descriptorHash: input.descriptorHash, descriptorFormat:input.descriptorFormat } : {}),
           }));
           if (input.discover && db.activeV3) { send(200, result); return; }
         }
@@ -424,6 +477,14 @@ export async function createApp({
       // schedule 无 ID 仅用于初次引导；其余数据读取必须明确指定工作区。
       if (path === '/api/sync/discover') {
         send(200, await catalog.discover(u.searchParams.get('workspaceId'), u.searchParams.get('targetConnectionId'))); return;
+      }
+      if (path === productivityRoute) {
+        const input = parseProductivityRead(u.searchParams);
+        ensure(!catalog.maintenance, '正在备份恢复；请稍后重试');
+        const db = await catalog.load(input.workspaceId);
+        const result = readProductivity(catalog, db, input, conflictReviewKey);
+        send(200, { ...(input.scope === 'all' ? publicValue(result) : result), writeInFlight: writes > 0 || db.writing > 0 });
+        return;
       }
       if (path.startsWith('/api/') && !['/api/export/ics', '/api/courses', '/api/maintenance', '/api/agent', '/api/import/rows', '/api/schedule/range', '/api/migration', '/api/history', '/api/history/space', '/api/history/eligibility', '/api/history/snapshot', '/api/history/diff', '/api/history/preview-diff', '/api/schedule', '/api/state', '/api/conflicts', '/api/manage', '/api/directories'].includes(path)) {
         send(404, { error: '不存在' }); return;
@@ -599,6 +660,7 @@ export async function createApp({
         "": ["index.html", "text/html; charset=utf-8"],
         "/": ["index.html", "text/html; charset=utf-8"],
         "/course-management.js": ["course-management.js", "text/javascript; charset=utf-8"],
+        "/productivity.js": ["productivity.js", "text/javascript; charset=utf-8"],
         "/app.js": ["app.js", "text/javascript; charset=utf-8"],
         "/feedback.js": ["feedback.js", "text/javascript; charset=utf-8"],
         "/sync-status.js": ["sync-status.js", "text/javascript; charset=utf-8"],
@@ -614,6 +676,7 @@ export async function createApp({
       const message=String(e.message ?? '操作失败');
       const sensitive=/\b(?:ENOENT|EACCES|EPERM|EIO|ERR_SQLITE|SQLITE_[A-Z_]+)\b|\/(?:data|var|vol\d+|home|proc|tmp)\/|[A-Za-z]:\\|password=|token=/i.test(message+' '+(e.code ?? ''));
       send(/过期|变化|失效/.test(message) ? 409 : 400, { error:sensitive ? '存储或访问验证失败；数据与恢复证据已保留，敏感位置已隐藏' : message.slice(0,500),
+        ...(requestPath === productivityEditRoute || sharedDecision ? { writeApplied:!productivityPersistenceStarted || rejectedBeforePersistence(e) ? false : null } : {}),
         ...(['/api/edit','/api/courses/save','/api/import/confirm'].includes(requestPath) && (rejectedBeforePersistence(e)||requestPath==='/api/courses/save'&&!coursePersistenceStarted) ? {writeApplied:false} : {}) });
     } finally {
       if (writing) writes--; requests--;
@@ -629,6 +692,15 @@ export async function createApp({
     return { status, data };
   };
   agents = await AgentService.open({ store, catalog:() => catalog, dispatch, approvalSummary:async (operation, input) => {
+    if (operation === 'todo.deleteList') {
+      const db = await catalog.load(input.workspaceId);
+      validateProductivityContext(catalog, db, input);
+      const detail = readProductivity(catalog, db, { ...input, view:'todo.get' });
+      editProductivity(db.frame.local, productivityEdit(db, { ...input, action:operation }));
+      return { listName:detail.list.name, taskCount:detail.list.total,
+        taskIdsHash:createHash('sha256').update(json([...input.taskIds].sort())).digest('hex'),
+        scope:'删除此清单及指定的完整任务集合' };
+    }
     if(operation==='endpoint.confirm') {
       await catalog.load(input.workspaceId);
       return new V3EndpointMove(catalog,input.workspaceId).status(input.token,'agent-package-os');

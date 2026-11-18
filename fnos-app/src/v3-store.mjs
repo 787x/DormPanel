@@ -82,9 +82,10 @@ export class V3WebDavStore {
     const result = await transport.request(method, new URL(path, this.base), Math.min(max, this.budget.bytes), bytes);
     this.budget.charge(result?.length ?? 0, 0); return result;
   }
-  async list(parent) {
+  async list(parent, { allowMissingRoot = false } = {}) {
     scope(parent); const raw = await this.request('PROPFIND', parent, 512 * 1024, '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>');
     // A missing collection is explicit failure, never evidence of an empty/unique dataset.
+    if (raw === null && parent === '' && allowMissingRoot) return [];
     ensure(raw !== null, 'v3 missing collection'); return parseListing(new TextDecoder('utf8', { fatal: true }).decode(raw), new URL(parent, this.base), parent);
   }
   async read(path) { file(path); const raw = await this.request('GET', path, MAX_OBJECT); if (raw) ensure((match(path, raw).format??3)===(this.config.sharedFormat===1?4:3),'Protocol namespace mismatch'); return raw; }
@@ -134,8 +135,13 @@ export class V3LocalStore {
   async prepareForIsolatedTest(parent) { return this.prepare(parent); }
   async prepare(parent) { const fd = await this.directory(parent, true); await fd.close(); }
   checkPutBudget(size) { this.budget.charge(0, 0); ensure(size <= this.budget.bytes && this.budget.requests >= 4, 'v3 budget exhausted before local publication intent'); }
-  async list(parent) {
-    const fd = await this.directory(parent);
+  async list(parent, { allowMissingRoot = false } = {}) {
+    let fd;
+    try { fd = await this.directory(parent); }
+    catch (error) {
+      if (error.code === 'ENOENT' && parent === '' && allowMissingRoot) return [];
+      throw error;
+    }
     try {
       const result = []; const dir = await opendir(fdPath(fd));
       for await (const row of dir) { ensure(result.length < 256 && (row.isFile() || row.isDirectory())); result.push(child(parent, row.name, row.isDirectory())); this.budget.charge(Buffer.byteLength(row.name), 0); }
