@@ -17,6 +17,7 @@ from homeassistant.helpers.event import async_track_point_in_utc_time
 
 from .const import (DOMAIN, EVENT_AVAILABLE, EVENT_CHANGED, MAX_BYTES, MAX_APK_BYTES, RETENTIONS, TERMINAL,
                     SCHEDULE_KINDS, CAPABILITY_BY_KIND, SCHEDULE_OUTCOMES, APK_OUTCOMES)
+from .control import Controls
 
 
 def safe_filename(value: str, kind: str = "schedule_ics") -> str:
@@ -38,6 +39,8 @@ class Relay:
         self.claims: dict = {}
         self.lock = asyncio.Lock()
         self.timer = None
+        self.active = True
+        self.controls = Controls(self)
 
     def _path(self, transfer_id):
         if not re.fullmatch(r"[0-9a-f]{32}", transfer_id):
@@ -72,7 +75,7 @@ class Relay:
         if self.timer:
             self.timer()
             self.timer = None
-        if self.transfers:
+        if self.active and self.transfers:
             nearest = min(item["expires_at"] for item in self.transfers.values())
             self.timer = async_track_point_in_utc_time(
                 self.hass,
@@ -82,6 +85,8 @@ class Relay:
 
     async def cleanup(self):
         async with self.lock:
+            if not self.active:
+                return
             expired = [key for key, item in self.transfers.items() if item["expires_at"] <= time.time()]
             for key in expired:
                 self.transfers.pop(key)
@@ -94,6 +99,11 @@ class Relay:
 
     def changed(self):
         self.hass.bus.async_fire(EVENT_CHANGED, {})
+
+    def pause(self):
+        self.active = False
+        self._schedule()
+        self.controls.cancel_commands()
 
     async def register(self, installation_id, secret, name, version, capabilities, admin):
         async with self.lock:
@@ -112,7 +122,7 @@ class Relay:
                 "last_seen": now,
             }
             await self._save()
-            self.changed()
+            self.controls.registered(installation_id)
 
     def authorize(self, installation_id, secret):
         screen = self.screens.get(installation_id)
@@ -230,6 +240,7 @@ class Relay:
             if installation_id not in self.screens:
                 raise ValueError("Unknown screen")
             del self.screens[installation_id]
+            self.controls.close(installation_id)
             for item in self.transfers.values():
                 if item["targets"].get(installation_id) not in (None, *TERMINAL):
                     item["targets"][installation_id] = "dismissed"
@@ -237,7 +248,7 @@ class Relay:
                     item["file_available"] = False
                     await self.hass.async_add_executor_job(self._path(item["transfer_id"]).unlink, True)
             await self._save()
-            self.changed()
+            self.controls.registered(installation_id)
 
     async def cancel(self, transfer_id):
         async with self.lock:
@@ -258,7 +269,8 @@ class Relay:
         return result
 
     def admin_state(self):
-        return {"screens": [{key: value for key, value in screen.items() if key != "secret_hash"}
+        return {"screens": [{**{key: value for key, value in screen.items() if key != "secret_hash"},
+                             "control": self.controls.public_state(screen["installation_id"])}
                             for screen in self.screens.values()],
                 "transfers": [self.public_transfer(item) for item in
                               sorted(self.transfers.values(), key=lambda item: item["created_at"], reverse=True)]}

@@ -89,7 +89,8 @@ class HaRelayDownloader(http: OkHttpClient) {
 class HaScheduleRelayController(private val channel: HaRelayChannel, private val identity: HaRelayIdentityStore,
     http: OkHttpClient, private val status: (String) -> Unit = {}, private val apk: ApkInstallController? = null,
     private val appVersion: () -> String = { "unknown" },
-    profiles: TermScheduleProfileStore? = null) {
+    profiles: TermScheduleProfileStore? = null,
+    private val onRegistered: (() -> Unit)? = null) {
     private val downloader = HaRelayDownloader(http)
     private val importer = TimetableImporter(profiles = profiles)
     private val worker = Executors.newSingleThreadExecutor()
@@ -141,9 +142,10 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         terminalAwaitingAck.clear()
         recoveredInFlight = null
         inFlightId?.let { queued.addFirst(it); inFlightId = null; downloading = false }
-            val request = message("register").put("display_name", identity.displayName).put("app_version", appVersion())
+        val request = message("register").put("display_name", identity.displayName).put("app_version", appVersion())
             .put("capabilities", org.json.JSONArray().put("schedule_relay_v1").put("schedule_csv_v1").put("schedule_xls_v1").apply {
                 if (apk != null) put("apk_install_v1")
+                if (onRegistered != null) put(com.dormpanel.app.ha.NativeDeviceControls.CAPABILITY)
             })
         if (!channel.request(request) { result ->
             if (closed || generation != connectionGeneration) return@request
@@ -152,6 +154,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
                 return@request
             }
             registered = true
+            onRegistered?.invoke()
             status("Relay ready")
             flushRecoveredTerminals(generation)
             next()

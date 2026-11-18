@@ -21,6 +21,8 @@ class UploadView(HomeAssistantView):
     async def post(self, request):
         if not request["hass_user"].is_admin:
             raise Unauthorized()
+        if not self.relay.active:
+            raise web.HTTPServiceUnavailable(text="DormPanel integration is not loaded")
         if not request.content_type.startswith("multipart/"):
             raise web.HTTPBadRequest(text="Multipart upload required")
         if request.content_length is not None and request.content_length > MAX_APK_BYTES + 65536:
@@ -78,6 +80,8 @@ class DownloadView(HomeAssistantView):
         self.relay = relay
 
     async def get(self, request, transfer_id, claim_id):
+        if not self.relay.active:
+            raise web.HTTPNotFound()
         if "Range" in request.headers:
             raise web.HTTPBadRequest(text="Range downloads are not supported")
         try:

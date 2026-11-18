@@ -50,6 +50,9 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private val statusListeners = linkedSetOf<(HaStatus) -> Unit>()
     private val relayReadyListeners = linkedSetOf<() -> Unit>()
     private val relayEventListeners = linkedSetOf<(JSONObject) -> Unit>()
+    private var legacyHelpers = false
+    internal var nativeControlSupported = false
+        private set
     private var initialized = false
     private val registryPending = mutableSetOf<String>()
     private val registryDirty = mutableSetOf<String>()
@@ -90,6 +93,8 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         override val origin get() = settings.baseUrl
         override val ready get() = connected
         override fun request(message: JSONObject, callback: (JSONObject) -> Unit) = socket.request(message, callback)
+        override fun subscribe(message: JSONObject, onResult: (JSONObject) -> Unit, onEvent: (JSONObject) -> Unit) =
+            socket.subscribe(message, onResult, onEvent)
         override fun addReadyListener(listener: () -> Unit) { relayReadyListeners += listener; if (connected) listener() }
         override fun removeReadyListener(listener: () -> Unit) { relayReadyListeners -= listener }
         override fun addEventListener(listener: (JSONObject) -> Unit) { relayEventListeners += listener }
@@ -99,7 +104,11 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     fun removeStatusListener(listener: (HaStatus) -> Unit) { statusListeners -= listener }
     private fun statusChanged(value: HaStatus) {
         status = value
-        if (!connected) { initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); deviceCommands.clear(); pendingLights.clear(); legacyForecast?.invoke(); legacyForecast = null }
+        if (!connected) {
+            legacyHelpers = false
+            nativeControlSupported = false
+            initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); deviceCommands.clear(); pendingLights.clear(); legacyForecast?.invoke(); legacyForecast = null
+        }
         forecasts.connection(connected)
         publish(rebuild = true); statusListeners.toList().forEach { it(value) }
     }
@@ -131,9 +140,11 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                                 initialized = true
                                 bufferedEvents.forEach(store::event); bufferedEvents.clear()
                                 store.lightStates(true).values.forEach(memory::observe)
-                                selectWeather(); socket.synchronized(); applyAppearance(); applyDeviceHelpers(); fetchForecast()
-                                relayReadyListeners.toList().forEach { it() }
-                                registryDirty.toList().forEach { kind -> registryDirty -= kind; refreshRegistry(kind) }
+                                negotiateControls {
+                                    selectWeather(); socket.synchronized(); applyAppearance(); applyDeviceHelpers(); fetchForecast()
+                                    relayReadyListeners.toList().forEach { it() }
+                                    registryDirty.toList().forEach { kind -> registryDirty -= kind; refreshRegistry(kind) }
+                                }
                             }
                         }
                     }
@@ -144,6 +155,15 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
             socket.request(JSONObject().put("type", "subscribe_events").put("event_type", event))
         }
         socket.request(JSONObject().put("type", "subscribe_events").put("event_type", "dormpanel_transfer_available"))
+    }
+    private fun negotiateControls(done: () -> Unit) {
+        val sent = socket.request(JSONObject().put("type", "dormpanel/control_protocol")) { result ->
+            nativeControlSupported = result.optBoolean("success") &&
+                result.optJSONObject("result")?.optInt("version") == NativeDeviceControls.VERSION
+            legacyHelpers = result.optJSONObject("error")?.optString("code") == "unknown_command"
+            done()
+        }
+        if (!sent) socket.resyncFailed()
     }
     private fun refreshRegistry(kind: String, done: () -> Unit = {}) {
         if (!registryPending.add(kind)) { registryDirty += kind; return }
@@ -310,7 +330,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         val HOME_DOMAINS = HomeKind.entries.map { it.name.lowercase() }.toSet()
     }
     private fun appearanceHelper(id: String, domain: String): HaEntity? {
-        if (!connected || !id.startsWith("$domain.")) return null
+        if (!connected || !legacyHelpers || !id.startsWith("$domain.")) return null
         return store.entities[id]?.takeIf { it.usable && store.enabled(it) }
     }
     private fun numberHelper(id: String, minimum: Int = 0): HaEntity? = appearanceHelper(id, "input_number")?.takeIf { helper ->

@@ -63,6 +63,7 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
         mode.setOnTouchListener { _, _ -> modeExplicitlyChosen = true; false }
         val relayName = input("DormPanel relay screen name", backend.relayIdentity.displayName, advanced)
         label("Timetable relay: ${backend.relayStatus}", advanced)
+        label("旧版 HA 兼容选项 · 支持原生控制时自动使用设备实体，以下 Helper 绑定仅用于旧版 HA。", advanced)
         val theme = choices("Theme helper (optional input_select: light / dark)", entities("input_select", settings.themeEntity), settings.themeEntity, advanced)
         val opacity = choices("Opacity helper (optional input_number: 0–100)", entities("input_number", settings.opacityEntity), settings.opacityEntity, advanced)
         val brightness = choices("DormPanel brightness helper (optional input_number: 1–100)", entities("input_number", settings.displayBrightnessEntity), settings.displayBrightnessEntity, advanced)
