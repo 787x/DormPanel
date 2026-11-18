@@ -17,7 +17,7 @@ class MainHaScheduler : HaScheduler {
 }
 /** Stable providers retain this boundary when settings switch the backend at runtime. */
 class DashboardBackend(context: Context, appearance: AppearanceController, labels: CatalogLabels) : DashboardDataSource, HomeControlSource {
-    private val scheduler = MainHaScheduler()
+    internal val scheduler = MainHaScheduler()
     private val http = haHttpClient()
     val relayHttp: okhttp3.OkHttpClient get() = http
     val rest = HaRestClient(http, scheduler)

@@ -2,6 +2,8 @@ package com.dormpanel.app.schedule
 
 import com.dormpanel.app.ha.HaRelayChannel
 import com.dormpanel.app.ha.HaRelayIdentityStore
+import com.dormpanel.app.ha.HaRetryRequest
+import com.dormpanel.app.ha.MainHaScheduler
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -89,11 +91,15 @@ class HaRelayDownloader(http: OkHttpClient) {
 class HaScheduleRelayController(private val channel: HaRelayChannel, private val identity: HaRelayIdentityStore,
     http: OkHttpClient, private val status: (String) -> Unit = {}, private val apk: ApkInstallController? = null,
     private val appVersion: () -> String = { "unknown" },
-    profiles: TermScheduleProfileStore? = null) {
+    profiles: TermScheduleProfileStore? = null,
+    private val onRegistered: (() -> Unit)? = null,
+    private val onRegistrationFailed: (() -> Unit)? = null,
+    private val isLegacyServer: () -> Boolean = { true }) {
     private val downloader = HaRelayDownloader(http)
     private val importer = TimetableImporter(profiles = profiles)
     private val worker = Executors.newSingleThreadExecutor()
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val registration = HaRetryRequest(channel, MainHaScheduler())
     private val queued = ArrayDeque<String>()
     private val known = mutableSetOf<String>()
     private val terminalAwaitingAck = mutableSetOf<String>()
@@ -115,13 +121,18 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
     private var presenter: ((RelayPreview) -> Unit)? = null
     private var closed = false
     private val readyListener: () -> Unit = { register() }
+    private val disconnectListener: () -> Unit = { resetRegistration() }
     private val eventListener: (JSONObject) -> Unit = { event ->
         val targets = event.optJSONArray("target_installation_ids")
         if (targets != null && (0 until targets.length()).any { targets.optString(it) == identity.installationId })
             event.optString("transfer_id").takeIf { Regex("[0-9a-f]{32}").matches(it) }?.let(::enqueue)
     }
 
-    init { channel.addEventListener(eventListener); channel.addReadyListener(readyListener) }
+    init {
+        channel.addEventListener(eventListener)
+        channel.addDisconnectListener(disconnectListener)
+        channel.addReadyListener(readyListener)
+    }
 
     private fun message(type: String, transferId: String? = null, outcome: String? = null) =
         JSONObject().put("type", "dormpanel/$type").put("installation_id", identity.credentials().first)
@@ -130,10 +141,9 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
                 if (outcome != null) put("outcome", outcome)
             }
 
-    private fun register() {
-        if (closed || !channel.ready) return
+    private fun resetRegistration() {
+        registration.cancel()
         connectionGeneration++
-        val generation = connectionGeneration
         registered = false
         // The socket discards outstanding callbacks when it disconnects. An
         // unconfirmed terminal ack must be offered again by list_pending.
@@ -141,17 +151,25 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
         terminalAwaitingAck.clear()
         recoveredInFlight = null
         inFlightId?.let { queued.addFirst(it); inFlightId = null; downloading = false }
-            val request = message("register").put("display_name", identity.displayName).put("app_version", appVersion())
+    }
+
+    private fun register() {
+        if (closed || !channel.ready) return
+        resetRegistration()
+        val generation = connectionGeneration
+        registration.start({ message("register").put("display_name", identity.displayName).put("app_version", appVersion())
             .put("capabilities", org.json.JSONArray().put("schedule_relay_v1").put("schedule_csv_v1").put("schedule_xls_v1").apply {
                 if (apk != null) put("apk_install_v1")
+                if (onRegistered != null) put(com.dormpanel.app.ha.NativeDeviceControls.CAPABILITY)
             })
-        if (!channel.request(request) { result ->
-            if (closed || generation != connectionGeneration) return@request
+        }) { result ->
             if (!result.optBoolean("success")) {
                 status("Relay unavailable: administrator permission or DormPanel integration required")
-                return@request
+                onRegistrationFailed?.invoke()
+                return@start result.optJSONObject("error")?.optString("code") == "unknown_command" && isLegacyServer()
             }
             registered = true
+            onRegistered?.invoke()
             status("Relay ready")
             flushRecoveredTerminals(generation)
             next()
@@ -161,7 +179,8 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
                     for (index in 0 until entries.length()) entries.optJSONObject(index)?.optString("transfer_id")?.let(::enqueue)
                 }
             }
-        }) status("Relay unavailable: WebSocket is not ready")
+            true
+        }
     }
 
     private fun enqueue(id: String) {
@@ -177,7 +196,7 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
     }
 
     private fun next() {
-        if (closed || active != null || activeApkId != null || downloading || queued.isEmpty() || !channel.ready) return
+        if (closed || active != null || activeApkId != null || downloading || queued.isEmpty() || !channel.ready || !registered) return
         val id = queued.removeFirst()
         downloading = true
         inFlightId = id
@@ -352,6 +371,8 @@ class HaScheduleRelayController(private val channel: HaRelayChannel, private val
     fun close() {
         if (closed) return
         closed = true; presenter = null
+        registration.cancel()
+        channel.removeDisconnectListener(disconnectListener)
         channel.removeReadyListener(readyListener); channel.removeEventListener(eventListener)
         worker.shutdownNow()
     }

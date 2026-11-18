@@ -118,10 +118,12 @@ class DeviceControlController(private val store: DeviceControlStore, private val
         val current = state.system
         if (!current.canWrite || current.automatic || systemBrightness == null) return false
         if (current.percent == percent) return true
-        val changed = systemBrightness.setBrightness(current.rawFor(percent))
+        val target = current.rawFor(percent)
+        val changed = systemBrightness.setBrightness(target)
         refreshSystemBrightness()
-        if (changed && !remote) systemBrightnessCommand?.invoke(state.system.percent)
-        return changed
+        val success = changed && state.system.raw == target
+        if (success && !remote) systemBrightnessCommand?.invoke(state.system.percent)
+        return success
     }
     fun setKeepAwake(enabled: Boolean, remote: Boolean = false) {
         if (enabled == state.keepAwake) return
@@ -136,12 +138,12 @@ class DeviceControlController(private val store: DeviceControlStore, private val
         update(state.copy(blackout = enabled))
         if (!remote) blackoutCommand?.invoke(enabled)
     }
-    fun setMediaPercent(percent: Int, remote: Boolean = false) {
-        if (percent !in 0..100 || (percent == 0 && !audio.muteAvailable)) return
+    fun setMediaPercent(percent: Int, remote: Boolean = false): Boolean {
+        if (percent !in 0..100 || (percent == 0 && !audio.muteAvailable)) return false
         val target = if (percent == 0) 0 else (percent * audio.max.coerceAtLeast(1) / 100f).roundToInt().coerceAtLeast(1)
         if ((target == 0 && audio.muted()) || (target > 0 && target == audio.current() && !audio.muted())) {
             refreshAudio()
-            return
+            return true
         }
         if (target == 0) {
             if (!audio.muted()) audio.mute(true)
@@ -151,6 +153,7 @@ class DeviceControlController(private val store: DeviceControlStore, private val
         }
         refreshAudio()
         if (!remote) volumeCommand?.invoke(state.mediaPercent)
+        return if (target == 0) state.muted else state.mediaVolume == target && !state.muted
     }
     fun toggleMute() {
         if (!audio.muteAvailable) return

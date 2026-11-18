@@ -19,7 +19,8 @@ import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
 
 class HaProtocolTest {
-    private class Fixture(val reject: Boolean = false, val modernWeather: Boolean = false) : AutoCloseable {
+    private class Fixture(val reject: Boolean = false, val modernWeather: Boolean = false,
+        val nativeControl: Boolean = false, val failFirstProbe: Boolean = false) : AutoCloseable {
         val server = MockWebServer()
         val scheduler = ManualScheduler()
         val http = haHttpClient()
@@ -78,6 +79,15 @@ class HaProtocolTest {
                         return
                     }
                     if (holdServices && message.optString("type") == "call_service") return
+                    if (message.optString("type") == "dormpanel/control_protocol") {
+                        val failure = failFirstProbe && received.count { it.optString("type") == "dormpanel/control_protocol" } == 1
+                        webSocket.send(JSONObject().put("id", message.getInt("id")).put("type", "result")
+                            .put("success", nativeControl && !failure).apply {
+                                if (nativeControl && !failure) put("result", JSONObject().put("version", 1))
+                                else put("error", JSONObject().put("code", if (failure) "not_loaded" else "unknown_command"))
+                            }.toString())
+                        return
+                    }
                     val result: Any = when (message.optString("type")) {
                         "subscribe_events" -> { if (message.optString("event_type") == "state_changed") subscription = message.getInt("id"); JSONObject.NULL }
                         "get_states" -> org.json.JSONArray("""[
@@ -134,6 +144,51 @@ class HaProtocolTest {
         fun state(value: String) { peer.send(JSONObject().put("type", "event").put("id", subscription).put("event", JSONObject().put("event_type", "state_changed")
             .put("data", JSONObject().put("entity_id", "light.a").put("new_state", JSONObject("""{"entity_id":"light.a","state":"$value","attributes":{"supported_color_modes":["color_temp"],"brightness":255,"min_color_temp_kelvin":2700,"max_color_temp_kelvin":6500}}""")))).toString()) }
         override fun close() { source.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); server.close(); http.dispatcher.executorService.shutdown() }
+    }
+    @Test fun nativeHandshakeExcludesHelperSnapshotsEventsAndWrites() {
+        listOf(false, true).forEach { native ->
+            Fixture(nativeControl = native).use { f ->
+                val displays = mutableListOf<Int>()
+                f.source.remoteBrightness = { displays += it }
+                f.start(display = "input_number.display")
+                f.until { if (native) f.source.nativeControlSupported == true else displays.isNotEmpty() }
+                assertEquals(native, f.source.nativeControlSupported)
+                assertEquals(if (native) ThemeMode.DARK else ThemeMode.LIGHT, f.appearance.state.themeMode)
+                assertEquals(if (native) emptyList<Int>() else listOf(32), displays)
+                f.entity("input_number.display", "80")
+                assertEquals(if (native) emptyList<Int>() else listOf(32, 80), displays)
+                f.source.requestDisplayBrightness(70)
+                f.scheduler.advance(180)
+                if (native) {
+                    f.appearance.setTheme(ThemeMode.LIGHT)
+                    assertEquals(ThemeMode.LIGHT, f.appearance.state.themeMode)
+                    assertTrue(f.services("set_value").isEmpty())
+                } else {
+                    f.until { f.services("set_value").size == 1 }
+                }
+            }
+        }
+    }
+    @Test fun temporaryProbeFailureEnablesLiveHelpersUntilNativeSessionTakesOver() {
+        Fixture(nativeControl = true, failFirstProbe = true).use { f ->
+            val displays = mutableListOf<Int>()
+            f.source.remoteBrightness = { displays += it }
+            f.start(display = "input_number.display")
+            f.awaitAppearanceIdle()
+            assertTrue(displays.isEmpty()) // Preserve local state during a transient fault.
+            f.entity("input_number.display", "80")
+            assertEquals(listOf(80), displays)
+            f.scheduler.advance(1000)
+            f.until { f.source.nativeControlSupported == true }
+            f.entity("input_number.display", "81")
+            assertEquals(listOf(80, 81), displays) // The probe alone does not take over.
+            f.source.requestDisplayBrightness(67)
+            f.source.enableLegacyControls(false) // Valid subscription, before first native report.
+            f.scheduler.advance(180)
+            f.entity("input_number.display", "82")
+            assertEquals(listOf(80, 81), displays)
+            assertTrue(f.services("set_value").isEmpty())
+        }
     }
     @Test fun projectionsAreDemandDrivenAndTopologyReusesOneDashboardSnapshot() {
         Fixture().use { f ->

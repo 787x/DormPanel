@@ -1,6 +1,8 @@
 package com.dormpanel.app.ha
 
 import android.content.Context
+import android.provider.Settings
+import android.view.View
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
@@ -10,17 +12,122 @@ import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.platform.app.InstrumentationRegistry
 import com.dormpanel.app.MainActivity
+import com.dormpanel.app.R
+import com.dormpanel.app.appearance.PreferencesAppearanceStore
+import com.dormpanel.app.appearance.ThemeMode
 import com.dormpanel.app.dashboard.DashboardViewModel
 import okhttp3.*
 import okhttp3.mockwebserver.*
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
 
 class HaAndroidTest {
     @get:org.junit.Rule val dashboardPersistence = com.dormpanel.app.IsolatedDashboardRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+
+    @Test fun nativeControlRoundtripUsesActivityControllersOnDevice() {
+        val appearance = PreferencesAppearanceStore(context)
+        val originalAppearance = appearance.read()
+        val reports = LinkedBlockingQueue<JSONObject>()
+        val registered = AtomicReference<JSONObject>()
+        val peer = AtomicReference<WebSocket>()
+        val subscription = AtomicReference<Int>()
+        val token = "a".repeat(32)
+        val probeAttempts = AtomicInteger()
+        val registrationAttempts = AtomicInteger()
+        val subscriptionAttempts = AtomicInteger()
+        fun report(): JSONObject = checkNotNull(reports.poll(8, TimeUnit.SECONDS)) { "Missing native state report" }
+        fun command(id: String, field: String, value: Any): JSONObject {
+            val event = JSONObject().put("version", 1).put("session", token).put("command_id", id)
+                .put("installation_id", registered.get().getString("installation_id"))
+                .put("field", field).put("value", value)
+            assertTrue(peer.get().send(JSONObject().put("id", subscription.get()).put("type", "event")
+                .put("event", event).toString()))
+            return report().also { assertEquals(id, it.getString("command_id")) }
+        }
+
+        try {
+            MockWebServer().use { server ->
+                server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                    override fun onOpen(webSocket: WebSocket, response: Response) {
+                        peer.set(webSocket)
+                        webSocket.send("""{"type":"auth_required"}""")
+                    }
+
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        val message = JSONObject(text)
+                        val id = message.optInt("id")
+                        val type = message.getString("type")
+                        val firstFailure = when (type) {
+                            "dormpanel/control_protocol" -> probeAttempts.incrementAndGet() == 1
+                            "dormpanel/register" -> registrationAttempts.incrementAndGet() == 1
+                            "dormpanel/control_subscribe" -> subscriptionAttempts.incrementAndGet() == 1
+                            else -> false
+                        }
+                        if (firstFailure) {
+                            webSocket.send(JSONObject().put("id", id).put("type", "result").put("success", false)
+                                .put("error", JSONObject().put("code", if (type == "dormpanel/register") "unknown_command" else "not_loaded")).toString())
+                            return
+                        }
+                        val result: Any = when (type) {
+                            "auth" -> { webSocket.send("""{"type":"auth_ok"}"""); return }
+                            "get_states" -> org.json.JSONArray()
+                            "dormpanel/control_protocol" -> JSONObject().put("version", 1)
+                            "dormpanel/register" -> { registered.set(message); JSONObject() }
+                            "dormpanel/control_subscribe" -> {
+                                subscription.set(id)
+                                JSONObject().put("version", 1).put("session", token)
+                            }
+                            "dormpanel/control_admit" -> JSONObject().put("remaining_ms", 5000)
+                            "dormpanel/control_report" -> { reports.add(message); JSONObject.NULL }
+                            "dormpanel/list_pending" -> org.json.JSONArray()
+                            else -> JSONObject.NULL
+                        }
+                        webSocket.send(JSONObject().put("id", id).put("type", "result")
+                            .put("success", true).put("result", result).toString())
+                    }
+                }))
+                server.start()
+                val endpoint = server.url("/").toString()
+                ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                    scenario.onActivity {
+                        ViewModelProvider(it)[DashboardViewModel::class.java].dataSource.ha.configure(
+                            HaConnectionSettings(BackendMode.HOME_ASSISTANT, endpoint), "test")
+                    }
+                    val first = report()
+                    assertEquals(2, probeAttempts.get())
+                    assertEquals(2, registrationAttempts.get())
+                    assertEquals(2, subscriptionAttempts.get())
+                    assertEquals(10, first.getJSONObject("values").length())
+                    assertFalse(first.getBoolean("mute_available"))
+                    assertFalse(Settings.System.canWrite(context))
+                    assertFalse(first.getBoolean("system_write"))
+                    assertTrue(registered.get().getJSONArray("capabilities").toString().contains("device_control_v1"))
+                    assertEquals("permission", command("1".repeat(32), "system_automatic", false).getString("error"))
+                    assertEquals("unsupported", command("2".repeat(32), "media_volume", 0).getString("error"))
+                    val mode = if (originalAppearance.themeMode == ThemeMode.DARK) ThemeMode.LIGHT else ThemeMode.DARK
+                    assertEquals(mode.name.lowercase(), command("3".repeat(32), "theme", mode.name.lowercase())
+                        .getJSONObject("values").getString("theme"))
+                    assertTrue(command("4".repeat(32), "blackout", true).getJSONObject("values").getBoolean("blackout"))
+                    scenario.onActivity {
+                        val model = ViewModelProvider(it)[DashboardViewModel::class.java]
+                        assertEquals(mode, model.appearance.state.themeMode)
+                        val overlay = it.findViewById<View>(R.id.blackout_surface)
+                        assertEquals(View.VISIBLE, overlay.visibility)
+                        assertTrue(overlay.performClick())
+                    }
+                    assertFalse(report().getJSONObject("values").getBoolean("blackout"))
+                }
+            }
+        } finally {
+            appearance.write(originalAppearance)
+        }
+    }
     @Test fun addingDeviceHelpersPreservesExistingSettings() {
         val store = HaSettingsStore(context)
         val saved = store.read()
