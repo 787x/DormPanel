@@ -11,13 +11,18 @@ before(async () => {
 });
 after(async () => browser?.close());
 
-async function fixture(t, admin = true) {
+async function fixture(t, admin = true, faults) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   t.after(() => page.close());
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
   page.on("dialog", dialog => dialog.accept());
+  if (faults) {
+    const now = new Date("2026-01-01T00:00:00Z");
+    await page.clock.install({ time: now });
+    await page.clock.pauseAt(new Date(+now + 1000));
+  }
   await page.setContent(`<style>
     body { margin: 0; font-family: sans-serif; }
     dormpanel-overview { width: 300px; }
@@ -25,7 +30,7 @@ async function fixture(t, admin = true) {
   </style><dormpanel-panel></dormpanel-panel>
   <dormpanel-overview id="cardA"></dormpanel-overview><dormpanel-overview id="cardB"></dormpanel-overview>`);
   await page.addScriptTag({ path: path.resolve(__dirname, "../custom_components/dormpanel/frontend/panel.js") });
-  await page.evaluate(is_admin => {
+  await page.evaluate(({ is_admin, faults }) => {
     const values = {
       display_brightness: 52, card_opacity: 80, theme: "dark", follow_system: false,
       system_brightness: 40, media_volume: 33, system_automatic: false,
@@ -41,6 +46,7 @@ async function fixture(t, admin = true) {
     const mock = window.mock = {
       a, b, screens: [a, b], transfers: [], commands: [], reads: 0, subscriptions: new Set(),
       uploads: [], listeners: new Map(), subscribed: 0, unsubscribed: 0,
+      readFailures: 0, subscribeFailures: 0, ...faults,
       changed() { for (const callback of this.subscriptions) callback(); },
       emit(event) { for (const callback of this.listeners.get(event) || []) callback(); },
       connection: {
@@ -53,12 +59,24 @@ async function fixture(t, admin = true) {
         async subscribeEvents(fn, type) {
           if (type !== "dormpanel_transfer_changed") throw new Error(type);
           mock.subscribed++;
+          if (mock.subscribeFailures > 0) {
+            mock.subscribeFailures--;
+            throw new Error("订阅暂时失败");
+          }
+          if (mock.holdSubscription) {
+            mock.holdSubscription = false;
+            await new Promise(resolve => { mock.releaseSubscription = resolve; });
+          }
           mock.subscriptions.add(fn);
           return async () => { mock.unsubscribed++; mock.subscriptions.delete(fn); };
         },
         async sendMessagePromise(msg) {
           if (msg.type === "dormpanel/admin_state") {
             mock.reads++;
+            if (mock.readFailures > 0) {
+              mock.readFailures--;
+              throw new Error("读取暂时失败");
+            }
             const snapshot = structuredClone({ screens: mock.screens, transfers: mock.transfers });
             if (mock.holdRead) {
               mock.holdRead = false;
@@ -114,8 +132,8 @@ async function fixture(t, admin = true) {
     document.querySelector("#cardA").setConfig({ device: "a" });
     document.querySelector("#cardB").setConfig({ device: "b" });
     for (const view of document.querySelectorAll("dormpanel-panel, dormpanel-overview")) view.hass = mock.hass();
-  }, admin);
-  if (admin) await page.waitForFunction(() => document.querySelector("#cardB").screen?.installation_id === "b");
+  }, { is_admin: admin, faults });
+  if (admin && !faults) await page.waitForFunction(() => document.querySelector("#cardB").screen?.installation_id === "b");
   return page;
 }
 
@@ -127,6 +145,167 @@ const ready = (page, selector) => page.waitForFunction(s => {
 const update = (page, fn) => page.evaluate(fn);
 const commands = page => page.evaluate(() => mock.commands.map(command => command.msg));
 const count = (page, n) => page.waitForFunction(n => mock.commands.length === n, n);
+
+test("初次和运行中读取失败时，多个界面共享退避重试", async t => {
+  const page = await fixture(t, true, { readFailures: 7 });
+  const reads = () => page.evaluate(() => mock.reads);
+  const allAvailable = () => page.evaluate(() => [...document.querySelectorAll("dormpanel-panel, dormpanel-overview")]
+    .every(view => view.available));
+  assert.equal(await reads(), 1);
+  assert.equal(await allAvailable(), false);
+  for (const [index, delay] of [1000, 2000, 4000, 8000, 16000, 30000, 30000].entries()) {
+    await page.clock.runFor(delay - 1);
+    assert.equal(await reads(), index + 1);
+    await page.clock.runFor(1);
+    assert.equal(await reads(), index + 2);
+  }
+  assert.equal(await allAvailable(), true);
+  await update(page, () => {
+    mock.readFailures = 1;
+    mock.a.control.values.display_brightness = 73;
+    mock.changed();
+  });
+  assert.equal(await allAvailable(), false);
+  assert.match(await page.locator("#cardA main").innerText(), /读取设备与传输失败.*上次读取结果/);
+  await update(page, () => { for (let i = 0; i < 20; i++) mock.changed(); });
+  assert.equal(await reads(), 9);
+  await page.clock.runFor(1000);
+  assert.equal(await reads(), 10);
+  assert.equal(await allAvailable(), true);
+  assert.equal(await page.locator("#cardA #display_brightness").inputValue(), "73");
+  await page.clock.runFor(31000);
+  assert.deepEqual(await page.evaluate(() => [mock.reads, mock.subscribed, mock.commands.length]), [10, 1, 0]);
+});
+
+test("订阅在同一连接中恢复并补读状态，正常重连沿用原有订阅", async t => {
+  const page = await fixture(t, true, { subscribeFailures: 2 });
+  const attempts = () => page.evaluate(() => [mock.subscribed, mock.subscriptions.size, mock.reads]);
+  assert.deepEqual(await attempts(), [1, 0, 1]);
+  assert.match(await page.locator("#cardA main").innerText(), /实时更新不可用/);
+  await page.clock.runFor(1000);
+  assert.deepEqual(await attempts(), [2, 0, 1]);
+  await update(page, () => { mock.a.control.values.display_brightness = 68; });
+  await page.clock.runFor(1999);
+  assert.deepEqual(await attempts(), [2, 0, 1]);
+  await page.clock.runFor(1);
+  assert.deepEqual(await attempts(), [3, 1, 2]);
+  assert.doesNotMatch(await page.locator("#cardA main").innerText(), /实时更新不可用/);
+  assert.equal(await page.locator("#cardA #display_brightness").inputValue(), "68");
+  await update(page, () => {
+    mock.a.control.values.display_brightness = 84;
+    mock.changed();
+  });
+  assert.equal(await page.locator("#cardA #display_brightness").inputValue(), "84");
+  await update(page, () => {
+    mock.connection.connected = false;
+    mock.emit("disconnected");
+    mock.connection.connected = true;
+    mock.emit("ready");
+  });
+  await page.clock.runFor(31000);
+  assert.deepEqual(await attempts(), [3, 1, 4]);
+});
+
+test("断线和最后一个界面卸载会取消重试并释放迟到的订阅", async t => {
+  const page = await fixture(t, true, { subscribeFailures: 2, readFailures: 2 });
+  const attempts = () => page.evaluate(() => [mock.subscribed, mock.subscriptions.size, mock.reads]);
+  assert.deepEqual(await attempts(), [1, 0, 1]);
+  await update(page, () => {
+    mock.connection.connected = false;
+    mock.emit("disconnected");
+  });
+  await page.clock.runFor(31000);
+  assert.deepEqual(await attempts(), [1, 0, 1]);
+  await update(page, () => {
+    mock.connection.connected = true;
+    mock.emit("ready");
+  });
+  assert.deepEqual(await attempts(), [2, 0, 2]);
+  await update(page, () => {
+    mock.views = [...document.querySelectorAll("dormpanel-panel, dormpanel-overview")];
+    mock.views.forEach(view => view.remove());
+  });
+  await page.clock.runFor(31000);
+  assert.deepEqual(await attempts(), [2, 0, 2]);
+  assert.deepEqual(await page.evaluate(() => [...mock.listeners.values()].map(v => v.size)), [0, 0]);
+
+  await update(page, () => {
+    mock.holdSubscription = true;
+    document.body.append(mock.views[0]);
+    mock.views[0].remove();
+    document.body.append(mock.views[1]);
+  });
+  assert.deepEqual(await attempts(), [3, 0, 3]);
+  await update(page, () => mock.releaseSubscription());
+  assert.deepEqual(await attempts(), [4, 1, 4]);
+  await update(page, () => mock.views[1].remove());
+  assert.equal(await page.evaluate(() => mock.unsubscribed), 2);
+  assert.deepEqual(await attempts(), [4, 0, 4]);
+});
+
+test("读取失败和恢复保留各界面的上传草稿，仅发送最新兼容目标", async t => {
+  const page = await fixture(t, true, {});
+  const card = page.locator("#cardA");
+  const checks = selector => page.locator(`${selector} .targets input:checked`).evaluateAll(inputs => inputs.map(el => el.value));
+  await update(page, () => {
+    const a = document.querySelector("#cardA");
+    const b = document.querySelector("#cardB");
+    a.adminArea.open = true;
+    a.retention.value = "3600";
+    a.targets.querySelectorAll("input").forEach(input => input.click());
+    b.targets.querySelector('input[value="b"]').click();
+  });
+  const file = card.locator("input[type=file]");
+  await file.setInputFiles({ name: "schedule.ics", mimeType: "text/calendar", buffer: Buffer.from("fixture") });
+  await update(page, () => {
+    mock.readFailures = 1;
+    mock.changed();
+  });
+  assert.equal(await card.getByRole("button", { name: "发送至所选设备" }).isDisabled(), true);
+  assert.equal(await card.locator("#blackout").isDisabled(), true);
+  assert.deepEqual(await checks("#cardA"), ["a", "b"]);
+  assert.deepEqual(await checks("#cardB"), ["b"]);
+  assert.deepEqual(await checks(panel), []);
+  await update(page, () => { mock.screens = [mock.a]; });
+  await page.clock.runFor(1000);
+  assert.deepEqual(await checks("#cardA"), ["a"]);
+  assert.deepEqual(await checks("#cardB"), []);
+  assert.equal(await file.evaluate(input => input.files[0].name), "schedule.ics");
+  assert.equal(await card.getByLabel("临时保留").inputValue(), "3600");
+  await update(page, () => {
+    mock.holdUpload = true;
+    document.querySelector("#cardA").submit.click();
+    mock.readFailures = 1;
+    mock.changed();
+  });
+  assert.deepEqual(await page.evaluate(() => mock.uploads.map(upload => upload.targets)), [["a"]]);
+  assert.equal(await card.locator("progress").isVisible(), true);
+  await page.clock.runFor(1000);
+  assert.equal(await card.locator("progress").isVisible(), true);
+  await update(page, () => {
+    mock.holdUpload = false;
+    mock.releaseUpload();
+  });
+  assert.equal(await card.locator("progress").isVisible(), false);
+
+  await update(page, () => {
+    mock.screens.push(mock.b);
+    mock.changed();
+  });
+  await update(page, () => {
+    const view = document.querySelector("#cardA");
+    view.targets.querySelector('input[value="b"]').click();
+    view.kind.value = "apk";
+    view.kind.dispatchEvent(new Event("change"));
+  });
+  assert.deepEqual(await checks("#cardA"), ["a"]);
+  await update(page, () => {
+    mock.a.capabilities = [];
+    mock.changed();
+  });
+  assert.deepEqual(await checks("#cardA"), []);
+  assert.equal(await card.getByRole("button", { name: "发送至所选设备" }).isDisabled(), true);
+});
 
 test("10 项设置、实际回执、本机上报、拖动与三个实例共享订阅", async t => {
   const page = await fixture(t);

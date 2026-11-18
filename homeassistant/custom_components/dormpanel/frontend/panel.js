@@ -84,6 +84,26 @@
     }
   }
 
+  class Retry {
+    delay = 1000;
+
+    schedule(run) {
+      if (this.timer !== undefined) return;
+      const timer = this.timer = setTimeout(() => {
+        if (this.timer !== timer) return;
+        this.timer = undefined;
+        run();
+      }, this.delay);
+      this.delay = Math.min(this.delay * 2, 30000);
+    }
+
+    reset() {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+      this.delay = 1000;
+    }
+  }
+
   // Both views share a single relay snapshot and event subscription per HA connection.
   class RelayState {
     constructor(connection) {
@@ -92,16 +112,22 @@
       this.commands = new Map();
       this.link = {};
       this.data = null;
+      this.readRetry = new Retry();
+      this.subscriptionRetry = new Retry();
       this.ready = () => {
         this.online = true;
-        if (this.subscriptionError) this.subscribe();
-        else if (this.unsubscribe) this.refresh();
+        this.notify();
+        // HA owns reconnecting established and still-pending subscriptions.
+        if (this.unsubscribe || this.subscribing) this.refresh();
+        else this.subscribe();
       };
       this.disconnected = () => {
         this.online = false;
         this.fresh = false;
         this.error = "";
         this.request = undefined;
+        this.readRetry.reset();
+        this.subscriptionRetry.reset();
         this.link = {};
         this.commands.clear();
         this.notify();
@@ -115,7 +141,8 @@
         this.online = this.connection.connected !== false;
         this.connection.addEventListener("ready", this.ready);
         this.connection.addEventListener("disconnected", this.disconnected);
-        this.subscribe();
+        if (this.subscribing) this.refresh();
+        else this.subscribe();
       }
       view.updateRelay();
       return () => {
@@ -126,35 +153,51 @@
         this.connection.removeEventListener("disconnected", this.disconnected);
         this.unsubscribe?.().catch(() => {});
         this.unsubscribe = this.request = undefined;
+        this.readRetry.reset();
+        this.subscriptionRetry.reset();
         this.error = this.subscriptionError = "";
         this.data = null;
         this.fresh = false;
       };
     }
 
+    get canRequest() {
+      return !!(this.token && this.online && this.connection.connected !== false);
+    }
+
     async subscribe() {
+      if (!this.canRequest || this.subscribing || this.unsubscribe) return;
       const token = this.token;
-      this.subscriptionError = "";
+      this.subscribing = true;
       try {
         const unsubscribe = await this.connection.subscribeEvents(() => {
           if (this.token === token) this.refresh();
         }, "dormpanel_transfer_changed");
         if (this.token !== token) {
-          await unsubscribe();
+          await unsubscribe().catch(() => {});
           return;
         }
         this.unsubscribe = unsubscribe;
+        this.subscriptionRetry.reset();
+        this.subscriptionError = "";
+        this.notify();
+        // Read after registration so changes during setup cannot be missed.
+        this.refresh();
       } catch (error) {
         if (this.token !== token) return;
         this.subscriptionError = `实时更新不可用。 ${message(error)}`;
         this.notify();
+        if (this.canRequest) this.subscriptionRetry.schedule(() => this.subscribe());
+        if (!this.fresh && !this.request) this.refresh();
+      } finally {
+        this.subscribing = false;
+        // A new view may have attached while releasing a late subscription.
+        if (this.token !== token) this.subscribe();
       }
-      // Read after registration so changes during setup cannot be missed.
-      this.refresh();
     }
 
     async refresh() {
-      if (!this.online || !this.token) return;
+      if (!this.canRequest || this.readRetry.timer !== undefined) return;
       if (this.request) {
         this.request.again = true;
         return this.request.done;
@@ -174,11 +217,15 @@
             this.data = data;
             this.fresh = true;
             this.error = "";
+            this.readRetry.reset();
           } catch (error) {
             if (this.request !== request) return;
-            this.data = null;
+            if (error?.code === "unauthorized") this.data = null;
             this.fresh = false;
             this.error = message(error);
+            if (this.canRequest) this.readRetry.schedule(() => this.refresh());
+            this.notify();
+            return;
           }
           this.notify();
         } while (request.again && this.request === request);
@@ -535,12 +582,12 @@
 
     buildUpload() {
       const form = node("form");
+      this.selectedTargets = new Set();
       this.kind = node("select");
       for (const [value, [label]] of Object.entries(formats)) this.kind.add(node("option", label, { value }));
       this.kind.onchange = () => {
         this.file.value = "";
         this.uploadStatus.textContent = "";
-        this.targets.replaceChildren();
         this.renderTargets();
       };
       this.file = node("input", null, { type: "file" });
@@ -579,12 +626,16 @@
     updateRelay() {
       const relay = this.relay;
       const admin = this._hass?.user?.is_admin;
-      setText(this.connectionStatus, !this._hass ? "正在连接 Home Assistant…"
+      const connectionNotice = !this._hass ? "正在连接 Home Assistant…"
         : !admin ? "当前账户需要 Home Assistant 管理员权限才能控制设备、管理设备和传输文件。"
         : !relay?.online ? "Home Assistant 连接已断开。"
-        : relay.error ? `读取设备与传输失败。 ${relay.error}`
-        : !relay.fresh ? "正在读取设备与传输…"
-        : relay.subscriptionError || "");
+        : relay.error ? `读取设备与传输失败，正在重试。 ${relay.error}`
+        : !relay.fresh ? "正在读取设备与传输…" : "";
+      setText(this.connectionStatus, [
+        connectionNotice,
+        admin && relay?.online && relay.subscriptionError,
+        admin && relay?.data && !this.available && "设备与传输记录为上次读取结果。",
+      ].filter(Boolean).join(" "));
       this.connectionStatus.hidden = !this.connectionStatus.textContent;
       this.adminContent.hidden = !relay?.data;
       setText(this.adminNotice, this.available ? "" : "文件发送和记录操作当前不可用。");
@@ -646,11 +697,22 @@
       diagnostics.forEach((line, index) => setText(this.deviceDetails.children[index], line));
     }
 
+    get compatibleTargets() {
+      const capability = formats[this.kind.value][3];
+      return this.screens.filter(screen => !capability || screen.capabilities?.includes(capability));
+    }
+
     renderTargets() {
-      const [, ext, size, capability] = formats[this.kind.value];
+      const [, ext, size] = formats[this.kind.value];
       if (this.file.accept !== ext) this.file.accept = ext;
       setText(this.limit, `${ext}，最大 ${size} MiB`);
-      const targets = this.screens.filter(screen => !capability || screen.capabilities?.includes(capability));
+      const targets = this.compatibleTargets;
+      if (this.available) {
+        const ids = new Set(targets.map(screen => screen.installation_id));
+        for (const id of this.selectedTargets) {
+          if (!ids.has(id)) this.selectedTargets.delete(id);
+        }
+      }
       this.submit.disabled = !this.available || this.uploading || !targets.length;
       const targetList = JSON.stringify(targets.map(({ installation_id, display_name }) => [installation_id, display_name]));
       if (targetList === this.targetList && this.targets.hasChildNodes()) return;
@@ -660,11 +722,18 @@
         return;
       }
       reconcile(this.targets, targets, screen => screen.installation_id, (screen, label) => {
+        const id = screen.installation_id;
         if (!label) {
           label = node("label");
-          label.append(node("input", null, { type: "checkbox", value: screen.installation_id }), node("span"));
+          const check = node("input", null, { type: "checkbox", value: id });
+          check.onchange = () => {
+            if (check.checked) this.selectedTargets.add(id);
+            else this.selectedTargets.delete(id);
+          };
+          label.append(check, node("span"));
         }
-        setText(label.lastElementChild, `${screen.display_name} · ${screen.installation_id.slice(0, 8)}`);
+        label.firstElementChild.checked = this.selectedTargets.has(id);
+        setText(label.lastElementChild, `${screen.display_name} · ${id.slice(0, 8)}`);
         return label;
       });
     }
@@ -674,7 +743,8 @@
       if (!this.available || this.uploading) return;
       const [label, extension, size] = formats[this.kind.value];
       const file = this.file.files[0];
-      const targets = [...this.targets.querySelectorAll("input:checked")].map(input => input.value);
+      const targets = this.compatibleTargets.map(screen => screen.installation_id)
+        .filter(id => this.selectedTargets.has(id));
       if (!file?.size || file.size > size * 1048576 || !file.name.toLowerCase().endsWith(extension) || !targets.length) {
         this.uploadStatus.textContent = `请选择一个符合大小限制的 ${extension} 文件，并勾选目标设备。`;
         return;
