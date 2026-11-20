@@ -94,6 +94,7 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     override fun addListener(listener: (DashboardData) -> Unit) { listeners += listener; listener(state) }
     override fun removeListener(listener: (DashboardData) -> Unit) { listeners -= listener }
     override fun toggleLight(id: String) = active.toggleLight(id)
+    override fun toggleSwitch(sourceId: String, identity: SwitchIdentity) = active.toggleSwitch(sourceId, identity)
     override fun setLightPower(id: String, on: Boolean) = active.setLightPower(id, on)
     override fun setBrightness(id: String, percent: Int) = active.setBrightness(id, percent)
     override fun setColorTemperature(id: String, kelvin: Int) = active.setColorTemperature(id, kelvin)

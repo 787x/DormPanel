@@ -80,7 +80,10 @@ class CardPickerDialog(context: Context, private val catalog: CardCatalog,
                     isClickable = true; isFocusable = true
                     contentDescription = context.getString(R.string.picker_add_description, candidate.displayName)
                     addView(TextView(context).apply { text = candidate.displayName; textSize = 24f })
-                    addView(TextView(context).apply { text = candidate.description; textSize = 20f })
+                    addView(TextView(context).apply {
+                        text = candidate.descriptionResource?.let(context::getString) ?: candidate.description
+                        textSize = 20f
+                    })
                     setOnClickListener { if (onAdd(candidate)) dismiss() }
                 }
                 tiles += tile

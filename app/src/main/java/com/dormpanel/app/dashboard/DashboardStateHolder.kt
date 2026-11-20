@@ -12,6 +12,8 @@ import com.dormpanel.app.dashboard.persistence.QuarantinedCard
 import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
 import com.dormpanel.app.dashboard.card.canSave
 import com.dormpanel.app.dashboard.card.isWeatherCard
+import com.dormpanel.app.dashboard.card.isSwitchCard
+import com.dormpanel.app.dashboard.card.SwitchCardConfiguration
 import java.util.UUID
 import com.dormpanel.app.dashboard.catalog.CardAddCandidate
 
@@ -57,7 +59,7 @@ class DashboardStateHolder(
     fun add(candidate: CardAddCandidate): LayoutMutationResult {
         val provider = registry.provider(candidate.providerType)
             ?: return LayoutMutationResult.Failure(LayoutFailureReason.UNKNOWN_PROVIDER, state.cards)
-        if (provider.typeKey.isWeatherCard() && !validWeatherConfiguration(candidate.configurationJson)) {
+        if (!validConfiguration(provider.typeKey, candidate.configurationJson, editing = false)) {
             return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_CONFIGURATION, state.cards)
         }
         val newCard = PlacedCard(
@@ -74,7 +76,7 @@ class DashboardStateHolder(
     fun updateConfiguration(cardId: String, configurationJson: String): LayoutMutationResult {
         val card = state.cards.firstOrNull { it.id == cardId }
             ?: return LayoutMutationResult.Failure(LayoutFailureReason.CARD_NOT_FOUND, state.cards)
-        if (!card.providerType.isWeatherCard() || !validWeatherConfiguration(configurationJson)) {
+        if (!validConfiguration(card.providerType, configurationJson, editing = true)) {
             return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_CONFIGURATION, state.cards)
         }
         if (closed) return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_EXISTING_LAYOUT, state.cards)
@@ -90,8 +92,11 @@ class DashboardStateHolder(
         }))
     }
 
-    private fun validWeatherConfiguration(json: String) =
-        WeatherCardConfiguration.decode(json).canSave(weatherPlaces)
+    private fun validConfiguration(type: String, json: String, editing: Boolean) = when {
+        type.isWeatherCard() -> WeatherCardConfiguration.decode(json).canSave(weatherPlaces)
+        type.isSwitchCard() -> SwitchCardConfiguration.decode(json)?.isValid(type) == true
+        else -> !editing
+    }
 
     fun delete(cardId: String): LayoutMutationResult = commit(engine.delete(state.cards, cardId))
 

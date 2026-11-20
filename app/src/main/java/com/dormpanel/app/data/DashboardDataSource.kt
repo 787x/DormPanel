@@ -54,6 +54,7 @@ data class DashboardData(
     val weather: WeatherState,
     val sensors: Map<String, SensorState>,
     val lights: Map<String, LightState>,
+    val switches: DashboardSwitches = DashboardSwitches(),
 )
 
 /** Single state owner. Implementations deliver immutable snapshots and callbacks on the main thread.
@@ -64,6 +65,7 @@ interface DashboardDataSource {
     fun addListener(listener: (DashboardData) -> Unit)
     fun removeListener(listener: (DashboardData) -> Unit)
     fun toggleLight(id: String)
+    fun toggleSwitch(sourceId: String, identity: SwitchIdentity): Boolean = false
     fun setLightPower(id: String, on: Boolean) { if (state.lights[id]?.isOn != on) toggleLight(id) }
     /** User brightness commands are 1..100; power is a separate action. */
     fun setBrightness(id: String, percent: Int)
@@ -91,6 +93,7 @@ class FakeDashboardDataSource : DashboardDataSource {
             LightState("bedside", "Bedside light", false, LightCapabilities(true), 40),
             LightState("ceiling", "Ceiling light", false),
         ).associateBy { it.id },
+        switches = demoSwitches(),
     )
         private set
     private val listeners = linkedSetOf<(DashboardData) -> Unit>()
@@ -98,6 +101,15 @@ class FakeDashboardDataSource : DashboardDataSource {
     override fun addListener(listener: (DashboardData) -> Unit) { listeners += listener; listener(state) }
     override fun removeListener(listener: (DashboardData) -> Unit) { listeners -= listener }
     override fun toggleLight(id: String) = update(id) { it.copy(isOn = !it.isOn) }
+    override fun toggleSwitch(sourceId: String, identity: SwitchIdentity): Boolean {
+        val switches = state.switches
+        val channel = switches.resolve(sourceId, identity) ?: return false
+        if (!switches.connected || channel.availability != Availability.AVAILABLE) return false
+        state = state.copy(switches = switches.copy(channels = switches.channels +
+            (identity.entityId to channel.copy(isOn = channel.isOn != true))))
+        listeners.toList().forEach { it(state) }
+        return true
+    }
     override fun setLightPower(id: String, on: Boolean) = update(id) { it.copy(isOn = on) }
     override fun setBrightness(id: String, percent: Int) = update(id) {
         if (it.capabilities.brightness) it.copy(isOn = true, brightness = percent.coerceIn(1, 100)) else it
@@ -114,4 +126,20 @@ class FakeDashboardDataSource : DashboardDataSource {
         state = state.copy(lights = state.lights + (id to next))
         listeners.toList().forEach { it(state) }
     }
+}
+
+private fun demoSwitches(): DashboardSwitches {
+    val devices = linkedMapOf("desk" to "Desk")
+    val desk = SwitchIdentity("switch:desk", "desk", "desk")
+    val channels = mutableListOf(DashboardSwitch(desk, "Desk outlet", false, Availability.AVAILABLE))
+    for (count in 2..3) {
+        val id = "demo-switch-$count"
+        devices[id] = "Demo · ${count}键开关"
+        val names = if (count == 2) listOf("左键", "右键") else listOf("左键", "中键", "右键")
+        names.forEachIndexed { index, name ->
+            val entityId = "switch:$id-$index"
+            channels += DashboardSwitch(SwitchIdentity(entityId, id, entityId), name, false, Availability.AVAILABLE)
+        }
+    }
+    return DashboardSwitches("demo", true, channels.associateBy { it.identity.entityId }, devices)
 }

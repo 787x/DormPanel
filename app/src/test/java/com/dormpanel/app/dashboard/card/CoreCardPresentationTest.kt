@@ -13,7 +13,7 @@ class CoreCardPresentationTest {
             override fun write(state: AppearanceState) = Unit
         })
         val registry = coreCardRegistry(FakeDashboardDataSource(), appearance)
-        assertEquals(listOf("clock", WEATHER_CARD, COMPACT_WEATHER_CARD, CLASSIC_WEATHER_CARD, "sensor", "light"),
+        assertEquals(listOf("clock", WEATHER_CARD, COMPACT_WEATHER_CARD, CLASSIC_WEATHER_CARD, "sensor", "light", SWITCH_CARD, SWITCH_GROUP_CARD),
             registry.providers.map { it.typeKey })
         val compact = registry.provider(COMPACT_WEATHER_CARD)!!
         assertEquals(CardSize(2, 3), compact.defaultSize)
@@ -27,9 +27,14 @@ class CoreCardPresentationTest {
             assertTrue(it.sizePolicy.allows(CardSize(2, 1)))
             assertTrue(it.sizePolicy.allows(CardSize(2, 2)))
             assertTrue(it.sizePolicy.allows(CardSize(3, 3)))
-            assertFalse(it.sizePolicy.allows(CardSize(1, 1)))
+            assertEquals(it.typeKey == SWITCH_CARD, it.sizePolicy.allows(CardSize(1, 1)))
         }
         assertTrue(registry.provider("light")!!.sizePolicy.allows(CardSize(4, 3)))
+        assertEquals(CardSize(1, 1), registry.provider(SWITCH_CARD)!!.defaultSize)
+        val grouped = registry.provider(SWITCH_GROUP_CARD)!!
+        assertEquals(CardSize(2, 1), grouped.defaultSize)
+        assertTrue(grouped.sizePolicy.allows(CardSize(1, 2)))
+        assertEquals(CardSize(1, 2), grouped.sizePolicy.snap(CardSize(1, 1), CardSize(1, 3)))
     }
     @Test fun `clock layout uses both width and height`() {
         assertFalse(clockPresentation(CardSize(2, 1)).date)

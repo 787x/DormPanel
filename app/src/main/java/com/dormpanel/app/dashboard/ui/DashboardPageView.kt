@@ -37,6 +37,7 @@ class DashboardPageView @JvmOverloads constructor(
         }
     }
     private var picker: CardPickerDialog? = null
+    private var switchPicker: SwitchConfigurationDialog? = null
     private var onOpenWeather: (WeatherCardConfiguration) -> Unit = {}
     private var weatherPicker: WeatherSourcePicker? = null
     private data class WeatherSave(
@@ -100,6 +101,7 @@ class DashboardPageView @JvmOverloads constructor(
             onEnterEditMode = ::enterEditMode,
             onGestureClaimed = this.onGestureClaimed,
             onWeatherAction = ::openWeather,
+            onConfigureSwitch = ::configureSwitch,
             onOperationRejected = {
                 Toast.makeText(context, R.string.dashboard_operation_rejected, Toast.LENGTH_SHORT).show()
             },
@@ -122,6 +124,7 @@ class DashboardPageView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         backend?.ha?.removeStatusListener(haListener)
         picker?.dismiss(); picker = null
+        switchPicker?.dismiss(); switchPicker = null
         weatherSettings?.dismiss(); weatherSettings = null
         weatherSave = null
         weatherPicker?.dismiss(); weatherPicker = null
@@ -219,8 +222,32 @@ class DashboardPageView @JvmOverloads constructor(
                     } else weather.showRejected()
                 }
                 false
+            } else if (candidate.providerType == SWITCH_GROUP_CARD && backend != null) {
+                showSwitchConfiguration(candidate.providerType, candidate.configurationJson) { config ->
+                    addCard(candidate.copy(configurationJson = config)).also { if (it) picker?.dismiss() }
+                }
+                false
             } else addCard(candidate)
         }.also { it.show() }
+    }
+
+    private fun configureSwitch(cardId: String) {
+        if (!editing) return
+        val card = stateHolder.state.cards.firstOrNull { it.id == cardId && it.providerType.isSwitchCard() } ?: return
+        showSwitchConfiguration(card.providerType, card.configurationJson) { config ->
+            val result = stateHolder.updateConfiguration(cardId, config)
+            if (result is LayoutMutationResult.Failure) {
+                Toast.makeText(context, R.string.dashboard_operation_rejected, Toast.LENGTH_SHORT).show()
+                false
+            } else true
+        }
+    }
+
+    private fun showSwitchConfiguration(type: String, json: String, confirm: (String) -> Boolean) {
+        val backend = backend ?: return
+        switchPicker?.dismiss()
+        switchPicker = SwitchConfigurationDialog(context, type, SwitchCardConfiguration.decode(json),
+            { backend.state.switches }, confirm).also { it.show() }
     }
 
     private fun addCard(candidate: CardAddCandidate): Boolean {

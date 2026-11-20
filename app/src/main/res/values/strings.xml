@@ -177,4 +177,23 @@
     <string name="light_number_error">Enter a whole number from %1$d to %2$d</string>
 <string name="schedule_today">Today courses</string>
 <string name="schedule_recent">Upcoming courses</string>
+    <string name="card_switch">Individual switch</string>
+    <string name="card_switch_group">Grouped switch</string>
+    <string name="card_switch_description">Tap to toggle one switch</string>
+    <string name="card_switch_group_description">Control up to three channels independently</string>
+    <string name="switch_on">On</string>
+    <string name="switch_off">Off</string>
+    <string name="switch_disconnected">Offline</string>
+    <string name="switch_stale_state">%1$s · offline</string>
+    <string name="switch_toggle_action">%1$s, %2$s. Toggle switch.</string>
+    <string name="switch_choose_device">Choose device</string>
+    <string name="switch_choose_channel">Choose channel</string>
+    <string name="switch_empty_slot">Remove from card</string>
+    <string name="switch_choose_unavailable">No choices available. Check the connection and device.</string>
+    <string name="switch_invalid_selection">Choose current channels before saving.</string>
+    <string name="switch_configure">Configure switch binding</string>
+    <string name="switch_custom_device">Custom device name</string>
+    <string name="switch_custom_channel">Custom channel name</string>
+    <string name="switch_save">Save binding</string>
+    <string name="switch_order_hint">Choose 1–3 channels in display order. Selecting an already assigned channel swaps the two slots.</string>
 </resources>

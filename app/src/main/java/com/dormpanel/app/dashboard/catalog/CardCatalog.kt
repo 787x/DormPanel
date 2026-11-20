@@ -5,6 +5,11 @@ import com.dormpanel.app.data.DashboardData
 import com.dormpanel.app.dashboard.card.CLASSIC_WEATHER_CARD
 import com.dormpanel.app.dashboard.card.COMPACT_WEATHER_CARD
 import com.dormpanel.app.dashboard.card.WEATHER_CARD
+import com.dormpanel.app.dashboard.card.SWITCH_CARD
+import com.dormpanel.app.dashboard.card.SWITCH_GROUP_CARD
+import com.dormpanel.app.dashboard.card.SwitchCardConfiguration
+import com.dormpanel.app.dashboard.card.SwitchChannelBinding
+import com.dormpanel.app.data.DashboardSwitches
 
 enum class CardCategory { INFORMATION, HOME, PRODUCTIVITY, SYSTEM, APPS }
 
@@ -15,6 +20,7 @@ data class CardAddCandidate(
     val displayName: String,
     val description: String,
     val configurationJson: String,
+    val descriptionResource: Int? = null,
 )
 
 /** Discovery contract, independent of views and network protocols. Callbacks run on the main thread. */
@@ -58,6 +64,7 @@ class SourceCardCatalog(private val source: DashboardDataSource, private val lab
                 }
                 add(CardAddCandidate("light:${it.id}", CardCategory.HOME, "light", it.name, description, entityConfiguration("lightId", it.id)))
             }
+            addAll(source.state.switches.cardCandidates())
         }
     private val subscriptions = mutableMapOf<(List<CardAddCandidate>) -> Unit, (DashboardData) -> Unit>()
     override fun addListener(listener: (List<CardAddCandidate>) -> Unit) {
@@ -72,6 +79,26 @@ class SourceCardCatalog(private val source: DashboardDataSource, private val lab
     }
     override fun removeListener(listener: (List<CardAddCandidate>) -> Unit) {
         subscriptions.remove(listener)?.let(source::removeListener)
+    }
+}
+
+internal fun DashboardSwitches.cardCandidates(): List<CardAddCandidate> {
+    if (!connected) return emptyList()
+    val ordered = channels.values.sortedBy { it.identity.entityId }
+    return buildList {
+        ordered.forEach { channel ->
+            val config = SwitchCardConfiguration(sourceId, channel.identity.deviceId, listOf(SwitchChannelBinding(channel.identity)))
+            add(CardAddCandidate("switch:${channel.identity.entityId}", CardCategory.HOME, SWITCH_CARD,
+                channel.name, "Individual switch", config.encode(), com.dormpanel.app.R.string.card_switch))
+        }
+        ordered.filter { it.identity.deviceId != null }.groupBy { it.identity.deviceId }.forEach { (device, members) ->
+            // Larger devices require an explicit selection. For smaller devices the dialog
+            // presents an editable initial order, with no claim about physical position.
+            val initial = members.takeIf { it.size <= 3 }.orEmpty().map { SwitchChannelBinding(it.identity) }
+            val config = SwitchCardConfiguration(sourceId, device, initial)
+            add(CardAddCandidate("switch-group:$device", CardCategory.HOME, SWITCH_GROUP_CARD,
+                deviceNames[device] ?: device.orEmpty(), "Grouped switch", config.encode(), com.dormpanel.app.R.string.card_switch_group))
+        }
     }
 }
 

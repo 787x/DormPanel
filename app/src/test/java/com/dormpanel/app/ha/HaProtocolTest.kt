@@ -20,7 +20,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 class HaProtocolTest {
     private class Fixture(val reject: Boolean = false, val modernWeather: Boolean = false,
-        val nativeControl: Boolean = false, val failFirstProbe: Boolean = false) : AutoCloseable {
+        val nativeControl: Boolean = false, val failFirstProbe: Boolean = false,
+        val switchFixture: Boolean = false) : AutoCloseable {
         val server = MockWebServer()
         val scheduler = ManualScheduler()
         val http = haHttpClient()
@@ -45,6 +46,8 @@ class HaProtocolTest {
         val source = HaDashboardDataSource(scheduler, http, appearance, projector)
         var subscription = 0
         @Volatile var holdServices = false
+        @Volatile var switchEntryId = "outlet-entry"
+        @Volatile var snapshotSwitch = "off"
         @Volatile var scriptRequiresInput = false
         @Volatile var areaName = "Bedroom"
         init {
@@ -105,10 +108,12 @@ class HaProtocolTest {
                             {"entity_id":"input_boolean.awake","state":"on","attributes":{}},
                             {"entity_id":"input_boolean.boot","state":"off","attributes":{}},
                             {"entity_id":"weather.home","state":"sunny","attributes":{"temperature":72,"temperature_unit":"°F","supported_features":1}}
-                        ]""")
+                        ]""").apply { if (switchFixture) put(JSONObject().put("entity_id", "switch.panel").put("state", snapshotSwitch)) }
                         "config/entity_registry/list_for_display" -> JSONObject("""{"entities":[]}""")
                         "config/entity_registry/list" -> org.json.JSONArray("""[{"entity_id":"light.b","disabled_by":"user"},{"entity_id":"light.a","device_id":"lamp","area_id":"bedroom"}]""")
+                            .apply { if (switchFixture) put(JSONObject().put("entity_id", "switch.panel").put("device_id", "wall").put("id", switchEntryId)) }
                         "config/device_registry/list" -> org.json.JSONArray("""[{"id":"lamp","name_by_user":"Lamp","area_id":"study"}]""")
+                            .apply { if (switchFixture) put(JSONObject().put("id", "wall").put("name", "Wall switch")) }
                         "config/area_registry/list" -> org.json.JSONArray().put(JSONObject().put("area_id", "study").put("name", "Study"))
                             .put(JSONObject().put("area_id", "bedroom").put("name", areaName))
                         "get_services" -> JSONObject("""{"script":{"simple":{"fields":{"input":{"required":$scriptRequiresInput}}},"required":{"fields":{"input":{"required":true}}}}}""")
@@ -144,6 +149,54 @@ class HaProtocolTest {
         fun state(value: String) { peer.send(JSONObject().put("type", "event").put("id", subscription).put("event", JSONObject().put("event_type", "state_changed")
             .put("data", JSONObject().put("entity_id", "light.a").put("new_state", JSONObject("""{"entity_id":"light.a","state":"$value","attributes":{"supported_color_modes":["color_temp"],"brightness":255,"min_color_temp_kelvin":2700,"max_color_temp_kelvin":6500}}""")))).toString()) }
         override fun close() { source.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); server.close(); http.dispatcher.executorService.shutdown() }
+    }
+    @Test fun switchCommandsShareActualStateAndRejectUnverifiedBindings() {
+        Fixture(switchFixture = true).use { f ->
+            f.start()
+            f.until { f.source.connected }
+            val id = "ha:switch.panel"
+            val sourceId = f.source.state.switches.sourceId
+            val identity = f.source.state.switches.channels.getValue(id).identity
+            val firstCard = mutableListOf<Boolean?>()
+            val secondCard = mutableListOf<Boolean?>()
+            f.source.addListener { firstCard += it.switches.resolve(sourceId, identity)?.isOn }
+            f.source.addListener { secondCard += it.switches.resolve(sourceId, identity)?.isOn }
+            assertTrue(f.source.toggleSwitch(sourceId, identity))
+            assertFalse(f.source.activateEntity(id))
+            f.until { f.services("turn_on").size == 1 }
+            val command = f.services("turn_on").single()
+            assertEquals("switch", command.getString("domain"))
+            assertEquals("switch.panel", command.getJSONObject("target").getString("entity_id"))
+            assertEquals(false, firstCard.last())
+            assertEquals(false, secondCard.last())
+            f.entity("switch.panel", "on")
+            assertEquals(true, firstCard.last())
+            assertEquals(firstCard, secondCard)
+            assertTrue(f.source.homeState.entities.single { it.id == id }.isOn)
+            assertTrue(f.source.activateEntity(id))
+            f.until { f.services("turn_off").size == 1 }
+            f.entity("switch.panel", "unavailable")
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            f.entity("switch.panel", "on")
+            f.peer.close(1000, "offline")
+            f.until { !f.source.connected }
+            assertEquals(Availability.STALE, f.source.state.switches.resolve(sourceId, identity)?.availability)
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            f.enqueueSocket(); f.scheduler.advance(1000); f.until { f.source.connected }
+            assertEquals(false, firstCard.last())
+            assertFalse(f.source.toggleSwitch("another-source", identity))
+            f.entity("switch.panel", null)
+            assertNull(firstCard.last())
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            f.peer.close(1000, "replace registry entry")
+            f.until { !f.source.connected }
+            f.switchEntryId = "replacement"
+            f.enqueueSocket(); f.scheduler.advance(1000); f.until { f.source.connected }
+            assertNull(firstCard.last())
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            assertEquals(1, f.services("turn_on").size)
+            assertEquals(1, f.services("turn_off").size)
+        }
     }
     @Test fun nativeHandshakeExcludesHelperSnapshotsEventsAndWrites() {
         listOf(false, true).forEach { native ->
