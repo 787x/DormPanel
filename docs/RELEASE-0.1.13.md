@@ -1,49 +1,110 @@
-# DormPanel Android v0.1.13
+# DormPanel Android v0.1.13 — Todo 与备忘跨端共享、X08E 桌面升级
 
-X08E 和 Android Phone 均更新到 **0.1.13**，支持 Android 9（API 28）及以上，目标 SDK 为 37。本次更新让音箱和手机可以共享 Todo 清单与备忘，并为 X08E 首页加入独立开关、组合开关和更多紧凑天气尺寸。
+本次更新重点提升了 **X08E 和 Android 手机之间的 Todo 与备忘共享体验**，同时为 X08E 桌面加入独立开关、组合开关和更多紧凑天气尺寸。
 
-## Todo 和备忘跨端共享
+**本次发布版本：**
 
-现在可以在手机上整理待办，在音箱上查看或勾选同一张清单。纯文本备忘也能跨端编辑，保留换行。
+- **X08E：v0.1.13**
+- **Android Phone：v0.1.13**
 
-1. 将两端升级到 v0.1.13，在 WebDAV 共享管理中创建或加入**同一个扩展版 Sync v3（DPV3/4）数据集**。普通 WebDAV 即可使用。
-2. 在 X08E 长按 Todo 或备忘卡片，打开「数据来源」。在 Phone 打开课表的「管理」，进入 Todo 或备忘页面，选择共享来源。
-3. 可以绑定已有共享内容，也可以先预览、再确认导入本机内容。源内容会留在设备上，可切回本地使用。
+支持 Android 9 及以上版本。两个客户端版本号独立，请按设备选择安装包。
 
-断网时可继续在本机保存，恢复连接后再同步。如果两端同时改了同一项，按提示检查并处理冲突。本机同步结果只代表此设备已确认的进度，其他设备会在各自同步后收到更新。计时器仍在本机使用。
+---
 
-覆盖安装会保留原有同步绑定。已有 Sync v2 或旧版 Sync v3（DPV3/3）数据集需要按共享管理流程显式迁移，原目录和历史请保留。启用共享 Todo 前请确认同一数据集内的客户端都兼容，旧版 Writer 遇到含 Todo 的数据集可能停止写入。
+## ✨ 本次更新亮点
 
-## Android Phone
+### 📝 1. Todo 和备忘可以跨设备共享
 
-- 在「管理」中创建和编辑 Todo 清单、任务及纯文本备忘，可选择仅本机或共享来源。
-- 在 Android 桌面添加可调整大小的 **Todo** 和 **备忘** 小组件。每个实例可选择不同清单或备忘。Todo 支持直接勾选任务，点击任务可进入编辑。点击备忘正文可打开编辑器。尺寸和重新配置入口由手机桌面决定。
+在手机上整理待办，回到桌前就能在音箱上查看或勾选同一张清单。共享备忘也可以在两端编辑，比如把出门清单或临时记下的事项放在桌面上。
 
-## X08E
+1. 两端升级到 v0.1.13，在 WebDAV 共享管理中创建或加入**同一个扩展版 Sync v3（DPV3/4）数据集**。普通 WebDAV 即可使用。
+2. X08E 长按 Todo 或备忘卡片，打开「数据来源」。Phone 从课表「管理」进入 Todo 或备忘，选择共享来源。
+3. 可以连接已有的共享清单或备忘，也可以预览并确认导入本机内容。原有本机内容会保留，可以随时切回本地。
 
-- **独立开关**默认占 1×1 格，适合把一盏接在 HA 开关上的灯或一个插座放到首页。**组合开关**可将同一 HA 设备的 1～3 路开关放进一个卡片，支持横向 2×1 和纵向 1×2，可逐路控制、自定义名称和顺序。长按首页进入编辑后添加卡片，再选择 HA 实体。设备不可用或实体身份无法确认时，卡片会暂停相应控制。
-- **「2×3 紧凑天气」**现在可调整为宽 2～4 格、高 1～3 格的九种尺寸。默认 2×3 保留专门的三条预报布局，其余尺寸使用同规格的普通天气布局。已有卡片可以直接调整大小，地点和天气来源会保留。
+断网时可以继续保存，恢复连接后再同步。两端同时修改同一项时，可按提示检查并处理冲突。另一台设备完成自己的同步后才能看到更新。
 
-## 下载与原位升级
+### 🎛️ 2. X08E 首页新增独立开关和组合开关
 
-| 设备 | 版本 / versionCode | APK |
-| --- | --- | --- |
-| Redmi 小爱触屏音箱 Pro 8（X08E） | 0.1.13 / 16 | [DormPanel-X08E-0.1.13.apk](https://github.com/787x/DormPanel/releases/download/v0.1.13/DormPanel-X08E-0.1.13.apk) |
-| Android 手机 | 0.1.13 / 14 | [DormPanel-Phone-0.1.13.apk](https://github.com/787x/DormPanel/releases/download/v0.1.13/DormPanel-Phone-0.1.13.apk) |
+- **独立开关**默认占 **1×1**，适合把一个 HA 开关单独放到首页。
+- **组合开关**可把同一 HA 设备的 **1～3 路开关**放在一起，支持横向 **2×1** 或纵向 **1×2**。每一路都能独立操作，也可以改名、调整顺序。
 
-1. 下载对应 APK 和 [SHA256SUMS.txt](https://github.com/787x/DormPanel/releases/download/v0.1.13/SHA256SUMS.txt)。也可使用同名 `.apk.sha256` 文件核对单个 APK。
-2. 在 PowerShell 运行 `Get-FileHash -Algorithm SHA256 .\DormPanel-X08E-0.1.13.apk` 并与清单比对。手机请换成对应文件名。
-3. 使用系统安装器覆盖安装，或运行 `adb install -r <APK 文件>`。包名及正式签名沿用原版，X08E 的 versionCode 从 15 升至 16，Phone 从 13 升至 14。请保留已安装应用和数据，避免卸载、清除数据或重置 Keystore。
+在首页编辑模式下添加卡片，再选择相应的 Home Assistant 开关。设备不可用或实体身份无法确认时，卡片会暂停相应控制。
+
+### 🌦️ 3. 紧凑天气卡片支持九种尺寸
+
+「2×3 紧凑天气」现在可调整为**宽 2～4 格、高 1～3 格**。默认 **2×3** 仍保留紧凑的三条预报布局，其余尺寸会采用同尺寸的普通天气布局。
+
+进入首页编辑模式即可调整已有卡片的大小，地点和天气来源会保留。
+
+---
+
+## 📱 Android Phone：Todo、备忘与桌面小组件
+
+### 4. 在手机上管理清单和备忘
+
+打开课表的「管理」，可创建和编辑 Todo 清单、任务与纯文本备忘。可以只在手机上使用，也可以选择共享来源，在音箱上继续查看和编辑。
+
+### 5. 在手机桌面查看备忘、勾选任务
+
+从系统桌面添加 **Todo** 或 **备忘** 小组件。每个小组件都能选择不同的清单或备忘，并可调整大小。
+
+- **Todo**：直接勾选任务，点任务正文打开编辑。
+- **备忘**：显示选中的备忘，点正文打开编辑。
+
+实际尺寸和重新配置入口由手机的桌面启动器决定。
+
+---
+
+## 🏠 原有功能继续保留
+
+DormPanel 仍然是一套为 X08E 固定横屏设备优化的**桌面信息中心、快捷控制与效率工具**，而不是替换小米原生系统。
+
+继续支持：
+
+- **可编辑卡片桌面**：自由添加、移动和调整卡片尺寸。
+- **Home Assistant 智能家居控制**：查看设备状态、控制灯光及执行场景。
+- **日历与课程表**：周视图、课程管理、课表导入和共享同步。
+- **效率工具**：Todo、备忘录、计时器等。
+- **应用管理**：打开已安装应用及使用现有 APK 安装功能。
+- **系统快捷控制**：亮度、音量、屏幕常亮、黑屏等。
+
+DormPanel 继续与 MIUI Home、小爱同学及小米原有服务共存，不要求删除或替换系统组件。
+
+---
+
+## 📦 下载与升级
+
+| 设备 | 本次版本 | 下载 |
+|---|---|---|
+| 小米 Redmi 小爱触屏音箱 Pro 8（X08E） | v0.1.13 | [DormPanel-X08E-0.1.13.apk](https://github.com/787x/DormPanel/releases/download/v0.1.13/DormPanel-X08E-0.1.13.apk) |
+| Android 手机 | v0.1.13 | [DormPanel-Phone-0.1.13.apk](https://github.com/787x/DormPanel/releases/download/v0.1.13/DormPanel-Phone-0.1.13.apk) |
+
+**升级方法**
+
+1. 下载适合设备的 APK。
+2. 建议通过 [SHA256SUMS.txt](https://github.com/787x/DormPanel/releases/download/v0.1.13/SHA256SUMS.txt) 核对文件完整性。
+3. 使用系统安装器覆盖安装，或使用 `adb install -r` 原位升级。
+
+本次发布继续使用现有正式签名。X08E 的 versionCode 从 15 升至 16，Phone 从 13 升至 14。正常覆盖安装会保留已有应用数据、桌面布局、天气配置及课表同步绑定。
+
+**请勿先卸载旧版或清除应用数据。** 卸载或清理数据可能造成配置、密钥及同步身份丢失。
 
 ### 配套组件
 
-- [HA Integration 0.1.2](https://github.com/787x/DormPanel/releases/tag/v0.1.9) 继续独立提供。源码中新增的 HA 侧边栏、概览卡片和 X08E 原生设置控制需要配套新版集成。
-- [fnOS FPK 0.8.2 Pre-release](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.2) 继续独立提供。fnOS 网页、CLI/MCP 的 Todo 与备忘功能已在源码中实现，等待配套 FPK 发布。
+- Home Assistant Integration：继续使用 **v0.1.2**
+- fnOS DormPanel Schedule Manager：继续使用 **v0.8.2 Pre-release**
 
-## 验收依据
+以上组件没有随本次 Android 版本一起更新，需要时请从各自的 Release 获取。
 
-- Todo 和备忘复用 Kotlin/Node 专项、API 28 和 API 37 隔离模拟器、真实 WebDAV 及隔离 fnOS FPK 验证，覆盖导入、离线恢复、冲突和小组件刷新。实体 Phone 与第三方桌面仍有待覆盖。[PR87](https://github.com/787x/DormPanel/pull/87) · [PR88](https://github.com/787x/DormPanel/pull/88) · [PR89](https://github.com/787x/DormPanel/pull/89)
-- HA 兼容路径复用隔离 HA Core、模拟连接和 X08E 隔离包的专项验证。新版集成与生产 HAOS 的直连未在这轮验证。[PR90](https://github.com/787x/DormPanel/pull/90) · [PR91](https://github.com/787x/DormPanel/pull/91)
-- 开关与天气复用 X08E 实机隔离包和定向测试，涵盖布局、触控、尺寸和配置恢复。开关测试使用模拟端点，实际 XMS01BXS 与真实 HA 联调尚未执行。实机使用 1.3× 字体且无预报时，4×3 卡片在极端温度区间可能轻微溢出。[PR92](https://github.com/787x/DormPanel/pull/92) · [PR93](https://github.com/787x/DormPanel/pull/93)
+## ℹ️ 使用说明与注意事项
 
-[完整代码对比 v0.1.12…v0.1.13](https://github.com/787x/DormPanel/compare/v0.1.12...v0.1.13)
+- 更新 APK 会保留原有的同步绑定。已有 Sync v2 或旧版 Sync v3（DPV3/3）的用户，如需共享 Todo 和备忘，请按共享管理流程显式迁移，并保留原目录和历史。启用共享 Todo 前请确认各参与端兼容此功能，旧版可能无法向含 Todo 的数据集写入。
+- HA 侧边栏、概览卡片和 X08E 原生设置控制需要配套新版 HA 集成。fnOS 网页和 CLI/MCP 的 Todo 与备忘功能也需要配套新版 FPK。现有公开配套版本见上文。
+- 本次核验了两份正式 APK 的包名、版本、签名及 SHA-256。功能验证沿用 [PR87](https://github.com/787x/DormPanel/pull/87)、[PR88](https://github.com/787x/DormPanel/pull/88) 和 [PR89](https://github.com/787x/DormPanel/pull/89) 的共享和小组件专项、[PR90](https://github.com/787x/DormPanel/pull/90) 和 [PR91](https://github.com/787x/DormPanel/pull/91) 的隔离 HA 专项，以及 [PR92](https://github.com/787x/DormPanel/pull/92) 和 [PR93](https://github.com/787x/DormPanel/pull/93) 的 X08E 开关和天气专项。真实 HA 开关联调和实体 Phone 的第三方桌面仍有待覆盖。
+- 使用 1.3× 字体且无预报时，4×3 天气卡片的极端温度区间可能轻微溢出。
+
+---
+
+**完整更新：** [v0.1.12 → v0.1.13 代码对比](https://github.com/787x/DormPanel/compare/v0.1.12...v0.1.13)
+
+感谢使用 DormPanel！
