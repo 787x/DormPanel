@@ -196,4 +196,8 @@
     <string name="switch_custom_channel">Custom channel name</string>
     <string name="switch_save">Save binding</string>
     <string name="switch_order_hint">Choose 1–3 channels in display order. Selecting an already assigned channel swaps the two slots.</string>
+    <string name="switch_rebind_required">Rebind required</string>
+    <string name="switch_saving">Saving binding…</string>
+    <string name="switch_save_failed">Could not save the binding. Try again.</string>
+    <string name="switch_save_superseded">This card changed or was removed.</string>
 </resources>

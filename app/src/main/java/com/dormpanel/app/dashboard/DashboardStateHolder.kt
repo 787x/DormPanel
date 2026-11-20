@@ -94,7 +94,7 @@ class DashboardStateHolder(
 
     private fun validConfiguration(type: String, json: String, editing: Boolean) = when {
         type.isWeatherCard() -> WeatherCardConfiguration.decode(json).canSave(weatherPlaces)
-        type.isSwitchCard() -> SwitchCardConfiguration.decode(json)?.isValid(type) == true
+        type.isSwitchCard() -> SwitchCardConfiguration.decode(json)?.canSave(type) == true
         else -> !editing
     }
 

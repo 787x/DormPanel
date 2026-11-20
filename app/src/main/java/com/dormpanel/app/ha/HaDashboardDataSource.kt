@@ -84,7 +84,6 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private val registryPending = mutableSetOf<String>()
     private val registryDirty = mutableSetOf<String>()
     private var switchRegistryReady = false
-    private var fullSwitchRegistry = false
     private var switchSourceId = ""
     private var legacyForecast: (() -> Unit)? = null
     private val weatherListeners = linkedSetOf<(String) -> Unit>()
@@ -250,9 +249,8 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                     }
                 }
                 if (kind == "entity") {
-                    fullSwitchRegistry = result.optBoolean("success") && result.optJSONArray("result") != null
-                    if (!fullSwitchRegistry) store.registry(displayRegistry)
-                    switchRegistryReady = fullSwitchRegistry || displayRegistry != null
+                    switchRegistryReady = result.optBoolean("success") && result.optJSONArray("result") != null
+                    if (!switchRegistryReady) store.registry(displayRegistry)
                 }
                 complete()
             }
@@ -330,7 +328,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private fun publish(rebuild: Boolean = false, homeRelevant: Boolean = true, switchChanged: Boolean = false) {
         val raw = projector.dashboard(store, connected, weatherId)
         val switches = when {
-            connected && switchRegistryReady -> if (rebuild || switchChanged) store.switches(switchSourceId, fullSwitchRegistry)
+            connected && switchRegistryReady -> if (rebuild || switchChanged) store.switches(switchSourceId)
                 else state.switches
             !connected && state.switches.sourceId == switchSourceId -> if (!state.switches.connected) state.switches
                 else state.switches.copy(connected = false, channels = state.switches.channels.mapValues {

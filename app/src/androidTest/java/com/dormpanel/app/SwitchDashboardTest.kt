@@ -1,5 +1,6 @@
 package com.dormpanel.app
 
+import android.view.MotionEvent
 import android.view.View
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -46,13 +47,13 @@ class SwitchDashboardTest {
         withContentDescription(startsWith(label)),
     ))
 
-    private fun swipe(fromX: Float, fromY: Float, deltaX: Int, deltaY: Int, speed: Swipe = Swipe.SLOW): androidx.test.espresso.ViewAction {
+    private fun swipe(fromX: Float, fromY: Float, deltaX: Int, deltaY: Int): androidx.test.espresso.ViewAction {
         fun position(view: View, dx: Int, dy: Int): FloatArray {
             val at = IntArray(2)
             view.getLocationOnScreen(at)
             return floatArrayOf(at[0] + view.width * fromX + dx, at[1] + view.height * fromY + dy)
         }
-        return GeneralSwipeAction(speed, { position(it, 0, 0) }, { position(it, deltaX, deltaY) }, Press.FINGER)
+        return GeneralSwipeAction(Swipe.SLOW, { position(it, 0, 0) }, { position(it, deltaX, deltaY) }, Press.FINGER)
     }
 
     @Test fun oneAndTwoChannelCardsAndIndependentRebinding() {
@@ -106,8 +107,17 @@ class SwitchDashboardTest {
                 onView(withText(containsString("switch:demo-switch-2-1"))).perform(click())
                 val alias = "Custom right channel with an intentionally long name"
                 onView(withHint(R.string.switch_custom_channel)).perform(replaceText(alias))
+                var complete: ((Result<Unit>) -> Unit)? = null
+                scenario.onActivity { persistence.interceptNextSave = { complete = it } }
+                onView(withText(R.string.switch_save)).perform(click())
+                onView(withText(R.string.switch_saving)).check(matches(isDisplayed()))
+                onView(withText(R.string.switch_save)).check(matches(not(isEnabled())))
+                scenario.onActivity { checkNotNull(complete)(Result.failure(IllegalStateException("test write failed"))) }
+                onView(withText(R.string.switch_save_failed)).check(matches(isDisplayed()))
+                onView(withHint(R.string.switch_custom_channel)).check(matches(withText(alias)))
                 onView(withText(R.string.switch_save)).perform(click())
                 ready(scenario) { it.stateHolder.state.configurationSaves.isEmpty() && !it.stateHolder.state.storageError }
+                onView(withText(R.string.switch_save)).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
                 onView(withId(R.id.dashboard_done)).perform(click())
                 onView(allOf(withText(alias), isDescendantOfA(withTagValue(equalTo<Any>(desk))))).check { view, error ->
                     if (error != null) throw error
@@ -118,6 +128,20 @@ class SwitchDashboardTest {
                 tile(desk, "Custom right").perform(click())
                 checkPower("switch:desk" to false, "switch:demo-switch-2-0" to true, "switch:demo-switch-2-1" to true)
                 onView(withId(R.id.dashboard_edit)).perform(click())
+                val configure = onView(allOf(withParent(deskChrome), withContentDescription(R.string.switch_configure)))
+                configure.perform(click())
+                onView(withHint(R.string.switch_custom_channel)).perform(replaceText("Closing while saving"))
+                scenario.onActivity { persistence.interceptNextSave = { complete = it } }
+                onView(withText(R.string.switch_save)).perform(click())
+                onView(withText(R.string.switch_saving)).check(matches(isDisplayed()))
+                onView(withText(android.R.string.cancel)).perform(click())
+                configure.perform(click())
+                onView(withHint(R.string.switch_custom_channel)).perform(replaceText("New dialog draft"))
+                scenario.onActivity { checkNotNull(complete)(Result.failure(IllegalStateException("obsolete window"))) }
+                onView(withText(R.string.switch_save)).check(matches(allOf(isDisplayed(), isEnabled())))
+                onView(withHint(R.string.switch_custom_channel)).check(matches(withText("New dialog draft")))
+                onView(withText(R.string.switch_save_failed)).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                onView(withText(android.R.string.cancel)).perform(click())
                 onView(allOf(withParent(deskChrome), withContentDescription(
                     context.getString(R.string.dashboard_delete_card, context.getString(R.string.card_switch))))).perform(click())
                 ready(scenario) { it.stateHolder.state.cards.none { card -> card.id == desk } }
@@ -145,6 +169,7 @@ class SwitchDashboardTest {
                 onView(withId(R.id.dashboard_edit)).perform(click())
                 onView(withId(R.id.dashboard_add)).perform(click())
                 onView(withText(R.string.category_home)).perform(click())
+                onView(allOf(withText(three), hasSibling(withText(R.string.card_switch_group_description)))).perform(scrollTo())
                 onView(withText(three)).perform(scrollTo(), click())
                 onView(withText(R.string.switch_save)).perform(click())
                 onView(withId(R.id.dashboard_done)).perform(click())
@@ -186,7 +211,27 @@ class SwitchDashboardTest {
                 tile(group, "左键").check(matches(withContentDescription(containsString(context.getString(R.string.switch_on)))))
                 onView(allOf(withText(three), isDescendantOfA(withTagValue(equalTo<Any>(group))))).perform(click())
                 tile(group, "左键").check(matches(withContentDescription(containsString(context.getString(R.string.switch_on)))))
-                tile(group, "左键").perform(swipe(.5f, .5f, 520, 0, Swipe.FAST))
+                var swipeStart = 0 to 0
+                tile(group, "左键").check { view, error ->
+                    if (error != null) throw error
+                    val at = IntArray(2)
+                    view.getLocationOnScreen(at)
+                    swipeStart = (at[0] + view.width / 2) to (at[1] + view.height / 2)
+                }
+                scenario.onActivity { activity ->
+                    // Keep fling velocity independent of emulator input injection timing.
+                    val down = android.os.SystemClock.uptimeMillis() - 96
+                    for (step in 0..6) {
+                        val action = when (step) {
+                            0 -> MotionEvent.ACTION_DOWN
+                            6 -> MotionEvent.ACTION_UP
+                            else -> MotionEvent.ACTION_MOVE
+                        }
+                        val event = MotionEvent.obtain(down, down + step * 16, action,
+                            swipeStart.first + step * 85f, swipeStart.second.toFloat(), 0)
+                        try { activity.dispatchTouchEvent(event) } finally { event.recycle() }
+                    }
+                }
                 onView(isAssignableFrom(com.dormpanel.app.home.HomeControlView::class.java)).check(matches(isDisplayed()))
                 pressBack()
                 tile(group, "左键").check(matches(allOf(isDisplayed(),

@@ -39,6 +39,8 @@ internal data class SwitchCardConfiguration(
                 else -> false
             }
 
+    fun canSave(type: String) = isValid(type) && channels.all { it.identity.isPersistent }
+
     companion object {
         fun decode(json: String): SwitchCardConfiguration? = runCatching {
             val config = JSONObject(json)

@@ -106,7 +106,9 @@ private class SwitchCardView(
                 false -> context.getString(R.string.switch_off)
                 null -> context.getString(R.string.state_unavailable)
             }
-            tile.status.text = if (display.stale) {
+            tile.status.text = if (channel?.identity?.isLegacyObservation == true) {
+                context.getString(R.string.switch_rebind_required)
+            } else if (display.stale) {
                 if (live?.isOn == null) context.getString(R.string.switch_disconnected)
                 else context.getString(R.string.switch_stale_state, state)
             } else state

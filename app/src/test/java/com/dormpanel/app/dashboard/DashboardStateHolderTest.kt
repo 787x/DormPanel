@@ -185,6 +185,24 @@ class DashboardStateHolderTest {
         assertEquals(store.lastSnapshot, holder.state.cards)
     }
 
+    @Test fun `legacy switch configuration loads but only a verified binding can replace it`() {
+        val store = DelayedStore()
+        val holder = DashboardStateHolder(registry(), store)
+        val legacy = """{"source":"ha","channels":[{"entity":"ha:switch.outlet","entry":"observed:old"}]}"""
+        val card = com.dormpanel.app.dashboard.model.PlacedCard("switch", "switch", 0, 0, CardSize(1, 1), legacy)
+        store.loaded(Result.success(StoredDashboard(true, 1, listOf(card))))
+        assertEquals(listOf(card), holder.state.cards)
+        assertTrue(holder.updateConfiguration(card.id, legacy) is LayoutMutationResult.Failure)
+        val stable = legacy.replace("observed:old", "registry-entry")
+        assertTrue(holder.updateConfiguration(card.id, stable) is LayoutMutationResult.Success)
+        assertEquals(ConfigurationSaveState.SAVING, holder.state.configurationSaves[card.id])
+        val oldAck = store.saved
+        holder.delete(card.id)
+        oldAck(Result.success(Unit))
+        assertTrue(holder.state.cards.isEmpty())
+        assertTrue(holder.state.configurationSaves.isEmpty())
+    }
+
     private fun registry() = coreCardRegistry(FakeDashboardDataSource(), AppearanceController(object : AppearanceStore {
         override fun read() = AppearanceState()
         override fun write(state: AppearanceState) = Unit

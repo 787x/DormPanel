@@ -64,8 +64,6 @@ class HaEntityStore {
             devices.values.sortedWith(compareBy({ it.name }, { it.id })), values, connected)
     }
     private val discoveryIds = mutableMapOf<String, List<String>>()
-    // Without a registry entry ID we can only verify continuity within this snapshot/stream.
-    private val observedSwitches = mutableMapOf<String, String>()
     private var groupedSensors: List<SensorGroup>? = null
     private fun invalidateDiscovery() { discoveryIds.clear(); groupedSensors = null }
     private fun topology(entity: HaEntity?) = entity?.let { listOf(it.id, it.attributes.text("friendly_name"), it.attributes.text("device_class")) }
@@ -73,22 +71,18 @@ class HaEntityStore {
     var forecast = emptyList<WeatherForecast>()
     var forecastType = "daily"
     fun snapshot(array: JSONArray) {
-        invalidateDiscovery(); observedSwitches.clear(); entities.clear()
+        invalidateDiscovery(); entities.clear()
         array.objects().map(HaEntity::parse).forEach { entities[it.id] = it }
     }
     fun event(data: JSONObject) {
         val id = data.getString("entity_id")
         val next = data.optJSONObject("new_state")?.let(HaEntity::parse)
         if (topology(entities[id]) != topology(next)) invalidateDiscovery()
-        if (next == null) {
-            entities.remove(id)
-            observedSwitches.remove(id)
-        } else entities[id] = next
+        if (next == null) entities.remove(id) else entities[id] = next
     }
     fun registry(result: Any?) {
         val array = when (result) { is JSONObject -> result.optJSONArray("entities"); is JSONArray -> result; else -> null } ?: return
         val categories = (result as? JSONObject)?.optJSONObject("entity_categories")
-        val previous = metadata.toMap()
         invalidateDiscovery(); metadata.clear(); registryKnown = true
         array.objects().forEach {
             val id = it.text("entity_id").ifEmpty { it.text("ei") }
@@ -101,12 +95,6 @@ class HaEntityStore {
                 it.text("name").ifEmpty { it.text("en") }, it.text("area_id").ifEmpty { it.text("ai") },
                 !it.isNull("disabled_by"), category, it.text("id"))
         }
-        observedSwitches.keys.removeAll { id ->
-            val old = previous[id]
-            val next = metadata[id]
-            old?.device != next?.device || old?.entryId != next?.entryId ||
-                old?.category != next?.category || old?.disabled != next?.disabled
-        }
     }
     fun enabled(entity: HaEntity) = metadata[entity.id]?.disabled != true
     fun name(entity: HaEntity) = metadata[entity.id]?.name?.takeIf { it.isNotBlank() }
@@ -116,16 +104,14 @@ class HaEntityStore {
             .sortedWith(compareBy({ metadata[it.id]?.area ?: "" }, { name(it) }, { it.id })).map { it.id }
     }.mapNotNull { entities[it] }
 
-    fun switches(sourceId: String, allowUnregistered: Boolean): DashboardSwitches {
+    fun switches(sourceId: String): DashboardSwitches {
         val channels = discovered("switch").mapNotNull { entity ->
-            val meta = metadata[entity.id]
-            if (!meta?.category.isNullOrEmpty() || (meta == null && !allowUnregistered)) return@mapNotNull null
-            val device = meta?.device?.ifBlank { null }
+            val meta = metadata[entity.id] ?: return@mapNotNull null
+            if (meta.category.isNotEmpty()) return@mapNotNull null
+            val device = meta.device.ifBlank { null }
             if (deviceRegistryKnown && device != null && device !in devices) return@mapNotNull null
-            val identity = SwitchIdentity("ha:${entity.id}", device,
-                meta?.entryId?.takeIf(String::isNotBlank) ?: observedSwitches.getOrPut(entity.id) {
-                    "observed:${java.util.UUID.randomUUID()}"
-                })
+            val identity = SwitchIdentity("ha:${entity.id}", device, meta.entryId)
+            if (!identity.isPersistent) return@mapNotNull null
             val on = when (entity.value) { "on" -> true; "off" -> false; else -> null }
             identity.entityId to DashboardSwitch(identity, name(entity), on,
                 if (on == null) Availability.UNAVAILABLE else Availability.AVAILABLE)

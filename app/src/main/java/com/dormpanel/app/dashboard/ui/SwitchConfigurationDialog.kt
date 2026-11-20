@@ -1,6 +1,7 @@
 package com.dormpanel.app.dashboard.ui
 
 import android.content.Context
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -20,7 +21,7 @@ internal class SwitchConfigurationDialog(
     private val type: String,
     initial: SwitchCardConfiguration?,
     private val current: () -> DashboardSwitches,
-    private val confirm: (String) -> Boolean,
+    private val confirm: (SwitchConfigurationDialog, String) -> Unit,
 ) {
     private val grouped = type == SWITCH_GROUP_CARD
     private var sourceId = initial?.sourceId.orEmpty()
@@ -32,7 +33,13 @@ internal class SwitchConfigurationDialog(
     }
     private val deviceName = edit(R.string.switch_custom_device).apply { setText(initial?.name.orEmpty()) }
     private val rows = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val status = android.widget.TextView(context).apply {
+        visibility = View.GONE
+        accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+    }
     private val aliases = mutableListOf<EditText>()
+    private val channelPickers = mutableListOf<Button>()
+    private var saving = false
     private val devicePicker = button("") { chooseDevice() }
     private var chooser: AlertDialog? = null
     private val dialog = AlertDialog.Builder(context)
@@ -48,6 +55,7 @@ internal class SwitchConfigurationDialog(
             body.addView(deviceName)
             body.addView(android.widget.TextView(context).apply { setText(R.string.switch_order_hint) })
         }
+        body.addView(status)
         body.addView(rows)
         render()
     }
@@ -63,9 +71,26 @@ internal class SwitchConfigurationDialog(
         dialog.dismiss()
     }
 
+    val isShowing get() = dialog.isShowing
+
+    fun showSaving() = showSaveStatus(R.string.switch_saving, inProgress = true)
+
+    fun showSaveError(message: Int) = showSaveStatus(message, inProgress = false)
+
+    private fun showSaveStatus(message: Int, inProgress: Boolean) {
+        saving = inProgress
+        status.setText(message)
+        status.visibility = View.VISIBLE
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = !saving
+        devicePicker.isEnabled = !saving
+        deviceName.isEnabled = !saving
+        channelPickers.forEach { it.isEnabled = !saving }
+        aliases.forEachIndexed { index, alias -> alias.isEnabled = !saving && bindings[index] != null }
+    }
+
     private fun chooseDevice() {
         val live = current()
-        val ids = live.channels.values.mapNotNull { it.identity.deviceId }.distinct()
+        val ids = live.channels.values.filter { it.identity.isPersistent }.mapNotNull { it.identity.deviceId }.distinct()
             .sortedWith(compareBy({ live.deviceNames[it] }, { it }))
         choose(R.string.switch_choose_device, ids.map { live.deviceNames[it] ?: it }) { index ->
             val id = ids[index]
@@ -83,7 +108,7 @@ internal class SwitchConfigurationDialog(
         captureAliases()
         val live = current()
         val choices = live.channels.values.filter {
-            !grouped || (sourceId == live.sourceId && it.identity.deviceId == deviceId)
+            it.identity.isPersistent && (!grouped || (sourceId == live.sourceId && it.identity.deviceId == deviceId))
         }.sortedWith(compareBy({ it.name }, { it.identity.entityId }))
         val offset = if (grouped) 1 else 0
         val names = choices.map { "${it.name}  ·  ${it.identity.entityId.removePrefix("ha:")}" }
@@ -124,16 +149,21 @@ internal class SwitchConfigurationDialog(
         } ?: context.getString(R.string.switch_choose_device)
         rows.removeAllViews()
         aliases.clear()
+        channelPickers.clear()
         bindings.forEachIndexed { index, binding ->
             val row = LinearLayout(context).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
             val identity = binding?.identity
             val currentName = identity?.let { live.resolve(sourceId, it)?.name }
             val label = when {
                 currentName != null -> "$currentName · ${identity.entityId.removePrefix("ha:")}"
+                identity?.isLegacyObservation == true ->
+                    "${identity.entityId.removePrefix("ha:")} · ${context.getString(R.string.switch_rebind_required)}"
                 identity != null -> "${identity.entityId.removePrefix("ha:")} · ${context.getString(R.string.state_unavailable)}"
                 else -> context.getString(R.string.switch_choose_channel)
             }
-            row.addView(button(if (grouped) "${index + 1}. $label" else label) { chooseChannel(index) },
+            val channelPicker = button(if (grouped) "${index + 1}. $label" else label) { chooseChannel(index) }
+            channelPickers += channelPicker
+            row.addView(channelPicker,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val alias = edit(R.string.switch_custom_channel).apply {
                 setText(binding?.name.orEmpty())
@@ -151,14 +181,15 @@ internal class SwitchConfigurationDialog(
     }
 
     private fun save() {
+        if (saving) return
         captureAliases()
         val live = current()
         val config = SwitchCardConfiguration(sourceId, deviceId, bindings.filterNotNull(),
             if (grouped) deviceName.text.toString().trim() else "")
-        if (!live.connected || !config.isValid(type) || config.channels.any { live.resolve(sourceId, it.identity) == null }) {
+        if (!live.connected || !config.canSave(type) || config.channels.any { live.resolve(sourceId, it.identity) == null }) {
             Toast.makeText(body.context, R.string.switch_invalid_selection, Toast.LENGTH_SHORT).show()
             render()
-        } else if (confirm(config.encode())) dismiss()
+        } else confirm(this, config.encode())
     }
 
     private fun button(label: String, click: () -> Unit) = Button(body.context).apply {

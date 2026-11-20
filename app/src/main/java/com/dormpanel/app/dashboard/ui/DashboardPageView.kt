@@ -38,6 +38,8 @@ class DashboardPageView @JvmOverloads constructor(
     }
     private var picker: CardPickerDialog? = null
     private var switchPicker: SwitchConfigurationDialog? = null
+    private data class SwitchSave(val picker: SwitchConfigurationDialog, val cardId: String, val configuration: String)
+    private var switchSave: SwitchSave? = null
     private var onOpenWeather: (WeatherCardConfiguration) -> Unit = {}
     private var weatherPicker: WeatherSourcePicker? = null
     private data class WeatherSave(
@@ -125,6 +127,7 @@ class DashboardPageView @JvmOverloads constructor(
         backend?.ha?.removeStatusListener(haListener)
         picker?.dismiss(); picker = null
         switchPicker?.dismiss(); switchPicker = null
+        switchSave = null
         weatherSettings?.dismiss(); weatherSettings = null
         weatherSave = null
         weatherPicker?.dismiss(); weatherPicker = null
@@ -166,6 +169,24 @@ class DashboardPageView @JvmOverloads constructor(
             },
         )
         resolveWeatherSave(state)
+        resolveSwitchSave(state)
+    }
+
+    private fun resolveSwitchSave(state: DashboardUiState) {
+        val pending = switchSave ?: return
+        if (switchPicker !== pending.picker || !pending.picker.isShowing) {
+            switchSave = null
+            return
+        }
+        val card = state.cards.firstOrNull { it.id == pending.cardId }
+        val status = when {
+            card?.configurationJson != pending.configuration -> R.string.switch_save_superseded
+            state.configurationSaves[card.id] == ConfigurationSaveState.SAVING -> return
+            state.configurationSaves[card.id] == ConfigurationSaveState.FAILED -> R.string.switch_save_failed
+            else -> null
+        }
+        switchSave = null
+        if (status == null) pending.picker.dismiss() else pending.picker.showSaveError(status)
     }
 
     private fun resolveWeatherSave(state: DashboardUiState) {
@@ -223,8 +244,11 @@ class DashboardPageView @JvmOverloads constructor(
                 }
                 false
             } else if (candidate.providerType == SWITCH_GROUP_CARD && backend != null) {
-                showSwitchConfiguration(candidate.providerType, candidate.configurationJson) { config ->
-                    addCard(candidate.copy(configurationJson = config)).also { if (it) picker?.dismiss() }
+                showSwitchConfiguration(candidate.providerType, candidate.configurationJson) { dialog, config ->
+                    if (addCard(candidate.copy(configurationJson = config))) {
+                        dialog.dismiss()
+                        picker?.dismiss()
+                    }
                 }
                 false
             } else addCard(candidate)
@@ -234,18 +258,21 @@ class DashboardPageView @JvmOverloads constructor(
     private fun configureSwitch(cardId: String) {
         if (!editing) return
         val card = stateHolder.state.cards.firstOrNull { it.id == cardId && it.providerType.isSwitchCard() } ?: return
-        showSwitchConfiguration(card.providerType, card.configurationJson) { config ->
+        showSwitchConfiguration(card.providerType, card.configurationJson) { dialog, config ->
+            dialog.showSaving()
+            switchSave = SwitchSave(dialog, cardId, config)
             val result = stateHolder.updateConfiguration(cardId, config)
             if (result is LayoutMutationResult.Failure) {
-                Toast.makeText(context, R.string.dashboard_operation_rejected, Toast.LENGTH_SHORT).show()
-                false
-            } else true
+                switchSave = null
+                dialog.showSaveError(R.string.switch_save_superseded)
+            } else resolveSwitchSave(stateHolder.state)
         }
     }
 
-    private fun showSwitchConfiguration(type: String, json: String, confirm: (String) -> Boolean) {
+    private fun showSwitchConfiguration(type: String, json: String, confirm: (SwitchConfigurationDialog, String) -> Unit) {
         val backend = backend ?: return
         switchPicker?.dismiss()
+        switchSave = null
         switchPicker = SwitchConfigurationDialog(context, type, SwitchCardConfiguration.decode(json),
             { backend.state.switches }, confirm).also { it.show() }
     }

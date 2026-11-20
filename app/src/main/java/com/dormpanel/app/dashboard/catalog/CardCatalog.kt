@@ -84,12 +84,12 @@ class SourceCardCatalog(private val source: DashboardDataSource, private val lab
 
 internal fun DashboardSwitches.cardCandidates(): List<CardAddCandidate> {
     if (!connected) return emptyList()
-    val ordered = channels.values.sortedBy { it.identity.entityId }
+    val ordered = channels.values.filter { it.identity.isPersistent }.sortedBy { it.identity.entityId }
     return buildList {
         ordered.forEach { channel ->
             val config = SwitchCardConfiguration(sourceId, channel.identity.deviceId, listOf(SwitchChannelBinding(channel.identity)))
             add(CardAddCandidate("switch:${channel.identity.entityId}", CardCategory.HOME, SWITCH_CARD,
-                channel.name, "Individual switch", config.encode(), com.dormpanel.app.R.string.card_switch))
+                channel.name, "Tap to toggle one switch", config.encode(), com.dormpanel.app.R.string.card_switch_description))
         }
         ordered.filter { it.identity.deviceId != null }.groupBy { it.identity.deviceId }.forEach { (device, members) ->
             // Larger devices require an explicit selection. For smaller devices the dialog
@@ -97,7 +97,8 @@ internal fun DashboardSwitches.cardCandidates(): List<CardAddCandidate> {
             val initial = members.takeIf { it.size <= 3 }.orEmpty().map { SwitchChannelBinding(it.identity) }
             val config = SwitchCardConfiguration(sourceId, device, initial)
             add(CardAddCandidate("switch-group:$device", CardCategory.HOME, SWITCH_GROUP_CARD,
-                deviceNames[device] ?: device.orEmpty(), "Grouped switch", config.encode(), com.dormpanel.app.R.string.card_switch_group))
+                deviceNames[device] ?: device.orEmpty(), "Control up to three channels independently",
+                config.encode(), com.dormpanel.app.R.string.card_switch_group_description))
         }
     }
 }
