@@ -80,6 +80,7 @@ abstract class DashboardCardView(context: Context, protected val appearance: App
 abstract class SourceCardView<T>(context: Context, appearance: AppearanceController, protected val source: DashboardDataSource) : DashboardCardView(context, appearance) {
     private var renderedKey: T? = null
     protected abstract fun select(data: DashboardData): T?
+    protected fun resetRenderKey() { renderedKey = select(source.state) }
     private val listener: (DashboardData) -> Unit = { data ->
         if (isBound) {
             val key = select(data)

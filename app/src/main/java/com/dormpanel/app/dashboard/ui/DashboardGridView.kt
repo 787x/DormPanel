@@ -17,6 +17,7 @@ import com.dormpanel.app.R
 import com.dormpanel.app.dashboard.DashboardStateHolder
 import com.dormpanel.app.dashboard.card.CardInteractionScope
 import com.dormpanel.app.dashboard.card.DashboardCardRegistry
+import com.dormpanel.app.dashboard.card.isSwitchCard
 import com.dormpanel.app.dashboard.layout.LayoutMutationResult
 import com.dormpanel.app.dashboard.model.CardSize
 import com.dormpanel.app.dashboard.model.DashboardGridPolicy
@@ -48,6 +49,7 @@ class DashboardGridView @JvmOverloads constructor(
     private lateinit var stateHolder: DashboardStateHolder
     private lateinit var registry: DashboardCardRegistry
     private var onWeatherAction: (com.dormpanel.app.dashboard.card.WeatherCardNavigation) -> Unit = {}
+    private var onConfigureSwitch: (String) -> Unit = {}
     private var onEnterEditMode: () -> Unit = {}
     private var onGestureClaimed: () -> Unit = {}
     private var onOperationRejected: (String) -> Unit = {}
@@ -63,11 +65,13 @@ class DashboardGridView @JvmOverloads constructor(
         onEnterEditMode: () -> Unit,
         onGestureClaimed: () -> Unit,
         onWeatherAction: (com.dormpanel.app.dashboard.card.WeatherCardNavigation) -> Unit = {},
+        onConfigureSwitch: (String) -> Unit = {},
         onOperationRejected: (String) -> Unit,
     ) {
         this.stateHolder = stateHolder
         this.registry = registry
         this.onWeatherAction = onWeatherAction
+        this.onConfigureSwitch = onConfigureSwitch
         this.onEnterEditMode = onEnterEditMode
         this.onGestureClaimed = onGestureClaimed
         this.onOperationRejected = onOperationRejected
@@ -153,9 +157,10 @@ class DashboardGridView @JvmOverloads constructor(
 
     private fun createEntry(card: PlacedCard): CardEntry {
         val provider = checkNotNull(registry.provider(card.providerType))
+        val switchCard = card.providerType.isSwitchCard()
         val container = FrameLayout(context).apply {
-            isClickable = true
-            isFocusable = true
+            isClickable = !switchCard
+            isFocusable = !switchCard
             clipToOutline = true
             background = cardBackground(editMode)
         }
@@ -181,7 +186,7 @@ class DashboardGridView @JvmOverloads constructor(
             gravity = Gravity.CENTER
             setBackgroundColor(Color.argb(150, 8, 10, 14))
         }
-        chrome.addView(
+        if (!switchCard) chrome.addView(
             grip,
             FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, 36.dp).apply {
                 gravity = Gravity.CENTER
@@ -189,6 +194,18 @@ class DashboardGridView @JvmOverloads constructor(
                 rightMargin = 12.dp
             },
         )
+        if (switchCard) {
+            val configure = editButton("⚙", TextView(context)).apply {
+                contentDescription = context.getString(R.string.switch_configure)
+                setOnClickListener { onConfigureSwitch(card.id) }
+            }
+            chrome.addView(configure, FrameLayout.LayoutParams(48.dp, 48.dp).apply {
+                gravity = Gravity.TOP or Gravity.START
+                topMargin = 4.dp
+                marginStart = 4.dp
+            })
+        }
+        val compactMargin = if (switchCard) 4.dp else 8.dp
         val delete = editButton("×", TextView(context)).apply {
             setOnClickListener {
                 val result = stateHolder.delete(card.id)
@@ -199,8 +216,8 @@ class DashboardGridView @JvmOverloads constructor(
             delete,
             FrameLayout.LayoutParams(44.dp, 44.dp).apply {
                 gravity = Gravity.TOP or Gravity.END
-                topMargin = 8.dp
-                marginEnd = 8.dp
+                topMargin = compactMargin
+                marginEnd = compactMargin
             },
         )
         val resize = editButton("◢", ResizeHandleView(context)).apply {
@@ -214,8 +231,8 @@ class DashboardGridView @JvmOverloads constructor(
             resize,
             FrameLayout.LayoutParams(48.dp, 48.dp).apply {
                 gravity = Gravity.BOTTOM or Gravity.END
-                bottomMargin = 8.dp
-                marginEnd = 8.dp
+                bottomMargin = compactMargin
+                marginEnd = compactMargin
             },
         )
         container.addView(chrome, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))

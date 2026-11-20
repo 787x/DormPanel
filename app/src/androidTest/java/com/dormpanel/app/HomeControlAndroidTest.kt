@@ -62,7 +62,7 @@ class HomeControlAndroidTest {
             screenshot("pr5-study.png")
             onView(withText("Study · Desk")).check(matches(isDisplayed()))
             onView(rowButton("Desk outlet", "Turn on")).perform(ViewActions.click())
-            scenario.onActivity { assertTrue(model(it).dataSource.homeState.entities.single { e -> e.kind == HomeKind.SWITCH }.isOn) }
+            scenario.onActivity { assertTrue(model(it).dataSource.homeState.entities.single { e -> e.id == "switch:desk" }.isOn) }
             onView(rowButton("Desk light", "Turn off")).perform(ViewActions.click())
             scenario.onActivity { assertFalse(model(it).dataSource.state.lights.getValue("desk").isOn) }
             onView(rowButton("Desk light", "Details")).perform(ViewActions.click())

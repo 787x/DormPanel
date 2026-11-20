@@ -5,8 +5,12 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
+import com.dormpanel.app.dashboard.card.SWITCH_GROUP_CARD
+import com.dormpanel.app.dashboard.card.SwitchCardConfiguration
+import com.dormpanel.app.dashboard.card.SwitchChannelBinding
 import com.dormpanel.app.dashboard.model.CardSize
 import com.dormpanel.app.dashboard.model.PlacedCard
+import com.dormpanel.app.data.SwitchIdentity
 import com.dormpanel.app.weather.WeatherSourceRef
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
@@ -37,6 +41,44 @@ class DashboardDaoTest {
     @After
     fun closeDatabase() {
         database.close()
+    }
+
+    @Test fun groupedSwitchConfigurationSurvivesDiskReopenBesideLegacyCard() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "switch-cards-${UUID.randomUUID()}.db"
+        val group = SwitchCardConfiguration("ha-source", "wall", listOf(
+            SwitchChannelBinding(SwitchIdentity("ha:switch.right", "wall", "right-entry"), "Hall"),
+            SwitchChannelBinding(SwitchIdentity("ha:switch.left", "wall", "left-entry")),
+        ), "Wall switch")
+        val cards = listOf(PlacedCard("legacy", "clock", 0, 0, CardSize(2, 1)),
+            PlacedCard("switch", SWITCH_GROUP_CARD, 3, 2, CardSize(1, 2), group.encode()))
+        try {
+            val original = Room.databaseBuilder(context, DashboardDatabase::class.java, name).build()
+            val executor = Executors.newSingleThreadExecutor()
+            val saved = CompletableFuture<Result<Unit>>()
+            try {
+                val store = RoomDashboardStore(original, executor)
+                store.save(cards) { saved.complete(it) }
+                saved.get(10, TimeUnit.SECONDS).getOrThrow()
+                store.close()
+                assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS))
+            } finally {
+                executor.shutdown()
+                original.close()
+            }
+            val reopened = Room.databaseBuilder(context, DashboardDatabase::class.java, name).build()
+            val reader = RoomDashboardStore(reopened)
+            try {
+                val loaded = CompletableFuture<Result<StoredDashboard>>()
+                reader.load { loaded.complete(it) }
+                val recovered = loaded.get(10, TimeUnit.SECONDS).getOrThrow().cards.associateBy { it.id }
+                assertEquals(cards.associateBy { it.id }, recovered)
+                assertEquals(group, SwitchCardConfiguration.decode(recovered.getValue("switch").configurationJson))
+            } finally {
+                reader.close()
+                reopened.close()
+            }
+        } finally { context.deleteDatabase(name) }
     }
 
     @Test fun repairQuarantineSurvivesOrdinarySaveAndRawMalformedLoad() {

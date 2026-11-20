@@ -185,6 +185,50 @@ class DashboardStateHolderTest {
         assertEquals(store.lastSnapshot, holder.state.cards)
     }
 
+    @Test fun `legacy switch configuration loads but only a verified binding can replace it`() {
+        val store = DelayedStore()
+        val holder = DashboardStateHolder(registry(), store)
+        val legacy = """{"source":"ha","channels":[{"entity":"ha:switch.outlet","entry":"observed:old"}]}"""
+        val card = com.dormpanel.app.dashboard.model.PlacedCard("switch", "switch", 0, 0, CardSize(1, 1), legacy)
+        store.loaded(Result.success(StoredDashboard(true, 1, listOf(card))))
+        assertEquals(listOf(card), holder.state.cards)
+        assertTrue(holder.updateConfiguration(card.id, legacy) is LayoutMutationResult.Failure)
+        val stable = legacy.replace("observed:old", "registry-entry")
+        assertTrue(holder.updateConfiguration(card.id, stable) is LayoutMutationResult.Success)
+        assertEquals(ConfigurationSaveState.SAVING, holder.state.configurationSaves[card.id])
+        val oldAck = store.saved
+        holder.delete(card.id)
+        oldAck(Result.success(Unit))
+        assertTrue(holder.state.cards.isEmpty())
+        assertTrue(holder.state.configurationSaves.isEmpty())
+    }
+
+    @Test fun `new switch waits for the latest layout acknowledgement and retries with the same ID`() {
+        val store = DelayedStore()
+        val holder = DashboardStateHolder(registry(), store)
+        store.loaded(Result.success(StoredDashboard(true, 1, emptyList())))
+        val config = """{"source":"ha","channels":[{"entity":"ha:switch.outlet","entry":"stable","name":"Hall"}]}"""
+        val candidate = com.dormpanel.app.dashboard.catalog.CardAddCandidate("outlet",
+            com.dormpanel.app.dashboard.catalog.CardCategory.HOME, "switch", "Outlet", "", config)
+        assertTrue(holder.add(candidate, "new") is LayoutMutationResult.Success)
+        assertEquals(ConfigurationSaveState.SAVING, holder.state.configurationSaves["new"])
+        val older = store.saved
+        holder.move("new", 1, 0)
+        older(Result.success(Unit))
+        assertEquals(ConfigurationSaveState.SAVING, holder.state.configurationSaves["new"])
+        store.saved(Result.failure(IllegalStateException("disk full")))
+        assertEquals(ConfigurationSaveState.FAILED, holder.state.configurationSaves["new"])
+        holder.updateConfiguration("new", config)
+        val retry = store.saved
+        assertEquals("new", store.lastSnapshot.single().id)
+        assertEquals(1, store.lastSnapshot.single().column)
+        assertEquals(config, store.lastSnapshot.single().configurationJson)
+        holder.delete("new")
+        retry(Result.success(Unit))
+        assertTrue(holder.state.cards.isEmpty())
+        assertTrue(holder.state.configurationSaves.isEmpty())
+    }
+
     private fun registry() = coreCardRegistry(FakeDashboardDataSource(), AppearanceController(object : AppearanceStore {
         override fun read() = AppearanceState()
         override fun write(state: AppearanceState) = Unit

@@ -7,4 +7,27 @@
     <string name="card_weather_compact_description">当前天气与最多三条预报</string>
     <string name="card_weather_classic">经典天气</string>
     <string name="card_weather_classic_description">温度、湿度和文字预报</string>
+    <string name="card_switch">独立开关</string>
+    <string name="card_switch_group">组合开关</string>
+    <string name="card_switch_description">点击切换一路开关</string>
+    <string name="card_switch_group_description">独立控制设备的 1～3 路开关</string>
+    <string name="switch_on">开启</string>
+    <string name="switch_off">关闭</string>
+    <string name="switch_disconnected">断线</string>
+    <string name="switch_stale_state">%1$s · 断线</string>
+    <string name="switch_toggle_action">%1$s，%2$s。切换开关。</string>
+    <string name="switch_choose_device">选择设备</string>
+    <string name="switch_choose_channel">选择按键</string>
+    <string name="switch_empty_slot">从卡片移除此路</string>
+    <string name="switch_choose_unavailable">暂无可选项，请检查连接和设备。</string>
+    <string name="switch_invalid_selection">请重新选择当前可绑定的按键。</string>
+    <string name="switch_configure">配置开关绑定</string>
+    <string name="switch_custom_device">自定义设备名称</string>
+    <string name="switch_custom_channel">自定义按键名称</string>
+    <string name="switch_save">保存绑定</string>
+    <string name="switch_order_hint">按显示顺序选择 1～3 路。选择已绑定的按键可交换两个位置。</string>
+    <string name="switch_rebind_required">请重新绑定</string>
+    <string name="switch_saving">正在保存绑定…</string>
+    <string name="switch_save_failed">绑定保存失败，请重试。</string>
+    <string name="switch_save_superseded">卡片已变更或删除。</string>
 </resources>

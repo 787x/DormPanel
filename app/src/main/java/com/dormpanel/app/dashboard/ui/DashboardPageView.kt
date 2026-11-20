@@ -37,6 +37,14 @@ class DashboardPageView @JvmOverloads constructor(
         }
     }
     private var picker: CardPickerDialog? = null
+    private var switchPicker: SwitchConfigurationDialog? = null
+    private data class SwitchSave(
+        val picker: SwitchConfigurationDialog,
+        val cardId: String,
+        val configuration: String,
+        val addPicker: CardPickerDialog?,
+    )
+    private var switchSave: SwitchSave? = null
     private var onOpenWeather: (WeatherCardConfiguration) -> Unit = {}
     private var weatherPicker: WeatherSourcePicker? = null
     private data class WeatherSave(
@@ -100,6 +108,7 @@ class DashboardPageView @JvmOverloads constructor(
             onEnterEditMode = ::enterEditMode,
             onGestureClaimed = this.onGestureClaimed,
             onWeatherAction = ::openWeather,
+            onConfigureSwitch = ::configureSwitch,
             onOperationRejected = {
                 Toast.makeText(context, R.string.dashboard_operation_rejected, Toast.LENGTH_SHORT).show()
             },
@@ -122,6 +131,8 @@ class DashboardPageView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         backend?.ha?.removeStatusListener(haListener)
         picker?.dismiss(); picker = null
+        switchPicker?.dismiss(); switchPicker = null
+        switchSave = null
         weatherSettings?.dismiss(); weatherSettings = null
         weatherSave = null
         weatherPicker?.dismiss(); weatherPicker = null
@@ -163,6 +174,28 @@ class DashboardPageView @JvmOverloads constructor(
             },
         )
         resolveWeatherSave(state)
+        resolveSwitchSave(state)
+    }
+
+    private fun resolveSwitchSave(state: DashboardUiState) {
+        val pending = switchSave ?: return
+        if (switchPicker !== pending.picker || !pending.picker.isShowing ||
+            (pending.addPicker != null && (picker !== pending.addPicker || !pending.addPicker.isShowing))) {
+            switchSave = null
+            return
+        }
+        val card = state.cards.firstOrNull { it.id == pending.cardId }
+        val status = when {
+            card?.configurationJson != pending.configuration -> R.string.switch_save_superseded
+            state.configurationSaves[card.id] == ConfigurationSaveState.SAVING -> return
+            state.configurationSaves[card.id] == ConfigurationSaveState.FAILED -> R.string.switch_save_failed
+            else -> null
+        }
+        switchSave = null
+        if (status == null) {
+            pending.picker.dismiss()
+            pending.addPicker?.dismiss()
+        } else pending.picker.showSaveError(status)
     }
 
     private fun resolveWeatherSave(state: DashboardUiState) {
@@ -219,8 +252,52 @@ class DashboardPageView @JvmOverloads constructor(
                     } else weather.showRejected()
                 }
                 false
+            } else if (candidate.providerType.isSwitchCard()) {
+                configureNewSwitch(candidate, checkNotNull(picker))
+                false
             } else addCard(candidate)
         }.also { it.show() }
+    }
+
+    private fun configureNewSwitch(candidate: CardAddCandidate, addPicker: CardPickerDialog) {
+        val cardId = java.util.UUID.randomUUID().toString()
+        var submitted = false
+        showSwitchConfiguration(candidate.providerType, candidate.configurationJson) { dialog, config ->
+            saveSwitch(SwitchSave(dialog, cardId, config, addPicker)) {
+                if (submitted) stateHolder.updateConfiguration(cardId, config)
+                else stateHolder.add(candidate.copy(configurationJson = config), cardId).also {
+                    submitted = it is LayoutMutationResult.Success
+                }
+            }
+        }
+    }
+
+    private fun configureSwitch(cardId: String) {
+        if (!editing) return
+        val card = stateHolder.state.cards.firstOrNull { it.id == cardId && it.providerType.isSwitchCard() } ?: return
+        showSwitchConfiguration(card.providerType, card.configurationJson) { dialog, config ->
+            saveSwitch(SwitchSave(dialog, cardId, config, null)) { stateHolder.updateConfiguration(cardId, config) }
+        }
+    }
+
+    private fun saveSwitch(pending: SwitchSave, submit: () -> LayoutMutationResult) {
+        pending.picker.showSaving()
+        switchSave = pending
+        val result = submit()
+        if (switchSave !== pending) return
+        if (result is LayoutMutationResult.Failure) {
+            switchSave = null
+            pending.picker.showSaveError(if (result.reason == LayoutFailureReason.NO_SPACE) R.string.dashboard_no_space
+                else R.string.switch_save_superseded)
+        } else resolveSwitchSave(stateHolder.state)
+    }
+
+    private fun showSwitchConfiguration(type: String, json: String, confirm: (SwitchConfigurationDialog, String) -> Unit) {
+        val backend = backend ?: return
+        switchPicker?.dismiss()
+        switchSave = null
+        switchPicker = SwitchConfigurationDialog(context, type, SwitchCardConfiguration.decode(json),
+            { backend.state.switches }, confirm).also { it.show() }
     }
 
     private fun addCard(candidate: CardAddCandidate): Boolean {

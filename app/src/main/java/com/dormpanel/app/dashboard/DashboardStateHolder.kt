@@ -12,6 +12,8 @@ import com.dormpanel.app.dashboard.persistence.QuarantinedCard
 import com.dormpanel.app.dashboard.card.WeatherCardConfiguration
 import com.dormpanel.app.dashboard.card.canSave
 import com.dormpanel.app.dashboard.card.isWeatherCard
+import com.dormpanel.app.dashboard.card.isSwitchCard
+import com.dormpanel.app.dashboard.card.SwitchCardConfiguration
 import java.util.UUID
 import com.dormpanel.app.dashboard.catalog.CardAddCandidate
 
@@ -33,7 +35,7 @@ class DashboardStateHolder(
     // All owner operations and callbacks run on the UI scheduler.
     private var closed = false
     private var pendingRecovery: List<QuarantinedCard>? = null
-    private class ConfigurationWrite(var attempt: Long = 0)
+    private class ConfigurationWrite(val waitForLatest: Boolean = false, var attempt: Long = 0)
     private val configurationWrites = mutableMapOf<String, ConfigurationWrite>()
     private var writeAttempt = 0L
     private val listeners = linkedSetOf<(DashboardUiState) -> Unit>()
@@ -54,27 +56,33 @@ class DashboardStateHolder(
         listeners -= listener
     }
 
-    fun add(candidate: CardAddCandidate): LayoutMutationResult {
+    fun add(candidate: CardAddCandidate): LayoutMutationResult = add(candidate, UUID.randomUUID().toString())
+
+    internal fun add(candidate: CardAddCandidate, cardId: String): LayoutMutationResult {
         val provider = registry.provider(candidate.providerType)
             ?: return LayoutMutationResult.Failure(LayoutFailureReason.UNKNOWN_PROVIDER, state.cards)
-        if (provider.typeKey.isWeatherCard() && !validWeatherConfiguration(candidate.configurationJson)) {
+        if (!validConfiguration(provider.typeKey, candidate.configurationJson, editing = false)) {
             return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_CONFIGURATION, state.cards)
         }
         val newCard = PlacedCard(
-            id = UUID.randomUUID().toString(),
+            id = cardId,
             providerType = provider.typeKey,
             column = 0,
             row = 0,
             size = provider.defaultSize,
             configurationJson = candidate.configurationJson,
         )
-        return commit(engine.addBestFit(state.cards, newCard))
+        val placement = engine.addBestFit(state.cards, newCard)
+        if (!closed && placement is LayoutMutationResult.Success && provider.typeKey.isSwitchCard()) {
+            beginConfigurationSave(cardId, waitForLatest = true)
+        }
+        return commit(placement)
     }
 
     fun updateConfiguration(cardId: String, configurationJson: String): LayoutMutationResult {
         val card = state.cards.firstOrNull { it.id == cardId }
             ?: return LayoutMutationResult.Failure(LayoutFailureReason.CARD_NOT_FOUND, state.cards)
-        if (!card.providerType.isWeatherCard() || !validWeatherConfiguration(configurationJson)) {
+        if (!validConfiguration(card.providerType, configurationJson, editing = true)) {
             return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_CONFIGURATION, state.cards)
         }
         if (closed) return LayoutMutationResult.Failure(LayoutFailureReason.INVALID_EXISTING_LAYOUT, state.cards)
@@ -83,15 +91,22 @@ class DashboardStateHolder(
             (saveState == ConfigurationSaveState.SAVING || (saveState == null && !state.storageError))) {
             return LayoutMutationResult.Success(state.cards)
         }
-        configurationWrites[cardId] = ConfigurationWrite()
-        state = state.copy(configurationSaves = state.configurationSaves + (cardId to ConfigurationSaveState.SAVING))
+        beginConfigurationSave(cardId, configurationWrites[cardId]?.waitForLatest == true)
         return commit(LayoutMutationResult.Success(state.cards.map {
             if (it.id == cardId) it.copy(configurationJson = configurationJson) else it
         }))
     }
 
-    private fun validWeatherConfiguration(json: String) =
-        WeatherCardConfiguration.decode(json).canSave(weatherPlaces)
+    private fun beginConfigurationSave(cardId: String, waitForLatest: Boolean) {
+        configurationWrites[cardId] = ConfigurationWrite(waitForLatest)
+        state = state.copy(configurationSaves = state.configurationSaves + (cardId to ConfigurationSaveState.SAVING))
+    }
+
+    private fun validConfiguration(type: String, json: String, editing: Boolean) = when {
+        type.isWeatherCard() -> WeatherCardConfiguration.decode(json).canSave(weatherPlaces)
+        type.isSwitchCard() -> SwitchCardConfiguration.decode(json)?.canSave(type) == true
+        else -> !editing
+    }
 
     fun delete(cardId: String): LayoutMutationResult = commit(engine.delete(state.cards, cardId))
 
@@ -176,10 +191,10 @@ class DashboardStateHolder(
             val saves = state.configurationSaves.toMutableMap()
             writes.forEach { (id, write) ->
                 if (configurationWrites[id] === write) {
-                    if (result.isSuccess) {
+                    if (result.isSuccess && (!write.waitForLatest || write.attempt == attempt)) {
                         configurationWrites.remove(id)
                         saves.remove(id)
-                    } else if (write.attempt == attempt) {
+                    } else if (result.isFailure && write.attempt == attempt) {
                         saves[id] = ConfigurationSaveState.FAILED
                     }
                 }

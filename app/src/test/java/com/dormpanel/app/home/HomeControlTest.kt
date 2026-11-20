@@ -82,7 +82,7 @@ class HomeControlTest {
         demo.activateEntity("desk"); assertFalse(dashboard.state.lights.getValue("desk").isOn)
         dashboard.setBrightness("desk", 20)
         assertEquals(20, demo.homeState.entities.single { it.id == "desk" }.light?.brightness)
-        demo.activateEntity("switch:desk"); assertTrue(demo.homeState.entities.single { it.kind == HomeKind.SWITCH }.isOn)
+        demo.activateEntity("switch:desk"); assertTrue(demo.homeState.entities.single { it.id == "switch:desk" }.isOn)
         demo.activateEntity("scene:night"); assertTrue(dashboard.state.lights.values.none { it.isOn })
         demo.activateEntity("script:study"); assertTrue(dashboard.state.lights.getValue("desk").isOn)
     }

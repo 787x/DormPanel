@@ -82,4 +82,5 @@ fun coreCardRegistry(
     CompactWeatherCardProvider(source, appearance, weather),
     ClassicWeatherCardProvider(source, appearance, weather),
     SensorCardProvider(source, appearance), LightCardProvider(source, appearance),
+    SwitchCardProvider(source, appearance, grouped = false), SwitchCardProvider(source, appearance, grouped = true),
 ))

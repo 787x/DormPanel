@@ -20,7 +20,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 class HaProtocolTest {
     private class Fixture(val reject: Boolean = false, val modernWeather: Boolean = false,
-        val nativeControl: Boolean = false, val failFirstProbe: Boolean = false) : AutoCloseable {
+        val nativeControl: Boolean = false, val failFirstProbe: Boolean = false,
+        val switchFixture: Boolean = false) : AutoCloseable {
         val server = MockWebServer()
         val scheduler = ManualScheduler()
         val http = haHttpClient()
@@ -45,6 +46,10 @@ class HaProtocolTest {
         val source = HaDashboardDataSource(scheduler, http, appearance, projector)
         var subscription = 0
         @Volatile var holdServices = false
+        @Volatile var switchEntryId = "outlet-entry"
+        @Volatile var failFullRegistry = false
+        @Volatile var fullRegistryError = "unavailable"
+        @Volatile var snapshotSwitch = "off"
         @Volatile var scriptRequiresInput = false
         @Volatile var areaName = "Bedroom"
         init {
@@ -79,6 +84,11 @@ class HaProtocolTest {
                         return
                     }
                     if (holdServices && message.optString("type") == "call_service") return
+                    if (failFullRegistry && message.optString("type") == "config/entity_registry/list") {
+                        webSocket.send(JSONObject().put("id", message.getInt("id")).put("type", "result")
+                            .put("success", false).put("error", JSONObject().put("code", fullRegistryError)).toString())
+                        return
+                    }
                     if (message.optString("type") == "dormpanel/control_protocol") {
                         val failure = failFirstProbe && received.count { it.optString("type") == "dormpanel/control_protocol" } == 1
                         webSocket.send(JSONObject().put("id", message.getInt("id")).put("type", "result")
@@ -105,10 +115,13 @@ class HaProtocolTest {
                             {"entity_id":"input_boolean.awake","state":"on","attributes":{}},
                             {"entity_id":"input_boolean.boot","state":"off","attributes":{}},
                             {"entity_id":"weather.home","state":"sunny","attributes":{"temperature":72,"temperature_unit":"°F","supported_features":1}}
-                        ]""")
-                        "config/entity_registry/list_for_display" -> JSONObject("""{"entities":[]}""")
+                        ]""").apply { if (switchFixture) put(JSONObject().put("entity_id", "switch.panel").put("state", snapshotSwitch)) }
+                        "config/entity_registry/list_for_display" -> JSONObject(if (switchFixture)
+                            """{"entities":[{"ei":"switch.panel","di":"wall"}]}""" else """{"entities":[]}""")
                         "config/entity_registry/list" -> org.json.JSONArray("""[{"entity_id":"light.b","disabled_by":"user"},{"entity_id":"light.a","device_id":"lamp","area_id":"bedroom"}]""")
+                            .apply { if (switchFixture) put(JSONObject().put("entity_id", "switch.panel").put("device_id", "wall").put("id", switchEntryId)) }
                         "config/device_registry/list" -> org.json.JSONArray("""[{"id":"lamp","name_by_user":"Lamp","area_id":"study"}]""")
+                            .apply { if (switchFixture) put(JSONObject().put("id", "wall").put("name", "Wall switch")) }
                         "config/area_registry/list" -> org.json.JSONArray().put(JSONObject().put("area_id", "study").put("name", "Study"))
                             .put(JSONObject().put("area_id", "bedroom").put("name", areaName))
                         "get_services" -> JSONObject("""{"script":{"simple":{"fields":{"input":{"required":$scriptRequiresInput}}},"required":{"fields":{"input":{"required":true}}}}}""")
@@ -144,6 +157,133 @@ class HaProtocolTest {
         fun state(value: String) { peer.send(JSONObject().put("type", "event").put("id", subscription).put("event", JSONObject().put("event_type", "state_changed")
             .put("data", JSONObject().put("entity_id", "light.a").put("new_state", JSONObject("""{"entity_id":"light.a","state":"$value","attributes":{"supported_color_modes":["color_temp"],"brightness":255,"min_color_temp_kelvin":2700,"max_color_temp_kelvin":6500}}""")))).toString()) }
         override fun close() { source.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); server.close(); http.dispatcher.executorService.shutdown() }
+    }
+
+    @Test fun compactFallbackSuspendsPersistentCardsUntilFullRegistryReturns() {
+        Fixture(switchFixture = true).use { f ->
+            f.start()
+            f.until { f.source.connected }
+            val sourceId = f.source.state.switches.sourceId
+            val identity = f.source.state.switches.channels.getValue("ha:switch.panel").identity
+            f.failFullRegistry = true
+            f.peer.close(1000, "reconnect with compact registry only")
+            f.until { !f.source.connected }
+            f.enqueueSocket(); f.scheduler.advance(1000); f.until { f.source.connected }
+            assertTrue(f.source.state.switches.channels.isEmpty())
+            assertFalse(f.source.candidates.any { it.providerType == "switch" || it.providerType == "switch_group" })
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            assertTrue(f.source.activateEntity(identity.entityId))
+            f.until { f.services("turn_on").size == 1 }
+            f.entity("switch.panel", "on")
+
+            f.failFullRegistry = false
+            val subscription = f.received.last { it.optString("event_type") == "entity_registry_updated" }.getInt("id")
+            f.peer.send(JSONObject().put("id", subscription).put("type", "event").put("event",
+                JSONObject().put("event_type", "entity_registry_updated").put("data", JSONObject())).toString())
+            f.until { f.source.state.switches.resolve(sourceId, identity) != null }
+            assertTrue(f.source.toggleSwitch(sourceId, identity))
+            f.until { f.services("turn_off").size == 1 }
+        }
+    }
+
+    @Test fun fullRegistryRecoversOnTheSameSocketWithoutRegistryEvents() {
+        Fixture(switchFixture = true).use { f ->
+            f.failFullRegistry = true
+            f.start()
+            f.until { f.source.connected }
+            val sourceId = f.source.state.switches.sourceId
+            val identity = com.dormpanel.app.data.SwitchIdentity("ha:switch.panel", "wall", "outlet-entry")
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            assertTrue(f.source.state.switches.channels.isEmpty())
+            assertTrue(f.services("turn_on").isEmpty())
+            f.failFullRegistry = false
+            f.scheduler.advance(5000)
+            f.until { f.source.state.switches.resolve(sourceId, identity) != null }
+            assertEquals(1, f.server.requestCount)
+            assertEquals(1, f.received.count { it.optString("type") == "config/entity_registry/list_for_display" })
+            assertTrue(f.source.toggleSwitch(sourceId, identity))
+            f.until { f.services("turn_on").size == 1 }
+        }
+    }
+
+    @Test fun registryRetryBacksOffAndStopsOnPermissionFailureOrBackendChange() {
+        Fixture(switchFixture = true).use { f ->
+            f.failFullRegistry = true
+            f.start()
+            f.until { f.source.connected }
+            fun requests() = f.received.count { it.optString("type") == "config/entity_registry/list" }
+            f.scheduler.advance(5000)
+            f.until { requests() == 2 }
+            // Drain the WebSocket failure response before moving the fake clock again.
+            repeat(8) { Thread.sleep(10); f.scheduler.advance() }
+            f.scheduler.advance(20_000)
+            assertEquals(2, requests())
+            f.fullRegistryError = "unauthorized"
+            f.scheduler.advance(10_000)
+            f.until { requests() == 3 }
+            repeat(8) { Thread.sleep(10); f.scheduler.advance() }
+            f.scheduler.advance(3_600_000)
+            assertEquals(3, requests())
+            assertTrue(f.source.state.switches.channels.isEmpty())
+
+            f.peer.close(1000, "reconnect")
+            f.until { !f.source.connected }
+            f.fullRegistryError = "unavailable"
+            f.enqueueSocket(); f.scheduler.advance(1000); f.until { f.source.connected }
+            assertEquals(4, requests())
+            f.source.configure(HaConnectionSettings(), null)
+            f.scheduler.advance(3_600_000)
+            assertEquals(4, requests())
+            assertFalse(f.source.connected)
+        }
+    }
+    @Test fun switchCommandsShareActualStateAndRejectUnverifiedBindings() {
+        Fixture(switchFixture = true).use { f ->
+            f.start()
+            f.until { f.source.connected }
+            val id = "ha:switch.panel"
+            val sourceId = f.source.state.switches.sourceId
+            val identity = f.source.state.switches.channels.getValue(id).identity
+            val firstCard = mutableListOf<Boolean?>()
+            val secondCard = mutableListOf<Boolean?>()
+            f.source.addListener { firstCard += it.switches.resolve(sourceId, identity)?.isOn }
+            f.source.addListener { secondCard += it.switches.resolve(sourceId, identity)?.isOn }
+            assertTrue(f.source.toggleSwitch(sourceId, identity))
+            assertFalse(f.source.activateEntity(id))
+            f.until { f.services("turn_on").size == 1 }
+            val command = f.services("turn_on").single()
+            assertEquals("switch", command.getString("domain"))
+            assertEquals("switch.panel", command.getJSONObject("target").getString("entity_id"))
+            assertEquals(false, firstCard.last())
+            assertEquals(false, secondCard.last())
+            f.entity("switch.panel", "on")
+            assertEquals(true, firstCard.last())
+            assertEquals(firstCard, secondCard)
+            assertTrue(f.source.homeState.entities.single { it.id == id }.isOn)
+            assertTrue(f.source.activateEntity(id))
+            f.until { f.services("turn_off").size == 1 }
+            f.entity("switch.panel", "unavailable")
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            f.entity("switch.panel", "on")
+            f.peer.close(1000, "offline")
+            f.until { !f.source.connected }
+            assertEquals(Availability.STALE, f.source.state.switches.resolve(sourceId, identity)?.availability)
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            f.enqueueSocket(); f.scheduler.advance(1000); f.until { f.source.connected }
+            assertEquals(false, firstCard.last())
+            assertFalse(f.source.toggleSwitch("another-source", identity))
+            f.entity("switch.panel", null)
+            assertNull(firstCard.last())
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            f.peer.close(1000, "replace registry entry")
+            f.until { !f.source.connected }
+            f.switchEntryId = "replacement"
+            f.enqueueSocket(); f.scheduler.advance(1000); f.until { f.source.connected }
+            assertNull(firstCard.last())
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            assertEquals(1, f.services("turn_on").size)
+            assertEquals(1, f.services("turn_off").size)
+        }
     }
     @Test fun nativeHandshakeExcludesHelperSnapshotsEventsAndWrites() {
         listOf(false, true).forEach { native ->

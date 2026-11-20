@@ -38,12 +38,12 @@ fun HomeControlState.groups(selection: String?): List<HomeGroup> = entities
 
 /** Demo lights are projected directly from the dashboard owner. */
 class DemoHomeSource(private val dashboard: DashboardDataSource) : HomeControlSource {
-    private var switchOn = false
     private val listeners = linkedSetOf<(HomeControlState) -> Unit>()
-    private val areas = listOf(HomeArea("bedroom", "Bedroom"), HomeArea("study", "Study"))
+    private val areas = listOf(HomeArea("bedroom", "Bedroom"), HomeArea("study", "Study"), HomeArea("demo-switches", "Demo switches"))
     override val homeState get() = HomeControlState(areas,
         listOf(HomeDevice("bed", "Bedside", "bedroom"), HomeDevice("desk", "Desk", "study"),
-            HomeDevice("climate-room", "Climate sensor", "bedroom"), HomeDevice("climate-balcony", "Balcony sensor", null)),
+            HomeDevice("climate-room", "Climate sensor", "bedroom"), HomeDevice("climate-balcony", "Balcony sensor", null)) +
+            dashboard.state.switches.deviceNames.filterKeys { it != "desk" }.map { (id, name) -> HomeDevice(id, name, "demo-switches") },
         dashboard.state.lights.values.map { light ->
             val area = when (light.id) { "bedside" -> "bedroom"; "desk" -> "study"; else -> null }
             HomeEntity(light.id, light.name, HomeKind.LIGHT, area, when(light.id) { "bedside" -> "bed"; "desk" -> "desk"; else -> null }, light.availability, isOn = light.isOn, light = light)
@@ -53,8 +53,11 @@ class DemoHomeSource(private val dashboard: DashboardDataSource) : HomeControlSo
             listOf(
                 HomeEntity("temperature:${sensor.id}", "Temperature", HomeKind.SENSOR, area, device, sensor.availability, sensor.temperature?.toString().orEmpty(), sensor.temperatureUnit),
                 HomeEntity("humidity:${sensor.id}", "Humidity", HomeKind.SENSOR, area, device, sensor.availability, sensor.humidity?.toString().orEmpty(), sensor.humidityUnit))
+        } + dashboard.state.switches.channels.values.map {
+            HomeEntity(it.identity.entityId, it.name, HomeKind.SWITCH,
+                if (it.identity.deviceId == "desk") "study" else "demo-switches",
+                it.identity.deviceId, it.availability, isOn = it.isOn == true)
         } + listOf(
-            HomeEntity("switch:desk", "Desk outlet", HomeKind.SWITCH, "study", "desk", Availability.AVAILABLE, isOn = switchOn),
             HomeEntity("scene:night", "Good night", HomeKind.SCENE, "bedroom", null, Availability.AVAILABLE),
             HomeEntity("script:study", "Start studying", HomeKind.SCRIPT, "study", null, Availability.AVAILABLE)), true)
     init { dashboard.addListener { publish() } }
@@ -65,7 +68,9 @@ class DemoHomeSource(private val dashboard: DashboardDataSource) : HomeControlSo
         val entity = homeState.entities.find { it.id == id && it.availability == Availability.AVAILABLE } ?: return false
         when (entity.kind) {
             HomeKind.LIGHT -> dashboard.setLightPower(id, !entity.isOn)
-            HomeKind.SWITCH -> { switchOn = !switchOn; publish() }
+            HomeKind.SWITCH -> return dashboard.state.switches.let { switches ->
+                switches.channels[id]?.let { dashboard.toggleSwitch(switches.sourceId, it.identity) } == true
+            }
             HomeKind.SCENE -> dashboard.state.lights.values.filter { it.isOn }.forEach { dashboard.toggleLight(it.id) }
             HomeKind.SCRIPT -> if (dashboard.state.lights["desk"]?.isOn == false) dashboard.toggleLight("desk")
             HomeKind.SENSOR -> return false
