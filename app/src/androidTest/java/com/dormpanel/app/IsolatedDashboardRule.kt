@@ -15,6 +15,7 @@ class IsolatedDashboardRule : ExternalResource() {
     private lateinit var productivityDatabase: com.dormpanel.app.productivity.ProductivityDatabase
     private lateinit var database: DashboardDatabase
     var interceptNextSave: (((Result<Unit>) -> Unit) -> Unit)? = null
+    var deferNextSave: ((() -> Unit) -> Unit)? = null
     private val executors = mutableListOf<ExecutorService>()
     override fun before() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -43,7 +44,13 @@ class IsolatedDashboardRule : ExternalResource() {
                 override fun save(cards: List<com.dormpanel.app.dashboard.model.PlacedCard>, callback: (Result<Unit>) -> Unit) {
                     val intercept = interceptNextSave
                     interceptNextSave = null
-                    if (intercept == null) store.save(cards, callback) else intercept(callback)
+                    val defer = deferNextSave
+                    deferNextSave = null
+                    when {
+                        intercept != null -> intercept(callback)
+                        defer != null -> defer { store.save(cards, callback) }
+                        else -> store.save(cards, callback)
+                    }
                 }
             }
         }

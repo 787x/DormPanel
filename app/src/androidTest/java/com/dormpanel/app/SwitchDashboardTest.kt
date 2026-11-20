@@ -56,6 +56,82 @@ class SwitchDashboardTest {
         return GeneralSwipeAction(speed, { position(it, 0, 0) }, { position(it, deltaX, deltaY) }, Press.FINGER)
     }
 
+    @Test fun minimumSwitchHitTargetsAreDisjointAtDeviceDensity() {
+        val settings = HaSettingsStore(context)
+        val saved = settings.read()
+        settings.write(saved.copy(mode = BackendMode.DEMO))
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                ready(scenario) { it.stateHolder.state.loaded }
+                val density = context.resources.displayMetrics.density
+                fun bounds(view: View, minimumDp: Int): android.graphics.Rect {
+                    val rect = android.graphics.Rect()
+                    assertTrue(view.getGlobalVisibleRect(rect))
+                    assertTrue("${rect.width() / density}×${rect.height() / density} dp",
+                        rect.width() / density >= minimumDp && rect.height() / density >= minimumDp)
+                    return rect
+                }
+                var single = ""
+                scenario.onActivity {
+                    val model = vm(it)
+                    val holder = model.stateHolder
+                    holder.state.cards.forEach { card -> holder.delete(card.id) }
+                    assertTrue(holder.add(model.catalog.candidates.first { card -> card.candidateId == "switch:switch:desk" })
+                        is LayoutMutationResult.Success)
+                    single = holder.state.cards.single().id
+                    assertTrue(holder.move(single, 6, 4) is LayoutMutationResult.Success)
+                }
+                onView(withId(R.id.dashboard_edit)).perform(click())
+                val chrome = withParent(hasSibling(withTagValue(equalTo<Any>(single))))
+                val configure = onView(allOf(chrome, withContentDescription(R.string.switch_configure)))
+                val controls = listOf(configure to 48, onView(allOf(chrome, withContentDescription(
+                    context.getString(R.string.dashboard_delete_card, context.getString(R.string.card_switch))))) to 44,
+                    onView(allOf(chrome, withContentDescription(
+                        context.getString(R.string.dashboard_resize_card, context.getString(R.string.card_switch))))) to 48)
+                val editRects = controls.map { (control, minimum) ->
+                    lateinit var rect: android.graphics.Rect
+                    control.check { view, error ->
+                        if (error != null) throw error
+                        rect = bounds(view, minimum)
+                    }
+                    rect
+                }
+                assertTrue(editRects.indices.all { a -> (0 until a).none { b -> android.graphics.Rect.intersects(editRects[a], editRects[b]) } })
+                android.util.Log.i("SwitchGeometry", "density=$density, edit rectangles in px=$editRects")
+                configure.perform(click())
+                onView(withText(R.string.switch_save)).check(matches(isDisplayed()))
+                onView(withText(android.R.string.cancel)).perform(click())
+                onView(withId(R.id.dashboard_done)).perform(click())
+                val groups = listOf("desk" to listOf("Desk outlet"), "demo-switch-2" to listOf("左键", "右键"),
+                    "demo-switch-3" to listOf("左键", "中键", "右键"))
+                groups.forEach { (device, labels) ->
+                    var group = ""
+                    scenario.onActivity {
+                        val model = vm(it)
+                        val holder = model.stateHolder
+                        assertTrue(holder.add(model.catalog.candidates.first { it.candidateId == "switch-group:$device" })
+                            is LayoutMutationResult.Success)
+                        group = holder.state.cards.single { card -> card.id != single }.id
+                    }
+                    listOf(CardSize(2, 1), CardSize(1, 2)).forEach { size ->
+                        scenario.onActivity { assertTrue(vm(it).stateHolder.resize(group, size) is LayoutMutationResult.Success) }
+                        val hitRects = labels.map { label ->
+                            lateinit var rect: android.graphics.Rect
+                            tile(group, label).check { view, error ->
+                                if (error != null) throw error
+                                rect = bounds(view, 48)
+                            }.perform(click())
+                            rect
+                        }
+                        assertTrue(hitRects.indices.all { a -> (0 until a).none { b -> android.graphics.Rect.intersects(hitRects[a], hitRects[b]) } })
+                        android.util.Log.i("SwitchGeometry", "$size $device touch rectangles in px=$hitRects")
+                    }
+                    scenario.onActivity { vm(it).stateHolder.delete(group) }
+                }
+            }
+        } finally { settings.write(saved) }
+    }
+
     @Test fun oneAndTwoChannelCardsAndIndependentRebinding() {
         val settings = HaSettingsStore(context)
         val saved = settings.read()
@@ -151,6 +227,34 @@ class SwitchDashboardTest {
         }
     }
 
+    @Test fun pendingIndependentAddCannotCloseAReplacementDialog() {
+        val settings = HaSettingsStore(context)
+        val saved = settings.read()
+        settings.write(saved.copy(mode = BackendMode.DEMO))
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                ready(scenario) { it.stateHolder.state.loaded }
+                onView(withId(R.id.dashboard_edit)).perform(click())
+                onView(withId(R.id.dashboard_add)).perform(click())
+                onView(withText(R.string.category_home)).perform(click())
+                val outlet = onView(allOf(withText("Desk outlet"), hasSibling(withText(R.string.card_switch_description))))
+                outlet.perform(scrollTo(), click())
+                lateinit var persist: () -> Unit
+                scenario.onActivity { persistence.deferNextSave = { persist = it } }
+                onView(withText(R.string.switch_save)).perform(click())
+                onView(withText(R.string.switch_saving)).check(matches(isDisplayed()))
+                onView(withText(android.R.string.cancel)).perform(click())
+                outlet.perform(scrollTo(), click())
+                onView(withHint(R.string.switch_custom_channel)).perform(replaceText("Replacement draft"))
+                scenario.onActivity { persist() }
+                ready(scenario) { it.stateHolder.state.configurationSaves.isEmpty() }
+                onView(withText(R.string.switch_save)).check(matches(allOf(isDisplayed(), isEnabled())))
+                onView(withHint(R.string.switch_custom_channel)).check(matches(withText("Replacement draft")))
+                scenario.onActivity { assertEquals(1, vm(it).stateHolder.state.cards.count { card -> card.providerType == SWITCH_CARD }) }
+            }
+        } finally { settings.write(saved) }
+    }
+
     @Test fun addResizeReorderAndReloadSwitchCards() {
         val settings = HaSettingsStore(context)
         val saved = settings.read()
@@ -182,12 +286,39 @@ class SwitchDashboardTest {
                 onView(withText(R.string.category_home)).perform(click())
                 onView(allOf(withText(three), hasSibling(withText(R.string.card_switch_group_description)))).perform(scrollTo())
                 onView(withText(three)).perform(scrollTo(), click())
+                val alias = "Hall panel"
+                onView(withHint(R.string.switch_custom_device)).perform(replaceText(alias))
+                onView(withText(startsWith("1. 左键"))).perform(click())
+                onView(withText(startsWith("右键  ·"))).perform(click())
+                lateinit var failWrite: (Result<Unit>) -> Unit
+                scenario.onActivity { persistence.interceptNextSave = { failWrite = it } }
                 onView(withText(R.string.switch_save)).perform(click())
+                onView(withText(R.string.switch_saving)).check(matches(isDisplayed()))
+                scenario.onActivity {
+                    group = vm(it).stateHolder.state.cards.single().id
+                    failWrite(Result.failure(IllegalStateException("test")))
+                }
+                onView(withText(R.string.switch_save_failed)).check(matches(isDisplayed()))
+                onView(withHint(R.string.switch_custom_device)).check(matches(withText(alias)))
+                onView(withText(startsWith("1. 右键"))).check(matches(isDisplayed()))
+                lateinit var persistRetry: () -> Unit
+                scenario.onActivity { persistence.deferNextSave = { persistRetry = it } }
+                onView(withText(R.string.switch_save)).perform(click())
+                onView(withText(R.string.switch_saving)).check(matches(isDisplayed()))
+                onView(withText(R.string.switch_save)).check(matches(not(isEnabled())))
+                scenario.onActivity {
+                    assertEquals(group, vm(it).stateHolder.state.cards.single().id)
+                    persistRetry()
+                }
+                ready(scenario) { it.stateHolder.state.configurationSaves.isEmpty() }
                 onView(withId(R.id.dashboard_done)).perform(click())
                 scenario.onActivity {
                     val model = vm(it)
                     val holder = model.stateHolder
-                    group = holder.state.cards.single().id
+                    assertEquals(group, holder.state.cards.single().id)
+                    val savedBinding = SwitchCardConfiguration.decode(holder.state.cards.single().configurationJson)!!
+                    assertEquals(alias, savedBinding.name)
+                    assertEquals("switch:demo-switch-3-2", savedBinding.channels.first().identity.entityId)
                     assertEquals(CardSize(2, 1), holder.state.cards.single().size)
                     assertTrue(holder.add(model.catalog.candidates.single { candidate ->
                         candidate.candidateId == "switch:switch:demo-switch-3-0"
@@ -207,7 +338,7 @@ class SwitchDashboardTest {
                     }
                     return location
                 }
-                assertTrue(position(group, "左键").first < position(group, "右键").first)
+                assertTrue(position(group, "右键").first < position(group, "左键").first)
                 position(single, "左键")
                 channelName(group).check { view, error ->
                     if (error != null) throw error
@@ -228,11 +359,11 @@ class SwitchDashboardTest {
                     assertTrue(model.dataSource.homeState.entities.single { entity -> entity.id == "switch:demo-switch-3-0" }.isOn)
                 }
                 tile(group, "左键").check(matches(withContentDescription(containsString(context.getString(R.string.switch_on)))))
-                onView(allOf(withText(three), isDescendantOfA(withTagValue(equalTo<Any>(group))))).perform(click())
+                onView(allOf(withText(alias), isDescendantOfA(withTagValue(equalTo<Any>(group))))).perform(click())
                 tile(group, "左键").check(matches(withContentDescription(containsString(context.getString(R.string.switch_on)))))
                 // Give the preceding tap its own gesture sequence on fast emulators.
                 Thread.sleep(ViewConfiguration.getDoubleTapTimeout().toLong())
-                tile(group, "左键").perform(swipe(.5f, .5f, 520, 0, Swipe.FAST))
+                tile(group, "右键").perform(swipe(.5f, .5f, 520, 0, Swipe.FAST))
                 onView(isAssignableFrom(com.dormpanel.app.home.HomeControlView::class.java)).check(matches(isDisplayed()))
                 pressBack()
                 tile(group, "左键").check(matches(allOf(isDisplayed(),
@@ -256,12 +387,12 @@ class SwitchDashboardTest {
                 ready(scenario) { it.stateHolder.state.cards.any { card -> card.id == group && card.row == 1 } }
                 val gear = onView(allOf(withParent(groupChrome), withContentDescription(R.string.switch_configure)))
                 gear.perform(click())
-                onView(withText(startsWith("1. 左键"))).perform(click())
-                onView(withText(startsWith("右键  ·"))).perform(click())
+                onView(withText(startsWith("1. 右键"))).perform(click())
+                onView(withText(startsWith("左键  ·"))).perform(click())
                 onView(withText(R.string.switch_save)).perform(click())
                 ready(scenario) { it.stateHolder.state.configurationSaves.isEmpty() && !it.stateHolder.state.storageError }
                 onView(withId(R.id.dashboard_done)).perform(click())
-                assertTrue(position(group, "右键").second < position(group, "左键").second)
+                assertTrue(position(group, "左键").second < position(group, "右键").second)
                 scenario.onActivity {
                     vm(it).appearance.setTheme(com.dormpanel.app.appearance.ThemeMode.LIGHT)
                     vm(it).appearance.setCardOpacity(.3f)
@@ -270,7 +401,7 @@ class SwitchDashboardTest {
                 scenario.onActivity {
                     val card = vm(it).stateHolder.state.cards.single { card -> card.id == group }
                     savedJson = card.configurationJson
-                    assertEquals(listOf("switch:demo-switch-3-2", "switch:demo-switch-3-1", "switch:demo-switch-3-0"),
+                    assertEquals(listOf("switch:demo-switch-3-0", "switch:demo-switch-3-1", "switch:demo-switch-3-2"),
                         SwitchCardConfiguration.decode(savedJson)!!.channels.map { channel -> channel.identity.entityId })
                 }
             }

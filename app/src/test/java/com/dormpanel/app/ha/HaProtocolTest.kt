@@ -48,6 +48,7 @@ class HaProtocolTest {
         @Volatile var holdServices = false
         @Volatile var switchEntryId = "outlet-entry"
         @Volatile var failFullRegistry = false
+        @Volatile var fullRegistryError = "unavailable"
         @Volatile var snapshotSwitch = "off"
         @Volatile var scriptRequiresInput = false
         @Volatile var areaName = "Bedroom"
@@ -85,7 +86,7 @@ class HaProtocolTest {
                     if (holdServices && message.optString("type") == "call_service") return
                     if (failFullRegistry && message.optString("type") == "config/entity_registry/list") {
                         webSocket.send(JSONObject().put("id", message.getInt("id")).put("type", "result")
-                            .put("success", false).toString())
+                            .put("success", false).put("error", JSONObject().put("code", fullRegistryError)).toString())
                         return
                     }
                     if (message.optString("type") == "dormpanel/control_protocol") {
@@ -182,6 +183,58 @@ class HaProtocolTest {
             f.until { f.source.state.switches.resolve(sourceId, identity) != null }
             assertTrue(f.source.toggleSwitch(sourceId, identity))
             f.until { f.services("turn_off").size == 1 }
+        }
+    }
+
+    @Test fun fullRegistryRecoversOnTheSameSocketWithoutRegistryEvents() {
+        Fixture(switchFixture = true).use { f ->
+            f.failFullRegistry = true
+            f.start()
+            f.until { f.source.connected }
+            val sourceId = f.source.state.switches.sourceId
+            val identity = com.dormpanel.app.data.SwitchIdentity("ha:switch.panel", "wall", "outlet-entry")
+            assertFalse(f.source.toggleSwitch(sourceId, identity))
+            assertTrue(f.source.state.switches.channels.isEmpty())
+            assertTrue(f.services("turn_on").isEmpty())
+            f.failFullRegistry = false
+            f.scheduler.advance(5000)
+            f.until { f.source.state.switches.resolve(sourceId, identity) != null }
+            assertEquals(1, f.server.requestCount)
+            assertEquals(1, f.received.count { it.optString("type") == "config/entity_registry/list_for_display" })
+            assertTrue(f.source.toggleSwitch(sourceId, identity))
+            f.until { f.services("turn_on").size == 1 }
+        }
+    }
+
+    @Test fun registryRetryBacksOffAndStopsOnPermissionFailureOrBackendChange() {
+        Fixture(switchFixture = true).use { f ->
+            f.failFullRegistry = true
+            f.start()
+            f.until { f.source.connected }
+            fun requests() = f.received.count { it.optString("type") == "config/entity_registry/list" }
+            f.scheduler.advance(5000)
+            f.until { requests() == 2 }
+            // Drain the WebSocket failure response before moving the fake clock again.
+            repeat(8) { Thread.sleep(10); f.scheduler.advance() }
+            f.scheduler.advance(20_000)
+            assertEquals(2, requests())
+            f.fullRegistryError = "unauthorized"
+            f.scheduler.advance(10_000)
+            f.until { requests() == 3 }
+            repeat(8) { Thread.sleep(10); f.scheduler.advance() }
+            f.scheduler.advance(3_600_000)
+            assertEquals(3, requests())
+            assertTrue(f.source.state.switches.channels.isEmpty())
+
+            f.peer.close(1000, "reconnect")
+            f.until { !f.source.connected }
+            f.fullRegistryError = "unavailable"
+            f.enqueueSocket(); f.scheduler.advance(1000); f.until { f.source.connected }
+            assertEquals(4, requests())
+            f.source.configure(HaConnectionSettings(), null)
+            f.scheduler.advance(3_600_000)
+            assertEquals(4, requests())
+            assertFalse(f.source.connected)
         }
     }
     @Test fun switchCommandsShareActualStateAndRejectUnverifiedBindings() {

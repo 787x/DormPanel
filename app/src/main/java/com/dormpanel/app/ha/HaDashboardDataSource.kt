@@ -84,6 +84,9 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private val registryPending = mutableSetOf<String>()
     private val registryDirty = mutableSetOf<String>()
     private var switchRegistryReady = false
+    private var registryRetry: (() -> Unit)? = null
+    private var registryRetryStep = 0
+    private var registryRetryAllowed = false
     private var switchSourceId = ""
     private var legacyForecast: (() -> Unit)? = null
     private val weatherListeners = linkedSetOf<(String) -> Unit>()
@@ -144,12 +147,13 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private fun statusChanged(value: HaStatus) {
         status = value
         if (!connected) {
+            resetRegistryRetry()
             switchRegistryReady = false
             store.deviceRegistryKnown = false
             clearPendingSwitches()
             resetControlConnection()
             initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); deviceCommands.clear(); pendingLights.clear(); legacyForecast?.invoke(); legacyForecast = null
-        }
+        } else scheduleRegistryRetry()
         forecasts.connection(connected)
         publish(rebuild = true); statusListeners.toList().forEach { it(value) }
     }
@@ -164,7 +168,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         runCatching { HaEndpoint.parse(value.baseUrl) }.onSuccess { socket.start(it, token) }
             .onFailure { statusChanged(HaStatus(HaConnectionState.ERROR, "Invalid HA base URL.")) }
     }
-    fun stop() { socket.stop(); resetControlConnection(); forecasts.connection(false); commands.clear(); deviceCommands.clear(); pendingLights.clear(); clearPendingSwitches(); legacyForecast?.invoke(); legacyForecast = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
+    fun stop() { socket.stop(); resetRegistryRetry(); switchRegistryReady = false; resetControlConnection(); forecasts.connection(false); commands.clear(); deviceCommands.clear(); pendingLights.clear(); clearPendingSwitches(); legacyForecast?.invoke(); legacyForecast = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
     private fun initialize() {
         bufferedEvents.clear()
         socket.request(JSONObject().put("type", "subscribe_events").put("event_type", "state_changed")) { subscription ->
@@ -222,12 +226,30 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
             }
         }
     }
-    private fun refreshRegistry(kind: String, done: () -> Unit = {}) {
+    private fun resetRegistryRetry() {
+        registryRetry?.invoke()
+        registryRetry = null
+        registryRetryStep = 0
+        registryRetryAllowed = false
+    }
+
+    private fun scheduleRegistryRetry() {
+        if (!connected || !registryRetryAllowed || registryRetry != null || "entity" in registryPending) return
+        val delay = REGISTRY_RETRY_DELAYS[registryRetryStep]
+        registryRetryStep = (registryRetryStep + 1).coerceAtMost(REGISTRY_RETRY_DELAYS.lastIndex)
+        registryRetry = scheduler.after(delay) {
+            registryRetry = null
+            if (connected && registryRetryAllowed) refreshRegistry("entity", retryFullOnly = true)
+        }
+    }
+
+    private fun refreshRegistry(kind: String, retryFullOnly: Boolean = false, done: () -> Unit = {}) {
+        if (kind == "entity" && !retryFullOnly) resetRegistryRetry()
         if (!registryPending.add(kind)) { registryDirty += kind; return }
         var displayRegistry: Any? = null
         fun complete() {
             registryPending -= kind
-            if (registryDirty.remove(kind)) { refreshRegistry(kind, done); return }
+            if (registryDirty.remove(kind)) { refreshRegistry(kind, done = done); return }
             // Initialization's nested completions publish once at synchronized(), not once per unwind.
             val wasInitialized = initialized
             if (wasInitialized) {
@@ -236,38 +258,50 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                 publish(rebuild = true)
                 if (weatherId != previous) fetchForecast()
             }
+            if (kind == "entity") scheduleRegistryRetry()
             done()
         }
         fun full() {
-            socket.request(JSONObject().put("type", "config/${kind}_registry/list")) { result ->
+            val accept: (JSONObject) -> Unit = accept@{ result ->
+                if (kind == "entity" && kind in registryDirty) {
+                    complete()
+                    return@accept
+                }
+                val array = result.optJSONArray("result")
                 if (result.optBoolean("success")) {
-                    val array = result.optJSONArray("result")
                     when (kind) {
-                        "entity" -> store.registry(result.opt("result"))
+                        "entity" -> array?.let(store::registry)
                         "device" -> array?.let(store::deviceRegistry)
                         "area" -> array?.let(store::areaRegistry)
                     }
                 }
                 if (kind == "entity") {
-                    switchRegistryReady = result.optBoolean("success") && result.optJSONArray("result") != null
-                    if (!switchRegistryReady) store.registry(displayRegistry)
+                    switchRegistryReady = result.optBoolean("success") && array != null
+                    if (switchRegistryReady) resetRegistryRetry() else {
+                        if (!retryFullOnly) store.registry(displayRegistry)
+                        registryRetryAllowed = result.optJSONObject("error")?.optString("code") !in
+                            setOf("unauthorized", "forbidden", "not_allowed", "unknown_command")
+                    }
                 }
                 complete()
             }
+            if (!socket.request(JSONObject().put("type", "config/${kind}_registry/list"), accept)) accept(JSONObject())
         }
         if (kind == "service") {
             socket.request(JSONObject().put("type", "get_services")) { result ->
                 store.scriptServices(result.optJSONObject("result"))
                 complete()
             }
-        } else if (kind == "entity") socket.request(JSONObject().put("type", "config/entity_registry/list_for_display")) { result ->
-            if (result.optBoolean("success")) {
-                val entries = result.opt("result")
-                if (entries is org.json.JSONArray || (entries as? JSONObject)?.optJSONArray("entities") != null) {
-                    displayRegistry = entries
+        } else if (kind == "entity" && !retryFullOnly) {
+            if (!socket.request(JSONObject().put("type", "config/entity_registry/list_for_display")) { result ->
+                if (result.optBoolean("success")) {
+                    val entries = result.opt("result")
+                    if (entries is org.json.JSONArray || (entries as? JSONObject)?.optJSONArray("entities") != null) {
+                        displayRegistry = entries
+                    }
                 }
-            }
-            full()
+                full()
+            }) full()
         } else full()
     }
     private fun event(event: JSONObject) {
@@ -406,6 +440,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         if (light.isOn) commands.put(id.removePrefix("ha:"), "turn_on", 1)
     }
     private companion object {
+        val REGISTRY_RETRY_DELAYS = longArrayOf(5_000, 30_000, 120_000, 600_000)
         val HOME_DOMAINS = HomeKind.entries.map { it.name.lowercase() }.toSet()
     }
     private fun appearanceHelper(id: String, domain: String): HaEntity? {
