@@ -62,10 +62,7 @@ internal class WeatherCardFeed(
         }
         this.configuration = configuration
         this.blocks = blocks
-        if (!compactForecast) {
-            unsupportedForecasts.clear()
-            emptyForecasts.clear()
-        }
+        if (!compactForecast) emptyForecasts.clear()
         this.compactForecast = compactForecast
         subscribe()
     }
@@ -116,13 +113,22 @@ internal class WeatherCardFeed(
                 if (active != generation) return@listener
                 val previous = snapshots.put(block, snapshot)
                 if (previous == snapshot) return@listener
-                if (ha != null && compactForecast) {
-                    val recheck = if (block == WeatherBlock.CURRENT) {
-                        previous != null && (previous.haForecastFeatures != snapshot.haForecastFeatures ||
+                if (ha != null) {
+                    if (block == WeatherBlock.CURRENT) {
+                        // Keep unsupported types across a temporary drop in forecast demand.
+                        // Current weather can still invalidate that knowledge while demand is off.
+                        val recheck = previous != null && (previous.haForecastFeatures != snapshot.haForecastFeatures ||
                             (previous.state in setOf(WeatherState.ERROR, WeatherState.UNAUTHORIZED, WeatherState.UNCONFIGURED) &&
                                 snapshot.state == WeatherState.FRESH) ||
                             (previous.network == WeatherNetworkStatus.OFFLINE && snapshot.network != WeatherNetworkStatus.OFFLINE))
-                    } else {
+                        if (recheck) {
+                            val reconsidered = haForecastCandidates(snapshot).filterTo(mutableSetOf()) {
+                                it in emptyForecasts || it in unsupportedForecasts
+                            }
+                            unsupportedForecasts.clear()
+                            if (reconsidered.isNotEmpty()) repository.recheckEmptyHaForecasts(binding.placeId, ha, reconsidered)
+                        }
+                    } else if (compactForecast) {
                         if (snapshot.data is WeatherData.Forecast) {
                             emptyForecasts -= block
                         } else if (snapshot.state == WeatherState.UNSUPPORTED && !snapshot.refreshing) {
@@ -131,16 +137,8 @@ internal class WeatherCardFeed(
                         } else if (snapshot.haForecastRecovering || (snapshot.state == WeatherState.EMPTY && !snapshot.refreshing)) {
                             emptyForecasts += block
                         }
-                        false
                     }
-                    if (recheck) {
-                        val reconsidered = haForecastCandidates(snapshot).filterTo(mutableSetOf()) {
-                            it in emptyForecasts || it in unsupportedForecasts
-                        }
-                        unsupportedForecasts.clear()
-                        if (reconsidered.isNotEmpty()) repository.recheckEmptyHaForecasts(binding.placeId, ha, reconsidered)
-                    }
-                    subscribe()
+                    if (compactForecast) subscribe()
                 }
                 changed()
             }

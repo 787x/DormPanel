@@ -348,7 +348,7 @@ class DashboardGridView @JvmOverloads constructor(
                 when (val preview = stateHolder.previewResize(committedCards, cardId, snappedSize)) {
                     is LayoutMutationResult.Success -> {
                         session.lastValidSize = snappedSize
-                        applyDisplayedCards(preview.cards)
+                        applyDisplayedCards(preview.cards, resizePreview = true)
                     }
                     is LayoutMutationResult.Failure -> Unit
                 }
@@ -395,11 +395,12 @@ class DashboardGridView @JvmOverloads constructor(
         cancelResize()
     }
 
-    private fun applyDisplayedCards(cards: List<PlacedCard>) {
+    private fun applyDisplayedCards(cards: List<PlacedCard>, resizePreview: Boolean = false) {
         displayedCards = cards.toList()
+        val interactions = cardInteractions(resizePreview)
         displayedCards.forEach { card ->
             val entry = entries[card.id] ?: return@forEach
-            registry.provider(card.providerType)?.bind(entry.content, card, cardInteractions())
+            registry.provider(card.providerType)?.bind(entry.content, card, interactions)
         }
         requestLayout()
     }
@@ -411,10 +412,11 @@ class DashboardGridView @JvmOverloads constructor(
         }
     }
 
-    private fun cardInteractions() = CardInteractionScope(
+    private fun cardInteractions(resizePreview: Boolean = false) = CardInteractionScope(
         enabled = !editMode,
         navigateWeather = onWeatherAction,
         onGestureClaimed = onGestureClaimed,
+        isResizePreview = resizePreview,
     )
 
     private fun <T : TextView> editButton(label: String, view: T): T = view.apply {

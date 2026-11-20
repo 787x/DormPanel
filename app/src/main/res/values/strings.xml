@@ -58,7 +58,7 @@
     <string name="card_weather">Weather</string>
     <string name="card_weather_description">Sample weather and forecast</string>
     <string name="card_weather_compact">2×3 Compact weather</string>
-    <string name="card_weather_compact_description">Current weather and up to three forecasts</string>
+    <string name="card_weather_compact_description">Resizable weather card with up to three forecasts at 2×3</string>
     <string name="card_weather_classic">Classic weather</string>
     <string name="card_weather_classic_description">Temperature, humidity and text forecast</string>
     <string name="card_sensor">Room climate</string>

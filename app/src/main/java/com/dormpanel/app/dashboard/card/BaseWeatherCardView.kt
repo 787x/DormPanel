@@ -47,7 +47,14 @@ internal abstract class BaseWeatherCardView(
     private val feed = WeatherCardFeed(source, repository, ::refresh)
     private var configuration: WeatherCardConfiguration = WeatherCardConfiguration.Default
     private var lastClassicPlaceName: String? = null
-    private var requested = false
+    private val needsForecast get() = card.size.rowSpan >= 2
+    private var requestedForecast: Boolean? = null
+    private var pendingForecast: Boolean? = null
+    private val updatePreviewDemand = Runnable {
+        pendingForecast = null
+        bindFeed()
+        refresh()
+    }
     private val midnight = Runnable { refresh() }
     private val clockChanges = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) { refresh() }
@@ -61,7 +68,20 @@ internal abstract class BaseWeatherCardView(
             }
             configuration = next
         }
-        if (isAttachedToWindow && (configurationChanged || interactions.enabled || !requested)) bindFeed()
+        if (!isAttachedToWindow) return
+        val forecast = needsForecast
+        if (!interactions.isResizePreview || configurationChanged || requestedForecast == null) {
+            cancelPreviewDemand()
+            if (configurationChanged || requestedForecast != forecast) bindFeed()
+        } else if (forecast != pendingForecast) {
+            // Update layout immediately. Wait for a stable forecast demand during a drag;
+            // confirmation and rollback reconcile it immediately through the regular bind.
+            cancelPreviewDemand()
+            if (forecast != requestedForecast) {
+                pendingForecast = forecast
+                postDelayed(updatePreviewDemand, RESIZE_PREVIEW_DELAY_MS)
+            }
+        }
     }
 
     override fun onAttachedToWindow() {
@@ -77,14 +97,22 @@ internal abstract class BaseWeatherCardView(
     override fun onDetachedFromWindow() {
         context.unregisterReceiver(clockChanges)
         removeCallbacks(midnight)
+        cancelPreviewDemand()
         feed.close()
-        requested = false
+        requestedForecast = null
         super.onDetachedFromWindow()
     }
 
     private fun bindFeed() {
-        requested = true
-        feed.bind(configuration, setOf(WeatherBlock.CURRENT), compactForecast = card.size.rowSpan >= 2)
+        val forecast = needsForecast
+        requestedForecast = forecast
+        feed.bind(configuration, setOf(WeatherBlock.CURRENT), compactForecast = forecast)
+    }
+
+    private fun cancelPreviewDemand() {
+        if (pendingForecast == null) return
+        removeCallbacks(updatePreviewDemand)
+        pendingForecast = null
     }
 
     override fun primaryAction() = open(WeatherCardNavigation.Destination.WEATHER_CENTER)
@@ -152,10 +180,10 @@ internal abstract class BaseWeatherCardView(
             else -> prediction.forecastLines(now, slots, includeToday = prediction?.query?.block != WeatherBlock.DAILY,
                 forCard = true, classic = classic)
         }
-        if (card.size.rowSpan >= 2 && !invalid && binding?.source is WeatherSourceRef.HomeAssistant &&
+        if (needsForecast && !invalid && binding?.source is WeatherSourceRef.HomeAssistant &&
             prediction == null && snapshot?.haForecastFeatures == 0) {
             status = "${status}  ·  不支持预报"
-        } else if (card.size.rowSpan >= 2 && prediction != null && prediction.state != WeatherState.FRESH &&
+        } else if (needsForecast && prediction != null && prediction.state != WeatherState.FRESH &&
             (prediction.state != snapshot?.state || snapshot.data != null)) {
             status = "${status}  ·  预报${weatherStatus(prediction)}"
         } else if (slots > 0 && prediction?.state == WeatherState.FRESH && lines.isEmpty()) {
@@ -187,4 +215,8 @@ internal abstract class BaseWeatherCardView(
 
     protected fun forecastDescription(lines: List<WeatherLine>) =
         lines.joinToString("；") { listOfNotNull(it.label, it.temperature, it.sky.description).joinToString(" ") }
+
+    private companion object {
+        const val RESIZE_PREVIEW_DELAY_MS = 300L
+    }
 }

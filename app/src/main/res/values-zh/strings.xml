@@ -4,7 +4,7 @@
     <string name="card_weather">天气</string>
     <string name="card_weather_description">当前天气和预报</string>
     <string name="card_weather_compact">2×3紧凑天气</string>
-    <string name="card_weather_compact_description">当前天气与最多三条预报</string>
+    <string name="card_weather_compact_description">可调整尺寸，2×3 时使用最多三条预报的紧凑布局</string>
     <string name="card_weather_classic">经典天气</string>
     <string name="card_weather_classic_description">温度、湿度和文字预报</string>
     <string name="card_switch">独立开关</string>

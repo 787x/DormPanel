@@ -17,12 +17,16 @@ class CoreCardPresentationTest {
             registry.providers.map { it.typeKey })
         val compact = registry.provider(COMPACT_WEATHER_CARD)!!
         assertEquals(CardSize(2, 3), compact.defaultSize)
-        assertEquals(listOf(CardSize(2, 3)), compact.sizePolicy.legalSizes(CardSize(8, 6)))
-        assertFalse(compact.sizePolicy.hasAlternative(compact.defaultSize, CardSize(8, 6)))
+        val grid = CardSize(8, 6)
+        val ordinary = registry.provider(WEATHER_CARD)!!
+        val expected = (2..4).flatMap { columns -> (1..3).map { rows -> CardSize(columns, rows) } }.toSet()
+        assertEquals(expected, compact.sizePolicy.legalSizes(grid).toSet())
+        assertEquals(ordinary.sizePolicy.legalSizes(grid), compact.sizePolicy.legalSizes(grid))
+        assertTrue(compact.sizePolicy.hasAlternative(compact.defaultSize, grid))
         val classic = registry.provider("weather_classic")!!
         assertEquals(CardSize(4, 3), classic.defaultSize)
         for (rows in 1..3) for (columns in 2..4) assertTrue(classic.sizePolicy.allows(CardSize(columns, rows)))
-        registry.providers.filter { it != compact }.forEach {
+        registry.providers.forEach {
             assertTrue(it.sizePolicy.allows(it.defaultSize))
             assertTrue(it.sizePolicy.allows(CardSize(2, 1)))
             assertTrue(it.sizePolicy.allows(CardSize(2, 2)))
@@ -50,7 +54,6 @@ class CoreCardPresentationTest {
         assertEquals(1, weatherPresentation(CardSize(2, 2)).forecastColumns)
         assertTrue(weatherPresentation(CardSize(2, 3)).stackedCurrent)
         assertEquals(2, weatherPresentation(CardSize(2, 3)).forecastColumns)
-        assertEquals(3, weatherPresentation(CardSize(2, 3), compactForecast = true).forecastColumns)
         assertEquals(0, classicWeatherPresentation(CardSize(2, 3)).forecastColumns)
         assertEquals(3, weatherPresentation(CardSize(4, 3)).forecastColumns)
         assertEquals(3, weatherPresentation(CardSize(3, 3)).forecastColumns)
@@ -58,6 +61,20 @@ class CoreCardPresentationTest {
         assertTrue(sensorPresentation(CardSize(3, 2)).sideBySide)
         assertTrue(sensorPresentation(CardSize(3, 3)).status)
         assertTrue(sensorPresentation(CardSize(3, 3)).valueSp >= 60)
+    }
+    @Test fun `only compact weather at two by three uses compact forecast layout`() {
+        for (rows in 1..3) for (columns in 2..4) {
+            val size = CardSize(columns, rows)
+            val ordinary = weatherPresentation(size)
+            val compact = weatherPresentation(size, compactForecast = true)
+            assertFalse(ordinary.compactForecastLayout)
+            if (size == CardSize(2, 3)) {
+                assertEquals(2, ordinary.forecastColumns)
+                assertEquals(ordinary.copy(forecastColumns = 3, compactForecastLayout = true), compact)
+            } else {
+                assertEquals("Presentation at $size", ordinary, compact)
+            }
+        }
     }
     @Test fun `light controls require both sufficient area and device capability`() {
         val full = com.dormpanel.app.data.LightCapabilities(true, 2700..6500)

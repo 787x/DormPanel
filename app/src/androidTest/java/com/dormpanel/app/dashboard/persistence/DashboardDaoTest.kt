@@ -184,7 +184,7 @@ class DashboardDaoTest {
         val config = WeatherCardConfiguration.Bound("city", WeatherSourceRef.QWeatherCity("101010100")).encode()
         val cards = listOf(
             PlacedCard("seed-weather", "weather", 4, 0, CardSize(4, 3)),
-            PlacedCard("compact", "weather_compact_2x3", 0, 0, CardSize(2, 3), config),
+            PlacedCard("compact", "weather_compact_2x3", 1, 0, CardSize(3, 2), config),
             PlacedCard("classic", "weather_classic", 1, 3, CardSize(3, 3), config),
         )
         fun withStore(run: (RoomDashboardStore) -> Unit) {

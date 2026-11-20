@@ -45,9 +45,8 @@ private class CompactWeatherCardProvider(
     private val appearance: AppearanceController,
     private val repository: com.dormpanel.app.weather.WeatherRepository?,
 ) : ProductionCardProvider(
-    COMPACT_WEATHER_CARD, R.string.card_weather_compact, R.string.card_weather_compact_description, CardSize(2, 3),
+    COMPACT_WEATHER_CARD, R.string.card_weather_compact, R.string.card_weather_compact_description, COMPACT_WEATHER_SIZE,
 ) {
-    override val sizePolicy = ExplicitCardSizePolicy(listOf(defaultSize))
     override fun createView(context: Context): View = WeatherCardView(context, appearance, source, repository, compactForecast = true)
 }
 
