@@ -26,19 +26,30 @@ fun clockPresentation(size: CardSize) = ClockPresentation(
     centered = size.columnSpan <= 2,
 )
 
-data class WeatherPresentation(val stackedCurrent: Boolean, val summary: Boolean, val forecastColumns: Int)
+internal val COMPACT_WEATHER_SIZE = CardSize(2, 3)
+
+data class WeatherPresentation(
+    val stackedCurrent: Boolean,
+    val summary: Boolean,
+    val forecastColumns: Int,
+    val compactForecastLayout: Boolean = false,
+)
 fun weatherPresentation(size: CardSize) = weatherPresentation(size, compactForecast = false)
 
-internal fun weatherPresentation(size: CardSize, compactForecast: Boolean) = WeatherPresentation(
-    stackedCurrent = size.columnSpan == 2 && size.rowSpan == 3,
-    summary = size.rowSpan >= 2,
-    forecastColumns = when {
-        size.rowSpan == 1 -> 0
-        size.rowSpan == 2 -> 1
-        size.rowSpan == 3 && (compactForecast || size.columnSpan == 3) -> 3
-        else -> maxOf(2, size.columnSpan - 1)
-    },
-)
+internal fun weatherPresentation(size: CardSize, compactForecast: Boolean): WeatherPresentation {
+    val compactForecastLayout = compactForecast && size == COMPACT_WEATHER_SIZE
+    return WeatherPresentation(
+        stackedCurrent = size == COMPACT_WEATHER_SIZE,
+        summary = size.rowSpan >= 2,
+        forecastColumns = when {
+            size.rowSpan == 1 -> 0
+            size.rowSpan == 2 -> 1
+            compactForecastLayout || (size.rowSpan == 3 && size.columnSpan == 3) -> 3
+            else -> maxOf(2, size.columnSpan - 1)
+        },
+        compactForecastLayout = compactForecastLayout,
+    )
+}
 
 internal data class ClassicWeatherPresentation(val horizontal: Boolean, val temperatureSp: Float, val summary: Boolean, val forecastColumns: Int)
 

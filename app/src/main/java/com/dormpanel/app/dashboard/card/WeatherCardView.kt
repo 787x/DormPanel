@@ -63,7 +63,8 @@ internal class WeatherCardView(
         addView(forecast)
         addView(status)
     }
-    override val forecastColumns get() = weatherPresentation(card.size, compactForecast).forecastColumns
+    private val presentation get() = weatherPresentation(card.size, compactForecast)
+    override val forecastColumns get() = presentation.forecastColumns
 
     override fun renderReadings(readings: WeatherCardReadings, metric: (WeatherCardMetric) -> String?) {
         heading.text = readings.title
@@ -131,7 +132,7 @@ internal class WeatherCardView(
         val hasRange = todayRange.visibility == VISIBLE
         if (card.size.rowSpan == 1) return if (card.size.columnSpan >= 3 && !hasRange) 1 else 0
 
-        val rangeShares = if (hasRange && !weatherPresentation(card.size).stackedCurrent) 1 else 0
+        val rangeShares = if (hasRange && !presentation.stackedCurrent) 1 else 0
         val available = width - 28.dp
         val minimumPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 15f, resources.displayMetrics)
         fun fits(label: TextView, slot: Int): Boolean {
@@ -153,8 +154,9 @@ internal class WeatherCardView(
         val height = key.height
         val tall = card.size.rowSpan == 3
         val compact = card.size.rowSpan == 1
-        val stacked = weatherPresentation(card.size).stackedCurrent
-        val narrowForecast = compactForecast && key.forecasts == 3
+        val policy = presentation
+        val stacked = policy.stackedCurrent
+        val narrowForecast = policy.compactForecastLayout && key.forecasts == 3
         val inset = if (compact) 6.dp else 10.dp
         setPadding(14.dp, inset, 14.dp, inset)
         val available = (height - inset * 2).coerceAtLeast(0)

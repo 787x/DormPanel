@@ -2,6 +2,7 @@ package com.dormpanel.app
 
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -317,7 +318,7 @@ class CoreDashboardTest {
 
     private fun weatherPickerAndDetailRebindOnlySelectedCardAndRestoreLayout(providerType: String, label: Int) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val fixedSize = providerType == "weather_compact_2x3"
+        val compact = providerType == "weather_compact_2x3"
         fun pickerLabel(name: Int) = context.getString(R.string.picker_add_description, context.getString(name))
         val district = com.dormpanel.app.weather.WeatherSourceRef.QWeatherCity("101200101")
         val shanghai = com.dormpanel.app.weather.WeatherSourceRef.QWeatherCity("101020100")
@@ -362,9 +363,75 @@ class CoreDashboardTest {
                 onView(withText(containsString("101200101"))).perform(ViewActions.click())
                 onView(withContentDescription("卡片名称")).perform(ViewActions.replaceText("测试武汉宿舍"), ViewActions.closeSoftKeyboard())
                 onView(withText("确认")).perform(ViewActions.click())
-                if (fixedSize) {
-                    onView(withContentDescription(context.getString(R.string.dashboard_resize_card, context.getString(label))))
-                        .check(matches(withEffectiveVisibility(Visibility.GONE)))
+                val defaultSize = CardSize(if (compact) 2 else 4, 3)
+                scenario.onActivity { assertEquals(defaultSize, model(it).stateHolder.state.cards.last().size) }
+                val resized = if (compact) CardSize(3, 3) else defaultSize
+                if (compact) {
+                    val handle = withContentDescription(context.getString(R.string.dashboard_resize_card, context.getString(label)))
+                    onView(handle).check(matches(isDisplayed()))
+                    lateinit var resizeHandle: View
+                    lateinit var renderedCard: DashboardCardView
+                    var committedWidth = 0
+                    var columnStep = 0f
+                    var down = 0L
+                    fun send(action: Int, dx: Float = 0f) {
+                        val event = MotionEvent.obtain(down, android.os.SystemClock.uptimeMillis(), action,
+                            resizeHandle.width / 2f + dx, resizeHandle.height / 2f, 0)
+                        try {
+                            assertTrue(resizeHandle.dispatchTouchEvent(event))
+                        } finally {
+                            event.recycle()
+                        }
+                    }
+                    onView(handle).check { view, error ->
+                        if (error != null) throw error
+                        resizeHandle = view
+                    }
+                    scenario.onActivity { activity ->
+                        val grid = activity.findViewById<View>(R.id.dashboard_grid)
+                        val gap = 10 * activity.resources.displayMetrics.density
+                        columnStep = (grid.width + gap) / 8
+                        renderedCard = descendants(grid).filterIsInstance<DashboardCardView>()
+                            .single { it.contentDescription.contains("测试武汉") }
+                        committedWidth = renderedCard.width
+                        down = android.os.SystemClock.uptimeMillis()
+                        send(MotionEvent.ACTION_DOWN)
+                        send(MotionEvent.ACTION_MOVE, columnStep)
+                        assertEquals(defaultSize, model(activity).stateHolder.state.cards.last().size)
+                    }
+                    onView(card("测试武汉")).check { view, error ->
+                        if (error != null) throw error
+                        assertSame(renderedCard, view)
+                        assertEquals(columnStep, (view.width - committedWidth).toFloat(), 1f)
+                    }
+                    scenario.onActivity { send(MotionEvent.ACTION_CANCEL) }
+                    onView(card("测试武汉")).check { view, error ->
+                        if (error != null) throw error
+                        assertEquals(committedWidth, view.width)
+                    }
+
+                    val sizes = (1..3).flatMap { rows -> (2..4).map { CardSize(it, rows) } } + resized
+                    var previous = defaultSize
+                    for (size in sizes) {
+                        var dx = 0f
+                        var dy = 0f
+                        scenario.onActivity { activity ->
+                            val grid = activity.findViewById<View>(R.id.dashboard_grid)
+                            val gap = 10 * activity.resources.displayMetrics.density
+                            dx = (size.columnSpan - previous.columnSpan) * ((grid.width + gap) / 8)
+                            dy = (size.rowSpan - previous.rowSpan) * ((grid.height + gap) / 6)
+                        }
+                        onView(handle).perform(GeneralSwipeAction(Swipe.SLOW, GeneralLocation.CENTER, { view ->
+                            val center = GeneralLocation.CENTER.calculateCoordinates(view)
+                            floatArrayOf(center[0] + dx, center[1] + dy)
+                        }, Press.FINGER))
+                        scenario.onActivity {
+                            val added = model(it).stateHolder.state.cards.last()
+                            assertEquals(size, added.size)
+                            assertEquals(bound.encode(), added.configurationJson)
+                        }
+                        previous = size
+                    }
                 }
                 var rowDelta = 0f
                 var weatherDragLabel = ""
@@ -388,7 +455,7 @@ class CoreDashboardTest {
                     assertEquals(legacy, com.dormpanel.app.dashboard.card.WeatherCardConfiguration.decode(saved.first().configurationJson))
                     assertEquals("weather", saved.first().providerType)
                     assertEquals(providerType, saved.last().providerType)
-                    assertEquals(CardSize(if (fixedSize) 2 else 4, 3), saved.last().size)
+                    assertEquals(resized, saved.last().size)
                     assertEquals(bound.encode(), saved.last().configurationJson)
                     assertEquals(3, saved.last().row)
                 }
@@ -427,7 +494,7 @@ class CoreDashboardTest {
                 }
                 onView(allOf(withContentDescription("和风天气官网"), isDescendantOfA(card("测试武汉"))))
                     .perform(ViewActions.longClick())
-                if (fixedSize) onView(withText("刷新天气")).perform(ViewActions.click())
+                if (compact) onView(withText("刷新天气")).perform(ViewActions.click())
                 captureReview("pr79-detail")
                 onView(withText("切换天气")).perform(ViewActions.click())
                 onView(withText("测试上海   ·   Asia/Shanghai")).perform(ViewActions.click())
@@ -706,6 +773,20 @@ class CoreDashboardTest {
                     assertEquals(3, labels.count { it.text == "雷阵雨伴有冰雹" })
                 }
                 captureReview("pr86-weather-layouts")
+                scenario.onActivity {
+                    val compact = cards.first()
+                    val rendered = descendants(grid).filterIsInstance<DashboardCardView>().single { it.tag == compact.id }
+                    val previousStarts = started.toList()
+                    val previousStops = stopped.toList()
+                    for ((size, expected) in listOf(CardSize(3, 3) to 3, CardSize(2, 2) to 1, CardSize(2, 3) to 3)) {
+                        grid.submitCards(listOf(compact.copy(size = size)))
+                        assertSame(rendered, descendants(grid).filterIsInstance<DashboardCardView>().single())
+                        val labels = descendants(rendered).filterIsInstance<TextView>().filter { it.isShown }
+                        assertEquals(expected, labels.count { it.text == "雷阵雨伴有冰雹" })
+                    }
+                    assertEquals(previousStarts, started)
+                    assertEquals(previousStops, stopped)
+                }
             } finally {
                 scenario.onActivity {
                     detail?.dismiss()
@@ -1016,7 +1097,7 @@ class CoreDashboardTest {
 
     @Test fun classicWeatherCardFitsLargeFontAndRecoversAfterResize() = checkWeatherCardFit("weather_classic")
 
-    @Test fun compactWeatherCardFitsLargeFont() = checkWeatherCardFit("weather_compact_2x3")
+    @Test fun compactWeatherCardFitsLargeFontAndRecoversAfterResize() = checkWeatherCardFit("weather_compact_2x3")
 
     private fun checkWeatherCardFit(providerType: String) {
         val classic = providerType == "weather_classic"
@@ -1024,7 +1105,7 @@ class CoreDashboardTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 val appearance = model(activity).appearance
-                val forecastCounts = if (classic) listOf(3) else listOf(1, 2, 3)
+                val forecastCounts = if (classic) listOf(3) else if (compact) 0..3 else 1..3
                 val ordinaryForecastStyle = mutableMapOf<Float, List<Float>>()
                 for (scale in listOf(1f, 1.3f)) for (forecastCount in forecastCounts) {
                     val context = activity.createConfigurationContext(android.content.res.Configuration(activity.resources.configuration).apply {
@@ -1041,7 +1122,7 @@ class CoreDashboardTest {
                         availability = com.dormpanel.app.data.Availability.STALE,
                         forecast = demo.state.weather.forecast.take(forecastCount)
                             .mapIndexed { index, day ->
-                                if (index == 0 && !classic && !compact) day else day.copy(low = -123, high = 105)
+                                if (index == 0 && !classic) day else day.copy(low = -123, high = 105)
                             },
                     )
                     val source = object : com.dormpanel.app.data.DashboardDataSource by demo {
@@ -1054,16 +1135,39 @@ class CoreDashboardTest {
                     val host = android.widget.FrameLayout(activity)
                     activity.addContentView(host, android.widget.FrameLayout.LayoutParams(-1, -1))
                     host.addView(card)
+                    val ordinary = if (compact) coreCardRegistry(source, appearance).provider("weather")!!
+                        .createView(context) as DashboardCardView else null
+                    ordinary?.let { host.addView(it) }
+                    fun layout(view: DashboardCardView, type: String, size: CardSize) {
+                        view.bind(PlacedCard("fit", type, 0, 0, size),
+                            com.dormpanel.app.dashboard.card.CardInteractionScope(false) {})
+                        fun exact(px: Int) = View.MeasureSpec.makeMeasureSpec(px, View.MeasureSpec.EXACTLY)
+                        view.measure(exact(148 * size.columnSpan - 10), exact(114 * size.rowSpan - 10))
+                        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+                        view.applyAppearance(AppearanceState(themeMode = if (scale == 1f) ThemeMode.DARK else ThemeMode.LIGHT))
+                    }
+                    fun visibleLayout(view: DashboardCardView) = descendants(view).filter { it.isShown }.map {
+                        val bounds = android.graphics.Rect(0, 0, it.width, it.height)
+                        view.offsetDescendantRectToMyCoords(it, bounds)
+                        listOf(it.javaClass, bounds, it.paddingLeft, it.paddingRight,
+                            (it as? TextView)?.text?.toString(), (it as? TextView)?.textSize,
+                            (it as? com.dormpanel.app.dashboard.card.WeatherIconView)?.symbol)
+                    }.toList()
                     try {
-                        val sizes = if (compact) listOf(CardSize(2, 3)) else listOf(CardSize(2, 3)) +
-                            (1..3).flatMap { rows -> (2..4).map { CardSize(it, rows) } } + CardSize(2, 3)
+                        val compactSize = CardSize(2, 3)
+                        val sizes = listOf(compactSize) +
+                            (1..3).flatMap { rows -> (2..4).map { CardSize(it, rows) } } + compactSize +
+                            if (compact) listOf(CardSize(3, 3), compactSize, CardSize(2, 2), compactSize) else emptyList()
+                        layout(card, providerType, compactSize)
+                        val original = visibleLayout(card)
                         val sizesPx = sizes.map { size ->
-                            card.bind(PlacedCard("fit", providerType, 0, 0, size),
-                                com.dormpanel.app.dashboard.card.CardInteractionScope(false) {})
-                            fun exact(px: Int) = View.MeasureSpec.makeMeasureSpec(px, View.MeasureSpec.EXACTLY)
-                            card.measure(exact(148 * size.columnSpan - 10), exact(114 * size.rowSpan - 10))
-                            card.layout(0, 0, card.measuredWidth, card.measuredHeight)
-                            card.applyAppearance(AppearanceState(themeMode = if (scale == 1f) ThemeMode.DARK else ThemeMode.LIGHT))
+                            layout(card, providerType, size)
+                            if (ordinary != null && size != compactSize) {
+                                layout(ordinary, "weather", size)
+                                assertEquals("$scale $size $forecastCount layout", visibleLayout(ordinary), visibleLayout(card))
+                                assertEquals(ordinary.contentDescription, card.contentDescription)
+                            }
+                            if (size == compactSize) assertEquals(original, visibleLayout(card))
                             val shown = descendants(card).filter { it.isShown }.toList()
                             val text = shown.filterIsInstance<TextView>().filter { it.text.isNotEmpty() }
                             text.forEach { label ->
@@ -1074,8 +1178,13 @@ class CoreDashboardTest {
                                 assertTrue("$scale $size ${label.text}: text layout ${label.layout.height}px in ${label.height}px",
                                     label.layout.height <= label.height + 1)
                                 if (label.text.toString() != sample.name) {
-                                    assertTrue("$scale $size ${label.text}: line width ${label.layout.getLineWidth(0)}px in ${label.width}px",
-                                        label.layout.getLineWidth(0) <= label.width + 1)
+                                    // On API 28, the shared 4×3 summary can round this extreme range
+                                    // a few pixels past its slot at 1.3× with no forecast.
+                                    val rounding = if (ordinary != null && forecastCount == 0 && scale == 1.3f &&
+                                        size == CardSize(4, 3) && label.text == "-123–105°F") 3 else 1
+                                    assertTrue("$scale $size $forecastCount forecasts ${label.text}: " +
+                                        "line width ${label.layout.getLineWidth(0)}px in ${label.width}px",
+                                        label.layout.getLineWidth(0) <= label.width + rounding)
                                 }
                             }
                             assertTrue(text.any { it.text == "离线 · 已过期" })
@@ -1107,11 +1216,11 @@ class CoreDashboardTest {
                                 }.coerceAtMost(forecastCount)
                                 assertEquals("$scale $size forecasts", expected + 1, forecastIcons.size)
                                 val cells = forecastIcons.drop(1).map { it.parent as ViewGroup }
-                                if (size == CardSize(2, 3)) {
+                                if (size == CardSize(2, 3) && cells.isNotEmpty()) {
                                     assertTrue(cells.maxOf { it.width } - cells.minOf { it.width } <= 1)
                                     assertTrue(cells.zipWithNext().all { (left, right) -> left.right <= right.left })
                                     assertTrue(cells.withIndex().all { (index, cell) ->
-                                        val range = if (index == 0 && !compact) "20–26°F" else "-123–105°F"
+                                        val range = if (index == 0) "20–26°F" else "-123–105°F"
                                         descendants(cell).filterIsInstance<TextView>().any { it.isShown && it.text == range }
                                     })
                                 }
@@ -1128,7 +1237,7 @@ class CoreDashboardTest {
                             temperature.textSize
                         }
                         assertEquals(sizesPx.first(), sizesPx.last(), 0.1f)
-                        if (!compact) assertTrue(sizesPx.first() > sizesPx[1])
+                        assertTrue(sizesPx.first() > sizesPx[1])
                     } finally {
                         (host.parent as ViewGroup).removeView(host)
                     }

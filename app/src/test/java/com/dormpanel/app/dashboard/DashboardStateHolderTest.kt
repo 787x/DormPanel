@@ -151,7 +151,7 @@ class DashboardStateHolderTest {
         val right = left.copy(id = "right", providerType = "weather_compact_2x3", column = 2, size = CardSize(2, 3))
         store.loaded(Result.success(StoredDashboard(true, 1, listOf(left, right))))
         assertEquals(listOf(left, right), holder.state.cards)
-        assertTrue(holder.resize(right.id, CardSize(3, 3)) is LayoutMutationResult.Failure)
+        assertTrue(holder.resize(right.id, CardSize(5, 3)) is LayoutMutationResult.Failure)
         val state = WeatherCardConfiguration.Bound("city", source)
         val initiating = state.copy(displayName = "第一次").encode()
         val latest = state.copy(displayName = "第二次").encode()
