@@ -159,7 +159,18 @@ class SwitchDashboardTest {
             var single = ""
             var group = ""
             var savedJson = ""
+            var compactNamePixels = 0f
             val three = "Demo · 3键开关"
+            fun channelName(card: String) = onView(allOf(withText("中键"), isDescendantOfA(withTagValue(equalTo<Any>(card)))))
+            fun checkGlyph(card: String, label: String, expected: SwitchGlyph.State) {
+                tile(card, label).check { view, error ->
+                    if (error != null) throw error
+                    val glyph = (view as android.view.ViewGroup).getChildAt(0) as SwitchGlyph
+                    assertEquals(expected, glyph.state)
+                    assertTrue(glyph.width > glyph.height && glyph.height > 0)
+                    assertFalse(glyph.isClickable)
+                }
+            }
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 ready(scenario) { it.stateHolder.state.loaded }
                 scenario.onActivity {
@@ -198,8 +209,16 @@ class SwitchDashboardTest {
                 }
                 assertTrue(position(group, "左键").first < position(group, "右键").first)
                 position(single, "左键")
+                channelName(group).check { view, error ->
+                    if (error != null) throw error
+                    compactNamePixels = (view as android.widget.TextView).textSize
+                }
+                checkGlyph(group, "左键", SwitchGlyph.State.OFF)
                 tile(group, "中键").perform(click())
                 tile(single, "左键").perform(click())
+                checkGlyph(group, "左键", SwitchGlyph.State.ON)
+                checkGlyph(single, "左键", SwitchGlyph.State.ON)
+                checkGlyph(group, "右键", SwitchGlyph.State.OFF)
                 scenario.onActivity {
                     val model = vm(it)
                     val channels = model.dataSource.state.switches.channels.values.filter { channel ->
@@ -263,6 +282,11 @@ class SwitchDashboardTest {
                     assertEquals(1, cards.single { card -> card.id == group }.row)
                     assertEquals(savedJson, cards.single { card -> card.id == group }.configurationJson)
                     assertEquals(CardSize(1, 1), cards.single { card -> card.id == single }.size)
+                    assertTrue(vm(it).stateHolder.resize(group, CardSize(3, 2)) is LayoutMutationResult.Success)
+                }
+                channelName(group).check { view, error ->
+                    if (error != null) throw error
+                    assertTrue((view as android.widget.TextView).textSize > compactNamePixels)
                 }
             }
         } finally {
