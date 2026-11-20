@@ -2,7 +2,7 @@
 
 ## 安装与连接
 
-将集成的 `homeassistant/custom_components/dormpanel/` 复制到 HA 的 `config/custom_components/dormpanel/`，重启 Home Assistant。从「设置 → 设备与服务 → 添加集成」添加 DormPanel。升级已有集成时，直接覆盖集成目录中的代码再重启，保留原有配置条目及 HA 的存储数据。
+解压 `DormPanel-HA-0.1.3.zip`，将其中的 `custom_components/dormpanel/` 复制到 HA 的 `config/custom_components/dormpanel/`，重启 Home Assistant。从「设置 → 设备与服务 → 添加集成」添加 DormPanel。升级已有集成时，直接覆盖集成目录中的代码再重启，保留原有配置条目及 HA 的存储数据。
 
 在 X08E 控制中心的 Home Assistant 设置中填写 HA 地址和长期访问令牌。首次注册需要管理员连接。连接成功后，从 HA 侧边栏进入「DormPanel」，在设备概览选择已注册设备，查看版本、上次注册时间及支持的文件类型。
 
@@ -43,11 +43,11 @@
 
 卡片资源由 DormPanel 集成提供。资源注册只需完成一次，可供多个仪表盘使用。
 
-- **由界面管理资源**时，使用管理员账户打开「设置 → 仪表盘 → 右上角菜单 → 资源」。如果菜单没有「资源」，在个人资料中启用高级模式。添加 `/dormpanel_static/panel.js?v=92`，类型选「JavaScript 模块」。
+- **由界面管理资源**时，使用管理员账户打开「设置 → 仪表盘 → 右上角菜单 → 资源」。如果菜单没有「资源」，在个人资料中启用高级模式。添加 `/dormpanel_static/panel.js?v=0.1.3`，类型选「JavaScript 模块」。
 - **已使用 YAML 管理资源**时，将下列条目加入现有 `lovelace.resources` 列表。重新加载仪表盘资源或重启 HA，再刷新浏览器。[HA 资源注册文档](https://contributors.home-assistant.io/frontend/custom-ui/resources/)
 
 ```yaml
-- url: /dormpanel_static/panel.js?v=92
+- url: /dormpanel_static/panel.js?v=0.1.3
   type: module
 ```
 
@@ -60,7 +60,7 @@ type: custom:dormpanel-overview
 
 卡片提供与侧边栏相同的 10 项设置。点击「设备信息与诊断」「发送文件与传输记录」或「设备管理」展开其他操作。每张卡片的设备选择和展开状态各自独立。
 
-侧边栏脚本地址会随文件内容变更。升级时，把已有 Lovelace 资源条目的 `v` 值改为 `92`，刷新所有打开的 HA 页面；如果仍看到旧卡片，重新加载仪表盘资源并强制刷新浏览器。保留原有卡片配置即可。
+侧边栏脚本地址会随文件内容变更。升级时，把已有 Lovelace 资源条目的 `v` 值改为 `0.1.3`，刷新所有打开的 HA 页面；如果仍看到旧卡片，重新加载仪表盘资源并强制刷新浏览器。保留原有卡片配置即可。
 
 ## 文件发送与记录
 

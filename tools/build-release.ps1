@@ -70,26 +70,7 @@ try {
     if (-not $AndroidOnly) {
         $haVersion = $haReleaseVersion
         $haRoot = Join-Path $repositoryRoot 'homeassistant\custom_components\dormpanel'
-        $manifest = Get-Content -LiteralPath (Join-Path $haRoot 'manifest.json') -Raw | ConvertFrom-Json
-        if ($manifest.version -cne $haVersion) { throw "Unexpected HA manifest version (expected $haVersion)." }
-        $haZip = Join-Path $staging "DormPanel-HA-$haVersion.zip"
-        $files = @(Get-ChildItem -LiteralPath $haRoot -Recurse -File | Where-Object {
-            $_.FullName -notmatch '\\(__pycache__|\.storage|transfer[^\\]*)\\' -and
-            $_.Name -notmatch 'credential|secret|token' -and
-            $_.Extension -in '.py', '.json', '.js', '.md', '.txt', '.css', '.html'
-        } | Sort-Object FullName)
-        if ($files.Count -eq 0) { throw 'No HA source files.' }
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $zip = [IO.Compression.ZipFile]::Open($haZip, [IO.Compression.ZipArchiveMode]::Create)
-        try {
-            foreach ($file in $files) {
-                $entry = 'custom_components/dormpanel/' + $file.FullName.Substring($haRoot.Length).TrimStart('\', '/').Replace('\', '/')
-                [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $entry) | Out-Null
-            }
-        } finally { $zip.Dispose() }
-        $haHash = (Get-FileHash -LiteralPath $haZip -Algorithm SHA256).Hash.ToLowerInvariant()
-        Set-Content -LiteralPath "$haZip.sha256" -Encoding ascii -Value "$haHash  $([IO.Path]::GetFileName($haZip))"
-        Assert-HaReleaseArchive $haZip $haRoot
+        New-HaReleaseArchive (Join-Path $staging "DormPanel-HA-$haVersion.zip") $haRoot
     }
     $sumLines = @(Get-ChildItem -LiteralPath $staging -File | Where-Object Extension -in '.apk', '.zip' | Sort-Object Name | ForEach-Object {
         "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"

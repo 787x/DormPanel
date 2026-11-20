@@ -1,4 +1,4 @@
-# DormPanel Schedule Manager 0.8.2（Pre-release）
+# DormPanel Schedule Manager 0.8.3（Pre-release）
 
 显式 v3 工作区与 v2→v3 迁移复用同一 Catalog / Workspace / Writer 和管理员边界。PR56 增加无副作用的只读 Descriptor 发现、游标分页历史、八类 RAW 版本详情与差异、新提交式回退、可续做审计和独立历史归档。v3 完整应用备份使用 DPBK0002 一致性 SQLite 快照，继续读取 DPBK0001；恢复后先隔离发布并核验已知引用。支持明确预览与确认的私有无引用 RAW 快照整理；缓存身份、未知恢复材料和全部远端历史均不自动删除。普通 WebDAV 远端 GC 保持 NOT_ELIGIBLE，v2 精简候选不适用于 v3。实际范围、预算和验收见 [PR56 记录](../docs/pr56-sync-v3-maintenance.md)，此前接入边界见 [PR55 记录](../docs/pr55-sync-v3-verification.md)。
 
@@ -16,7 +16,7 @@ HTTP WebDAV 须在连接中显式允许明文传输；HTTPS 推荐使用系统 C
 
 ## 使用
 
-当前版本 0.8.2，参见[本轮发布与升级说明](../docs/RELEASE-fpk-0.8.2.md)。官方 Node 22、管理员 Socket、目录授权及原位状态保留规则不变。
+当前版本 0.8.3，参见[本轮发布与升级说明](../docs/RELEASE-fpk-0.8.3.md)。官方 Node 22、管理员 Socket、目录授权及原位状态保留规则不变。
 
 0.4.4 安装时不再填写 WebDAV。打开后可以直接本地编辑；需要共享时，到“课程表与共享”添加 NAS 本地目录或 WebDAV。保存连接后按下一步提示，选择保留当前本地课程开启共享，或建立独立空白课程表。新建默认推荐 Sync v3，旧版设备可明确选择 v2。建立本机配置不会创建远端共享数据；加入已验证目标或创建新的共享课表仍需单独确认。切换不会迁移或合并原课程，移除配置不会删除远端文件。
 

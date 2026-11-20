@@ -22,8 +22,8 @@ DormPanel 是一个面向 **小米 Redmi 小爱触屏音箱 Pro 8（X08E）** �
 | --- | --- | --- | --- |
 | [X08E 应用](https://github.com/787x/DormPanel/releases/tag/v0.1.13) | **0.1.13** | 在小爱触屏音箱 Pro 8 上使用桌面、天气、控制与课表 | 核心应用 |
 | [Phone 应用](https://github.com/787x/DormPanel/releases/tag/v0.1.13) | **0.1.13** | 在 Android 手机上查看、编辑课程、Todo 和备忘，以及添加桌面小部件 | 可选 |
-| [fnOS Schedule Manager](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.2) | **0.8.2 · Pre-release** | 在 NAS 浏览器中管理课程、共享工作区、历史和备份 | 可选 |
-| [Home Assistant 集成](https://github.com/787x/DormPanel/releases/tag/v0.1.9) | **0.1.2** | 从 HA 向 X08E 发送课表/APK，以及使用可选的辅助实体联动 | 可选 |
+| [fnOS Schedule Manager](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.3) | **0.8.3 · Pre-release** | 在 NAS 浏览器中管理课程、Todo、备忘、工作区和备份 | 可选 |
+| [Home Assistant 集成](https://github.com/787x/DormPanel/releases/tag/ha-v0.1.3) | **0.1.3** | 在 HA 中控制 X08E 并发送课表或 APK | 可选 |
 
 X08E 与 Phone 的版本号独立。**仅使用 X08E 的本地卡片和工具不需要 NAS 或 Home Assistant；两台 Android 设备通过 WebDAV 同步课表、Todo 和备忘也不要求安装 FPK。**
 
@@ -93,7 +93,7 @@ X08E 天气功能可以选择 **和风天气（QWeather）**或 **Home Assistant
 
 一般的 HA 灯光/传感器控制不要求先安装此自定义集成；上述中继功能则需要它。更多信息见 [Home Assistant 接入](docs/PR4-home-assistant.md)、[完整家居控制](docs/PR5-home-control.md)及 [XLS 中继](docs/pr52-ha-xls.md)。
 
-需要配套新版 HA 集成的原生控制已在源码中实现，已公开的 0.1.2 继续使用原有功能。配套新版支持从 HA 侧边栏和 Lovelace 的 `custom:dormpanel-overview` 卡片切换设备、直接操作 X08E 的 10 项原生设置，并查看设备的实际状态与文件传输记录。原生实体也可用于仪表盘和自动化，无需创建 Helper；已有 Helper 绑定可用于兼容旧版 HA 集成。安装、升级和操作步骤见 [DormPanel HA 管理指南](docs/ha-dormpanel-management.md)。
+HA 集成 0.1.3 与 X08E 0.1.13 配套，支持从 HA 侧边栏和 Lovelace 的 `custom:dormpanel-overview` 卡片切换设备、直接操作 X08E 的 10 项原生设置，并查看设备的实际状态与文件传输记录。原生实体也可用于仪表盘和自动化，无需创建 Helper；已有 Helper 绑定可用于兼容旧版 HA 集成。安装、升级和操作步骤见 [DormPanel HA 管理指南](docs/ha-dormpanel-management.md)。
 
 ### 4. X08E 控制中心与系统共存
 
@@ -178,17 +178,18 @@ fnOS FPK ──┘  （可选：网页管理、备份、历史、CLI/MCP）
 
 **重要：升级 APK/FPK 不会自动迁移已有同步数据集。** 旧 `dormpanel-sync-v3/` 与扩展版 `dormpanel-sync-v3-shared/` 是不同数据集，不会自动持续双向桥接。要让共享颜色、课程安排跨端生效，应先确认各端版本兼容，并按明确的预览、绑定和迁移流程操作；不要直接改目录或删除旧历史。
 
-**共享 Todo 与备忘**：两端需绑定同一个支持效率记录的 DPV3/4 WebDAV 数据集。在 X08E 长按 Todo 或备忘卡片打开「数据来源」，在 Phone 从「管理」进入 Todo 或备忘，再选择连接共享内容或预览并确认导入本机内容。原本机内容会保留，可以切回本地。请先确认各参与端兼容 Todo，旧版可能无法向含 Todo 的数据集写入。天气配置和设备设置各自保存在本机。
+**共享 Todo 与备忘**：参与同步的 X08E、Phone 和 fnOS 需绑定同一个支持效率记录的 DPV3/4 WebDAV 数据集。在 X08E 长按 Todo 或备忘卡片打开「数据来源」，在 Phone 从「管理」进入 Todo 或备忘，再选择连接共享内容或预览并确认导入本机内容。原本机内容会保留，可以切回本地。请先确认各参与端兼容 Todo，旧版可能无法向含 Todo 的数据集写入。天气配置和设备设置各自保存在本机。
 
 技术细节见 [Sync v3 扩展格式](docs/sync-v3-shared-state.md)、[课程安排语义](docs/pr70-course-schedule.md)、[同步发布与迁移](docs/RELEASE-sync-v3.md)。
 
 ## fnOS：可选的 NAS 课程管理器
 
-[fnOS Schedule Manager 0.8.2](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.2) 提供适合浏览器的课程管理界面，并需要 fnOS 官方 **Node.js 22** 运行环境。
+[fnOS Schedule Manager 0.8.3](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.3) 提供适合浏览器的课程管理界面，并需要 fnOS 官方 **Node.js 22** 运行环境。
 
 主要支持：
 
 - 本地工作区与 WebDAV 共享工作区管理；
+- DPV3/4 共享 Todo 清单、任务与备忘管理；
 - 按课程分组、共享选色、多时段、教学周和课程安排编辑；
 - ICS 导入/导出、学期管理、日期调整；
 - 历史版本查看、比较、冲突处理与新提交式回退；
@@ -197,7 +198,7 @@ fnOS FPK ──┘  （可选：网页管理、备份、历史、CLI/MCP）
 
 它是**可选的管理端**，不是必须部署的 Sync v3 中央服务器；没有 fnOS 也可以使用 WebDAV 共享课表。FPK 目前标记为 **Pre-release**。升级已安装 FPK 请使用 fnOS 官方应用中心的较高版本原位升级，不要通过可能先卸载旧包的命令强行安装。
 
-详见 [fnOS 课程管理](docs/pr71-course-management.md) 与 [fnOS 发布说明](docs/RELEASE-fpk-0.8.2.md)。
+详见 [fnOS 课程管理](docs/pr71-course-management.md) 与 [fnOS 发布说明](docs/RELEASE-fpk-0.8.3.md)。
 
 ## 快速开始
 
@@ -205,8 +206,8 @@ fnOS FPK ──┘  （可选：网页管理、备份、历史、CLI/MCP）
 
 1. **X08E**：从 [Android v0.1.13 Release](https://github.com/787x/DormPanel/releases/tag/v0.1.13) 下载 `DormPanel-X08E-0.1.13.apk`。
 2. **Phone**（可选）：从同一 Release 下载 `DormPanel-Phone-0.1.13.apk`。
-3. **fnOS**（可选）：从 [fpk-v0.8.2](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.2) 下载 `dormpanel-schedule-manager-0.8.2.fpk`，通过官方应用中心安装。
-4. **HA 集成**（按需）：从 [v0.1.9 的资产](https://github.com/787x/DormPanel/releases/tag/v0.1.9) 获取 `DormPanel-HA-0.1.2.zip`；按 HA 自定义集成方式安装后重启 HA，再添加 DormPanel 集成。
+3. **fnOS**（可选）：从 [fpk-v0.8.3](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.3) 下载 `dormpanel-schedule-manager-0.8.3.fpk`，通过官方应用中心安装。
+4. **HA 集成**（按需）：从 [ha-v0.1.3](https://github.com/787x/DormPanel/releases/tag/ha-v0.1.3) 获取 `DormPanel-HA-0.1.3.zip`，按 [安装说明](docs/RELEASE-ha-0.1.3.md) 复制代码后重启 HA。首次安装需添加 DormPanel 集成，升级保留已有配置。
 
 下载后请按 Release 内的 `SHA256SUMS.txt` 校验文件。Android APK 可以通过系统安装器安装，或在具备 ADB 的电脑上原位安装：
 
@@ -267,7 +268,8 @@ X08E 的 HA、WebDAV 和和风天气配置支持**同一个限时扫码配置网
 ## 更多文档
 
 - [最新 Android 发布说明](docs/RELEASE-0.1.13.md)
-- [fnOS 0.8.2 发布说明](docs/RELEASE-fpk-0.8.2.md)
+- [Home Assistant 0.1.3 发布说明](docs/RELEASE-ha-0.1.3.md)
+- [fnOS 0.8.3 发布说明](docs/RELEASE-fpk-0.8.3.md)
 - [X08E 天气功能与和风配置](docs/x08e-weather.md)
 - [扫码配置 HA / WebDAV / 和风天气](docs/PR26-settings-phone-entry.md)
 - [Phone 课程通知与 Live Updates 边界](docs/phone-course-notifications.md)

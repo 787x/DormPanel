@@ -58,7 +58,7 @@ async function equalOriginal(f, before) {
 }
 linux('多工作区、候选/capture/attempt/abandoned、真实冲突、凭据证书和私有历史精确恢复', async t => {
   const f = await fixture(t), before = await original(f), created = await f.manager.create(f.location);
-  assert(created.verified); assert.equal(created.workspaceCount, 4); assert.equal(created.appVersion, '0.8.2');
+  assert(created.verified); assert.equal(created.workspaceCount, 4); assert.equal(created.appVersion, '0.8.3');
   assert(created.dependencies.some(d => d.included)); assert(created.dependencies.some(d => !d.included && d.type === 'webdav'));
   const newerLocal = await f.catalog.load(f.local.id);
   await newerLocal.edit(operation('备份后新增私有提交'));
@@ -70,7 +70,7 @@ linux('多工作区、候选/capture/attempt/abandoned、真实冲突、凭据�
   for (const secret of ['sensitive-password', 'legacy-secret', 'BEGIN CERTIFICATE', 'capture 之后']) assert(!bytes.includes(Buffer.from(secret)));
   const remoteBefore = [...f.rows].filter(([, rows]) => rows.size).map(([k, rows]) => [k, [...rows].map(([id, b]) => [id, hash(b).toString('hex')])]);
   await (await f.catalog.load(f.a.id)).edit(operation('备份后的编辑'));
-  const verified = await f.manager.verify({ ...f.location, name: created.name }, 'admin'); assert(verified.verified);
+  const verified = await f.manager.verify({ ...f.location, name: created.name }, 'admin'); assert(verified.verified); assert.equal(verified.appVersion, '0.8.3');
   await f.manager.restore({ token: verified.token, confirm: '恢复应用数据' }, 'admin');
   await equalOriginal(f, before);
   assert.deepEqual(await readFile(retainedPath), retainedBytes);
@@ -212,7 +212,7 @@ async function forged(f, m, payload = Buffer.alloc(0)) {
   const encrypted = Buffer.concat([cipher.update(Buffer.concat([len, manifest, payload])), cipher.final()]); cipher.getAuthTag().copy(header, 36);
   const name = `backup-${randomUUID()}.dpbk`; await writeFile(join(f.exports, name), Buffer.concat([header, encrypted])); return name;
 }
-for (const oldVersion of ['0.4.1', '0.4.2', '0.4.3', '0.4.4']) linux(`0.5.0 兼容 ${oldVersion} 版本元数据并精确恢复，备份格式保持不变`, async t => {
+for (const oldVersion of ['0.4.1', '0.4.2', '0.4.3', '0.4.4', '0.8.2']) linux(`当前版本兼容 ${oldVersion} 版本元数据并精确恢复，备份格式保持不变`, async t => {
   const f = await fixture(t), before = await original(f), created = await f.manager.create(f.location);
   const bytes = await readFile(join(f.exports, created.name));
   const secret = scryptSync(password, bytes.subarray(8, 24), 32, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
