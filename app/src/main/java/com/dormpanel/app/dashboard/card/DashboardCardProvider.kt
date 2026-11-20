@@ -22,6 +22,7 @@ class CardInteractionScope(
     val enabled: Boolean,
     private val navigateWeather: (WeatherCardNavigation) -> Unit,
     private val onGestureClaimed: () -> Unit,
+    internal val isResizePreview: Boolean = false,
 ) {
     constructor(enabled: Boolean, onGestureClaimed: () -> Unit) : this(enabled, {}, onGestureClaimed)
 

@@ -458,6 +458,37 @@ class WeatherRepositoryTest {
         feed.close()
     }
 
+    @Test fun pausedCardForecastKeepsUnsupportedTypesUntilCurrentCapabilitiesChange() = Fixture().use { f ->
+        val (config, feed) = f.bindHaCard()
+        val current = f.jobs.single()
+        current.send(haFeatures(5))
+        f.advance()
+        val daily = f.jobs.last()
+        assertEquals(WeatherBlock.DAILY, daily.block)
+        daily.fail(WeatherState.UNSUPPORTED)
+        f.advance()
+        val fallback = f.jobs.last()
+        assertEquals(WeatherBlock.TWICE_DAILY, fallback.block)
+
+        feed.bind(config, setOf(WeatherBlock.CURRENT), compactForecast = false)
+        assertTrue(fallback.cancelled)
+        assertFalse(current.cancelled)
+        feed.bind(config, setOf(WeatherBlock.CURRENT), compactForecast = true)
+        f.advance()
+        assertEquals(WeatherBlock.TWICE_DAILY, f.jobs.last().block)
+        assertEquals(1, f.jobs.count { it.block == WeatherBlock.DAILY })
+
+        feed.bind(config, setOf(WeatherBlock.CURRENT), compactForecast = false)
+        current.send(haFeatures(1))
+        f.advance()
+        assertTrue(f.jobs.last().cancelled)
+        assertEquals(1, f.jobs.count { it.block == WeatherBlock.DAILY })
+        feed.bind(config, setOf(WeatherBlock.CURRENT), compactForecast = true)
+        f.advance()
+        assertEquals(2, f.jobs.count { it.block == WeatherBlock.DAILY })
+        feed.close()
+    }
+
     @Test fun sourceChangeCancelsRecoveryAndRejectsLateProbeResults() = Fixture().use { f ->
         val (_, feed) = f.bindHaCard()
         f.jobs.single().send(haFeatures(7))
