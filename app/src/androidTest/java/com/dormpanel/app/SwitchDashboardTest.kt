@@ -1,7 +1,7 @@
 package com.dormpanel.app
 
-import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
@@ -47,13 +47,13 @@ class SwitchDashboardTest {
         withContentDescription(startsWith(label)),
     ))
 
-    private fun swipe(fromX: Float, fromY: Float, deltaX: Int, deltaY: Int): androidx.test.espresso.ViewAction {
+    private fun swipe(fromX: Float, fromY: Float, deltaX: Int, deltaY: Int, speed: Swipe = Swipe.SLOW): androidx.test.espresso.ViewAction {
         fun position(view: View, dx: Int, dy: Int): FloatArray {
             val at = IntArray(2)
             view.getLocationOnScreen(at)
             return floatArrayOf(at[0] + view.width * fromX + dx, at[1] + view.height * fromY + dy)
         }
-        return GeneralSwipeAction(Swipe.SLOW, { position(it, 0, 0) }, { position(it, deltaX, deltaY) }, Press.FINGER)
+        return GeneralSwipeAction(speed, { position(it, 0, 0) }, { position(it, deltaX, deltaY) }, Press.FINGER)
     }
 
     @Test fun oneAndTwoChannelCardsAndIndependentRebinding() {
@@ -211,27 +211,9 @@ class SwitchDashboardTest {
                 tile(group, "左键").check(matches(withContentDescription(containsString(context.getString(R.string.switch_on)))))
                 onView(allOf(withText(three), isDescendantOfA(withTagValue(equalTo<Any>(group))))).perform(click())
                 tile(group, "左键").check(matches(withContentDescription(containsString(context.getString(R.string.switch_on)))))
-                var swipeStart = 0 to 0
-                tile(group, "左键").check { view, error ->
-                    if (error != null) throw error
-                    val at = IntArray(2)
-                    view.getLocationOnScreen(at)
-                    swipeStart = (at[0] + view.width / 2) to (at[1] + view.height / 2)
-                }
-                scenario.onActivity { activity ->
-                    // Keep fling velocity independent of emulator input injection timing.
-                    val down = android.os.SystemClock.uptimeMillis() - 96
-                    for (step in 0..6) {
-                        val action = when (step) {
-                            0 -> MotionEvent.ACTION_DOWN
-                            6 -> MotionEvent.ACTION_UP
-                            else -> MotionEvent.ACTION_MOVE
-                        }
-                        val event = MotionEvent.obtain(down, down + step * 16, action,
-                            swipeStart.first + step * 85f, swipeStart.second.toFloat(), 0)
-                        try { activity.dispatchTouchEvent(event) } finally { event.recycle() }
-                    }
-                }
+                // Give the preceding tap its own gesture sequence on fast emulators.
+                Thread.sleep(ViewConfiguration.getDoubleTapTimeout().toLong())
+                tile(group, "左键").perform(swipe(.5f, .5f, 520, 0, Swipe.FAST))
                 onView(isAssignableFrom(com.dormpanel.app.home.HomeControlView::class.java)).check(matches(isDisplayed()))
                 pressBack()
                 tile(group, "左键").check(matches(allOf(isDisplayed(),
