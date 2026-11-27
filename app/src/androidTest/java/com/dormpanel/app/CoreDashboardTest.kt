@@ -2,6 +2,7 @@ package com.dormpanel.app
 
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -308,6 +309,7 @@ class CoreDashboardTest {
                     { v -> val p = IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0] + v.width / 2f - dx, p[1] + v.height / 2f - dy) }, Press.FINGER))
                 scenario.onActivity { assertEquals(CardSize(2, 1), model(it).stateHolder.state.cards.first { c -> c.id == id }.size) }
             }
+            checkWeatherAqi()
             onView(withId(R.id.dashboard_done)).perform(ViewActions.click())
             scenario.onActivity { activity ->
                 original.forEach { model(activity).stateHolder.resize(it.id, it.size) }
@@ -586,6 +588,7 @@ class CoreDashboardTest {
     private fun checkWeatherResizeDemand(type: String, source: WeatherSourceRef, compactWidthSlots: Int) {
         val ha = source is WeatherSourceRef.HomeAssistant
         val forecastBlock = if (ha) WeatherBlock.TWICE_DAILY else WeatherBlock.DAILY
+        val currentBlocks = if (ha) setOf(WeatherBlock.CURRENT) else setOf(WeatherBlock.CURRENT, WeatherBlock.AIR_CURRENT)
         val zone = ZoneId.of("Asia/Shanghai")
         val places = WeatherPlaceStore("[]") { true }
         places.save(WeatherPlace("resize", "Resize weather", zone, listOf(source)))
@@ -697,7 +700,7 @@ class CoreDashboardTest {
                     val gap = (10 * activity.resources.displayMetrics.density).toInt()
                     rowStep = (grid.height + gap) / 6f
                     columnStep = (grid.width + gap) / 8f
-                    assertEquals(listOf(WeatherBlock.CURRENT), starts)
+                    assertEquals(currentBlocks.toList(), starts)
 
                     // Repeated brief crossings must not start and stop provider work.
                     begin()
@@ -708,7 +711,7 @@ class CoreDashboardTest {
                     send(MotionEvent.ACTION_CANCEL)
                 }
                 scenario.onActivity {
-                    assertEquals(listOf(WeatherBlock.CURRENT), starts)
+                    assertEquals(currentBlocks.toList(), starts)
                     begin()
                     send(MotionEvent.ACTION_MOVE, 2)
                     assertColumns(0)
@@ -726,7 +729,7 @@ class CoreDashboardTest {
                     assertColumns(compactWidthSlots)
                     send(MotionEvent.ACTION_CANCEL)
                     assertColumns(0)
-                    assertEquals(setOf(WeatherBlock.CURRENT), active.keys)
+                    assertEquals(currentBlocks, active.keys)
                     assertEquals(CardSize(2, 1), holder.state.cards.single().size)
 
                     // Confirm before the preview delay expires. The demand must start immediately.
@@ -734,8 +737,7 @@ class CoreDashboardTest {
                     send(MotionEvent.ACTION_MOVE, 2)
                     send(MotionEvent.ACTION_UP)
                     assertEquals(CardSize(2, 3), holder.state.cards.single().size)
-                    val tallBlocks = setOf(WeatherBlock.CURRENT, forecastBlock) +
-                        listOfNotNull(WeatherBlock.AIR_CURRENT.takeIf { type == "weather_compact_2x3" })
+                    val tallBlocks = currentBlocks + forecastBlock
                     assertEquals(tallBlocks, active.keys)
                     assertFalse(view.isClickable)
                     val confirmedStarts = starts.toList()
@@ -752,8 +754,8 @@ class CoreDashboardTest {
                     resize(0, -1)
                     assertColumns(compactWidthSlots)
                     grid.setEditMode(false)
-                    assertEquals(confirmedStarts.filterNot { it == WeatherBlock.AIR_CURRENT }, starts.filterNot { it == WeatherBlock.AIR_CURRENT })
-                    assertEquals(confirmedStops.filterNot { it == WeatherBlock.AIR_CURRENT }, stops.filterNot { it == WeatherBlock.AIR_CURRENT })
+                    assertEquals(confirmedStarts, starts)
+                    assertEquals(confirmedStops, stops)
                     assertTrue(view.isClickable)
                     grid.setEditMode(true)
 
@@ -766,19 +768,18 @@ class CoreDashboardTest {
                 scenario.onActivity {
                     send(MotionEvent.ACTION_CANCEL)
                     assertColumns(compactWidthSlots)
-                    assertEquals(setOf(WeatherBlock.CURRENT, forecastBlock) +
-                        listOfNotNull(WeatherBlock.AIR_CURRENT.takeIf { type == "weather_compact_2x3" }), active.keys)
+                    assertEquals(currentBlocks + forecastBlock, active.keys)
 
                     resize(-2)
                     assertEquals(CardSize(2, 1), holder.state.cards.single().size)
-                    assertEquals(setOf(WeatherBlock.CURRENT), active.keys)
+                    assertEquals(currentBlocks, active.keys)
 
                     resize(2, 1)
                     assertEquals(CardSize(3, 3), holder.state.cards.single().size)
                     assertColumns(if (ha) 2 else 3)
                     resize(-2, -1)
                     assertEquals(CardSize(2, 1), holder.state.cards.single().size)
-                    assertEquals(setOf(WeatherBlock.CURRENT), active.keys)
+                    assertEquals(currentBlocks, active.keys)
 
                     if (ha) assertEquals(1, starts.count { it == WeatherBlock.DAILY })
                     assertEquals(1, starts.count { it == WeatherBlock.CURRENT })
@@ -791,7 +792,7 @@ class CoreDashboardTest {
                     send(MotionEvent.ACTION_UP)
                     assertEquals("INVALID_EXISTING_LAYOUT", rejection)
                     assertEquals(CardSize(2, 1), holder.state.cards.single().size)
-                    assertEquals(setOf(WeatherBlock.CURRENT), active.keys)
+                    assertEquals(currentBlocks, active.keys)
                     assertColumns(0)
 
                     begin()
@@ -956,15 +957,25 @@ class CoreDashboardTest {
                         .any { it.symbol == com.dormpanel.app.dashboard.card.WeatherSymbol.STORM && it.isShown })
                 }
                 val compactCard = withTagValue(org.hamcrest.CoreMatchers.equalTo<Any>("a"))
-                onView(allOf(withText("AQI 39 优"), isDescendantOfA(compactCard))).check { view, error ->
-                    if (error != null) throw error
-                    val aqi = view as TextView
-                    val row = aqi.parent as ViewGroup
-                    val range = descendants(row).filterIsInstance<TextView>().single { it.text == "20–26°C" }
-                    assertEquals(row.width, aqi.right)
-                    assertTrue(kotlin.math.abs((range.top + range.bottom) - (aqi.top + aqi.bottom)) <= 1)
-                    assertTrue((range.width + range.layout.getLineWidth(0)) / 2 + range.translationX < aqi.left)
-                    assertTrue(aqi.layout.height <= aqi.height)
+                val standardTwoByThree = withTagValue(org.hamcrest.CoreMatchers.equalTo<Any>("f"))
+                for (cardMatcher in listOf(compactCard, standardTwoByThree)) {
+                    onView(allOf(withText("AQI 39 优"), isDescendantOfA(cardMatcher))).check { view, error ->
+                        if (error != null) throw error
+                        val aqi = view as TextView
+                        val row = aqi.parent as ViewGroup
+                        val range = descendants(row).filterIsInstance<TextView>().single { it.text == "20–26°C" }
+                        assertEquals(row.width, aqi.right)
+                        assertTrue(kotlin.math.abs((range.top + range.bottom) - (aqi.top + aqi.bottom)) <= 1)
+                        assertEquals(Gravity.LEFT, range.gravity and Gravity.HORIZONTAL_GRAVITY_MASK)
+                        assertTrue(range.layout.getLineWidth(0) + 12 * range.resources.displayMetrics.density <= aqi.left)
+                        assertTrue(aqi.layout.height <= aqi.height)
+                        assertTrue(aqi.textSize >= 16 * aqi.resources.displayMetrics.density)
+                    }
+                    onView(allOf(withText("晴"), isDescendantOfA(cardMatcher))).check { view, error ->
+                        if (error != null) throw error
+                        val condition = view as TextView
+                        assertTrue(condition.textSize >= 16 * condition.resources.displayMetrics.density)
+                    }
                 }
                 onView(allOf(withText("和风天气"), isDescendantOfA(compactCard))).check(matches(isDisplayed()))
                 onView(allOf(withText("HA"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
@@ -1045,9 +1056,22 @@ class CoreDashboardTest {
                     assertTrue(aqi.top >= condition.baseline + conditionBounds.bottom)
                     assertTrue(screenY(aqi) + aqi.height <= screenY(humidity))
                     assertTrue(aqi.layout.height <= aqi.height)
-                    assertTrue(aqi.textSize / aqi.resources.displayMetrics.density >= 12f)
+                    assertTrue(aqi.textSize / aqi.resources.displayMetrics.scaledDensity >= 20f)
                 }
                 captureReview("pr86-weather-layouts")
+                val regularCard = withTagValue(org.hamcrest.CoreMatchers.equalTo<Any>("g"))
+                for (size in listOf(CardSize(4, 3), CardSize(3, 2), CardSize(2, 1))) {
+                    scenario.onActivity {
+                        val regular = cards.single { it.id == "f" }.copy(id = "g", column = 4, size = size)
+                        grid.submitCards(cards.filter { it.id in setOf("a", "f") } + regular)
+                    }
+                    onView(allOf(withText("AQI 39 优"), isDescendantOfA(regularCard))).check { view, error ->
+                        if (error != null) throw error
+                        val aqi = view as TextView
+                        assertTrue(aqi.layout.height <= aqi.height)
+                        assertTrue(aqi.textSize / aqi.resources.displayMetrics.scaledDensity >= 10f)
+                    }
+                }
                 scenario.onActivity {
                     val compact = cards.first()
                     val rendered = descendants(grid).filterIsInstance<DashboardCardView>().single { it.tag == compact.id }
@@ -1058,10 +1082,10 @@ class CoreDashboardTest {
                         assertSame(rendered, descendants(grid).filterIsInstance<DashboardCardView>().single())
                         val labels = descendants(rendered).filterIsInstance<TextView>().filter { it.isShown }
                         assertEquals(expected, labels.count { it.text == "雷阵雨伴有冰雹" })
+                        assertEquals(1, labels.count { it.text == "AQI 39 优" })
                     }
-                    val air = wuhan to WeatherBlock.AIR_CURRENT
-                    assertEquals(previousStarts + air, started)
-                    assertEquals(previousStops + air, stopped)
+                    assertEquals(previousStarts, started)
+                    assertEquals(previousStops, stopped)
                 }
             } finally {
                 scenario.onActivity {

@@ -3,7 +3,6 @@ package com.dormpanel.app.dashboard.card
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Paint
-import android.graphics.Rect
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -15,6 +14,7 @@ import com.dormpanel.app.appearance.PanelPalette
 import com.dormpanel.app.data.DashboardDataSource
 import com.dormpanel.app.weather.WeatherRepository
 import java.time.Instant
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 @SuppressLint("ViewConstructor")
@@ -42,9 +42,9 @@ internal class WeatherCardView(
     private val summary = row()
     private val todayRange = text(30f)
     private val airQuality = text(20f, secondary = true).apply { verifyFittedWidth = true }
-    private val airQualitySlot = AirQualitySlot(if (compactForecast) todayRange else condition)
-    private val conditionSlot: View get() = if (!compactForecast && airQualitySlot.parent != null) airQualitySlot else condition
-    private val rangeSlot: View get() = if (compactForecast && airQualitySlot.parent != null) airQualitySlot else todayRange
+    private val airQualitySlot = AirQualitySlot()
+    private val conditionSlot: View get() = if (airQualitySlot.anchor === condition) airQualitySlot else condition
+    private val rangeSlot: View get() = if (airQualitySlot.anchor === todayRange) airQualitySlot else todayRange
     private val metrics = row()
     private val metricLabels = List(3) { text(25f, secondary = true) }
     private val metricPaint = Paint()
@@ -72,8 +72,7 @@ internal class WeatherCardView(
     }
     private val presentation get() = weatherPresentation(card.size, compactForecast)
     override val forecastColumns get() = presentation.forecastColumns
-    override val showsAirQuality get() = if (compactForecast) card.size == COMPACT_WEATHER_SIZE
-        else card.size.columnSpan == 3 && card.size.rowSpan == 3
+    override val showsAirQuality get() = true
 
     override fun renderReadings(readings: WeatherCardReadings, metric: (WeatherCardMetric) -> String?) {
         heading.text = readings.title
@@ -83,10 +82,13 @@ internal class WeatherCardView(
         icon.symbol = readings.symbol
         status.text = readings.status
         todayRange.setReading(readings.range)
-        val airQualityReading = readings.airQuality.takeIf { !compactForecast || readings.range != null }
-        airQuality.setReading(airQualityReading)
-        airQualitySlot.showAlongsideReading(airQualityReading != null)
-        rangeSlot.show(readings.range != null)
+        airQuality.setReading(readings.airQuality)
+        airQualitySlot.bindAnchor(when {
+            readings.airQuality == null -> null
+            presentation.stackedCurrent -> todayRange
+            else -> condition
+        })
+        rangeSlot.show(readings.range != null || airQualitySlot.anchor === todayRange)
 
         val preferred = readings.preferredMetric ?: WeatherCardMetric.FEELS_LIKE
         val details = (listOf(preferred, WeatherCardMetric.HUMIDITY, WeatherCardMetric.FEELS_LIKE) + WeatherCardMetric.entries)
@@ -186,6 +188,11 @@ internal class WeatherCardView(
         conditionSlot.layoutParams = weighted(!stacked, 1f).apply { if (!stacked) marginStart = 8.dp }
         temperature.maximumTextSp = when { compact -> 39f; tall -> 76f; else -> 67f }
         condition.maximumTextSp = when { compact -> 23f; tall -> 40f; else -> 34f }
+        airQuality.maximumTextSp = when {
+            compact -> 14f
+            card.size.columnSpan == 3 && tall -> 24f
+            else -> 20f
+        }
         icon.layoutParams = LayoutParams(minOf(width / 4, when { compact -> 34.dp; tall -> 86.dp; else -> 62.dp }),
             LayoutParams.MATCH_PARENT).apply { marginEnd = 8.dp }
 
@@ -204,59 +211,57 @@ internal class WeatherCardView(
         }
     }
 
-    // Measure the original reading at its full size, then fit AQI into the space around it.
-    private inner class AirQualitySlot(private val reading: FittingValueView) : FrameLayout(context) {
-        private val textBounds = Rect()
+    private inner class AirQualitySlot : FrameLayout(context) {
+        var anchor: FittingValueView? = null
+            private set
 
         init {
-            val alignment = if (compactForecast) Gravity.RIGHT or Gravity.CENTER_VERTICAL
-                else Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
-            addView(airQuality, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, alignment))
+            addView(airQuality, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         }
 
-        fun showAlongsideReading(show: Boolean) {
-            if (show == (parent != null)) return
-            val container = if (compactForecast) summary else this@WeatherCardView.reading
-            if (show) {
-                val index = container.indexOfChild(reading)
-                val params = reading.layoutParams
-                container.removeViewAt(index)
-                addView(reading, 0, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-                container.addView(this, index, params)
-            } else {
+        fun bindAnchor(target: FittingValueView?) {
+            if (anchor === target) return
+            anchor?.let { previous ->
+                val container = parent as android.view.ViewGroup
                 val index = container.indexOfChild(this)
                 val params = layoutParams
-                removeView(reading)
+                removeView(previous)
                 container.removeViewAt(index)
-                reading.translationX = 0f
-                container.addView(reading, index, params)
+                previous.gravity = Gravity.CENTER
+                container.addView(previous, index, params)
             }
+            anchor = target
+            if (target == null) return
+
+            val inline = target === todayRange
+            val container = if (inline) summary else reading
+            val index = container.indexOfChild(target)
+            val params = target.layoutParams
+            container.removeViewAt(index)
+            target.gravity = if (inline) Gravity.LEFT or Gravity.CENTER_VERTICAL else Gravity.CENTER
+            addView(target, 0, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.TOP))
+            airQuality.layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT,
+                if (inline) Gravity.RIGHT or Gravity.CENTER_VERTICAL else Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM)
+            container.addView(this, index, params)
         }
 
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-            if (airQuality.visibility != VISIBLE) return
-            val line = reading.layout?.takeIf { reading.visibility == VISIBLE && it.lineCount > 0 }
-            val lineWidth = line?.getLineWidth(0)?.let { kotlin.math.ceil(it).toInt() } ?: 0
-            val width = if (compactForecast && lineWidth > 0) measuredWidth - lineWidth - 6.dp else measuredWidth
-            val height = if (compactForecast) measuredHeight else if (line != null) {
-                val text = reading.text.toString()
-                reading.paint.getTextBounds(text, 0, text.length, textBounds)
-                val baseline = (measuredHeight - line.height) / 2 + line.getLineBaseline(0)
-                measuredHeight - baseline - textBounds.bottom - 3.dp
-            } else measuredHeight / 2
-            airQuality.measure(MeasureSpec.makeMeasureSpec(width.coerceAtLeast(0), MeasureSpec.AT_MOST),
-                MeasureSpec.makeMeasureSpec(height.coerceAtLeast(0), MeasureSpec.AT_MOST))
-        }
-
-        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-            super.onLayout(changed, left, top, right, bottom)
-            if (!compactForecast) return
-            val lineWidth = reading.layout?.takeIf { it.lineCount > 0 }?.getLineWidth(0) ?: 0f
-            reading.translationX = if (airQuality.visibility == VISIBLE && airQuality.width > 0) {
-                val rangeRight = (width + lineWidth) / 2f
-                (airQuality.left - 6.dp - rangeRight).coerceAtMost(0f)
-            } else 0f
+            val target = anchor ?: return
+            val inline = target === todayRange
+            if (inline) {
+                val lineWidth = if (target.visibility == VISIBLE) ceil(target.layout?.getLineWidth(0) ?: 0f).toInt() else 0
+                val availableWidth = measuredWidth - lineWidth - 12.dp
+                airQuality.measure(MeasureSpec.makeMeasureSpec(availableWidth.coerceAtLeast(0), MeasureSpec.AT_MOST),
+                    MeasureSpec.makeMeasureSpec(measuredHeight, MeasureSpec.AT_MOST))
+            } else {
+                // Reserve a line below the condition, with a cap for single-row cards.
+                airQuality.measure(MeasureSpec.makeMeasureSpec(measuredWidth, MeasureSpec.AT_MOST),
+                    MeasureSpec.makeMeasureSpec(measuredHeight * 2 / 5, MeasureSpec.AT_MOST))
+                val conditionHeight = (measuredHeight - airQuality.measuredHeight - 2.dp).coerceAtLeast(0)
+                target.measure(MeasureSpec.makeMeasureSpec(measuredWidth, MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(conditionHeight, MeasureSpec.EXACTLY))
+            }
         }
     }
 
