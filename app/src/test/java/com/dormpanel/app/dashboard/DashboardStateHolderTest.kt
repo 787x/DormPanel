@@ -41,7 +41,7 @@ class DashboardStateHolderTest {
         val holder = DashboardStateHolder(registry(), store)
 
         assertTrue(holder.state.loaded)
-        assertEquals(listOf("seed-clock", "seed-weather", "seed-sensor", "seed-light", "seed-bedside", "seed-ceiling"), holder.state.cards.map { it.id })
+        assertEquals(listOf("seed-clock", "seed-weather", "seed-weather-compact", "seed-sensor", "seed-light", "seed-bedside", "seed-ceiling"), holder.state.cards.map { it.id })
         assertEquals(1, store.savedSnapshots.size)
         assertEquals(holder.state.cards, store.savedSnapshots.single())
     }
@@ -83,16 +83,16 @@ class DashboardStateHolderTest {
         val holder = DashboardStateHolder(registry(), store)
         store.savedSnapshots.clear()
 
-        val preview = holder.previewResize(holder.state.cards, "seed-clock", CardSize(4, 2))
+        val preview = holder.previewResize(holder.state.cards, "seed-clock", CardSize(3, 2))
 
         assertTrue(preview is LayoutMutationResult.Success)
         assertTrue(store.savedSnapshots.isEmpty())
 
-        val committed = holder.resize("seed-clock", CardSize(4, 2))
+        val committed = holder.resize("seed-clock", CardSize(3, 2))
         assertTrue(committed is LayoutMutationResult.Success)
         assertEquals(1, store.savedSnapshots.size)
 
-        holder.resize("seed-clock", CardSize(4, 2))
+        holder.resize("seed-clock", CardSize(3, 2))
         assertEquals(1, store.savedSnapshots.size)
     }
 

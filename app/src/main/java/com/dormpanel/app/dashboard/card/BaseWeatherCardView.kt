@@ -27,6 +27,7 @@ internal data class WeatherCardReadings(
     val condition: String,
     val symbol: WeatherSymbol,
     val range: String?,
+    val airQuality: String?,
     val status: String,
     val preferredMetric: WeatherCardMetric?,
     val forecast: List<WeatherLine>,
@@ -42,16 +43,21 @@ internal abstract class BaseWeatherCardView(
     private val classic: Boolean = false,
 ) : DashboardCardView(context, appearance) {
     protected abstract val forecastColumns: Int
+    protected open val showsAirQuality get() = false
     protected abstract fun renderReadings(readings: WeatherCardReadings, metric: (WeatherCardMetric) -> String?)
 
     private val feed = WeatherCardFeed(source, repository, ::refresh)
     private var configuration: WeatherCardConfiguration = WeatherCardConfiguration.Default
     private var lastClassicPlaceName: String? = null
     private val needsForecast get() = card.size.rowSpan >= 2
-    private var requestedForecast: Boolean? = null
-    private var pendingForecast: Boolean? = null
+    private data class Demand(val forecast: Boolean, val airQuality: Boolean)
+
+    private val demand get() = Demand(needsForecast, showsAirQuality &&
+        (configuration as? WeatherCardConfiguration.Bound)?.source?.let { it !is WeatherSourceRef.HomeAssistant } == true)
+    private var requestedDemand: Demand? = null
+    private var pendingDemand: Demand? = null
     private val updatePreviewDemand = Runnable {
-        pendingForecast = null
+        pendingDemand = null
         bindFeed()
         refresh()
     }
@@ -69,16 +75,16 @@ internal abstract class BaseWeatherCardView(
             configuration = next
         }
         if (!isAttachedToWindow) return
-        val forecast = needsForecast
-        if (!interactions.isResizePreview || configurationChanged || requestedForecast == null) {
+        val demand = demand
+        if (!interactions.isResizePreview || configurationChanged || requestedDemand == null) {
             cancelPreviewDemand()
-            if (configurationChanged || requestedForecast != forecast) bindFeed()
-        } else if (forecast != pendingForecast) {
-            // Update layout immediately. Wait for a stable forecast demand during a drag;
+            if (configurationChanged || requestedDemand != demand) bindFeed()
+        } else if (demand != pendingDemand) {
+            // Update layout immediately. Wait for stable data demand during a drag;
             // confirmation and rollback reconcile it immediately through the regular bind.
             cancelPreviewDemand()
-            if (forecast != requestedForecast) {
-                pendingForecast = forecast
+            if (demand != requestedDemand) {
+                pendingDemand = demand
                 postDelayed(updatePreviewDemand, RESIZE_PREVIEW_DELAY_MS)
             }
         }
@@ -99,20 +105,22 @@ internal abstract class BaseWeatherCardView(
         removeCallbacks(midnight)
         cancelPreviewDemand()
         feed.close()
-        requestedForecast = null
+        requestedDemand = null
         super.onDetachedFromWindow()
     }
 
     private fun bindFeed() {
-        val forecast = needsForecast
-        requestedForecast = forecast
-        feed.bind(configuration, setOf(WeatherBlock.CURRENT), compactForecast = forecast)
+        val demand = demand
+        requestedDemand = demand
+        val blocks = if (demand.airQuality) setOf(WeatherBlock.CURRENT, WeatherBlock.AIR_CURRENT)
+            else setOf(WeatherBlock.CURRENT)
+        feed.bind(configuration, blocks, compactForecast = demand.forecast)
     }
 
     private fun cancelPreviewDemand() {
-        if (pendingForecast == null) return
+        if (pendingDemand == null) return
         removeCallbacks(updatePreviewDemand)
-        pendingForecast = null
+        pendingDemand = null
     }
 
     override fun primaryAction() = open(WeatherCardNavigation.Destination.WEATHER_CENTER)
@@ -189,8 +197,15 @@ internal abstract class BaseWeatherCardView(
         } else if (slots > 0 && prediction?.state == WeatherState.FRESH && lines.isEmpty()) {
             status = "${status}  ·  暂无后续预报"
         }
+        val airQuality = if (showsAirQuality) {
+            feed[WeatherBlock.AIR_CURRENT].cardAirQuality()
+                ?: validLegacy?.takeIf { it.availability == Availability.AVAILABLE }?.airQuality?.let {
+                    listOfNotNull("AQI ${it.index}", it.category).joinToString(" ")
+                }
+        } else null
         renderReadings(WeatherCardReadings(title, credit, qweather, temperature, condition,
-            weather.symbol, range, status, binding?.metric, lines), ::metric)
+            weather.symbol, range, airQuality,
+            status, binding?.metric, lines), ::metric)
 
         removeCallbacks(midnight)
         if (isAttachedToWindow && (prediction.entries().isNotEmpty() || !validLegacy?.forecast.isNullOrEmpty())) {

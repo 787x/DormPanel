@@ -278,24 +278,31 @@ class CoreDashboardTest {
             waitForCards(scenario)
             var original = emptyList<com.dormpanel.app.dashboard.model.PlacedCard>()
             scenario.onActivity { original = model(it).stateHolder.state.cards }
+            fun checkWeatherAqi() {
+                for (id in listOf("seed-weather", "seed-weather-compact")) {
+                    val tagged = withTagValue(org.hamcrest.CoreMatchers.equalTo<Any>(id))
+                    onView(allOf(withText("AQI 39 优"), isDescendantOfA(tagged))).check(matches(isDisplayed()))
+                }
+            }
+            checkWeatherAqi()
             onView(withId(R.id.dashboard_edit)).perform(ViewActions.click())
             listOf(
-                Triple("Clock & date", "LOCAL TIME", "seed-clock"),
-                Triple("Weather", "多云", "seed-weather"),
-                Triple("Room climate", "Room climate", "seed-sensor"),
-                Triple("Light", "Desk light", "seed-light"),
-            ).forEach { (providerName, contentName, id) ->
+                "seed-clock", "seed-weather", "seed-weather-compact", "seed-sensor", "seed-light",
+            ).forEach { id ->
                 var dx = 0f
                 var dy = 0f
+                lateinit var handleDescription: String
                 scenario.onActivity {
                     val grid = it.findViewById<View>(R.id.dashboard_grid)
                     val placed = model(it).stateHolder.state.cards.first { c -> c.id == id }
+                    val provider = checkNotNull(model(it).registry.provider(placed.providerType))
+                    handleDescription = it.getString(R.string.dashboard_resize_card, provider.displayMetadata.name(it))
                     val gap = 10 * it.resources.displayMetrics.density
                     dx = (placed.size.columnSpan - 2) * ((grid.width + gap) / 8)
                     dy = (placed.size.rowSpan - 1) * ((grid.height + gap) / 6)
                 }
-                val handle = allOf(withContentDescription("Resize $providerName card"),
-                    withParent(withParent(hasDescendant(card(contentName)))))
+                val handle = allOf(withContentDescription(handleDescription),
+                    withParent(withParent(hasDescendant(withTagValue(org.hamcrest.CoreMatchers.equalTo<Any>(id))))))
                 onView(handle).perform(GeneralSwipeAction(Swipe.SLOW,
                     { v -> val p = IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0] + v.width / 2f, p[1] + v.height / 2f) },
                     { v -> val p = IntArray(2); v.getLocationOnScreen(p); floatArrayOf(p[0] + v.width / 2f - dx, p[1] + v.height / 2f - dy) }, Press.FINGER))
@@ -306,6 +313,7 @@ class CoreDashboardTest {
                 original.forEach { model(activity).stateHolder.resize(it.id, it.size) }
                 original.forEach { model(activity).stateHolder.move(it.id, it.column, it.row) }
             }
+            checkWeatherAqi()
         }
     }
 
@@ -726,7 +734,9 @@ class CoreDashboardTest {
                     send(MotionEvent.ACTION_MOVE, 2)
                     send(MotionEvent.ACTION_UP)
                     assertEquals(CardSize(2, 3), holder.state.cards.single().size)
-                    assertEquals(setOf(WeatherBlock.CURRENT, forecastBlock), active.keys)
+                    val tallBlocks = setOf(WeatherBlock.CURRENT, forecastBlock) +
+                        listOfNotNull(WeatherBlock.AIR_CURRENT.takeIf { type == "weather_compact_2x3" })
+                    assertEquals(tallBlocks, active.keys)
                     assertFalse(view.isClickable)
                     val confirmedStarts = starts.toList()
                     val confirmedStops = stops.toList()
@@ -742,8 +752,8 @@ class CoreDashboardTest {
                     resize(0, -1)
                     assertColumns(compactWidthSlots)
                     grid.setEditMode(false)
-                    assertEquals(confirmedStarts, starts)
-                    assertEquals(confirmedStops, stops)
+                    assertEquals(confirmedStarts.filterNot { it == WeatherBlock.AIR_CURRENT }, starts.filterNot { it == WeatherBlock.AIR_CURRENT })
+                    assertEquals(confirmedStops.filterNot { it == WeatherBlock.AIR_CURRENT }, stops.filterNot { it == WeatherBlock.AIR_CURRENT })
                     assertTrue(view.isClickable)
                     grid.setEditMode(true)
 
@@ -756,7 +766,8 @@ class CoreDashboardTest {
                 scenario.onActivity {
                     send(MotionEvent.ACTION_CANCEL)
                     assertColumns(compactWidthSlots)
-                    assertEquals(setOf(WeatherBlock.CURRENT, forecastBlock), active.keys)
+                    assertEquals(setOf(WeatherBlock.CURRENT, forecastBlock) +
+                        listOfNotNull(WeatherBlock.AIR_CURRENT.takeIf { type == "weather_compact_2x3" }), active.keys)
 
                     resize(-2)
                     assertEquals(CardSize(2, 1), holder.state.cards.single().size)
@@ -814,6 +825,8 @@ class CoreDashboardTest {
 
         val started = mutableListOf<Pair<WeatherSourceRef, WeatherBlock>>()
         val stopped = mutableListOf<Pair<WeatherSourceRef, WeatherBlock>>()
+        var updateAirQuality: ((WeatherResult) -> Unit)? = null
+        var freshAirQuality: WeatherResult? = null
         val provider = object : WeatherProvider {
             override fun plan(source: WeatherSourceRef, zone: ZoneId, query: WeatherQuery, now: Instant): WeatherPlan {
                 val temp = values.getValue(source).toDouble()
@@ -849,11 +862,12 @@ class CoreDashboardTest {
                 return WeatherPlan("$source/${query.block}", source.toString(), query, { _, _ -> parsed }, { emit ->
                     val key = source to query.block
                     started += key
-                    if (query.block == WeatherBlock.AIR_CURRENT && started.count { it == key } > 1) {
-                        emit(WeatherResult.Failed(WeatherFailure(WeatherState.UNAUTHORIZED, "测试 AQI 权限")))
-                    } else {
-                        emit(WeatherResult.Data(org.json.JSONObject(), parsed, zone))
+                    val result = WeatherResult.Data(org.json.JSONObject(), parsed, zone)
+                    if (query.block == WeatherBlock.AIR_CURRENT) {
+                        updateAirQuality = emit
+                        freshAirQuality = result
                     }
+                    emit(result)
                     val cancel: () -> Unit = { stopped += key }
                     cancel
                 }, live = true)
@@ -924,7 +938,7 @@ class CoreDashboardTest {
                         val condition = labels.first { it.text.toString() == longCondition }
                         assertTrue(condition.layout.getLineWidth(0) <= condition.width + 1)
                     }
-                    assertEquals(6, started.size)
+                    assertEquals(7, started.size)
                     assertTrue((home to WeatherBlock.TWICE_DAILY) in started)
                     assertFalse((home to WeatherBlock.DAILY) in started)
                     assertEquals(started.toSet().size, started.size)
@@ -942,6 +956,16 @@ class CoreDashboardTest {
                         .any { it.symbol == com.dormpanel.app.dashboard.card.WeatherSymbol.STORM && it.isShown })
                 }
                 val compactCard = withTagValue(org.hamcrest.CoreMatchers.equalTo<Any>("a"))
+                onView(allOf(withText("AQI 39 优"), isDescendantOfA(compactCard))).check { view, error ->
+                    if (error != null) throw error
+                    val aqi = view as TextView
+                    val row = aqi.parent as ViewGroup
+                    val range = descendants(row).filterIsInstance<TextView>().single { it.text == "20–26°C" }
+                    assertEquals(row.width, aqi.right)
+                    assertTrue(kotlin.math.abs((range.top + range.bottom) - (aqi.top + aqi.bottom)) <= 1)
+                    assertTrue((range.width + range.layout.getLineWidth(0)) / 2 + range.translationX < aqi.left)
+                    assertTrue(aqi.layout.height <= aqi.height)
+                }
                 onView(allOf(withText("和风天气"), isDescendantOfA(compactCard))).check(matches(isDisplayed()))
                 onView(allOf(withText("HA"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
                 onView(allOf(withText("体感 17°C"), isDescendantOfA(card("家")))).check(matches(isDisplayed()))
@@ -962,6 +986,8 @@ class CoreDashboardTest {
                 captureReview("pr84-mixed-weather-cards")
                 repeat(2) { iteration ->
                     scenario.onActivity { activity ->
+                        if (iteration == 1) checkNotNull(updateAirQuality)(
+                            WeatherResult.Failed(WeatherFailure(WeatherState.UNAUTHORIZED, "测试 AQI 权限")))
                         val vm = model(activity)
                         detail = WeatherDetailDialog(activity, vm.appearance, vm.dataSource, repository,
                             WeatherCardConfiguration.Bound("wuhan", wuhan), changeBinding = {}, more = {}).also { it.show() }
@@ -987,6 +1013,7 @@ class CoreDashboardTest {
                     }
                 }
                 scenario.onActivity {
+                    checkNotNull(updateAirQuality)(checkNotNull(freshAirQuality))
                     val original = checkNotNull(places.get("beijing"))
                     places.save(original.copy(name = "北京城区", sources = listOf(wuhan)))
                     val cardView = descendants(grid).filterIsInstance<DashboardCardView>().single { it.tag == "b" }
@@ -1008,6 +1035,17 @@ class CoreDashboardTest {
                     if (error != null) throw error
                     val labels = descendants(view).filterIsInstance<TextView>().filter { it.isShown }.toList()
                     assertEquals(3, labels.count { it.text == "雷阵雨伴有冰雹" })
+                    val aqi = labels.single { it.text == "AQI 39 优" }
+                    val condition = labels.single { it.text == "晴" }
+                    val humidity = labels.single { it.text == "湿度 62%" }
+                    fun screenY(label: View) = IntArray(2).also(label::getLocationOnScreen)[1]
+                    val conditionText = condition.text.toString()
+                    val conditionBounds = android.graphics.Rect()
+                    condition.paint.getTextBounds(conditionText, 0, conditionText.length, conditionBounds)
+                    assertTrue(aqi.top >= condition.baseline + conditionBounds.bottom)
+                    assertTrue(screenY(aqi) + aqi.height <= screenY(humidity))
+                    assertTrue(aqi.layout.height <= aqi.height)
+                    assertTrue(aqi.textSize / aqi.resources.displayMetrics.density >= 12f)
                 }
                 captureReview("pr86-weather-layouts")
                 scenario.onActivity {
@@ -1021,8 +1059,9 @@ class CoreDashboardTest {
                         val labels = descendants(rendered).filterIsInstance<TextView>().filter { it.isShown }
                         assertEquals(expected, labels.count { it.text == "雷阵雨伴有冰雹" })
                     }
-                    assertEquals(previousStarts, started)
-                    assertEquals(previousStops, stopped)
+                    val air = wuhan to WeatherBlock.AIR_CURRENT
+                    assertEquals(previousStarts + air, started)
+                    assertEquals(previousStops + air, stopped)
                 }
             } finally {
                 scenario.onActivity {

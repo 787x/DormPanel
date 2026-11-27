@@ -193,6 +193,17 @@ internal fun weatherSourceName(source: WeatherSourceRef) = when (source) {
     is WeatherSourceRef.QWeather, is WeatherSourceRef.QWeatherCity -> "和风天气"
 }
 
+internal fun WeatherSnapshot?.cardAirQuality(): String? {
+    if (this == null || state != WeatherState.FRESH || stale) return null
+    val indexes = (data as? WeatherData.Air)?.entries?.firstOrNull()?.indexes.orEmpty()
+    for ((code, label) in listOf("cn-mee" to "AQI", "cn-mee-1h" to "AQI-1H", "qaqi" to "QAQI")) {
+        val index = indexes.firstOrNull { it.code == code } ?: continue
+        val value = index.display?.takeIf(String::isNotBlank) ?: index.aqi.value("") ?: continue
+        return listOfNotNull("$label $value", index.category?.takeIf(String::isNotBlank)).joinToString(" ")
+    }
+    return null
+}
+
 internal fun weatherStatus(snapshot: WeatherSnapshot?): String {
     if (snapshot == null) return "正在加载"
     val state = when {
