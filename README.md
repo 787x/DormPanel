@@ -20,7 +20,7 @@ DormPanel 是一个面向 **小米 Redmi 小爱触屏音箱 Pro 8（X08E）** �
 
 | 组件 | 当前公开版本 | 适合谁 | 是否必需 |
 | --- | --- | --- | --- |
-| [X08E 应用](https://github.com/787x/DormPanel/releases/tag/v0.1.13) | **0.1.13** | 在小爱触屏音箱 Pro 8 上使用桌面、天气、控制与课表 | 核心应用 |
+| [X08E 应用](https://github.com/787x/DormPanel/releases/tag/v0.1.14) | **0.1.14** | 在小爱触屏音箱 Pro 8 上使用桌面、天气、控制与课表 | 核心应用 |
 | [Phone 应用](https://github.com/787x/DormPanel/releases/tag/v0.1.13) | **0.1.13** | 在 Android 手机上查看、编辑课程、Todo 和备忘，以及添加桌面小部件 | 可选 |
 | [fnOS Schedule Manager](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.3) | **0.8.3 · Pre-release** | 在 NAS 浏览器中管理课程、Todo、备忘、工作区和备份 | 可选 |
 | [Home Assistant 集成](https://github.com/787x/DormPanel/releases/tag/ha-v0.1.3) | **0.1.3** | 在 HA 中控制 X08E 并发送课表或 APK | 可选 |
@@ -204,15 +204,15 @@ fnOS FPK ──┘  （可选：网页管理、备份、历史、CLI/MCP）
 
 ### 第一步：下载安装
 
-1. **X08E**：从 [Android v0.1.13 Release](https://github.com/787x/DormPanel/releases/tag/v0.1.13) 下载 `DormPanel-X08E-0.1.13.apk`。
-2. **Phone**（可选）：从同一 Release 下载 `DormPanel-Phone-0.1.13.apk`。
+1. **X08E**：从 [X08E v0.1.14 Release](https://github.com/787x/DormPanel/releases/tag/v0.1.14) 下载 `DormPanel-X08E-0.1.14.apk`。
+2. **Phone**（可选）：从 [Android v0.1.13 Release](https://github.com/787x/DormPanel/releases/tag/v0.1.13) 下载 `DormPanel-Phone-0.1.13.apk`。
 3. **fnOS**（可选）：从 [fpk-v0.8.3](https://github.com/787x/DormPanel/releases/tag/fpk-v0.8.3) 下载 `dormpanel-schedule-manager-0.8.3.fpk`，通过官方应用中心安装。
 4. **HA 集成**（按需）：从 [ha-v0.1.3](https://github.com/787x/DormPanel/releases/tag/ha-v0.1.3) 获取 `DormPanel-HA-0.1.3.zip`，按 [安装说明](docs/RELEASE-ha-0.1.3.md) 复制代码后重启 HA。首次安装需添加 DormPanel 集成，升级保留已有配置。
 
 下载后请按 Release 内的 `SHA256SUMS.txt` 校验文件。Android APK 可以通过系统安装器安装，或在具备 ADB 的电脑上原位安装：
 
 ```bash
-adb install -r DormPanel-X08E-0.1.13.apk
+adb install -r DormPanel-X08E-0.1.14.apk
 # Phone 使用：adb install -r DormPanel-Phone-0.1.13.apk
 ```
 
@@ -267,7 +267,7 @@ X08E 的 HA、WebDAV 和和风天气配置支持**同一个限时扫码配置网
 
 ## 更多文档
 
-- [最新 Android 发布说明](docs/RELEASE-0.1.13.md)
+- [最新 X08E 发布说明](docs/RELEASE-0.1.14.md)
 - [Home Assistant 0.1.3 发布说明](docs/RELEASE-ha-0.1.3.md)
 - [fnOS 0.8.3 发布说明](docs/RELEASE-fpk-0.8.3.md)
 - [X08E 天气功能与和风配置](docs/x08e-weather.md)
