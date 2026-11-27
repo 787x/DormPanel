@@ -217,8 +217,9 @@ class DashboardStateHolder(
     }
 
     private fun seededCards(): List<PlacedCard> = listOf(
-        PlacedCard("seed-clock", "clock", 0, 0, CardSize(4, 3)),
-        PlacedCard("seed-weather", "weather", 4, 0, CardSize(4, 3)),
+        PlacedCard("seed-clock", "clock", 0, 0, CardSize(3, 3)),
+        PlacedCard("seed-weather", "weather", 3, 0, CardSize(3, 3)),
+        PlacedCard("seed-weather-compact", "weather_compact_2x3", 6, 0, CardSize(2, 3)),
         PlacedCard("seed-sensor", "sensor", 0, 3, CardSize(2, 2), "{\"sensorId\":\"room\"}"),
         PlacedCard("seed-light", "light", 2, 3, CardSize(2, 2), "{\"lightId\":\"desk\"}"),
         PlacedCard("seed-bedside", "light", 4, 3, CardSize(2, 2), "{\"lightId\":\"bedside\"}"),

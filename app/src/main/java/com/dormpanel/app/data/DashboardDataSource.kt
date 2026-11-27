@@ -8,6 +8,8 @@ data class WeatherForecast(
     val forecastTemperature: Int? = null, val isDaytime: Boolean? = null, val rainProbability: Double? = null,
 )
 
+data class WeatherAirQuality(val index: Int, val category: String? = null)
+
 data class WeatherState(
     val condition: String, val temperature: Int?, val humidity: Int?,
     val low: Int?, val high: Int?, val forecast: List<WeatherForecast>,
@@ -18,6 +20,7 @@ data class WeatherState(
     val forecastType: String = "daily",
     val entityId: String? = null,
     val conditions: com.dormpanel.app.weather.WeatherConditions? = null,
+    val airQuality: WeatherAirQuality? = null,
 )
 
 data class SensorState(
@@ -82,7 +85,7 @@ class FakeDashboardDataSource : DashboardDataSource {
             WeatherForecast(demoForecastTime(1), "Clear", 20, 26),
             WeatherForecast(demoForecastTime(2), "Cloudy", 19, 25),
             WeatherForecast(demoForecastTime(3), "Light rain", 18, 23),
-        ), name = "Demo 天气"),
+        ), name = "Demo 天气", airQuality = WeatherAirQuality(39, "优")),
         listOf(
             SensorState("room", "Room climate", 23.6, 54),
             SensorState("desk", "Desk climate", 24.1, 51, Availability.STALE),
