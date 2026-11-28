@@ -35,6 +35,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val termProfiles = TermScheduleProfileStore(application)
     private val productivityBindings = ProductivityBindings(application, "dashboard-productivity-bindings")
     val schedule = ScheduleSource(ScheduleStores.create(application, termProfiles), profileResolver = termProfiles::get)
+    val cloudCalendar = com.dormpanel.app.icloud.CloudCalendarService.create(application)
     private val productivityData = AndroidProductivity(application, schedule.syncStore)
     private val nativeControls = NativeDeviceControls(dataSource.ha.relayChannel, dataSource.scheduler,
         dataSource.relayIdentity::credentials, deviceControls, appearance, startupPolicy,
@@ -57,7 +58,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance, dataSource.weatherRepository).providers +
         CONTROL_CARD_KINDS.map { DeviceControlCardProvider(it, dataSource, appearance) } +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance, productivityData, productivityBindings) } +
-        listOf("calendar", "timetable").map { ScheduleCardProvider(it, schedule, appearance) } +
+        ScheduleCardProvider("calendar", schedule, appearance, cloudCalendar) + ScheduleCardProvider("timetable", schedule, appearance) +
         listOf(false, true).map { CourseListCardProvider(it, schedule, appearance) })
     val catalog: CardCatalog = CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps), ProductivityCatalog(application), ScheduleCatalog(application))
     val stateHolder = DashboardStateHolder(
@@ -104,6 +105,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         webDav.close()
         apkInstall.close()
         haRelay.close()
+        cloudCalendar.close()
         schedule.close()
         productivity.close()
         apps.close()

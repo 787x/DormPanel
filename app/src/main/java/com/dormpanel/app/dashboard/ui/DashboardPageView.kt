@@ -21,6 +21,9 @@ import com.dormpanel.app.dashboard.layout.LayoutFailureReason
 import com.dormpanel.app.weather.WeatherSettingsDialog
 import com.dormpanel.app.dashboard.layout.LayoutMutationResult
 import com.dormpanel.app.ui.PageInteraction
+import com.dormpanel.app.icloud.CardCalendars
+import com.dormpanel.app.icloud.CloudCalendarDialogs
+import com.dormpanel.app.icloud.CloudCalendarService
 
 class DashboardPageView @JvmOverloads constructor(
     context: Context,
@@ -55,6 +58,8 @@ class DashboardPageView @JvmOverloads constructor(
     private var weatherSave: WeatherSave? = null
     private var weatherDetail: WeatherDetailDialog? = null
     private var weatherSettings: WeatherSettingsDialog? = null
+    private var cloudCalendar: CloudCalendarService? = null
+    private var cloudCalendarDialogs: CloudCalendarDialogs? = null
     private lateinit var gridView: DashboardGridView
     private lateinit var editToolbar: View
     private lateinit var addButton: Button
@@ -92,9 +97,12 @@ class DashboardPageView @JvmOverloads constructor(
         catalog: CardCatalog,
         appearance: AppearanceController,
         backend: com.dormpanel.app.ha.DashboardBackend? = null,
+        cloudCalendar: CloudCalendarService? = null,
     ) {
         renderedCards = null
         this.backend = backend
+        this.cloudCalendar = cloudCalendar
+        cloudCalendarDialogs = cloudCalendar?.let { CloudCalendarDialogs(context, appearance) }
         this.stateHolder = stateHolder
         this.catalog = catalog
         this.appearance = appearance
@@ -108,7 +116,7 @@ class DashboardPageView @JvmOverloads constructor(
             onEnterEditMode = ::enterEditMode,
             onGestureClaimed = this.onGestureClaimed,
             onWeatherAction = ::openWeather,
-            onConfigureSwitch = ::configureSwitch,
+            onConfigureCard = ::configureCard,
             onOperationRejected = {
                 Toast.makeText(context, R.string.dashboard_operation_rejected, Toast.LENGTH_SHORT).show()
             },
@@ -137,6 +145,7 @@ class DashboardPageView @JvmOverloads constructor(
         weatherSave = null
         weatherPicker?.dismiss(); weatherPicker = null
         weatherDetail?.dismiss(); weatherDetail = null
+        cloudCalendarDialogs?.close()
         if (bound) stateHolder.removeListener(stateListener)
         super.onDetachedFromWindow()
     }
@@ -277,6 +286,23 @@ class DashboardPageView @JvmOverloads constructor(
         val card = stateHolder.state.cards.firstOrNull { it.id == cardId && it.providerType.isSwitchCard() } ?: return
         showSwitchConfiguration(card.providerType, card.configurationJson) { dialog, config ->
             saveSwitch(SwitchSave(dialog, cardId, config, null)) { stateHolder.updateConfiguration(cardId, config) }
+        }
+    }
+
+    private fun configureCard(cardId: String) {
+        if (!editing) return
+        val card = stateHolder.state.cards.firstOrNull { it.id == cardId } ?: return
+        if (card.providerType != "calendar") {
+            configureSwitch(cardId)
+            return
+        }
+        val service = cloudCalendar ?: return
+        val current = CardCalendars.decode(card.configurationJson)
+        cloudCalendarDialogs?.choose(service.calendars, current.selected, card = true, inherited = service.selected) { selected ->
+            if (editing && stateHolder.state.cards.any { it.id == cardId && it.configurationJson == card.configurationJson }) {
+                if (stateHolder.updateConfiguration(cardId, CardCalendars(selected).encode()) is LayoutMutationResult.Failure)
+                    Toast.makeText(context, R.string.dashboard_operation_rejected, Toast.LENGTH_SHORT).show()
+            }
         }
     }
 

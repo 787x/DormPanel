@@ -10,6 +10,10 @@ import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.core.view.doOnPreDraw
 import com.dormpanel.app.appearance.*
+import com.dormpanel.app.icloud.CloudCalendarDialogs
+import com.dormpanel.app.icloud.CloudCalendarService
+import com.dormpanel.app.icloud.CloudRange
+import com.dormpanel.app.icloud.stripe
 import com.dormpanel.app.ui.PageInteraction
 import java.time.*
 import java.time.format.DateTimeFormatter
@@ -20,8 +24,15 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
     private val appearance: AppearanceController, private val returnHome: () -> Unit,
     private val importTimetable: () -> Unit = {}, private val receiveTimetable: () -> Unit = {},
     private val manageTimetables: () -> Unit = {}, private val viewport: ScheduleViewport = ScheduleViewport(),
-    private val sharedSchedule: SharedScheduleController? = null) : LinearLayout(context), PageInteraction, AppearanceAware {
+    private val sharedSchedule: SharedScheduleController? = null,
+    private val cloudCalendar: CloudCalendarService? = null) : LinearLayout(context), PageInteraction, AppearanceAware {
     private val editors = ScheduleEditors(context, source, appearance)
+    private val cloudDialogs = CloudCalendarDialogs(context, appearance)
+    private var agendaScroll: ScrollView? = null
+    private var agendaDate: LocalDate? = null
+    private var agendaPage = 0
+    private val renderCloud = Runnable { if (visible && windowVisibility == VISIBLE && session.mode == ScheduleMode.CALENDAR) render() }
+    private val cloudListener: () -> Unit = { removeCallbacks(renderCloud); postOnAnimation(renderCloud) }
     private val display = ScheduleDisplay(this, source, ::render)
     private var visible = false
     private val accents = mutableListOf<() -> Unit>()
@@ -74,17 +85,31 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         super.onAttachedToWindow()
         latestSync = sharedSchedule?.latestSyncId ?: 0L
         sharedSchedule?.addSyncListener(syncListener)
+        cloudCalendar?.addListener(cloudListener)
         sharedSchedule?.refreshPresentation()
         display.visibility(isShown)
     }
     override fun onDetachedFromWindow() {
         sharedSchedule?.removeSyncListener(syncListener)
+        cloudCalendar?.removeListener(cloudListener)
+        cloudCalendar?.watch(this, null)
+        removeCallbacks(renderCloud)
+        cloudDialogs.close()
         resetSyncFeedback()
         displayCache.clear(); swipeContent?.cancelMotion(); display.visibility(false); settingsDialog?.dismiss(); editors.close()
         super.onDetachedFromWindow()
     }
-    override fun onVisibilityAggregated(isVisible: Boolean) { super.onVisibilityAggregated(isVisible); visible = isVisible; if(!isVisible) displayCache.clear(); display.visibility(isVisible) }
-    override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); if(visibility!=VISIBLE) displayCache.clear(); display.visibility(visible && visibility == VISIBLE) }
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        visible = isVisible
+        if (!isVisible) { displayCache.clear(); cloudCalendar?.watch(this, null) }
+        display.visibility(isVisible)
+    }
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility != VISIBLE) { displayCache.clear(); cloudCalendar?.watch(this, null) }
+        display.visibility(visible && visibility == VISIBLE)
+    }
     private fun button(text: String, action: () -> Unit) = context.scheduleButton(text, action)
     private fun resetSyncFeedback() {
         clearSyncSuccess?.let(::removeCallbacks)
@@ -161,10 +186,24 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         if (source.error) addView(button("重新读取本机课表") { source.retryLocalRead() }.apply {
             isEnabled = !source.applyingSnapshot
         })
-        if (session.mode == ScheduleMode.CALENDAR) calendar() else timetable(promoted)
+        if (session.mode == ScheduleMode.CALENDAR) calendar() else {
+            cloudCalendar?.watch(this, null)
+            agendaScroll = null
+            timetable(promoted)
+        }
         paintAppearance(appearance.state, includeContent = false)
     }
     private fun calendar() {
+        val days = ScheduleProjection.monthCells(session.month, source.clock.locale())
+        val cloudRange = CloudRange.between(days.first(), days.last(), source.clock.zone()).let {
+            it.copy(months = it.months + CloudRange.between(session.selectedDate, session.selectedDate, source.clock.zone()).months)
+        }
+        if (visible && windowVisibility == VISIBLE && isAttachedToWindow) cloudCalendar?.watch(this, cloudRange)
+        val marked = markedCalendarDays(source, cloudCalendar, days)
+        val resetAgenda = agendaDate != session.selectedDate
+        val offset = if (resetAgenda) 0 else agendaScroll?.scrollY ?: 0
+        if (resetAgenda) agendaPage = 0
+        agendaDate = session.selectedDate
         val body = LinearLayout(context)
         val month = context.scheduleColumn()
         val navigation = LinearLayout(context)
@@ -175,12 +214,13 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         val weekdays = LinearLayout(context)
         ScheduleProjection.weekDays(source.clock.locale()).forEach { weekdays.addView(context.scheduleLabel(it.getDisplayName(TextStyle.SHORT, source.clock.locale()), 16f), LayoutParams(0, context.dp(40), 1f)) }
         month.addView(weekdays)
-        ScheduleProjection.monthCells(session.month, source.clock.locale()).chunked(7).forEach { week ->
+        days.chunked(7).forEach { week ->
             val row = LinearLayout(context)
             week.forEach { date ->
-                val day = button(date.dayOfMonth.toString()) { session.select(date); render() }.apply {
+                val day = button(date.dayOfMonth.toString() + if (date in marked) " •" else "") { session.select(date); render() }.apply {
                     minWidth = 0; minimumWidth = 0; setPadding(0, 0, 0, 0)
                     contentDescription = "Select $date"
+                    if (date in marked) androidx.core.view.ViewCompat.setStateDescription(this, tr("有日程", "Has events"))
                 }
                 row.addView(day, LayoutParams(0, 0, 1f).apply { height = context.dp(48) })
                 accents += {
@@ -199,21 +239,38 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         body.addView(month, LayoutParams(0, LayoutParams.MATCH_PARENT, 1.05f))
         val agenda = context.scheduleColumn().apply { setPadding(context.dp(20), 0, 0, 0) }
         agenda.addView(context.scheduleLabel(scheduleDate(session.selectedDate), 24f))
-        agenda.addView(button(tr("+ 添加日程", "+ Add event")) { editors.event(session.selectedDate) }.apply { isEnabled = source.editable })
+        val actions = LinearLayout(context)
+        actions.addView(button(tr("+ 添加日程", "+ Add event")) { editors.event(session.selectedDate) }.apply { isEnabled = source.editable })
+        if (cloudCalendar != null) actions.addView(button("iCloud 日历") { cloudDialogs.settings(cloudCalendar, cloudRange) })
+        agenda.addView(actions)
+        if (cloudCalendar != null) agenda.addView(context.scheduleLabel(cloudCalendar.connectionLabel(cloudRange), 15f).apply {
+            maxLines = 2
+        })
         val events = context.scheduleColumn()
-        val selected = ScheduleProjection.eventsOn(source.state, session.selectedDate, source.clock.zone())
+        val selected = calendarAgenda(source, cloudCalendar, session.selectedDate)
+        val pageSize = 40
+        agendaPage = agendaPage.coerceAtMost((selected.size - 1).coerceAtLeast(0) / pageSize)
+        val firstItem = agendaPage * pageSize
         if (selected.isEmpty()) events.addView(context.scheduleLabel(tr("当天没有日程", "No events on this day"), 18f))
-        selected.forEach { event ->
-            val start = Instant.ofEpochMilli(event.start).atZone(source.clock.zone())
-            val end = Instant.ofEpochMilli(event.end).atZone(source.clock.zone())
-            val range = (if (start.toLocalDate() != session.selectedDate) "${scheduleDate(start.toLocalDate())} " else "") + context.scheduleTime(start.toInstant()) + " – " +
-                (if (end.toLocalDate() != session.selectedDate) "${scheduleDate(end.toLocalDate())} " else "") + context.scheduleTime(end.toInstant())
-            events.addView(button("$range\n${event.title}${if (event.note.isBlank()) "" else "\n${event.note}"}") { editors.event(session.selectedDate, event) }.apply {
+        if (agendaPage > 0) events.addView(button(tr("上一页日程", "Previous events")) { agendaPage--; agendaScroll = null; render() })
+        selected.drop(firstItem).take(pageSize).forEach { event ->
+            val range = event.label(context, session.selectedDate, source.clock.zone())
+            val note = event.note.takeUnless(String::isBlank)?.let { "\n$it" }.orEmpty()
+            events.addView(button("$range · ${event.source}\n${event.title}$note") {
+                event.remote?.let { cloudDialogs.details(it, range) } ?: event.local?.let { editors.event(session.selectedDate, it) }
+            }.apply {
                 gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL; maxLines = 4; textSize = 18f
                 ellipsize = android.text.TextUtils.TruncateAt.END
+                val color = event.color ?: PanelPalette.forMode(appearance.state.themeMode).accent
+                foreground = stripe(color, context.dp(3))
             }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         }
-        agenda.addView(ScrollView(context).apply { addView(events) }, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        if (selected.size > firstItem + pageSize) events.addView(button(tr("下一页日程", "More events")) {
+            agendaPage++; agendaScroll = null; render()
+        })
+        val scroll = ScrollView(context).apply { addView(events); doOnLayout { scrollTo(0, offset) } }
+        agendaScroll = scroll
+        agenda.addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         body.addView(agenda, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         addView(body, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
     }
