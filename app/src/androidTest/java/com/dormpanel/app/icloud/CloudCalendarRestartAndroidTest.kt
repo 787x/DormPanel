@@ -102,7 +102,7 @@ class CloudCalendarRestartAndroidTest {
                     model.stateHolder.state.cards.forEach { card -> model.stateHolder.delete(card.id) }
                     model.stateHolder.add(model.catalog.candidates.single { card -> card.providerType == "calendar" }, run)
                     model.stateHolder.updateConfiguration(run, CardCalendars(setOf(calendar.id)).encode())
-                    model.cloudCalendar.saveCreate(run, calendar, CloudEventDraft(uid, "测试", "等待写回",
+                    model.cloudCalendar.saveCreate(UUID.fromString(run), run, calendar, CloudEventDraft(uid, "测试", "等待写回",
                         date.atStartOfDay(), date.plusDays(1).atStartOfDay(), true, zone)) { error -> assertNull(error) }
                 }
                 waitFor { it.cloudCalendar.writes.singleOrNull()?.let { write ->

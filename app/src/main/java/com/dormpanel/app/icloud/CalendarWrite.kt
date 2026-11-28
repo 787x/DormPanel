@@ -35,6 +35,8 @@ internal data class CalendarWrite(
     val state: CalendarWriteState = CalendarWriteState.QUEUED, val detail: String? = null,
     val attempted: Boolean = false, val acknowledged: Boolean = false, val retryAt: Long = 0,
     val verifiedEtag: String? = null,
+    val cachePending: Boolean = false,
+    val retryCount: Int = 0,
 ) {
     fun sameTarget(other: CloudObjectRef) =
         ref.account == other.account && ref.calendarId == other.calendarId && ref.href == other.href
@@ -42,6 +44,16 @@ internal data class CalendarWrite(
     fun label(offline: Boolean): String =
         state.label + (if (offline && state in setOf(CalendarWriteState.QUEUED, CalendarWriteState.CHECKING)) " · 网络不可用" else "") +
             (detail?.let { " · $it" } ?: "")
+}
+
+internal fun CalendarWrite.canResumeAutomatically() =
+    state == CalendarWriteState.QUEUED || state == CalendarWriteState.CHECKING
+
+internal fun CalendarWrite.deferRetry(now: Long, initialDelay: Long): CalendarWrite {
+    if (!canResumeAutomatically()) return this
+    val count = retryCount.coerceIn(0, 8)
+    return copy(retryAt = maxOf(retryAt, now + (initialDelay * (1L shl count)).coerceAtMost(300_000)),
+        retryCount = (count + 1).coerceAtMost(8))
 }
 
 internal fun strongCalendarEtag(etag: String?): Boolean =
@@ -65,12 +77,16 @@ internal fun processCalendarWrite(
             } else if (remote.etag != op.ref.etag) conflict() else null
         }
         if (remote == null) {
-            return if (op.kind == CalendarWriteKind.CREATE) null else conflict("服务器资源已不存在")
+            return when {
+                op.kind == CalendarWriteKind.CREATE -> null
+                op.acknowledged -> state(CalendarWriteState.CHECKING, "服务器回读尚未找到已接收的日程")
+                else -> conflict("服务器资源已不存在")
+            }
         }
         val originalVersion = op.kind == CalendarWriteKind.UPDATE && remote.etag == op.ref.etag
         if (op.attempted || originalVersion) {
             if (sameCalendarResult(op, checkNotNull(op.ics), remote.ics))
-                return if (strongCalendarEtag(remote.etag)) confirm(remote.etag)
+                return if (strongCalendarEtag(remote.etag)) confirm(remote.etag).copy(ics = remote.ics)
                 else state(CalendarWriteState.CHECKING, "服务器未提供可验证的版本")
         }
         if (originalVersion) return null
@@ -97,8 +113,7 @@ internal fun processCalendarWrite(
             CalendarWriteKind.UPDATE -> client.objectPrivileges(ref.collection, ref.href, round).content
             CalendarWriteKind.DELETE -> privileges.unbind
         }
-        if (!permitted) return state(if (op.attempted) CalendarWriteState.CHECKING else CalendarWriteState.FAILED,
-            "权限不足或服务器未提供权限")
+        if (!permitted) return state(CalendarWriteState.FAILED, "权限不足或服务器未提供权限")
         val sending = state(CalendarWriteState.CHECKING).copy(attempted = true)
         val attemptedBefore = op.attempted
         persist(sending)
@@ -115,18 +130,27 @@ internal fun processCalendarWrite(
                 op = acknowledged
             }
             404, 409, 412 -> return conflict("服务器拒绝资源版本或写入前提（HTTP ${reply.code}）")
-            401, 403, 405, 413, 415, 422, 429, 507, in 300..399 ->
+            429 -> return state(if (attemptedBefore) CalendarWriteState.CHECKING else CalendarWriteState.QUEUED,
+                "服务器限流（HTTP 429）", reply.retryAt).copy(attempted = attemptedBefore)
+            401, 403, 405, 413, 415, 422, 507, in 300..399 ->
                 return state(CalendarWriteState.FAILED, "服务器拒绝写入（HTTP ${reply.code}）", reply.retryAt)
-                    .copy(attempted = false)
+                    .copy(attempted = attemptedBefore)
             else -> return state(CalendarWriteState.CHECKING, "服务器响应 HTTP ${reply.code}，需重新核对", reply.retryAt)
         }
         val verified = client.readObject(ref.collection, ref.href, round)
         if (op.kind == CalendarWriteKind.CREATE && verified == null) return state(CalendarWriteState.CHECKING, "服务器回读尚未找到新日程")
         return checkRemote(verified) ?: state(CalendarWriteState.CHECKING, "服务器回读尚未呈现已接收的修改")
     } catch (e: CalDavFailure) {
-        return state(if (op.attempted) CalendarWriteState.CHECKING else if (
-            e.problem in setOf(CalDavProblem.CANCELLED, CalDavProblem.NETWORK, CalDavProblem.SERVER, CalDavProblem.BUDGET)
-        ) CalendarWriteState.QUEUED else CalendarWriteState.FAILED, e.problem.label, e.retryAt)
+        val next = when (e.problem) {
+            CalDavProblem.AUTH, CalDavProblem.ACCESS, CalDavProblem.TLS -> CalendarWriteState.FAILED
+            else -> when {
+                op.attempted -> CalendarWriteState.CHECKING
+                e.problem in setOf(CalDavProblem.CANCELLED, CalDavProblem.NETWORK, CalDavProblem.SERVER,
+                    CalDavProblem.BUDGET, CalDavProblem.LIMITED) -> CalendarWriteState.QUEUED
+                else -> CalendarWriteState.FAILED
+            }
+        }
+        return state(next, e.problem.label, e.retryAt)
     }
 }
 

@@ -380,7 +380,7 @@ class CloudCalendarAndroidTest {
                     service.stop()
                     fixture.online = false
                     service.start()
-                    service.saveCreate(originalAccount, service.createCalendars.single(),
+                    service.saveCreate(UUID.randomUUID(), originalAccount, service.createCalendars.single(),
                         CloudEventDraft("Detached draft", "", "", day.atTime(12, 0), day.atTime(13, 0), false, zone)) { error ->
                         assertNull(error)
                     }
@@ -405,6 +405,161 @@ class CloudCalendarAndroidTest {
             File(context.noBackupFilesDir, namespace).resolve("account.json").delete()
             File(context.noBackupFilesDir, namespace).delete()
             mode.write(priorMode)
+        }
+    }
+
+    @Test fun retryTimerAndConfirmedCacheSurviveReportFailureAndRelaunch() {
+        val namespace = "test-caldav-recovery-${UUID.randomUUID()}"
+        val store = CloudCalendarStore(context, namespace)
+        val fixture = Fixture(day, zone)
+        CloudCalendarService.overrideFactory = { CloudCalendarService(it, fixture::open, { fixture.online }, store, 600) }
+        val title = "Recovery fixture"
+        val moved = day.plusMonths(1)
+        val intent = UUID.randomUUID()
+        val hrefName = "$intent.ics"
+        val owner = Any()
+        val range = CloudRange.between(day, moved.plusDays(1), zone)
+        fun inspect(scenario: ActivityScenario<MainActivity>, date: LocalDate): CloudEditBase {
+            val base = java.util.concurrent.CompletableFuture<CloudEditBase>()
+            scenario.onActivity {
+                val service = model(it).cloudCalendar
+                val ref = service.eventsOn(date, zone).single { item -> item.event.title == title }.ref!!
+                service.inspect(ref, zone) { value, error ->
+                    if (value == null) base.completeExceptionally(AssertionError(error)) else base.complete(value)
+                }
+            }
+            return base.get(10, java.util.concurrent.TimeUnit.SECONDS)
+        }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { !it.cloudCalendar.isBusy }
+                scenario.onActivity {
+                    val service = model(it).cloudCalendar
+                    service.connect(FIXTURE_EMAIL, FIXTURE_PASSWORD)
+                    service.watch(owner, range)
+                }
+                await(scenario) { it.cloudCalendar.eventsOn(day, zone).isNotEmpty() && it.cloudCalendar.calendars.size == 2 }
+                fixture.reportError = true
+                fixture.failGetOnce = hrefName
+                fixture.failPutOnce = hrefName
+                fixture.dropNextWrite = true
+                scenario.onActivity {
+                    val service = model(it).cloudCalendar
+                    service.saveCreate(intent, service.accountId, service.createCalendars.single(),
+                        CloudEventDraft(title, "", "", day.atTime(9, 0), day.atTime(10, 0), false, zone)) { assertNull(it) }
+                }
+                await(scenario) { it.cloudCalendar.writes.any { write -> write.id == intent.toString() && write.state == CalendarWriteState.CONFIRMED } &&
+                    it.cloudCalendar.eventsOn(day, zone).count { event -> event.event.title == title } == 1 }
+                await(scenario) { fixture.failedReports.get() > 0 }
+                assertEquals(2, fixture.putAttempts.get()) // 429 followed by the committed PUT with a lost response.
+                assertEquals(1, fixture.mutations.get())
+                assertTrue(fixture.putTimes[1] - fixture.putTimes[0] >= 1600) // Retry-After: 2.
+                val base = inspect(scenario, day)
+                val draft = base.event.draft.copy(start = moved.atTime(23, 0), end = moved.plusDays(1).atTime(1, 0))
+                fixture.delayNextUpdateReadback = true
+                scenario.onActivity { model(it).cloudCalendar.saveEdit(base, draft) { assertNull(it) } }
+                await(scenario) { it.cloudCalendar.writes.any { write -> write.kind == CalendarWriteKind.UPDATE &&
+                    write.state == CalendarWriteState.CONFIRMED } &&
+                    it.cloudCalendar.eventsOn(day, zone).none { event -> event.event.title == title } &&
+                    it.cloudCalendar.eventsOn(moved, zone).count { event -> event.event.title == title } == 1 }
+                assertEquals(3, fixture.putAttempts.get())
+                assertEquals(2, fixture.delayedReadbacks.get())
+            }
+            fixture.online = false
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { !it.cloudCalendar.isBusy }
+                scenario.onActivity { model(it).cloudCalendar.watch(owner, range) }
+                await(scenario) { it.cloudCalendar.eventsOn(moved, zone).count { event -> event.event.title == title } == 1 }
+                scenario.recreate()
+                await(scenario) { it.cloudCalendar.eventsOn(moved.plusDays(1), zone).count { event -> event.event.title == title } == 1 }
+            }
+            fixture.online = true
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { !it.cloudCalendar.isBusy }
+                scenario.onActivity { model(it).cloudCalendar.watch(owner, range) }
+                await(scenario) { it.cloudCalendar.eventsOn(moved, zone).any { event -> event.event.title == title } }
+                val base = inspect(scenario, moved)
+                scenario.onActivity { model(it).cloudCalendar.saveEdit(base, base.event.draft, delete = true) { assertNull(it) } }
+                await(scenario) { it.cloudCalendar.writes.any { write -> write.kind == CalendarWriteKind.DELETE &&
+                    write.state == CalendarWriteState.CONFIRMED } &&
+                    it.cloudCalendar.eventsOn(moved, zone).none { event -> event.event.title == title } }
+                assertEquals(1, fixture.deleteAttempts.get())
+            }
+            fixture.online = false
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { it.cloudCalendar.writes.any { write -> write.kind == CalendarWriteKind.DELETE && write.state == CalendarWriteState.CONFIRMED } }
+                scenario.onActivity { model(it).cloudCalendar.watch(owner, range) }
+                await(scenario) { it.cloudCalendar.eventsOn(day, zone).isNotEmpty() }
+                scenario.onActivity { assertFalse(model(it).cloudCalendar.events(range).any { event -> event.event.title == title }) }
+            }
+            fixture.reportError = false
+            fixture.online = true
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { !it.cloudCalendar.isBusy }
+                scenario.onActivity { model(it).cloudCalendar.watch(owner, range) }
+                await(scenario) { !it.cloudCalendar.hasStaleData(range) }
+                scenario.onActivity { assertFalse(model(it).cloudCalendar.events(range).any { event -> event.event.title == title }) }
+                assertEquals(3, fixture.putAttempts.get())
+                assertEquals(1, fixture.deleteAttempts.get())
+            }
+        } finally {
+            CloudCalendarService.overrideFactory = null
+            fixture.close()
+            store.disconnect()
+        }
+    }
+
+    @Test fun sameEditorRecoversCreationAfterCommitAcknowledgmentFails() {
+        val namespace = "test-caldav-create-fault-${UUID.randomUUID()}"
+        val before = java.util.concurrent.atomic.AtomicBoolean()
+        val after = java.util.concurrent.atomic.AtomicBoolean()
+        val store = CloudCalendarStore(context, namespace,
+            beforeQueueCommit = { if (before.getAndSet(false)) throw java.io.IOException() },
+            afterQueueCommit = { if (after.getAndSet(false)) throw java.io.IOException() })
+        val fixture = Fixture(day, zone)
+        val mode = PreferencesScheduleModeStore(context)
+        val previous = mode.read()
+        mode.write(ScheduleMode.CALENDAR)
+        CloudCalendarService.overrideFactory = { CloudCalendarService(it, fixture::open, { fixture.online }, store, 600) }
+        try {
+            var durable: CalendarWrite? = null
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { it.schedule.ready && !it.cloudCalendar.isBusy }
+                scenario.onActivity { model(it).cloudCalendar.connect(FIXTURE_EMAIL, FIXTURE_PASSWORD) }
+                await(scenario) { it.cloudCalendar.createCalendars.size == 1 }
+                scenario.onActivity {
+                    model(it).cloudCalendar.stop()
+                    fixture.online = false
+                    model(it).cloudCalendar.start()
+                }
+                openCalendar()
+                onView(withText(context.scheduleText("+ 添加日程", "+ Add event"))).perform(click())
+                onView(withText("iCloud · Main")).perform(click())
+                onView(withHint("日程标题")).perform(replaceText("Stable identity fixture"), closeSoftKeyboard())
+                before.set(true)
+                onView(withText("保存到本机待写")).perform(click())
+                awaitView(containsString("暂时无法确认本机保存"))
+                assertTrue(store.writes().isEmpty())
+                after.set(true)
+                onView(withText("保存到本机待写")).perform(click())
+                await(scenario) { it.cloudCalendar.writes.size == 1 }
+                durable = store.writes().single()
+                onView(withText("保存到本机待写")).perform(click())
+                awaitView(containsString("等待写入 · 网络不可用"))
+                assertEquals(durable, store.writes().single())
+            }
+            fixture.online = true
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { it.cloudCalendar.writes.singleOrNull()?.state == CalendarWriteState.CONFIRMED }
+                assertEquals(durable!!.ref, store.writes().single().ref)
+                assertEquals(1, fixture.putAttempts.get())
+                assertEquals(1, fixture.mutations.get())
+            }
+        } finally {
+            CloudCalendarService.overrideFactory = null
+            fixture.close()
+            store.disconnect()
+            mode.write(previous)
         }
     }
 
@@ -462,6 +617,16 @@ class CloudCalendarAndroidTest {
         val requestCount = java.util.concurrent.atomic.AtomicInteger()
         val mutations = java.util.concurrent.atomic.AtomicInteger()
         @Volatile var dropNextWrite = false
+        @Volatile var reportError = false
+        @Volatile var failGetOnce: String? = null
+        @Volatile var failPutOnce: String? = null
+        @Volatile var delayNextUpdateReadback = false
+        val putAttempts = java.util.concurrent.atomic.AtomicInteger()
+        val deleteAttempts = java.util.concurrent.atomic.AtomicInteger()
+        val failedReports = java.util.concurrent.atomic.AtomicInteger()
+        val delayedReadbacks = java.util.concurrent.atomic.AtomicInteger()
+        private val delayed = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
+        val putTimes = java.util.concurrent.CopyOnWriteArrayList<Long>()
         private val resources = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
         private val fmt = DateTimeFormatter.BASIC_ISO_DATE
         private val utc = DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(java.time.ZoneOffset.UTC)
@@ -511,7 +676,11 @@ class CloudCalendarAndroidTest {
                                         if ("calendar-multiget" in xml) "<C:calendar-data><![CDATA[${data.second}]]></C:calendar-data>" else "")
                                 }
                             reportStarted?.countDown()
-                            if (stallReport) MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE)
+                            if (reportError) {
+                                failedReports.incrementAndGet()
+                                MockResponse().setResponseCode(503)
+                            }
+                            else if (stallReport) MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE)
                             else dav(payload)
                         }
                         else -> if (path.startsWith(home) && path.endsWith(".ics")) objectResponse(request, path, xml)
@@ -534,16 +703,42 @@ class CloudCalendarAndroidTest {
             val existing = resources[path]
             fun response(code: Int) = MockResponse().setResponseCode(code)
             return when (request.method) {
-                "GET" -> if (existing == null) response(404) else response(200).setHeader("ETag", existing.first).setBody(existing.second)
+                "GET" -> if (path.substringAfterLast('/') == failGetOnce) {
+                    failGetOnce = null
+                    response(503)
+                } else {
+                    val stale = delayed[path]
+                    when {
+                        stale != null && delayedReadbacks.incrementAndGet() == 1 -> response(503)
+                        stale != null -> {
+                            delayed.remove(path)
+                            response(200).setHeader("ETag", stale.first).setBody(stale.second)
+                        }
+                        existing != null -> response(200).setHeader("ETag", existing.first).setBody(existing.second)
+                        else -> response(404)
+                    }
+                }
                 "PROPFIND" -> if (existing == null) response(404) else dav(item(path,
                     if (path.startsWith("${home}main/")) writable else "$access</D:current-user-privilege-set>"))
                 "PUT", "DELETE" -> {
+                    if (request.method == "PUT") {
+                        putAttempts.incrementAndGet()
+                        putTimes.add(SystemClock.elapsedRealtime())
+                        if (path.substringAfterLast('/') == failPutOnce) {
+                            failPutOnce = null
+                            return response(429).setHeader("Retry-After", "2")
+                        }
+                    } else deleteAttempts.incrementAndGet()
                     if (!path.startsWith("${home}main/")) return response(403)
                     val creating = request.getHeader("If-None-Match") == "*"
                     if (creating && existing != null || !creating &&
                         (existing == null || existing.first != request.getHeader("If-Match"))) return response(412)
                     val version = mutations.incrementAndGet()
                     if (request.method == "DELETE") resources.remove(path) else resources[path] = "\"write-$version\"" to body
+                    if (request.method == "PUT" && existing != null && delayNextUpdateReadback) {
+                        delayNextUpdateReadback = false
+                        delayed[path] = existing
+                    }
                     if (dropNextWrite) {
                         dropNextWrite = false
                         response(503).setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST)

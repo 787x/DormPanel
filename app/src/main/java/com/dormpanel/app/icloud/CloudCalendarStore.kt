@@ -57,7 +57,11 @@ internal data class CloudSettings(
 
 internal data class CalendarCacheKey(val calendarId: String, val window: CalendarWindow)
 
-internal class CloudCalendarStore(context: Context, namespace: String = "icloud-calendar-v1") {
+internal class CloudCalendarStore(
+    context: Context, namespace: String = "icloud-calendar-v1",
+    private val beforeQueueCommit: () -> Unit = {},
+    private val afterQueueCommit: () -> Unit = {},
+) {
     private val directory = File(context.noBackupFilesDir, namespace)
     private val keyAlias = "DormPanel.iCloud.Calendar.$namespace"
     private val meta = AtomicFile(File(directory, "account.json"))
@@ -113,7 +117,9 @@ internal class CloudCalendarStore(context: Context, namespace: String = "icloud-
         checkCalendarCapacity(active.size <= MAX_PENDING_WRITES)
         val receipts = entries.filter { it.state == CalendarWriteState.CONFIRMED }.takeLast(MAX_WRITE_RECEIPTS)
         val json = JSONObject().put("format", 1).put("entries", JSONArray((active + receipts).map(::encodeWrite)))
+        beforeQueueCommit()
         write(mutations, json, MAX_PENDING_BYTES)
+        afterQueueCommit()
         // AtomicFile may log a rename failure instead of throwing it.
         check(read(mutations, MAX_PENDING_BYTES)?.toString() == json.toString())
     }
@@ -136,6 +142,74 @@ internal class CloudCalendarStore(context: Context, namespace: String = "icloud-
             val persisted = read(file, MAX_SNAPSHOT_BYTES)
             check(persisted?.has("token") == false && persisted.getLong("checkedAt") == 0L &&
                 persisted.getJSONArray("objects").objects().none { it.getString("href") == ref.href.toString() })
+        }
+    }
+
+    /** Repair the ordinary snapshots from a journaled GET result; this also runs offline after a crash. */
+    fun cacheConfirmedWrite(entry: CalendarWrite, active: Set<CalendarCacheKey>) {
+        check(entry.cachePending)
+        val ref = entry.ref
+        val address = ref.collection.toString()
+        val href = ref.href.toString()
+        val folder = File(directory, ref.account)
+        val windows = linkedSetOf<CalendarWindow>()
+        folder.listFiles().orEmpty().map { it.name.removeSuffix(".new").removeSuffix(".bak") }.toSet()
+            .filter { it.startsWith("${ref.calendarId}_") && it.endsWith(".json") }
+            .forEach { name ->
+                val file = AtomicFile(File(folder, name))
+                val cached = runCatching {
+                    read(file, MAX_SNAPSHOT_BYTES)?.let {
+                        CalendarWindow(YearMonth.parse(it.getString("month")), ZoneId.of(it.getString("zone")))
+                            .also { window -> check(snapshotFile(ref.account, CalendarCacheKey(ref.calendarId, window)).baseFile == file.baseFile) }
+                    }
+                }.getOrElse {
+                    file.delete()
+                    check(!file.baseFile.exists() && !File(folder, "$name.bak").exists() && !File(folder, "$name.new").exists())
+                    null
+                }
+                cached?.let(windows::add)
+            }
+        val activeWindows = active.filter { it.calendarId == ref.calendarId }.map { it.window }
+        windows.addAll(activeWindows)
+        val raw = entry.ics
+        check((raw == null) == (entry.kind == CalendarWriteKind.DELETE))
+        val projections = hashMapOf<ZoneId, CloudEvent>()
+        fun projection(zone: ZoneId): CloudEvent = projections.getOrPut(zone) {
+            val payload = checkNotNull(raw)
+            val start = readEditableEvent(payload, zone).start(zone)
+            readCloudEvents(payload, CalendarWindow(YearMonth.from(start.atZone(zone)), zone)).single()
+        }
+        if (raw != null) {
+            // Seed nearby windows even when the target calendar/month was not displayed.
+            val zones = (activeWindows.map { it.zone } + entry.draft.zone).distinct()
+            for (zone in zones) {
+                val event = projection(zone)
+                val first = YearMonth.from(event.start(zone).atZone(zone))
+                val end = event.end(zone)
+                val last = YearMonth.from((if (end > event.start(zone)) end.minusNanos(1) else end).atZone(zone))
+                windows.addAll(generateSequence(first) { it.plusMonths(1) }.take(12)
+                    .takeWhile { it <= last }.map { CalendarWindow(it, zone) }.toList())
+                windows.add(CalendarWindow(last, zone))
+            }
+        }
+        for (window in windows) {
+            val key = CalendarCacheKey(ref.calendarId, window)
+            val old = runCatching { snapshot(ref.account, key) }.getOrElse {
+                val file = snapshotFile(ref.account, key)
+                file.delete()
+                val name = file.baseFile.name
+                check(!file.baseFile.exists() && !File(folder, "$name.bak").exists() && !File(folder, "$name.new").exists())
+                null
+            }
+            val event = raw?.let { projection(window.zone).takeIf { it.overlaps(window.start, window.end, window.zone) } }
+            val previous = old?.objects.orEmpty()
+            if (event == null && href !in previous) continue
+            val objects = previous - href
+            val next = if (event == null) objects else objects + (href to
+                CachedObject(checkNotNull(entry.verifiedEtag), listOf(event), CURRENT_PROJECTION_VERSION))
+            val repaired = (old ?: CalendarSnapshot(0, null, emptyMap(), collectionUrl = address))
+                .copy(checkedAt = 0, collectionToken = null, objects = next)
+            saveSnapshot(ref.account, key, repaired, active, verify = true)
         }
     }
 
@@ -171,7 +245,9 @@ internal class CloudCalendarStore(context: Context, namespace: String = "icloud-
         return decodeSnapshot(json)
     }
 
-    fun saveSnapshot(account: String, key: CalendarCacheKey, snapshot: CalendarSnapshot, active: Set<CalendarCacheKey> = emptySet()) {
+    fun saveSnapshot(account: String, key: CalendarCacheKey, snapshot: CalendarSnapshot,
+        active: Set<CalendarCacheKey> = emptySet(), verify: Boolean = false,
+    ) {
         val value = encodeSnapshot(snapshot).put("month", key.window.month.toString()).put("zone", key.window.zone.id)
         val bytes = value.toString().toByteArray()
         checkCalendarCapacity(bytes.size <= MAX_SNAPSHOT_BYTES)
@@ -194,6 +270,7 @@ internal class CloudCalendarStore(context: Context, namespace: String = "icloud-
             }
         }
         write(file, bytes)
+        if (verify) check(this.snapshot(account, key) == snapshot)
         // Eviction follows the successful atomic replacement and never touches an active window.
         evict.forEach { AtomicFile(it).delete() }
     }
@@ -247,6 +324,7 @@ private fun encodeWrite(value: CalendarWrite): JSONObject {
         .put("kind", value.kind.name).put("state", value.state.name).put("detail", value.detail)
         .put("attempted", value.attempted).put("acknowledged", value.acknowledged).put("retryAt", value.retryAt)
         .put("verifiedEtag", value.verifiedEtag)
+        .put("cachePending", value.cachePending).put("retryCount", value.retryCount)
         .put("ics", value.ics).put("title", draft.title).put("location", draft.location).put("description", draft.description)
         .put("start", draft.start.toString()).put("end", draft.end.toString()).put("allDay", draft.allDay).put("zone", draft.zone.id)
 }
@@ -263,7 +341,8 @@ private fun decodeWrite(json: JSONObject): CalendarWrite {
         ZoneId.of(json.getString("zone")))
     return CalendarWrite(id, ref, json.getString("name"), CalendarWriteKind.valueOf(json.getString("kind")),
         draft, json.optionalString("ics"), CalendarWriteState.valueOf(json.getString("state")), json.optionalString("detail"),
-        json.getBoolean("attempted"), json.getBoolean("acknowledged"), json.getLong("retryAt"), json.optionalString("verifiedEtag"))
+        json.getBoolean("attempted"), json.getBoolean("acknowledged"), json.getLong("retryAt"), json.optionalString("verifiedEtag"),
+        json.optBoolean("cachePending"), json.optInt("retryCount"))
 }
 
 /** Repeated instances share event text. Old snapshots remain readable until replaced atomically. */

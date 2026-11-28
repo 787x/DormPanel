@@ -132,7 +132,8 @@ internal class CloudCalendarDialogs(private val context: Context, private val ap
                 if (localAllowed && index == 0) local() else {
                     val calendar = targets[index - if (localAllowed) 1 else 0]
                     val initial = CloudEventDraft("", "", "", date.atTime(9, 0), date.atTime(10, 0), false, zone)
-                    editor("新建 iCloud 日程", calendar.name, initial) { value, saved -> service.saveCreate(account, calendar, value, saved) }
+                    val intent = java.util.UUID.randomUUID()
+                    editor("新建 iCloud 日程", calendar.name, initial) { value, saved -> service.saveCreate(intent, account, calendar, value, saved) }
                 }
             }.setNegativeButton("取消", null))
     }
@@ -246,11 +247,12 @@ internal class CloudCalendarDialogs(private val context: Context, private val ap
             state.text = (entry?.label(service.isOffline) ?: "本机待写记录已移除") + if (entry != null && detached) " · 原账户未连接" else ""
             summary.text = entry?.let { "${it.calendarName}\n${describe(it.draft)}" }.orEmpty()
             retry.visibility = if (active && !detached && entry?.state != CalendarWriteState.CONFLICT) View.VISIBLE else View.GONE
-            retry.isEnabled = !service.isOffline && !service.isBusy && (entry?.retryAt ?: 0) <= System.currentTimeMillis()
+            retry.isEnabled = (!service.isOffline || entry?.cachePending == true) && !service.isBusy &&
+                (entry?.retryAt ?: 0) <= System.currentTimeMillis()
             reload.visibility = if (active && !detached && entry?.kind != CalendarWriteKind.CREATE &&
                 entry?.state == CalendarWriteState.CONFLICT) View.VISIBLE else View.GONE
             reload.isEnabled = !service.isOffline && !service.isBusy
-            discard.visibility = if (active) View.VISIBLE else View.GONE
+            discard.visibility = if (active && entry?.cachePending != true) View.VISIBLE else View.GONE
         }
         val dialog = show(AlertDialog.Builder(context).setTitle("本机保存的 iCloud 日程").setView(scroll(content))
             .setNegativeButton("关闭", null), onDismiss = { service.removeListener(update) })

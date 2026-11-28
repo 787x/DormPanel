@@ -36,6 +36,7 @@ class CloudCalendarService internal constructor(
     private val openClient: (String, String) -> CalDavClient = { email, password -> CalDavClient(email, password) },
     private val networkAvailable: (() -> Boolean)? = null,
     private val store: CloudCalendarStore = CloudCalendarStore(context),
+    private val writeRetryDelay: Long = 15_000,
 ) : AutoCloseable {
     private val main = Handler(Looper.getMainLooper())
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
@@ -58,7 +59,7 @@ class CloudCalendarService internal constructor(
     private var syncing = false
     private var activeRound: CalDavRound? = null
     private val inspections = mutableSetOf<CalDavRound>()
-    private var writeRequested = false
+    private var writePassRetryAt = 0L
     private val manualWrites = mutableSetOf<String>()
     private var savedWrites = emptyList<CalendarWrite>()
     private var writingId: String? = null
@@ -129,7 +130,6 @@ class CloudCalendarService internal constructor(
     fun start() {
         if (started || closed) return
         started = true
-        writeRequested = true
         working = !settingsBusy && !offline
         registered = runCatching { connectivity.registerDefaultNetworkCallback(network) }.isSuccess
         updateNetwork()
@@ -158,7 +158,6 @@ class CloudCalendarService internal constructor(
                 inspections.forEach { it.cancel() }
             }
             if (!down) {
-                writeRequested = true
                 force = true
                 if (issue == CalDavProblem.NETWORK) retryAt = 0
             }
@@ -309,10 +308,10 @@ class CloudCalendarService internal constructor(
                     if (forceRefresh) {
                         issue = null
                         retryAt = 0
-                        serverRetryAt = 0
+                        if (it.account != old.account) serverRetryAt = 0
                         discoveryAt = now()
                         force = true
-                        writeRequested = true
+                        writePassRetryAt = 0
                     }
                 }.onFailure {
                     if (recovered != null && recovered.account != old.account) {
@@ -335,7 +334,6 @@ class CloudCalendarService internal constructor(
         // Keep the server's Retry-After in force for explicit refreshes too.
         if (issue != CalDavProblem.LIMITED) retryAt = serverRetryAt
         force = true
-        writeRequested = true
         discoveryAt = 0
         demandChanged()
     }
@@ -387,15 +385,20 @@ class CloudCalendarService internal constructor(
         }
     }
 
-    internal fun saveCreate(account: String, calendar: CloudCalendar, draft: CloudEventDraft, done: (String?) -> Unit) {
+    internal fun saveCreate(id: UUID, account: String, calendar: CloudCalendar, draft: CloudEventDraft, done: (String?) -> Unit) {
         editQueue(done) { config, entries ->
+            val key = id.toString()
+            entries.singleOrNull { it.id == key }?.let { existing ->
+                require(existing.kind == CalendarWriteKind.CREATE && existing.ref.matches(account, calendar))
+                require(existing.draft == draft) { "此日程的原草稿已保存，请从写入记录处理后续修改" }
+                return@editQueue entries
+            }
             val target = config.calendars.singleOrNull { it.id == calendar.id }
             require(config.account == account && target == calendar && target.privileges.bind) { "账户或创建权限已变化，请重新选择" }
-            val id = UUID.randomUUID().toString()
             val uid = "$id@dormpanel"
             val href = target.url.newBuilder().encodedPath(target.url.encodedPath.trimEnd('/') + "/").addPathSegment("$id.ics").build()
             val ref = CloudObjectRef(account, target.id, target.url, href, uid, null, null, target.resourceId)
-            entries + CalendarWrite(id, ref, target.name, CalendarWriteKind.CREATE, draft,
+            entries + CalendarWrite(key, ref, target.name, CalendarWriteKind.CREATE, draft,
                 EditableCalendarObject.create(uid, draft, Instant.now()))
         }
     }
@@ -429,6 +432,7 @@ class CloudCalendarService internal constructor(
     internal fun discardWrite(id: String, done: (String?) -> Unit) {
         editQueue(done, kick = false) { config, entries ->
             val entry = entries.singleOrNull { it.id == id } ?: return@editQueue entries
+            require(!entry.cachePending) { "iCloud 已写入，正在恢复本机缓存" }
             if (entry.attempted && entry.ref.account == config.account) store.invalidateObject(entry.ref)
             entries.filterNot { it.id == id }
         }
@@ -440,14 +444,20 @@ class CloudCalendarService internal constructor(
         if (closed || settingsBusy || queueUnavailable) { done("本机待写记录暂不可用"); return }
         worker.execute {
             val result = runCatching {
-                change(store.settings(), store.writes()).let { next -> store.saveWrites(next); store.writes() }
+                val previous = store.writes()
+                val next = change(store.settings(), previous)
+                if (next == previous) previous else {
+                    store.saveWrites(next)
+                    store.writes()
+                }
             }
+            val recovered = result.getOrNull() ?: runCatching(store::writes).getOrNull()
             main.post {
                 if (closed) return@post
                 val error = result.exceptionOrNull()
-                result.onSuccess {
-                    savedWrites = it
-                    if (kick) writeRequested = true else { visible.clear(); force = true }
+                if (recovered != null) {
+                    savedWrites = recovered
+                    if (!kick && error == null) { visible.clear(); force = true }
                     demandChanged()
                     publish()
                 }
@@ -455,7 +465,7 @@ class CloudCalendarService internal constructor(
                     null -> null
                     is IllegalArgumentException -> error.message
                     is CalDavFailure -> error.problem.label
-                    else -> "无法保存本机待写记录"
+                    else -> "暂时无法确认本机保存，请在此编辑器重试或查看写入记录"
                 })
             }
         }
@@ -490,7 +500,7 @@ class CloudCalendarService internal constructor(
         val active = activeRanges()
         wanted = active.flatMapTo(linkedSetOf()) { keys(it) }
         visible.keys.retainAll(wanted)
-        val canSync = !offline && now >= retryAt
+        val canSync = !offline && now >= maxOf(retryAt, serverRetryAt)
         val refresh = canSync && force
         val discover = canSync && (now >= discoveryAt + refreshMillis || refresh)
         val requested = wanted.filter { key ->
@@ -498,29 +508,26 @@ class CloudCalendarService internal constructor(
             view == null || (canSync && (refresh || now >= view.due(now, refreshMillis)))
         }
         val missing = requested.filterNot(visible::containsKey)
-        val writeIds = if (!canSync || queueUnavailable) emptySet() else savedWrites.filter {
-            it.ref.account == accountId && it.retryAt <= now && (
-                it.id in manualWrites || writeRequested && it.state in setOf(CalendarWriteState.QUEUED, CalendarWriteState.CHECKING)
-            )
+        val writeIds = eligibleWrites().filter {
+            it.retryAt <= now && now >= writePassRetryAt && (it.cachePending || !offline && now >= serverRetryAt)
         }.mapTo(linkedSetOf()) { it.id }
-        if (!discover && requested.isEmpty() && writeIds.isEmpty()) { scheduleNext(); return }
+        if (!discover && requested.isEmpty() && writeIds.isEmpty()) { publish(); scheduleNext(); return }
         val settings = configured
         val knownWrites = savedWrites
         val coolingDown = visible.filterValues { it.retryAt > now }.keys.toSet()
         val round = CalDavRound()
-        if (canSync) activeRound = round
+        if (canSync || !offline && writeIds.isNotEmpty()) activeRound = round
         syncing = true
-        if (canSync) {
-            force = false
-            writeRequested = false
-            manualWrites.removeAll(writeIds)
-        }
+        if (canSync) force = false
+        manualWrites.removeAll(writeIds)
         publish()
         worker.execute {
             val memory = requested.toSet()
             var effective = settings
             var failure: Throwable? = null
             var discovered = false
+            var writeFailure = false
+            var rateLimit = 0L
             val invalidated = mutableSetOf<String>()
             var receipts = knownWrites.filter { it.state == CalendarWriteState.CONFIRMED && it.ref.account == settings.account }
             val unprocessed = writeIds.toMutableSet()
@@ -539,19 +546,77 @@ class CloudCalendarService internal constructor(
                 onSuccess = { dispatch(key, it.toView()) },
                 onFailure = { dispatch(key, WindowView(0, null, emptyList(), CalDavProblem.STORAGE)) },
             )
+            var loaded = false
+            fun loadMissing() {
+                if (loaded) return
+                missing.forEach { if (it in wanted) load(it) }
+                loaded = true
+            }
             try {
                 if (writeIds.isNotEmpty()) {
+                    writeFailure = true
                     val persisted = store.settings()
                     effective = persisted
                     if (persisted.account != settings.account || persisted.encryptedLogin != settings.encryptedLogin) {
                         throw CalDavFailure(CalDavProblem.CANCELLED)
                     }
                 }
-                // Publish disk data before any network request, even if authentication is down.
-                missing.forEach { if (it in wanted) load(it) }
-                if (canSync && working) {
-                    val (email, password) = store.login(settings) ?: throw CalDavFailure(CalDavProblem.STORAGE)
-                    val client = openClient(email, password)
+                val client by lazy {
+                    val (email, password) = store.login(effective) ?: throw CalDavFailure(CalDavProblem.STORAGE)
+                    openClient(email, password)
+                }
+                // Complete local cache transactions before loading any potentially older snapshot.
+                if (writeIds.isNotEmpty()) {
+                    var entries = store.writes()
+                    for (id in writeIds.sortedByDescending { id -> entries.any { it.id == id && it.cachePending } }) {
+                        val entry = entries.singleOrNull { it.id == id } ?: continue
+                        if (entry.state in setOf(CalendarWriteState.CONFIRMED, CalendarWriteState.CONFLICT)) continue
+                        if (!entry.cachePending && !working) continue
+                        if (!entry.cachePending) loadMissing()
+                        round.check()
+                        unprocessed.remove(id)
+                        val calendar = effective.calendars.singleOrNull { entry.ref.matches(effective.account, it) }
+                        fun persist(next: CalendarWrite) {
+                            val saved = entries.map { if (it.id == id) next else it }
+                            store.saveWrites(saved)
+                            entries = store.writes()
+                        }
+                        main.post {
+                            if (!closed) { writingId = id; publish() }
+                        }
+                        val result = if (entry.cachePending) entry else if (calendar == null) entry.copy(state = CalendarWriteState.CONFLICT,
+                            detail = "无法确认原账户、日历或资源地址")
+                        else processCalendarWrite(client, calendar, entry, round, ::persist)
+                        val next = if (result.cachePending || result.state == CalendarWriteState.CONFIRMED) {
+                            val staged = result.copy(state = CalendarWriteState.CHECKING, cachePending = true,
+                                detail = "正在更新本机日程缓存", retryAt = 0)
+                            if (!result.cachePending) persist(staged)
+                            if (calendar != null) store.cacheConfirmedWrite(staged, wanted)
+                            else store.invalidateObject(staged.ref)
+                            invalidated.add(staged.ref.calendarId)
+                            staged.copy(state = CalendarWriteState.CONFIRMED, cachePending = false, ics = null, detail = null)
+                        } else {
+                            rateLimit = maxOf(rateLimit, result.retryAt)
+                            result.deferRetry(now(), writeRetryDelay)
+                        }
+                        persist(next)
+                        receipts = entries.filter { it.state == CalendarWriteState.CONFIRMED && it.ref.account == settings.account }
+                        if (next.state == CalendarWriteState.CONFIRMED)
+                            wanted.filter { it.calendarId == next.ref.calendarId }.forEach(::load)
+                        val updated = entries
+                        main.post {
+                            if (!closed) {
+                                writingId = null
+                                savedWrites = updated
+                                publish()
+                            }
+                        }
+                        if (rateLimit > now()) break
+                    }
+                }
+                writeFailure = false
+                loadMissing()
+                if (canSync && working && rateLimit <= now()) {
                     if (discover) {
                         val updated = effective.rediscovered(client.discover(round))
                         round.check()
@@ -560,50 +625,6 @@ class CloudCalendarService internal constructor(
                             effective = updated
                         }
                         discovered = true
-                    }
-                    if (writeIds.isNotEmpty()) {
-                        var entries = store.writes()
-                        for (id in writeIds) {
-                            if (!working) break
-                            round.check()
-                            unprocessed.remove(id)
-                            val entry = entries.singleOrNull { it.id == id } ?: continue
-                            if (entry.state in setOf(CalendarWriteState.CONFIRMED, CalendarWriteState.CONFLICT)) continue
-                            val calendar = effective.calendars.singleOrNull { entry.ref.matches(effective.account, it) }
-                            fun persist(next: CalendarWrite) {
-                                val saved = entries.map { if (it.id == id) next else it }
-                                store.saveWrites(saved)
-                                entries = store.writes()
-                            }
-                            main.post {
-                                if (!closed) { writingId = id; publish() }
-                            }
-                            val next = if (calendar == null) entry.copy(state = CalendarWriteState.CONFLICT,
-                                detail = "无法确认原账户、日历或资源地址")
-                            else processCalendarWrite(client, calendar, entry, round, ::persist)
-                            if (next.state == CalendarWriteState.CONFIRMED) {
-                                store.invalidateObject(next.ref)
-                                invalidated.add(next.ref.calendarId)
-                            }
-                            persist(next.copy(ics = next.ics.takeUnless { next.state == CalendarWriteState.CONFIRMED }))
-                            receipts = entries.filter { it.state == CalendarWriteState.CONFIRMED && it.ref.account == settings.account }
-                            val updated = entries
-                            main.post {
-                                if (!closed) {
-                                    writingId = null
-                                    savedWrites = updated
-                                    if (next.state == CalendarWriteState.CONFIRMED) {
-                                        visible.replaceAll { key, view ->
-                                            if (key.calendarId != next.ref.calendarId) view else view.copy(
-                                                checkedAt = 0, events = view.events.filterNot { it.href == next.ref.href.toString() },
-                                            )
-                                        }
-                                    }
-                                    publish()
-                                }
-                            }
-                            if (next.retryAt > now()) throw CalDavFailure(CalDavProblem.LIMITED, next.retryAt)
-                        }
                     }
                     val scopes = if (discover || invalidated.isNotEmpty()) active.flatMapTo(linkedSetOf()) { keys(it, effective) } else memory
                     for (key in scopes) {
@@ -618,14 +639,8 @@ class CloudCalendarService internal constructor(
                             previous.hasCurrentProjection && now - previous.checkedAt in 0 until settings.refreshMinutes * 60_000L) continue
                         try {
                             val snapshot = client.synchronize(calendar, key.window, previous, now(), round)
-                            val obsolete = receipts.filter { receipt ->
-                                receipt.ref.matches(effective.account, calendar) && receipt.ref.etag != null &&
-                                    receipt.ref.etag != receipt.verifiedEtag &&
-                                    snapshot.objects[receipt.ref.href.toString()]?.etag == receipt.ref.etag
-                            }.mapTo(hashSetOf()) { it.ref.href.toString() }
-                            val next = if (obsolete.isEmpty()) snapshot else snapshot.copy(
-                                checkedAt = 0, collectionToken = null, objects = snapshot.objects - obsolete, problem = CalDavProblem.DATA,
-                            )
+                            val next = reconcileWriteReceipts(client, snapshot, previous,
+                                receipts.filter { it.ref.matches(effective.account, calendar) }, round)
                             round.check()
                             store.saveSnapshot(effective.account, key, next, wanted)
                             val retry = next.problem?.let { retryTime(CalDavFailure(it)) } ?: 0
@@ -640,9 +655,15 @@ class CloudCalendarService internal constructor(
                         }
                     }
                 }
-            } catch (e: Exception) { failure = e }
+            } catch (e: Exception) {
+                failure = e
+                if (effective.account == settings.account) loadMissing()
+            }
             finally { syncingKey = null }
             val recoveredWrites = if (writeIds.isNotEmpty()) runCatching(store::writes).getOrNull() else null
+            if (writeFailure && effective.account == settings.account) recoveredWrites.orEmpty().filter {
+                it.id in writeIds && it.state == CalendarWriteState.CONFIRMED
+            }.forEach { entry -> wanted.filter { it.calendarId == entry.ref.calendarId }.forEach(::load) }
             main.post {
                 if (closed) return@post
                 syncing = false
@@ -659,16 +680,41 @@ class CloudCalendarService internal constructor(
                     wanted = next
                     visible.keys.retainAll(next)
                     if (discovered) discoveryAt = now()
+                    writePassRetryAt = if (writeFailure) now() + writeRetryDelay else 0
+                    serverRetryAt = maxOf(serverRetryAt, rateLimit, (failure as? CalDavFailure)?.retryAt ?: 0L)
                     if (canSync && failure?.let(::problem) != CalDavProblem.CANCELLED) {
                         issue = failure?.let(::problem)
                         retryAt = failure?.let(::retryTime) ?: 0
-                        serverRetryAt = (failure as? CalDavFailure)?.retryAt ?: 0
                     }
                 }
                 publish()
-                if (pending || wanted.any { it !in visible } || manualWrites.isNotEmpty()) { pending = false; demandChanged() } else scheduleNext()
+                if (pending) { pending = false; demandChanged() } else scheduleNext()
             }
         }
+    }
+
+    private fun reconcileWriteReceipts(client: CalDavClient, snapshot: CalendarSnapshot, previous: CalendarSnapshot?,
+        receipts: List<CalendarWrite>, round: CalDavRound,
+    ): CalendarSnapshot {
+        var repaired: MutableMap<String, CachedObject>? = null
+        for ((target, history) in receipts.groupBy { it.ref.href }) {
+            val latest = history.last()
+            val href = target.toString()
+            val reported = snapshot.objects[href]
+            val confirmed = previous?.objects?.get(href)?.takeIf { it.etag == latest.verifiedEtag }
+            val superseded = history.mapNotNullTo(hashSetOf()) { it.ref.etag }.apply { remove(latest.verifiedEtag) }
+            val obsolete = reported != null && reported.etag in superseded
+            val missingConfirmed = reported == null && confirmed?.events?.isNotEmpty() == true &&
+                (snapshot.problem != null || client.readObject(latest.ref.collection, target, round)?.etag?.let {
+                    it == latest.verifiedEtag || it in superseded
+                } == true)
+            if (obsolete || missingConfirmed) {
+                val objects = repaired ?: snapshot.objects.toMutableMap().also { repaired = it }
+                if (confirmed == null) objects.remove(href) else objects[href] = confirmed
+            }
+        }
+        return repaired?.let { snapshot.copy(checkedAt = 0, collectionToken = null, objects = it, problem = CalDavProblem.DATA) }
+            ?: snapshot
     }
 
     private fun CalendarSnapshot?.toView(issue: CalDavProblem? = null, retryAt: Long = 0) = WindowView(
@@ -681,9 +727,19 @@ class CloudCalendarService internal constructor(
     private fun scheduleNext() {
         if (!started || closed || settingsBusy || offline || !connected) return
         val now = now()
-        val due = minOf(discoveryAt + refreshMillis, wanted.minOfOrNull { visible[it]?.due(now, refreshMillis) ?: now } ?: Long.MAX_VALUE)
+        val readDue = maxOf(retryAt, serverRetryAt, minOf(discoveryAt + refreshMillis,
+            wanted.minOfOrNull { visible[it]?.due(now, refreshMillis) ?: now } ?: Long.MAX_VALUE))
+        val writeDue = eligibleWrites().minOfOrNull {
+            maxOf(it.retryAt, writePassRetryAt, if (it.cachePending) 0 else serverRetryAt)
+        } ?: Long.MAX_VALUE
+        val feedbackDue = savedWrites.filter { it.state == CalendarWriteState.FAILED && it.ref.account == accountId && it.retryAt > now }
+            .minOfOrNull { it.retryAt } ?: Long.MAX_VALUE
         main.removeCallbacks(timer)
-        main.postDelayed(timer, (max(due, retryAt) - now).coerceAtLeast(1000))
+        main.postDelayed(timer, (minOf(readDue, writeDue, feedbackDue) - now).coerceAtLeast(1000))
+    }
+
+    private fun eligibleWrites() = if (queueUnavailable) emptyList() else savedWrites.filter {
+        it.ref.account == accountId && (it.canResumeAutomatically() || it.state == CalendarWriteState.FAILED && it.id in manualWrites)
     }
 
     private fun retryTime(failure: Throwable): Long {

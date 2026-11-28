@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit
 class CalDavWriteTest {
     private val server = MockWebServer()
     private lateinit var client: CalDavClient
+    private var interruptPutBeforeSend = false
     private fun url(path: String) = server.url(path).newBuilder().host("localhost").build()
     private val calendar get() = CloudCalendar("calendar", url(PATH), "Fixture", null, CalendarAccess.UNKNOWN, "urn:uuid:fixture")
     private val href get() = url("${PATH}fixed.ics")
@@ -34,11 +35,32 @@ class CalDavWriteTest {
         server.useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory(), false)
         server.start()
         val transport = OkHttpClient.Builder().sslSocketFactory(tls.sslSocketFactory(), tls.trustManager)
+            .addInterceptor {
+                if (it.request().method == "PUT" && interruptPutBeforeSend) throw java.io.IOException()
+                it.proceed(it.request())
+            }
             .callTimeout(3, TimeUnit.SECONDS).readTimeout(500, TimeUnit.MILLISECONDS).build()
         client = CalDavClient("fixture@example.invalid", "secret", url("/"), { it == "localhost" }, transport)
     }
 
     @After fun stop() { server.shutdown() }
+
+    @Test fun connectionFailureBeforeMutationIsSafeToRetryWithSameIdentity() {
+        val create = entry(CalendarWriteKind.CREATE)
+        interruptPutBeforeSend = true
+        enqueue(collection("bind"), response(404))
+        val queued = process(create)
+        assertEquals(CalendarWriteState.QUEUED, queued.state)
+        assertFalse(queued.attempted)
+        assertEquals(create.ref, queued.ref)
+        assertRequests("PROPFIND", "GET")
+        interruptPutBeforeSend = false
+        enqueue(collection("bind"), response(404), response(201), remote(create.ics!!, NEW))
+        assertEquals(CalendarWriteState.CONFIRMED, process(queued).state)
+        assertRequests("PROPFIND", "GET", "PUT", "GET") { method, request ->
+            if (method == "PUT") assertEquals(href.encodedPath, request.path)
+        }
+    }
 
     @Test fun conditionalCreateUpdateAndDeleteRequireReadback() {
         val create = entry(CalendarWriteKind.CREATE)
@@ -112,6 +134,11 @@ class CalDavWriteTest {
         enqueue(collection("all"), remote())
         assertEquals(CalendarWriteState.CHECKING, process(unknown).state)
         assertRequests("PROPFIND", "GET")
+        enqueue(collection("all"), remote(newIcs, NEW))
+        val confirmed = process(unknown)
+        assertEquals(CalendarWriteState.CONFIRMED, confirmed.state)
+        assertEquals(newIcs, confirmed.ics)
+        assertRequests("PROPFIND", "GET")
         enqueue(collection("all"), remote(newIcs, "W/\"weak\""))
         assertEquals(CalendarWriteState.CHECKING, process(unknown).state)
         assertRequests("PROPFIND", "GET")
@@ -144,13 +171,14 @@ class CalDavWriteTest {
     @Test fun rejectionRedirectAndServerErrorsNeverFallBackToUnconditionalWrites() {
         val expectations = mapOf(401 to CalendarWriteState.FAILED, 403 to CalendarWriteState.FAILED,
             404 to CalendarWriteState.CONFLICT, 409 to CalendarWriteState.CONFLICT, 412 to CalendarWriteState.CONFLICT,
-            429 to CalendarWriteState.FAILED, 307 to CalendarWriteState.FAILED, 500 to CalendarWriteState.CHECKING,
+            429 to CalendarWriteState.QUEUED, 307 to CalendarWriteState.FAILED, 500 to CalendarWriteState.CHECKING,
             503 to CalendarWriteState.CHECKING)
         expectations.forEach { (code, expected) ->
             enqueue(collection("unbind"), remote(), response(code).setHeader("Location", "/other/else.ics")
                 .setHeader("Retry-After", if (code == 503) "0" else "60"))
             val result = process(entry(CalendarWriteKind.DELETE))
             assertEquals("HTTP $code", expected, result.state)
+            if (code in listOf(401, 403, 412)) assertFalse(result.canResumeAutomatically())
             if (code == 429) assertTrue(result.retryAt > System.currentTimeMillis())
             assertRequests("PROPFIND", "GET", "DELETE") { _, request ->
                 assertTrue(request.path == PATH || request.path == href.encodedPath)
