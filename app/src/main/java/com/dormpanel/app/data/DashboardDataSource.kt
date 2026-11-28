@@ -135,6 +135,8 @@ private fun demoSwitches(): DashboardSwitches {
     val devices = linkedMapOf("desk" to "Desk")
     val desk = SwitchIdentity("switch:desk", "desk", "desk")
     val channels = mutableListOf(DashboardSwitch(desk, "Desk outlet", false, Availability.AVAILABLE))
+    val helper = SwitchIdentity("ha:input_boolean.demo", null, "demo-helper")
+    channels += DashboardSwitch(helper, "Demo 虚拟开关", false, Availability.AVAILABLE)
     for (count in 2..3) {
         val id = "demo-switch-$count"
         devices[id] = "Demo · ${count}键开关"

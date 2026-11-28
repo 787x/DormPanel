@@ -90,7 +90,7 @@ internal class SwitchConfigurationDialog(
 
     private fun chooseDevice() {
         val live = current()
-        val ids = live.channels.values.filter { it.identity.isPersistent }.mapNotNull { it.identity.deviceId }.distinct()
+        val ids = live.channels.values.filter { it.identity.isPersistent && !it.identity.isVirtual }.mapNotNull { it.identity.deviceId }.distinct()
             .sortedWith(compareBy({ live.deviceNames[it] }, { it }))
         choose(R.string.switch_choose_device, ids.map { live.deviceNames[it] ?: it }) { index ->
             val id = ids[index]
@@ -108,7 +108,7 @@ internal class SwitchConfigurationDialog(
         captureAliases()
         val live = current()
         val choices = live.channels.values.filter {
-            it.identity.isPersistent && (!grouped || (sourceId == live.sourceId && it.identity.deviceId == deviceId))
+            it.identity.isPersistent && (!grouped || (!it.identity.isVirtual && sourceId == live.sourceId && it.identity.deviceId == deviceId))
         }.sortedWith(compareBy({ it.name }, { it.identity.entityId }))
         val offset = if (grouped) 1 else 0
         val names = choices.map { "${it.name}  ·  ${it.identity.entityId.removePrefix("ha:")}" }

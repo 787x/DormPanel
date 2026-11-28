@@ -35,7 +35,8 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
     override fun addHomeListener(listener: (HomeControlState) -> Unit) = home.addHomeListener(listener)
     override fun removeHomeListener(listener: (HomeControlState) -> Unit) = home.removeHomeListener(listener)
     override fun activateEntity(id: String) = home.activateEntity(id)
-    private val demoCatalog = SourceCardCatalog(demo, labels)
+    override fun command(target: HomeTarget, command: HomeCommand) = home.command(target, command)
+    private val demoCatalog = SourceCardCatalog(demo, labels) { controlCardCandidates(demoHome.homeState.entities) }
     var settings = preferences.read(); private set
     private var weatherHaAccount: String? = null
     internal val weatherServices = com.dormpanel.app.weather.WeatherServices(context, scheduler, ha,
@@ -77,6 +78,7 @@ class DashboardBackend(context: Context, appearance: AppearanceController, label
         }
         settings = normalized; preferences.write(settings); activate()
     }
+    internal fun reconnect() = activate()
     fun clearCredentials() { tokens.clear(); activate() }
     private fun activate() {
         active.removeListener(relay); activeCatalog.removeListener(catalogRelay)

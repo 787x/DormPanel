@@ -46,10 +46,32 @@ class HaEntityStore {
             if (id.isNotEmpty()) devices[id] = HomeDevice(id, it.text("name_by_user").ifBlank { it.text("name").ifBlank { id } }, it.text("area_id").ifEmpty { null })
         }
     }
+    internal var homeSourceId = ""
+    internal var temperatureUnit = ""
+
+    internal fun homeDevice(e: HaEntity, connected: Boolean): HomeEntity? {
+        val controls = e.deviceState(temperatureUnit) ?: return null
+        val meta = metadata[e.id]
+        if (!enabled(e) || !meta?.category.isNullOrEmpty()) return null
+        val device = devices[meta?.device]
+        val area = (meta?.area?.ifEmpty { null } ?: device?.areaId)?.takeIf { it in areas }
+        val availability = when {
+            !connected -> Availability.STALE
+            !controls.hasKnownState() -> Availability.UNAVAILABLE
+            else -> Availability.AVAILABLE
+        }
+        val deviceId = meta?.device?.ifBlank { null }
+        val entryId = meta?.entryId.orEmpty().takeUnless { deviceRegistryKnown && deviceId != null && device == null }.orEmpty()
+        val identity = SwitchIdentity("ha:${e.id}", deviceId, entryId)
+        return HomeEntity(identity.entityId, name(e), HomeKind.valueOf(e.id.substringBefore('.').uppercase()), area,
+            device?.id, availability, e.value, controls = controls, target = HomeTarget(homeSourceId, identity))
+    }
+
     fun home(connected: Boolean, lights: Map<String, LightState>): HomeControlState {
         val supported = HomeKind.entries.associateBy { it.name.lowercase() }
         val values = entities.values.mapNotNull { e ->
             val kind = supported[e.id.substringBefore('.')] ?: return@mapNotNull null
+            if (kind in DEVICE_CONTROL_KINDS) return@mapNotNull homeDevice(e, connected)
             val meta = metadata[e.id]
             if (!enabled(e) || meta?.category in setOf("diagnostic", "config")) return@mapNotNull null
             val device = devices[meta?.device]
@@ -105,7 +127,7 @@ class HaEntityStore {
     }.mapNotNull { entities[it] }
 
     fun switches(sourceId: String): DashboardSwitches {
-        val channels = discovered("switch").mapNotNull { entity ->
+        val channels = (discovered("switch") + discovered("input_boolean")).mapNotNull { entity ->
             val meta = metadata[entity.id] ?: return@mapNotNull null
             if (meta.category.isNotEmpty()) return@mapNotNull null
             val device = meta.device.ifBlank { null }

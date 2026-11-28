@@ -32,6 +32,16 @@ class MainActivity : AppCompatActivity() {
     private val dashboardViewModel: DashboardViewModel by viewModels()
     private lateinit var scheduleImports: com.dormpanel.app.schedule.ScheduleImportUi
     private lateinit var apkImports: com.dormpanel.app.apps.ApkImportUi
+    private val haLanPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) dashboardViewModel.dataSource.reconnect()
+    }
+    internal fun needsHaLanPermission() = android.os.Build.VERSION.SDK_INT >= 37 &&
+        checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") != android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    internal fun requestHaLanPermission() {
+        if (needsHaLanPermission()) haLanPermission.launch("android.permission.ACCESS_LOCAL_NETWORK")
+    }
+
     private val apkPicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) apkImports.selected(uri)
     }

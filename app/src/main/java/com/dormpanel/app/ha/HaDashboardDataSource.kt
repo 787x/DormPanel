@@ -15,11 +15,12 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
             "2×3 Compact weather", "Current weather and up to three forecasts"),
 ) : DashboardDataSource, HomeControlSource {
     val store = HaEntityStore()
+    private val deviceRequests = mutableMapOf<HomeTarget, DeviceRequest>()
     var settings = HaConnectionSettings(); private set
     var status = HaStatus(HaConnectionState.NOT_CONFIGURED); private set
     override var state = projector.dashboard(store, false, ""); private set
     // Fresh access is independent of notification deduplication; never cache unused Home projections.
-    override val homeState get() = projector.home(store, connected, store.lightStates(connected).mapValues { memory.project(it.value) })
+    override val homeState get() = projectHome(store.lightStates(connected).mapValues { memory.project(it.value) })
     private var lastEmittedHomeState: HomeControlState? = null
     private val homeListeners = linkedSetOf<(HomeControlState) -> Unit>()
     override fun addHomeListener(listener: (HomeControlState) -> Unit) {
@@ -35,6 +36,10 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     override fun activateEntity(id: String): Boolean {
         val entity = homeState.entities.find { it.id == id } ?: return false
         if (!connected || entity.availability != Availability.AVAILABLE || !entity.actionable) return false
+        entity.controls?.let { controls ->
+            val target = entity.target ?: return false
+            return controls.primaryCommand()?.let { command(target, it) } == true
+        }
         if (entity.kind == HomeKind.LIGHT) return powerLight(id, !entity.isOn)
         if (entity.kind == HomeKind.SWITCH) return sendSwitch(id.removePrefix("ha:"))
         val domain = when(entity.kind) {
@@ -44,6 +49,58 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         }
         return socket.service(domain, "turn_on", id.removePrefix("ha:"))
     }
+    private class DeviceRequest(val stopping: Boolean) {
+        var state = DeviceRequestState.SENDING
+        var expiry: (() -> Unit)? = null
+    }
+
+    private fun clearDeviceRequests() {
+        deviceRequests.values.forEach { it.expiry?.invoke() }
+        deviceRequests.clear()
+    }
+
+    override fun command(target: HomeTarget, command: HomeCommand): Boolean {
+        if (!connected || target.sourceId != switchSourceId || "entity" in registryPending ||
+            "entity" in registryDirty || "device" in registryPending || "device" in registryDirty) return false
+        val raw = store.entities[target.identity.entityId.removePrefix("ha:")] ?: return false
+        val entity = store.homeDevice(raw, connected)?.takeIf { it.target == target } ?: return false
+        if (target.identity.isPersistent && !switchRegistryReady) return false
+        val call = entity.deviceService(command) ?: return false
+        val previous = deviceRequests[target]
+        val stopping = command == HomeCommand.MoveCover(CoverOperation.STOP)
+        if (previous?.state?.busy == true &&
+            (!stopping || previous.stopping)) return false
+
+        val request = DeviceRequest(stopping)
+        val sent = socket.service(call.domain, call.service, call.entityId, JSONObject(call.data)) { result ->
+            if (deviceRequests[target] !== request) return@service
+            val error = result.optJSONObject("error")?.text("code")
+            request.state = when {
+                result.optBoolean("success") -> DeviceRequestState.ACCEPTED
+                error in setOf("unauthorized", "forbidden", "not_allowed") -> DeviceRequestState.DENIED
+                else -> DeviceRequestState.FAILED
+            }
+            request.expiry = scheduler.after(if (request.state == DeviceRequestState.ACCEPTED) 2500 else 5000) {
+                deviceRequests.remove(target)
+                publish(switchChanged = target.identity.isVirtual)
+            }
+            publish(switchChanged = target.identity.isVirtual)
+        }
+        if (!sent) return false
+        previous?.expiry?.invoke()
+        deviceRequests[target] = request
+        publish(switchChanged = target.identity.isVirtual)
+        return true
+    }
+
+    private fun projectHome(lights: Map<String, LightState>): HomeControlState {
+        val home = projector.home(store, connected, lights)
+        if (deviceRequests.isEmpty()) return home
+        return home.copy(entities = home.entities.map { entity ->
+            deviceRequests[entity.target]?.let { entity.copy(request = it.state) } ?: entity
+        })
+    }
+
     private val pendingSwitches = mutableMapOf<String, () -> Unit>()
     private fun clearPendingSwitches() {
         pendingSwitches.values.forEach { it() }
@@ -62,7 +119,12 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     override fun toggleSwitch(sourceId: String, identity: SwitchIdentity): Boolean {
         if (!connected || !switchRegistryReady || registryPending.any { it == "entity" || it == "device" }) return false
         val channel = state.switches.resolve(sourceId, identity) ?: return false
-        return channel.availability == Availability.AVAILABLE && sendSwitch(identity.entityId.removePrefix("ha:"))
+        if (channel.availability != Availability.AVAILABLE) return false
+        if (identity.isVirtual) {
+            val on = channel.isOn ?: return false
+            return command(HomeTarget(sourceId, identity), HomeCommand.Power(!on))
+        }
+        return sendSwitch(identity.entityId.removePrefix("ha:"))
     }
     var candidates = emptyList<CardAddCandidate>(); private set
     private val listeners = linkedSetOf<(DashboardData) -> Unit>()
@@ -151,6 +213,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
             switchRegistryReady = false
             store.deviceRegistryKnown = false
             clearPendingSwitches()
+            clearDeviceRequests()
             resetControlConnection()
             initialized = false; registryPending.clear(); registryDirty.clear(); commands.clear(); deviceCommands.clear(); pendingLights.clear(); legacyForecast?.invoke(); legacyForecast = null
         } else scheduleRegistryRetry()
@@ -161,16 +224,24 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         val changedServer = settings.baseUrl != value.baseUrl
         stop(); settings = value; memory.scope(value.baseUrl)
         switchSourceId = com.dormpanel.app.weather.weatherDigest(value.baseUrl)
-        if (changedServer) { store.snapshot(org.json.JSONArray()); store.metadata.clear(); store.areas.clear(); store.devices.clear(); store.scriptServices(null); store.registryKnown = false; store.forecast = emptyList(); weatherId = "" }
+        store.homeSourceId = switchSourceId
+        if (changedServer) { store.temperatureUnit = ""; store.snapshot(org.json.JSONArray()); store.metadata.clear(); store.areas.clear(); store.devices.clear(); store.scriptServices(null); store.registryKnown = false; store.forecast = emptyList(); weatherId = "" }
         if (value.mode != BackendMode.HOME_ASSISTANT || token.isNullOrBlank() || value.baseUrl.isBlank()) {
             statusChanged(HaStatus(HaConnectionState.NOT_CONFIGURED, if (value.mode == BackendMode.HOME_ASSISTANT) "Enter HA URL and access token." else "Demo backend")); return
         }
         runCatching { HaEndpoint.parse(value.baseUrl) }.onSuccess { socket.start(it, token) }
             .onFailure { statusChanged(HaStatus(HaConnectionState.ERROR, "Invalid HA base URL.")) }
     }
-    fun stop() { socket.stop(); resetRegistryRetry(); switchRegistryReady = false; resetControlConnection(); forecasts.connection(false); commands.clear(); deviceCommands.clear(); pendingLights.clear(); clearPendingSwitches(); legacyForecast?.invoke(); legacyForecast = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
+    fun stop() { socket.stop(); resetRegistryRetry(); switchRegistryReady = false; resetControlConnection(); forecasts.connection(false); commands.clear(); deviceCommands.clear(); pendingLights.clear(); clearPendingSwitches(); clearDeviceRequests(); legacyForecast?.invoke(); legacyForecast = null; initialized = false; bufferedEvents.clear(); registryPending.clear(); registryDirty.clear() }
     private fun initialize() {
         bufferedEvents.clear()
+        socket.request(JSONObject().put("type", "get_config")) { result ->
+            val unit = result.optJSONObject("result")?.optJSONObject("unit_system")?.text("temperature").orEmpty()
+            if (result.optBoolean("success") && unit in setOf("°C", "°F", "K")) {
+                store.temperatureUnit = unit
+                if (connected) publish()
+            }
+        }
         socket.request(JSONObject().put("type", "subscribe_events").put("event_type", "state_changed")) { subscription ->
             if (!subscription.optBoolean("success")) { socket.resyncFailed(); return@request }
             socket.request(JSONObject().put("type", "get_states")) { snapshot ->
@@ -332,7 +403,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
                 val previous = weatherId
                 if (topologyChanged) selectWeather()
                 publish(rebuild = topologyChanged, homeRelevant = id.substringBefore('.') in HOME_DOMAINS,
-                    switchChanged = id.startsWith("switch.") && old?.value != next?.value)
+                    switchChanged = (id.startsWith("switch.") || id.startsWith("input_boolean.")) && old?.value != next?.value)
                 if (weatherId != previous) fetchForecast()
                 applyAppearance(id)
                 applyDeviceHelpers(id)
@@ -362,11 +433,15 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
     private fun publish(rebuild: Boolean = false, homeRelevant: Boolean = true, switchChanged: Boolean = false) {
         val raw = projector.dashboard(store, connected, weatherId)
         val switches = when {
-            connected && switchRegistryReady -> if (rebuild || switchChanged) store.switches(switchSourceId)
+            connected && switchRegistryReady -> if (rebuild || switchChanged) store.switches(switchSourceId).let { switches ->
+                switches.copy(channels = switches.channels.mapValues { (_, channel) ->
+                    deviceRequests[HomeTarget(switchSourceId, channel.identity)]?.let { channel.copy(request = it.state) } ?: channel
+                })
+            }
                 else state.switches
             !connected && state.switches.sourceId == switchSourceId -> if (!state.switches.connected) state.switches
                 else state.switches.copy(connected = false, channels = state.switches.channels.mapValues {
-                    it.value.copy(availability = Availability.STALE)
+                    it.value.copy(availability = Availability.STALE, request = null)
                 })
             else -> DashboardSwitches(switchSourceId, connected)
         }
@@ -376,7 +451,7 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
         if (rebuild) rebuildCatalog(next)
         if (dashboardChanged) listeners.toList().forEach { it(next) }
         if (homeRelevant && homeListeners.isNotEmpty()) {
-            val home = projector.home(store, connected, next.lights)
+            val home = projectHome(next.lights)
             if (home != lastEmittedHomeState) {
                 lastEmittedHomeState = home
                 homeListeners.toList().forEach { it(home) }
@@ -390,6 +465,11 @@ class HaDashboardDataSource(private val scheduler: HaScheduler, http: OkHttpClie
             data.lights.values.forEach { add(CardAddCandidate(it.id, CardCategory.HOME, "light", it.name, "Home Assistant light", entityConfiguration("lightId", it.id))) }
             data.sensors.values.forEach { add(CardAddCandidate(it.id, CardCategory.HOME, "sensor", it.name, "Home Assistant climate", entityConfiguration("sensorId", it.id))) }
             addAll(data.switches.cardCandidates())
+            if (connected && switchRegistryReady) {
+                addAll(controlCardCandidates(CONTROL_CARD_KINDS.flatMap { kind ->
+                    store.discovered(kind.name.lowercase()).mapNotNull { store.homeDevice(it, connected) }
+                }))
+            }
         }
         if (next != candidates) { candidates = next; catalogListeners.toList().forEach { it(next) } }
     }

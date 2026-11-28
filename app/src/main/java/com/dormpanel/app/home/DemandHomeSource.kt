@@ -29,4 +29,5 @@ class DemandHomeSource(initial: HomeControlSource, private val onState: (HomeCon
         listeners.clear()
     }
     override fun activateEntity(id: String) = source.activateEntity(id)
+    override fun command(target: HomeTarget, command: HomeCommand) = source.command(target, command)
 }
