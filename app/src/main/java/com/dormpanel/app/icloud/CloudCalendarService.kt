@@ -540,15 +540,22 @@ class CloudCalendarService internal constructor(
                 onFailure = { dispatch(key, WindowView(0, null, emptyList(), CalDavProblem.STORAGE)) },
             )
             try {
+                if (writeIds.isNotEmpty()) {
+                    val persisted = store.settings()
+                    effective = persisted
+                    if (persisted.account != settings.account || persisted.encryptedLogin != settings.encryptedLogin) {
+                        throw CalDavFailure(CalDavProblem.CANCELLED)
+                    }
+                }
                 // Publish disk data before any network request, even if authentication is down.
                 missing.forEach { if (it in wanted) load(it) }
                 if (canSync && working) {
                     val (email, password) = store.login(settings) ?: throw CalDavFailure(CalDavProblem.STORAGE)
                     val client = openClient(email, password)
                     if (discover) {
-                        val updated = settings.rediscovered(client.discover(round))
+                        val updated = effective.rediscovered(client.discover(round))
                         round.check()
-                        if (updated != settings) {
+                        if (updated != effective) {
                             store.save(updated)
                             effective = updated
                         }
@@ -643,7 +650,10 @@ class CloudCalendarService internal constructor(
                 if (recoveredWrites != null) savedWrites = recoveredWrites
                 if (activeRound === round) activeRound = null
                 if (configured.account == settings.account && !settingsBusy) {
-                    manualWrites.addAll(unprocessed)
+                    if (effective.account == settings.account) manualWrites.addAll(unprocessed) else {
+                        visible.clear()
+                        manualWrites.clear()
+                    }
                     configured = effective
                     val next = activeRanges().flatMapTo(linkedSetOf()) { keys(it) }
                     wanted = next

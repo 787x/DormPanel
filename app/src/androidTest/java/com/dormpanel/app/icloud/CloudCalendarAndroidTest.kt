@@ -151,7 +151,7 @@ class CloudCalendarAndroidTest {
                 fixture.online = false
                 scenario.recreate()
                 await(scenario) { it.stateHolder.state.loaded && it.cloudCalendar.eventsOn(day, zone, cardSelection(it)).isNotEmpty() }
-                onView(withText(allOf(containsString("Shared fixture"), containsString("Family")))).check(matches(isDisplayed()))
+                awaitView(allOf(containsString("Shared fixture"), containsString("Family")))
             }
             val restored = store.settings()
             assertEquals(15, restored.refreshMinutes)
@@ -163,7 +163,7 @@ class CloudCalendarAndroidTest {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 await(scenario) { it.stateHolder.state.loaded && it.cloudCalendar.eventsOn(day, zone, cardSelection(it)).isNotEmpty() }
                 scenario.onActivity { assertEquals(cardId, model(it).stateHolder.state.cards.single().id) }
-                onView(withText(allOf(containsString("Shared fixture"), containsString("Family")))).check(matches(isDisplayed()))
+                awaitView(allOf(containsString("Shared fixture"), containsString("Family")))
                 openCalendar()
                 await(scenario) { it.cloudCalendar.eventsOn(day, zone).any { event -> event.calendar.name == "Main" } }
                 onView(withText(containsString("离线 · 缓存可能过期"))).check(matches(isDisplayed()))
@@ -171,6 +171,7 @@ class CloudCalendarAndroidTest {
                 onView(withText(allOf(containsString("Family"), containsString("Shared fixture")))).check(doesNotExist())
                 onView(withText(containsString("Local fixture"))).check(matches(isDisplayed()))
                 onView(withText(context.scheduleText("+ 添加日程", "+ Add event"))).perform(click())
+                onView(withText("本机日历")).perform(click())
                 onView(withHint("Event title")).perform(replaceText("Offline local CRUD"), closeSoftKeyboard())
                 onView(withText(context.scheduleText("保存", "Save"))).perform(click())
                 onView(withText(containsString("Offline local CRUD"))).perform(click())
@@ -329,13 +330,18 @@ class CloudCalendarAndroidTest {
                 onView(withText(containsString("结果待确认"))).check(matches(isDisplayed()))
             }
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                await(scenario) { it.cloudCalendar.writes.singleOrNull()?.state == CalendarWriteState.CONFIRMED }
+                await(scenario) { it.stateHolder.state.loaded && it.cloudCalendar.writes.singleOrNull()?.state == CalendarWriteState.CONFIRMED }
                 assertEquals(1, fixture.mutations.get())
                 scenario.onActivity {
-                    val service = model(it).cloudCalendar
+                    val model = model(it)
+                    val service = model.cloudCalendar
+                    model.stateHolder.state.cards.toList().forEach { card -> model.stateHolder.delete(card.id) }
+                    model.stateHolder.add(model.catalog.candidates.single { card -> card.providerType == "calendar" })
+                    model.stateHolder.resize(model.stateHolder.state.cards.single().id, CardSize(3, 2))
                     service.setSelection(service.calendars.map { cal -> cal.id }.toSet())
                 }
                 await(scenario) { it.cloudCalendar.eventsOn(day, zone).any { event -> event.event.title == title } }
+                awaitView(containsString(title))
                 openCalendar()
                 onView(withText(allOf(containsString(title), containsString("Main")))).perform(click())
                 awaitView("编辑 iCloud 日程")
@@ -364,6 +370,32 @@ class CloudCalendarAndroidTest {
                     write.kind == CalendarWriteKind.DELETE && write.state == CalendarWriteState.CONFIRMED
                 } && it.cloudCalendar.eventsOn(day, zone).none { event -> event.event.title == "Local edit fixture" } }
                 assertEquals(3, fixture.mutations.get())
+                onView(withText(context.scheduleText("返回首页", "Home"))).perform(click())
+                onView(withText(containsString("Local edit fixture"))).check(doesNotExist())
+
+                var originalAccount = ""
+                scenario.onActivity {
+                    val service = model(it).cloudCalendar
+                    originalAccount = service.accountId
+                    service.stop()
+                    fixture.online = false
+                    service.start()
+                    service.saveCreate(originalAccount, service.createCalendars.single(),
+                        CloudEventDraft("Detached draft", "", "", day.atTime(12, 0), day.atTime(13, 0), false, zone)) { error ->
+                        assertNull(error)
+                    }
+                }
+                await(scenario) { it.cloudCalendar.hasPendingWrites }
+                scenario.onActivity { model(it).cloudCalendar.disconnect() }
+                await(scenario) { !it.cloudCalendar.isBusy }
+                assertEquals(originalAccount, store.settings().account)
+                fixture.online = true
+                scenario.onActivity { model(it).cloudCalendar.connect("second@example.invalid", FIXTURE_PASSWORD, keepPending = true) }
+                await(scenario) { !it.cloudCalendar.isBusy && it.cloudCalendar.accountId != originalAccount }
+                val detached = store.writes().single { it.draft.title == "Detached draft" }
+                assertEquals(originalAccount, detached.ref.account)
+                assertEquals(CalendarWriteState.QUEUED, detached.state)
+                assertEquals(3, fixture.mutations.get())
             }
         } finally {
             CloudCalendarService.overrideFactory = null
@@ -376,7 +408,9 @@ class CloudCalendarAndroidTest {
         }
     }
 
-    private fun awaitView(label: String) {
+    private fun awaitView(label: String) = awaitView(equalTo(label))
+
+    private fun awaitView(label: org.hamcrest.Matcher<String>) {
         val deadline = SystemClock.uptimeMillis() + 8_000
         while (true) {
             try {

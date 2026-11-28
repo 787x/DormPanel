@@ -402,10 +402,16 @@ internal class CloudCalendarDialogs(private val context: Context, private val ap
         }
         val location = input("地点（可选）", initial.location)
         val description = input("描述（可选）", initial.description, true)
-        val error = context.scheduleLabel("", 16f)
+        val error = context.scheduleLabel("", 16f).apply { visibility = View.GONE }
         fields.addView(error)
+        val paintHints: (AppearanceState) -> Unit = { state ->
+            val color = PanelPalette.forMode(state.themeMode).secondary
+            listOf(summary, location, description).forEach { it.setHintTextColor(color) }
+        }
         val dialog = show(AlertDialog.Builder(context).setTitle(title).setView(scroll(fields))
-            .setNegativeButton("取消", null).setPositiveButton("保存到本机待写", null))
+            .setNegativeButton("取消", null).setPositiveButton("保存到本机待写", null),
+            onDismiss = { appearance.removeListener(paintHints) })
+        appearance.addListener(paintHints)
         dialog.window?.setLayout(minOf(context.dp(780), context.resources.displayMetrics.widthPixels - context.dp(48)),
             ViewGroup.LayoutParams.WRAP_CONTENT)
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
@@ -419,7 +425,11 @@ internal class CloudCalendarDialogs(private val context: Context, private val ap
                 if (all) end.toLocalDate().atStartOfDay() else end, all, initial.zone)
             save(value) { message ->
                 if (message == null) dialog.dismiss()
-                else if (dialog.isShowing) { error.text = message; action.isEnabled = true }
+                else if (dialog.isShowing) {
+                    error.text = message
+                    error.visibility = View.VISIBLE
+                    action.isEnabled = true
+                }
             }
         }
     }
