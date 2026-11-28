@@ -34,6 +34,7 @@ class PanelPageViewFactory(
     private val webDavSync: com.dormpanel.app.schedule.WebDavSyncController? = null,
     private val scheduleViewport: com.dormpanel.app.schedule.ScheduleViewport = com.dormpanel.app.schedule.ScheduleViewport(),
     private val sharedSchedule: com.dormpanel.app.schedule.SharedScheduleController,
+    private val cloudCalendar: com.dormpanel.app.icloud.CloudCalendarService? = null,
 ) {
     private val portal = if (webDavSettings != null && webDavSync != null)
         com.dormpanel.app.lan.SettingsPortal(inflater.context, backend, webDavSettings, webDavSync) else null
@@ -47,7 +48,7 @@ class PanelPageViewFactory(
     fun create(page: PanelPage, parent: ViewGroup): View {
         if (page == PanelPage.WEATHER) return com.dormpanel.app.weather.WeatherCenterView(inflater.context, backend, appearance,
             weatherSelection, backFromWeather, openPortal = openPortal, closePortal = closePortal)
-        if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, receiveTimetable, manageTimetables, scheduleViewport, sharedSchedule)
+        if (page == PanelPage.CALENDAR) return com.dormpanel.app.schedule.SchedulePageView(inflater.context, schedule, scheduleSession, appearance, onReturnHome, importTimetable, receiveTimetable, manageTimetables, scheduleViewport, sharedSchedule, cloudCalendar)
         if (page == PanelPage.APPS) return com.dormpanel.app.apps.AppsPageView(inflater.context, apps, apps.icons, appearance, onReturnHome, installApk)
         if (page == PanelPage.HOME_CONTROL) return com.dormpanel.app.home.HomeControlView(inflater.context, backend, appearance, onPageGestureClaimed, openPortal, closePortal)
         if (page == PanelPage.CONTROL_CENTER) return ControlCenterView(
@@ -68,7 +69,7 @@ class PanelPageViewFactory(
         if (page == PanelPage.HOME) {
             return (inflater.inflate(R.layout.view_home_page, parent, false) as DashboardPageView).apply {
                 setWeatherNavigation { openWeather(com.dormpanel.app.weather.WeatherCenterSelection.fromCard(it)) }
-                bind(dashboardStateHolder, cardRegistry, onPageGestureClaimed, catalog, appearance, backend)
+                bind(dashboardStateHolder, cardRegistry, onPageGestureClaimed, catalog, appearance, backend, cloudCalendar)
             }
         }
 

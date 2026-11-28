@@ -88,12 +88,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        dashboardViewModel.cloudCalendar.start()
         val visible = blackoutView.visibility != View.VISIBLE
         dashboardViewModel.dataSource.weatherRepository.setForeground(visible)
         (activePageInteraction as? WeatherCenterView)?.setActive(visible)
     }
 
     override fun onStop() {
+        dashboardViewModel.cloudCalendar.stop()
         dashboardViewModel.dataSource.weatherRepository.setForeground(false)
         (activePageInteraction as? WeatherCenterView)?.setActive(false)
         super.onStop()
@@ -143,6 +145,7 @@ class MainActivity : AppCompatActivity() {
             webDavSettings = dashboardViewModel.webDav.settings,
             webDavSync = dashboardViewModel.webDav,
             scheduleViewport = dashboardViewModel.scheduleViewport,
+            cloudCalendar = dashboardViewModel.cloudCalendar,
             sharedSchedule = dashboardViewModel.sharedSchedule,
             onReturnHome = ::returnHome,
             onPageGestureClaimed = {

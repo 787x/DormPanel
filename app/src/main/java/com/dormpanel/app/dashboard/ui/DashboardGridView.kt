@@ -49,7 +49,7 @@ class DashboardGridView @JvmOverloads constructor(
     private lateinit var stateHolder: DashboardStateHolder
     private lateinit var registry: DashboardCardRegistry
     private var onWeatherAction: (com.dormpanel.app.dashboard.card.WeatherCardNavigation) -> Unit = {}
-    private var onConfigureSwitch: (String) -> Unit = {}
+    private var onConfigureCard: (String) -> Unit = {}
     private var onEnterEditMode: () -> Unit = {}
     private var onGestureClaimed: () -> Unit = {}
     private var onOperationRejected: (String) -> Unit = {}
@@ -65,13 +65,13 @@ class DashboardGridView @JvmOverloads constructor(
         onEnterEditMode: () -> Unit,
         onGestureClaimed: () -> Unit,
         onWeatherAction: (com.dormpanel.app.dashboard.card.WeatherCardNavigation) -> Unit = {},
-        onConfigureSwitch: (String) -> Unit = {},
+        onConfigureCard: (String) -> Unit = {},
         onOperationRejected: (String) -> Unit,
     ) {
         this.stateHolder = stateHolder
         this.registry = registry
         this.onWeatherAction = onWeatherAction
-        this.onConfigureSwitch = onConfigureSwitch
+        this.onConfigureCard = onConfigureCard
         this.onEnterEditMode = onEnterEditMode
         this.onGestureClaimed = onGestureClaimed
         this.onOperationRejected = onOperationRejected
@@ -194,10 +194,10 @@ class DashboardGridView @JvmOverloads constructor(
                 rightMargin = 12.dp
             },
         )
-        if (switchCard) {
+        if (switchCard || card.providerType == "calendar") {
             val configure = editButton("⚙", TextView(context)).apply {
-                contentDescription = context.getString(R.string.switch_configure)
-                setOnClickListener { onConfigureSwitch(card.id) }
+                contentDescription = if (switchCard) context.getString(R.string.switch_configure) else "配置卡片显示的日历"
+                setOnClickListener { onConfigureCard(card.id) }
             }
             chrome.addView(configure, FrameLayout.LayoutParams(48.dp, 48.dp).apply {
                 gravity = Gravity.TOP or Gravity.START

@@ -105,6 +105,7 @@ class DashboardStateHolder(
     private fun validConfiguration(type: String, json: String, editing: Boolean) = when {
         type.isWeatherCard() -> WeatherCardConfiguration.decode(json).canSave(weatherPlaces)
         type.isSwitchCard() -> SwitchCardConfiguration.decode(json)?.canSave(type) == true
+        type == "calendar" && editing -> com.dormpanel.app.icloud.CardCalendars.decodeOrNull(json) != null
         else -> !editing
     }
 
