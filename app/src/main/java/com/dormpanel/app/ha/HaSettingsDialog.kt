@@ -45,6 +45,12 @@ class HaSettingsDialog(private val context: Context, private val backend: Dashbo
         openPortal?.let { open ->
             content.addView(Button(context).apply { text = "扫码配置"; setOnClickListener { dialog.dismiss(); open() } })
         }
+        (context as? com.dormpanel.app.MainActivity)?.takeIf { it.needsHaLanPermission() }?.let { activity ->
+            content.addView(Button(context).apply {
+                setText(R.string.ha_lan_permission)
+                setOnClickListener { activity.requestHaLanPermission() }
+            })
+        }
         label("HTTP sends your token without encryption. Prefer HTTPS on untrusted networks.")
         if (initialSetup) label("Saving a URL and token enables Home Assistant. Backend mode can be changed in Advanced settings.")
         fun entities(domain: String, saved: String) = (listOf("") + backend.ha.store.discovered(domain).map { it.id } + listOf(saved)).distinct()

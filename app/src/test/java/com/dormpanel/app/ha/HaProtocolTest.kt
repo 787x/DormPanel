@@ -2,6 +2,7 @@ package com.dormpanel.app.ha
 
 import com.dormpanel.app.appearance.*
 import com.dormpanel.app.data.Availability
+import com.dormpanel.app.home.*
 import com.dormpanel.app.weather.HaWeatherProvider
 import com.dormpanel.app.weather.WeatherBlock
 import com.dormpanel.app.weather.WeatherQuery
@@ -46,6 +47,7 @@ class HaProtocolTest {
         val source = HaDashboardDataSource(scheduler, http, appearance, projector)
         var subscription = 0
         @Volatile var holdServices = false
+        @Volatile var rejectDeviceServices = false
         @Volatile var switchEntryId = "outlet-entry"
         @Volatile var failFullRegistry = false
         @Volatile var fullRegistryError = "unavailable"
@@ -84,6 +86,11 @@ class HaProtocolTest {
                         return
                     }
                     if (holdServices && message.optString("type") == "call_service") return
+                    if (rejectDeviceServices && message.optString("domain") == "fan") {
+                        webSocket.send(JSONObject().put("id", message.getInt("id")).put("type", "result")
+                            .put("success", false).put("error", JSONObject().put("code", "unauthorized")).toString())
+                        return
+                    }
                     if (failFullRegistry && message.optString("type") == "config/entity_registry/list") {
                         webSocket.send(JSONObject().put("id", message.getInt("id")).put("type", "result")
                             .put("success", false).put("error", JSONObject().put("code", fullRegistryError)).toString())
@@ -157,6 +164,73 @@ class HaProtocolTest {
         fun state(value: String) { peer.send(JSONObject().put("type", "event").put("id", subscription).put("event", JSONObject().put("event_type", "state_changed")
             .put("data", JSONObject().put("entity_id", "light.a").put("new_state", JSONObject("""{"entity_id":"light.a","state":"$value","attributes":{"supported_color_modes":["color_temp"],"brightness":255,"min_color_temp_kelvin":2700,"max_color_temp_kelvin":6500}}""")))).toString()) }
         override fun close() { source.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); server.close(); http.dispatcher.executorService.shutdown() }
+    }
+
+    @Test fun fanZeroSpeedUsesTurnOffAndWaitsForTheStateEvent() {
+        Fixture().use { f ->
+            f.start()
+            f.until { f.source.connected }
+            val id = "fan.test"
+            val attrs = JSONObject("""{"supported_features":17,"percentage":50,"percentage_step":25}""")
+            f.entity(id, "on", attrs)
+            fun fan() = f.source.homeState.entities.single { it.id == "ha:$id" }
+            assertTrue(f.source.command(checkNotNull(fan().target), HomeCommand.Speed(0)))
+            f.until { fan().request == DeviceRequestState.ACCEPTED }
+            val call = f.services("turn_off").single()
+            assertEquals("fan", call.getString("domain"))
+            assertEquals(id, call.getJSONObject("target").getString("entity_id"))
+            assertEquals(0, call.getJSONObject("service_data").length())
+            assertTrue(f.services("set_percentage").isEmpty())
+            assertEquals(true, (fan().controls as HomeDeviceState.Fan).on)
+            f.entity(id, "off", attrs.put("percentage", 0))
+            assertEquals(false, (fan().controls as HomeDeviceState.Fan).on)
+        }
+    }
+
+    @Test fun typedCommandsRespectWireErrorsStateEventsAndReconnect() {
+        Fixture().use { f ->
+            f.start()
+            f.until { f.source.connected }
+            val attrs = JSONObject("""{"supported_features":57,"percentage":25,"percentage_step":25,
+                "preset_mode":"normal","preset_modes":["normal","sleep"]}""")
+            val id = "fan.test"
+            f.entity(id, "on", attrs)
+            fun fan() = f.source.homeState.entities.firstOrNull { it.id == "ha:$id" }
+            val target = checkNotNull(fan()?.target)
+            val command = HomeCommand.Speed(50)
+            f.rejectDeviceServices = true
+            assertFalse(f.source.command(target.copy(sourceId = "other"), command))
+            assertFalse(f.source.command(target, HomeCommand.Speed(51)))
+            assertTrue(f.source.command(target, command))
+            assertEquals(DeviceRequestState.SENDING, fan()?.request)
+            assertFalse(f.source.command(target, command))
+            f.until { fan()?.request == DeviceRequestState.DENIED }
+            val call = f.services("set_percentage").single()
+            assertEquals("fan", call.getString("domain"))
+            assertEquals(setOf("entity_id"), call.getJSONObject("target").keys().asSequence().toSet())
+            assertEquals(id, call.getJSONObject("target").getString("entity_id"))
+            assertEquals(setOf("percentage"), call.getJSONObject("service_data").keys().asSequence().toSet())
+            assertEquals(50, call.getJSONObject("service_data").getInt("percentage"))
+            assertEquals(25, (fan()?.controls as HomeDeviceState.Fan).percentage)
+
+            f.rejectDeviceServices = false
+            assertTrue(f.source.command(target, command))
+            f.until { fan()?.request == DeviceRequestState.ACCEPTED }
+            assertEquals(25, (fan()?.controls as HomeDeviceState.Fan).percentage)
+            f.entity(id, "on", JSONObject(attrs.toString()).put("percentage", 50))
+            assertEquals(50, (fan()?.controls as HomeDeviceState.Fan).percentage)
+            f.peer.close(1000, "offline")
+            f.until { !f.source.connected }
+            assertEquals(Availability.STALE, fan()?.availability)
+            assertNull(fan()?.request)
+            assertFalse(f.source.command(target, command))
+            f.enqueueSocket()
+            f.scheduler.advance(1000)
+            f.until { f.source.connected }
+            assertNull(fan()) // The new snapshot does not contain the entity.
+            assertFalse(f.source.command(target, command))
+            assertEquals(2, f.services("set_percentage").size)
+        }
     }
 
     @Test fun compactFallbackSuspendsPersistentCardsUntilFullRegistryReturns() {

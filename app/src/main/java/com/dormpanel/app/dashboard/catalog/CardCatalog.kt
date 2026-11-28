@@ -48,7 +48,9 @@ internal fun CatalogLabels.weatherCandidates() =
     weatherCandidates(weather, weatherDetail, classicWeather, classicWeatherDetail, compactWeather, compactWeatherDetail)
 
 /** Catalog is a projection of the current source, not a second device-state owner. */
-class SourceCardCatalog(private val source: DashboardDataSource, private val labels: CatalogLabels) : CardCatalog {
+class SourceCardCatalog(private val source: DashboardDataSource, private val labels: CatalogLabels,
+    private val extraCandidates: () -> List<CardAddCandidate> = { emptyList() },
+) : CardCatalog {
     override val candidates: List<CardAddCandidate>
         get() = buildList {
             add(CardAddCandidate("clock", CardCategory.INFORMATION, "clock", labels.clock, labels.clockDetail, "{}"))
@@ -65,6 +67,7 @@ class SourceCardCatalog(private val source: DashboardDataSource, private val lab
                 add(CardAddCandidate("light:${it.id}", CardCategory.HOME, "light", it.name, description, entityConfiguration("lightId", it.id)))
             }
             addAll(source.state.switches.cardCandidates())
+            addAll(extraCandidates())
         }
     private val subscriptions = mutableMapOf<(List<CardAddCandidate>) -> Unit, (DashboardData) -> Unit>()
     override fun addListener(listener: (List<CardAddCandidate>) -> Unit) {
@@ -91,7 +94,7 @@ internal fun DashboardSwitches.cardCandidates(): List<CardAddCandidate> {
             add(CardAddCandidate("switch:${channel.identity.entityId}", CardCategory.HOME, SWITCH_CARD,
                 channel.name, "Tap to toggle one switch", config.encode(), com.dormpanel.app.R.string.card_switch_description))
         }
-        ordered.filter { it.identity.deviceId != null }.groupBy { it.identity.deviceId }.forEach { (device, members) ->
+        ordered.filter { it.identity.deviceId != null && !it.identity.isVirtual }.groupBy { it.identity.deviceId }.forEach { (device, members) ->
             // Larger devices require an explicit selection. For smaller devices the dialog
             // presents an editable initial order, with no claim about physical position.
             val initial = members.takeIf { it.size <= 3 }.orEmpty().map { SwitchChannelBinding(it.identity) }

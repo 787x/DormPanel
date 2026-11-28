@@ -35,7 +35,7 @@ internal data class SwitchCardConfiguration(
             channels.map { it.identity.entityId }.distinct().size == channels.size &&
             when (type) {
                 SWITCH_CARD -> channels.size == 1
-                SWITCH_GROUP_CARD -> !deviceId.isNullOrBlank() && channels.size in 1..3
+                SWITCH_GROUP_CARD -> !deviceId.isNullOrBlank() && channels.size in 1..3 && channels.none { it.identity.isVirtual }
                 else -> false
             }
 

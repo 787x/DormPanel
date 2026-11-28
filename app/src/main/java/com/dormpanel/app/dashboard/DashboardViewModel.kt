@@ -5,6 +5,7 @@ import com.dormpanel.app.R
 import com.dormpanel.app.dashboard.catalog.*
 import androidx.lifecycle.AndroidViewModel
 import com.dormpanel.app.dashboard.card.coreCardRegistry
+import com.dormpanel.app.dashboard.card.DeviceControlCardProvider
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.PreferencesAppearanceStore
 import com.dormpanel.app.dashboard.persistence.DashboardStores
@@ -54,6 +55,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val scheduleSession = ScheduleSession(schedule.clock, PreferencesScheduleModeStore(application))
     val scheduleViewport = com.dormpanel.app.schedule.ScheduleViewport()
     val registry = com.dormpanel.app.dashboard.card.DashboardCardRegistry(coreCardRegistry(dataSource, appearance, dataSource.weatherRepository).providers +
+        CONTROL_CARD_KINDS.map { DeviceControlCardProvider(it, dataSource, appearance) } +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance, productivityData, productivityBindings) } +
         listOf("calendar", "timetable").map { ScheduleCardProvider(it, schedule, appearance) } +
         listOf(false, true).map { CourseListCardProvider(it, schedule, appearance) })

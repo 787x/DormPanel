@@ -12,11 +12,12 @@ class CardCatalogTest {
         val information = catalog.candidates.filter { it.category == CardCategory.INFORMATION }
         assertEquals(listOf("clock", "weather", "weather_compact_2x3", "weather_classic"), information.map { it.providerType })
         assertEquals(listOf("Clock", "Weather", "2×3 Compact weather", "Classic weather"), information.map { it.displayName })
-        assertEquals(15, catalog.candidates.count { it.category == CardCategory.HOME })
+        assertEquals(16, catalog.candidates.count { it.category == CardCategory.HOME })
+        assertEquals("switch", catalog.candidates.single { it.candidateId == "switch:ha:input_boolean.demo" }.providerType)
         assertEquals("{\"lightId\":\"bedside\"}", catalog.candidates.first { it.displayName == "Bedside light" }.configurationJson)
         assertEquals("{\"lightId\":\"ceiling\"}", catalog.candidates.first { it.displayName == "Ceiling light" }.configurationJson)
         assertEquals("{\"sensorId\":\"desk\"}", catalog.candidates.first { it.displayName == "Desk climate" }.configurationJson)
-        assertEquals(19, catalog.candidates.map { it.candidateId }.distinct().size)
+        assertEquals(20, catalog.candidates.map { it.candidateId }.distinct().size)
     }
     @Test fun `discovery updates catalog but ordinary state changes do not rebuild picker`() {
         val source = MutableSource()

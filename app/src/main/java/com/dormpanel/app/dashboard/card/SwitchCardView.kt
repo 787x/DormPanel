@@ -16,6 +16,7 @@ import com.dormpanel.app.appearance.AppearanceState
 import com.dormpanel.app.appearance.PanelPalette
 import com.dormpanel.app.dashboard.model.*
 import com.dormpanel.app.data.*
+import com.dormpanel.app.home.label
 
 internal class SwitchCardProvider(
     private val source: DashboardDataSource,
@@ -113,10 +114,13 @@ private class SwitchCardView(
             } else if (display.stale) {
                 if (live?.isOn == null) context.getString(R.string.switch_disconnected)
                 else context.getString(R.string.switch_stale_state, state)
-            } else state
-            val canToggle = interactions.enabled && !display.stale && live?.availability == Availability.AVAILABLE
+            } else if (live?.request != null) "$state · ${context.getString(live.request.label())}" else state
+            val canToggle = interactions.enabled && !display.stale && live?.availability == Availability.AVAILABLE &&
+                live.request?.busy != true
             tile.view.setOnClickListener(if (canToggle && config != null && channel != null) OnClickListener {
-                if (interactions.enabled) source.toggleSwitch(config.sourceId, channel.identity)
+                if (interactions.enabled && !source.toggleSwitch(config.sourceId, channel.identity) && channel.identity.isVirtual) {
+                    android.widget.Toast.makeText(context, R.string.device_not_sent, android.widget.Toast.LENGTH_SHORT).show()
+                }
             } else null)
             tile.view.isClickable = canToggle
             tile.view.isFocusable = canToggle

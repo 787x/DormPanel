@@ -40,10 +40,15 @@ private class ActionRenderer(private val label: Int) : EntityRenderer {
     override fun value(context: Context, entity: HomeEntity) = context.getString(if (!entity.actionable) R.string.home_requires_input else if (entity.kind == HomeKind.SCRIPT && entity.isOn) R.string.home_running else R.string.home_ready)
     override fun action(entity: HomeEntity) = label
 }
+private object DeviceRenderer : EntityRenderer {
+    override fun value(context: Context, entity: HomeEntity) = entity.deviceValue(context)
+    override val details = true
+}
+
 private val renderers = mapOf(
     HomeKind.LIGHT to PowerRenderer(true), HomeKind.SWITCH to PowerRenderer(), HomeKind.SENSOR to SensorRenderer(),
     HomeKind.SCENE to ActionRenderer(R.string.home_activate), HomeKind.SCRIPT to ActionRenderer(R.string.home_run),
-)
+) + DEVICE_CONTROL_KINDS.associateWith { DeviceRenderer }
 private data class HomeRow(val key: String, val title: String = "", val entity: HomeEntity? = null)
 
 class HomeControlView(context: Context, private val backend: DashboardBackend,
@@ -59,6 +64,7 @@ class HomeControlView(context: Context, private val backend: DashboardBackend,
     private var selected: String? = null
     private var theme = appearance.state
     private var dialog: LightQuickControls? = null
+    private var deviceDetails: HomeDeviceDetails? = null
     private val statusListener: (HaStatus) -> Unit = { bind(backend.homeState) }
     private val listener: (HomeControlState) -> Unit = { bind(it) }
     private var downX = 0f
@@ -83,7 +89,7 @@ class HomeControlView(context: Context, private val backend: DashboardBackend,
         content.addView(TextView(context).apply { setText(R.string.home_swipe_hint); textSize = 14f; setPadding(0, dp(8), 0, 0) })
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); backend.addHomeListener(listener); backend.ha.addStatusListener(statusListener) }
-    override fun onDetachedFromWindow() { closePortal(); backend.removeHomeListener(listener); backend.ha.removeStatusListener(statusListener); dialog?.dismiss(); super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { closePortal(); backend.removeHomeListener(listener); backend.ha.removeStatusListener(statusListener); dialog?.dismiss(); deviceDetails?.dismiss(); super.onDetachedFromWindow() }
     private fun bind(state: HomeControlState) {
         backend.homeSelection.reconcile(state)
         val choice = backend.homeSelection.areaId
@@ -198,6 +204,29 @@ class HomeControlView(context: Context, private val backend: DashboardBackend,
             applyAppearanceTree(box, theme)
             if (e == null) return
             val renderer = renderers.getValue(e.kind)
+            val target = e.target
+            val controls = e.controls
+            if (target != null && controls != null) {
+                value.text = listOfNotNull(renderer.value(context, e),
+                    e.request?.let { context.getString(it.label()) }).joinToString(" · ")
+                val command = controls.primaryCommand()
+                val label = command?.actionLabel()
+                if (command != null && label != null) {
+                    action.visibility = VISIBLE
+                    action.setText(label)
+                    action.isEnabled = e.canSend(command)
+                    action.setOnClickListener { sendDeviceCommand(context, backend, target, command) }
+                }
+                if (e.kind != HomeKind.INPUT_BOOLEAN) {
+                    details.visibility = VISIBLE
+                    details.setOnClickListener {
+                        deviceDetails?.dismiss()
+                        deviceDetails = HomeDeviceDetails(context, backend, appearance, target, e.kind) { deviceDetails = null }
+                            .also { it.show() }
+                    }
+                }
+                return
+            }
             val state = renderer.value(context, e)
             value.text = when (e.availability) {
                 Availability.AVAILABLE -> state

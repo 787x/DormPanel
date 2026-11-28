@@ -4,11 +4,13 @@ import com.dormpanel.app.data.*
 
 data class HomeArea(val id: String, val name: String)
 data class HomeDevice(val id: String, val name: String, val areaId: String?)
-enum class HomeKind { LIGHT, SWITCH, SENSOR, SCENE, SCRIPT }
+enum class HomeKind { LIGHT, SWITCH, SENSOR, SCENE, SCRIPT, CLIMATE, FAN, HUMIDIFIER, COVER, INPUT_BOOLEAN }
 data class HomeEntity(
     val id: String, val name: String, val kind: HomeKind, val areaId: String?, val deviceId: String?,
     val availability: Availability, val value: String = "", val unit: String = "",
     val isOn: Boolean = false, val light: LightState? = null, val actionable: Boolean = true,
+    val controls: HomeDeviceState? = null, val target: HomeTarget? = null,
+    val request: DeviceRequestState? = null,
 )
 data class HomeControlState(
     val areas: List<HomeArea> = emptyList(), val devices: List<HomeDevice> = emptyList(),
@@ -19,6 +21,7 @@ interface HomeControlSource {
     fun addHomeListener(listener: (HomeControlState) -> Unit)
     fun removeHomeListener(listener: (HomeControlState) -> Unit)
     fun activateEntity(id: String): Boolean
+    fun command(target: HomeTarget, command: HomeCommand): Boolean = false
 }
 /** null is All; empty string is Unassigned. Owned by the session, never by the View. */
 class HomeSelection {
@@ -38,6 +41,7 @@ fun HomeControlState.groups(selection: String?): List<HomeGroup> = entities
 
 /** Demo lights are projected directly from the dashboard owner. */
 class DemoHomeSource(private val dashboard: DashboardDataSource) : HomeControlSource {
+    private val demoDevices = DemoDevices()
     private val listeners = linkedSetOf<(HomeControlState) -> Unit>()
     private val areas = listOf(HomeArea("bedroom", "Bedroom"), HomeArea("study", "Study"), HomeArea("demo-switches", "Demo switches"))
     override val homeState get() = HomeControlState(areas,
@@ -54,16 +58,37 @@ class DemoHomeSource(private val dashboard: DashboardDataSource) : HomeControlSo
                 HomeEntity("temperature:${sensor.id}", "Temperature", HomeKind.SENSOR, area, device, sensor.availability, sensor.temperature?.toString().orEmpty(), sensor.temperatureUnit),
                 HomeEntity("humidity:${sensor.id}", "Humidity", HomeKind.SENSOR, area, device, sensor.availability, sensor.humidity?.toString().orEmpty(), sensor.humidityUnit))
         } + dashboard.state.switches.channels.values.map {
-            HomeEntity(it.identity.entityId, it.name, HomeKind.SWITCH,
+            if (it.identity.isVirtual) HomeEntity(it.identity.entityId, it.name, HomeKind.INPUT_BOOLEAN,
+                "demo-switches", null, it.availability, isOn = it.isOn == true, controls = HomeDeviceState.VirtualSwitch(it.isOn),
+                target = HomeTarget(dashboard.state.switches.sourceId, it.identity))
+            else HomeEntity(it.identity.entityId, it.name, HomeKind.SWITCH,
                 if (it.identity.deviceId == "desk") "study" else "demo-switches",
                 it.identity.deviceId, it.availability, isOn = it.isOn == true)
-        } + listOf(
+        } + demoDevices.entities() + listOf(
             HomeEntity("scene:night", "Good night", HomeKind.SCENE, "bedroom", null, Availability.AVAILABLE),
             HomeEntity("script:study", "Start studying", HomeKind.SCRIPT, "study", null, Availability.AVAILABLE)), true)
-    init { dashboard.addListener { publish() } }
+    private val dashboardListener: (DashboardData) -> Unit = { publish() }
     private fun publish() { val next = homeState; listeners.toList().forEach { it(next) } }
-    override fun addHomeListener(listener: (HomeControlState) -> Unit) { listeners += listener; listener(homeState) }
-    override fun removeHomeListener(listener: (HomeControlState) -> Unit) { listeners -= listener }
+    override fun addHomeListener(listener: (HomeControlState) -> Unit) {
+        if (!listeners.add(listener)) return
+        if (listeners.size == 1) dashboard.addListener(dashboardListener) else listener(homeState)
+    }
+    override fun removeHomeListener(listener: (HomeControlState) -> Unit) {
+        if (listeners.remove(listener) && listeners.isEmpty()) dashboard.removeListener(dashboardListener)
+    }
+    override fun command(target: HomeTarget, command: HomeCommand): Boolean {
+        if (target.identity.isVirtual) {
+            val switches = dashboard.state.switches
+            val channel = switches.resolve(target.sourceId, target.identity) ?: return false
+            val on = channel.isOn ?: return false
+            val power = command as? HomeCommand.Power ?: return false
+            return channel.availability == Availability.AVAILABLE &&
+                (on == power.on || dashboard.toggleSwitch(target.sourceId, target.identity))
+        }
+        if (!demoDevices.apply(target, command)) return false
+        publish()
+        return true
+    }
     override fun activateEntity(id: String): Boolean {
         val entity = homeState.entities.find { it.id == id && it.availability == Availability.AVAILABLE } ?: return false
         when (entity.kind) {
@@ -74,6 +99,9 @@ class DemoHomeSource(private val dashboard: DashboardDataSource) : HomeControlSo
             HomeKind.SCENE -> dashboard.state.lights.values.filter { it.isOn }.forEach { dashboard.toggleLight(it.id) }
             HomeKind.SCRIPT -> if (dashboard.state.lights["desk"]?.isOn == false) dashboard.toggleLight("desk")
             HomeKind.SENSOR -> return false
+            else -> return entity.target?.let { target ->
+                entity.controls?.primaryCommand()?.let { command(target, it) }
+            } == true
         }
         return true
     }
