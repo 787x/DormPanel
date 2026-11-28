@@ -1,12 +1,17 @@
 package com.dormpanel.app.icloud
 
+import okhttp3.Call
+import okhttp3.ConnectionPool
 import okhttp3.Credentials
+import okhttp3.EventListener
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
 import java.io.IOException
@@ -31,6 +36,14 @@ internal class CalDavClient(
     private val authorization = Credentials.basic(email, password, Charsets.UTF_8)
     private val http = transport.newBuilder().followRedirects(false).followSslRedirects(false)
         .authenticator(okhttp3.Authenticator.NONE).cookieJar(okhttp3.CookieJar.NO_COOKIES).cache(null).build()
+    private val writeHttp = http.newBuilder().retryOnConnectionFailure(false)
+        // A closed idle connection must not consume the only attempt at a mutation.
+        .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
+        .eventListener(object : EventListener() {
+            override fun requestHeadersStart(call: Call) {
+                call.request().tag(WriteTransmission::class.java)?.headersStarted = true
+            }
+        }).build()
 
     fun discover(round: CalDavRound = CalDavRound()): List<CloudCalendar> {
         val properties = "<D:current-user-principal/><C:calendar-home-set/>"
@@ -62,10 +75,10 @@ internal class CalDavClient(
                 if (type.child(CAL, "calendar") == null) continue
                 val components = item.property(CAL, "supported-calendar-component-set")
                 if (components != null && components.children(CAL, "comp").none { it.getAttribute("name") == "VEVENT" }) continue
-                val privileges = item.property(DAV, "current-user-privilege-set")
-                    ?.children(DAV, "privilege")?.flatMap { it.children(DAV) }?.map { it.localName }.orEmpty()
+                val privileges = item.privilegeNames()
+                val allowed = CalendarPrivileges.from(privileges)
                 val access = when {
-                    "all" in privileges || "write" in privileges || "write-content" in privileges -> CalendarAccess.WRITABLE
+                    allowed.bind || allowed.content || allowed.unbind -> CalendarAccess.WRITABLE
                     "read" in privileges -> CalendarAccess.READ_ONLY
                     else -> CalendarAccess.UNKNOWN
                 }
@@ -77,7 +90,7 @@ internal class CalDavClient(
                 val id = calendarDigest(if (stable == null) url.toString() else "resource-id:$stable")
                 val name = item.property(DAV, "displayname")?.text()?.take(160)?.ifBlank { null } ?: "iCloud"
                 val color = item.property(APPLE, "calendar-color")?.text()?.let(::parseColor)
-                val calendar = CloudCalendar(id, url, name, color, access, stable)
+                val calendar = CloudCalendar(id, url, name, color, access, stable, allowed)
                 val prior = found.putIfAbsent(id, calendar)
                 // A multi-home listing may return the same binding twice. Ambiguous aliases
                 // are kept out of selection reconciliation until discovery can be verified.
@@ -86,6 +99,101 @@ internal class CalDavClient(
             }
         }
         return found.values.toList()
+    }
+
+    fun verifyCollection(calendar: CloudCalendar, round: CalDavRound): CalendarPrivileges {
+        val item = exactProperties(calendar.url, "<D:resourcetype/><D:resource-id/><D:current-user-privilege-set/>", round, collection = true)
+        checkCalendar(item.property(DAV, "resourcetype")?.child(CAL, "calendar") != null)
+        val id = item.property(DAV, "resource-id")?.child(DAV, "href")?.text()
+        checkCalendar(calendar.resourceId == null || id == calendar.resourceId)
+        return CalendarPrivileges.from(item.privilegeNames())
+    }
+
+    fun objectPrivileges(collection: HttpUrl, href: HttpUrl, round: CalDavRound): CalendarPrivileges {
+        requireMember(collection, href)
+        return CalendarPrivileges.from(exactProperties(href, "<D:current-user-privilege-set/>", round).privilegeNames())
+    }
+
+    private fun exactProperties(url: HttpUrl, props: String, round: CalDavRound, collection: Boolean = false): DavItem = try {
+        request(round, url, "PROPFIND", "0", "<D:propfind $NS><D:prop>$props</D:prop></D:propfind>", redirects = false)
+            .let { if (collection) it.requiredCollection() else it.items[url.toString()] ?: invalidCalendar() }
+    } catch (e: DavHttpStatus) { throw e.failure() }
+
+    fun readObject(collection: HttpUrl, href: HttpUrl, round: CalDavRound): DavCalendarObject? {
+        requireMember(collection, href)
+        return objectRequest(Request.Builder().url(href).header("Accept", "text/calendar").get(), round) { response ->
+            if (response.code == 404) return@objectRequest null
+            if (response.code != 200) throw DavHttpStatus(response.code, retryAfter(response.header("Retry-After"))).failure()
+            val body = response.body ?: invalidCalendar()
+            val limit = round.bodyLimit(MAX_WRITE_ICS_BYTES.toLong())
+            val source = body.source()
+            if (body.contentLength() > limit || source.request(limit + 1)) {
+                round.received(source.buffer.size)
+                round.oversized(limit, MAX_WRITE_ICS_BYTES.toLong())
+            }
+            val bytes = source.readByteArray()
+            round.received(bytes.size.toLong())
+            DavCalendarObject(response.headers("ETag").singleOrNull(),
+                Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString())
+        }
+    }
+
+    fun mutateObject(collection: HttpUrl, href: HttpUrl, kind: CalendarWriteKind, etag: String?, ics: String?,
+        round: CalDavRound,
+    ): DavWriteResponse {
+        requireMember(collection, href)
+        checkCalendar((kind == CalendarWriteKind.CREATE && etag == null) ||
+            (kind != CalendarWriteKind.CREATE && strongCalendarEtag(etag)))
+        checkCalendar((kind == CalendarWriteKind.DELETE) == (ics == null))
+        val bytes = ics?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
+        checkCalendarCapacity(bytes.size <= MAX_WRITE_ICS_BYTES)
+        round.received(bytes.size.toLong())
+        // Prevent OkHttp from replaying an already transmitted mutation on an HTTP follow-up.
+        val body = object : RequestBody() {
+            override fun contentType() = if (ics == null) null else "text/calendar; charset=utf-8".toMediaType()
+            override fun contentLength() = bytes.size.toLong()
+            override fun isOneShot() = true
+            override fun writeTo(sink: BufferedSink) { sink.write(bytes) }
+        }
+        val transmission = WriteTransmission()
+        val request = Request.Builder().url(href).tag(WriteTransmission::class.java, transmission)
+            .method(if (kind == CalendarWriteKind.DELETE) "DELETE" else "PUT", body)
+        if (etag == null) request.header("If-None-Match", "*") else request.header("If-Match", etag)
+        return try {
+            objectRequest(request, round, writeHttp) { DavWriteResponse(it.code, retryAfter(it.header("Retry-After"))) }
+        } catch (e: CalDavFailure) {
+            if (transmission.headersStarted) throw e
+            throw CalDavWriteNotSent(e.problem, e.retryAt)
+        }
+    }
+
+    private fun requireMember(collection: HttpUrl, href: HttpUrl) {
+        trusted(collection)
+        trusted(href)
+        val directory = collection.encodedPath.trimEnd('/') + "/"
+        val member = href.encodedPath.removePrefix(directory)
+        checkCalendar(collection.encodedQuery == null && href.encodedQuery == null && href.host == collection.host &&
+            href.port == collection.port && href.encodedPath.startsWith(directory) && member.isNotEmpty() &&
+            !member.contains('/') && !member.contains(AMBIGUOUS_MEMBER))
+    }
+
+    private fun <T> objectRequest(builder: Request.Builder, round: CalDavRound, transport: OkHttpClient = http,
+        read: (okhttp3.Response) -> T,
+    ): T {
+        val request = builder.header("Authorization", authorization).header("Cache-Control", "no-cache").build()
+        val call = transport.newCall(request)
+        round.begin(call)
+        try {
+            return call.execute().use(read)
+        } catch (_: SSLException) {
+            round.check()
+            throw CalDavFailure(CalDavProblem.TLS)
+        } catch (_: java.nio.charset.CharacterCodingException) {
+            invalidCalendar()
+        } catch (_: IOException) {
+            round.check()
+            throw CalDavFailure(CalDavProblem.NETWORK)
+        } finally { round.end() }
     }
 
     fun synchronize(calendar: CloudCalendar, window: CalendarWindow, previous: CalendarSnapshot?, now: Long,
@@ -183,7 +291,9 @@ internal class CalDavClient(
     private fun report(round: CalDavRound, url: HttpUrl, depth: String, xml: String) =
         try { request(round, url, "REPORT", depth, xml) } catch (e: DavHttpStatus) { throw e.failure() }
 
-    private fun request(round: CalDavRound, initial: HttpUrl, method: String, depth: String, xml: String): DavDocument {
+    private fun request(round: CalDavRound, initial: HttpUrl, method: String, depth: String, xml: String,
+        redirects: Boolean = true,
+    ): DavDocument {
         var url = trusted(initial)
         try {
             repeat(5) {
@@ -194,6 +304,7 @@ internal class CalDavClient(
                 try {
                     call.execute().use { response ->
                         if (response.code in REDIRECTS) {
+                            if (!redirects) throw CalDavFailure(CalDavProblem.ACCESS)
                             url = at(url, response.header("Location") ?: throw CalDavFailure(CalDavProblem.TLS))
                         } else {
                             if (response.code != 207) throw DavHttpStatus(response.code, retryAfter(response.header("Retry-After")))
@@ -287,6 +398,8 @@ internal class CalDavClient(
     }
 }
 
+private class WriteTransmission { @Volatile var headersStarted = false }
+
 private val defaultCalDavTransport = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS)
     .readTimeout(12, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS).retryOnConnectionFailure(false).build()
 private val iCloudShard = Regex("p[0-9]{1,5}-caldav\\.icloud\\.com")
@@ -294,6 +407,7 @@ private fun isICloudHost(host: String) = host == "caldav.icloud.com" || iCloudSh
 private val XML = "application/xml; charset=utf-8".toMediaType()
 private val WIRE_TIME = DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'", java.util.Locale.ROOT).withZone(ZoneOffset.UTC)
 private val REDIRECTS = setOf(301, 302, 303, 307, 308)
+private val AMBIGUOUS_MEMBER = Regex("%(?:2f|5c|25|0[0-9a-f]|7f)", RegexOption.IGNORE_CASE)
 private const val MAX_XML_BYTES = 1_048_576L
 private const val DAV = "DAV:"
 private const val CAL = "urn:ietf:params:xml:ns:caldav"
@@ -315,11 +429,14 @@ private class DavHttpStatus(val code: Int, val retry: Long = 0) : Exception() {
 
 private data class DavItem(val url: HttpUrl, val props: Map<Pair<String?, String>, Element>) {
     fun property(ns: String, name: String) = props[ns to name]
+    fun privilegeNames() = property(DAV, "current-user-privilege-set")
+        ?.children(DAV, "privilege")?.flatMap { it.children(DAV) }?.map { it.localName }.orEmpty()
 }
 
 private data class DavDocument(val url: HttpUrl, val items: Map<String, DavItem>) {
     fun requiredCollection() = items[url.toString()] ?: items.values.singleOrNull {
-        it.url.host == url.host && it.url.port == url.port && it.url.encodedPath.trimEnd('/') == url.encodedPath.trimEnd('/')
+        it.url.host == url.host && it.url.port == url.port && it.url.encodedQuery == url.encodedQuery &&
+            it.url.encodedPath.trimEnd('/') == url.encodedPath.trimEnd('/')
     } ?: invalidCalendar()
 
     fun eventObjects(): Map<String, String> = items.mapValues { (_, item) ->

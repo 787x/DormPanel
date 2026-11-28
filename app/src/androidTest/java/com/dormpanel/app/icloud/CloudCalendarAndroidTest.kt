@@ -261,6 +261,134 @@ class CloudCalendarAndroidTest {
         }
     }
 
+    @Test fun editingWritesSurviveOfflineRelaunchAndConcurrentServerChanges() {
+        val mode = PreferencesScheduleModeStore(context)
+        val priorMode = mode.read()
+        val namespace = "test-caldav-write-${UUID.randomUUID()}"
+        val store = CloudCalendarStore(context, namespace)
+        val fixture = Fixture(day, zone)
+        mode.write(ScheduleMode.CALENDAR)
+        CloudCalendarService.overrideFactory = { CloudCalendarService(it, fixture::open, { fixture.online }, store) }
+        val title = "Queued create fixture"
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { it.schedule.ready && !it.cloudCalendar.isBusy }
+                scenario.onActivity { model(it).cloudCalendar.connect(FIXTURE_EMAIL, FIXTURE_PASSWORD) }
+                await(scenario) { it.cloudCalendar.calendars.size == 2 && !it.cloudCalendar.isBusy }
+                scenario.onActivity {
+                    val service = model(it).cloudCalendar
+                    service.setSelection(service.calendars.filter { cal -> cal.name == "Family" }.map { cal -> cal.id }.toSet())
+                }
+                await(scenario) { it.cloudCalendar.selected.size == 1 && !it.cloudCalendar.isBusy }
+                scenario.onActivity {
+                    val service = model(it).cloudCalendar
+                    service.stop()
+                    fixture.online = false
+                    service.start()
+                }
+                openCalendar()
+                onView(withText(context.scheduleText("+ 添加日程", "+ Add event"))).perform(click())
+                onView(withText("本机日历")).check(matches(isDisplayed()))
+                onView(withText("iCloud · Family")).check(doesNotExist())
+                onView(withText("iCloud · Main")).perform(click())
+                onView(withText("保存到 iCloud · Main")).check(matches(isDisplayed()))
+                onView(withContentDescription(startsWith("开始时间 ·"))).perform(click())
+                onView(isAssignableFrom(android.widget.TimePicker::class.java)).check(matches(isDisplayed()))
+                androidx.test.espresso.Espresso.pressBack()
+                onView(withText(startsWith("开始 ·"))).perform(click())
+                onView(isAssignableFrom(android.widget.DatePicker::class.java)).check(matches(isDisplayed()))
+                androidx.test.espresso.Espresso.pressBack()
+                onView(withHint("日程标题")).perform(replaceText(title), closeSoftKeyboard())
+                onView(withText("全天")).perform(click())
+                onView(withText(startsWith("结束日（不包含）"))).check(matches(isDisplayed()))
+                scenario.onActivity { model(it).appearance.setTheme(com.dormpanel.app.appearance.ThemeMode.DARK) }
+                screenshot("write-editor-dark")
+                scenario.onActivity { model(it).appearance.setTheme(com.dormpanel.app.appearance.ThemeMode.LIGHT) }
+                onView(withText("保存到本机待写")).check(matches(isDisplayed()))
+                screenshot("write-editor-light")
+                scenario.onActivity { model(it).appearance.setTheme(com.dormpanel.app.appearance.ThemeMode.DARK) }
+                onView(withText("保存到本机待写")).perform(click())
+                await(scenario) { it.cloudCalendar.writes.singleOrNull()?.state == CalendarWriteState.QUEUED }
+                onView(withText(containsString("等待写入 · 网络不可用"))).check(matches(isDisplayed()))
+                val persisted = store.writes().single()
+                scenario.onActivity { model(it).cloudCalendar.clearCache() }
+                await(scenario) { !it.cloudCalendar.isBusy }
+                assertEquals(persisted, store.writes().single())
+                scenario.recreate()
+                await(scenario) { it.cloudCalendar.writes.singleOrNull()?.id == persisted.id }
+                assertEquals(0, fixture.mutations.get())
+            }
+
+            fixture.online = true
+            fixture.dropNextWrite = true
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { it.cloudCalendar.writes.singleOrNull()?.state == CalendarWriteState.CHECKING }
+                assertEquals(1, fixture.mutations.get())
+                assertTrue(store.writes().single().attempted)
+                openCalendar()
+                onView(withText(containsString("结果待确认"))).check(matches(isDisplayed()))
+            }
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { it.cloudCalendar.writes.singleOrNull()?.state == CalendarWriteState.CONFIRMED }
+                assertEquals(1, fixture.mutations.get())
+                scenario.onActivity {
+                    val service = model(it).cloudCalendar
+                    service.setSelection(service.calendars.map { cal -> cal.id }.toSet())
+                }
+                await(scenario) { it.cloudCalendar.eventsOn(day, zone).any { event -> event.event.title == title } }
+                openCalendar()
+                onView(withText(allOf(containsString(title), containsString("Main")))).perform(click())
+                awaitView("编辑 iCloud 日程")
+                onView(withText("编辑 iCloud 日程")).perform(click())
+                onView(withHint("日程标题")).perform(replaceText("Local edit fixture"), closeSoftKeyboard())
+                fixture.changeTitle(title, "Concurrent remote fixture")
+                onView(withText("保存到本机待写")).perform(click())
+                await(scenario) { it.cloudCalendar.writes.any { write -> write.state == CalendarWriteState.CONFLICT } }
+                assertEquals(1, fixture.mutations.get())
+                onView(withText(startsWith("iCloud 写入记录 · 检测到远端冲突"))).perform(click())
+                onView(withText(containsString("修改 · Main · Local edit fixture"))).perform(click())
+                onView(withText("重新读取服务器版本")).perform(click())
+                awaitView("用本机草稿重新编辑")
+                screenshot("write-conflict")
+                onView(withText("用本机草稿重新编辑")).perform(click())
+                onView(withHint("日程标题")).check(matches(withText("Local edit fixture")))
+                onView(withText("保存到本机待写")).perform(click())
+                await(scenario) { it.cloudCalendar.eventsOn(day, zone).any { event -> event.event.title == "Local edit fixture" } }
+                onView(withText("关闭")).perform(click())
+                onView(withText("关闭")).perform(click())
+                onView(withText(allOf(containsString("Local edit fixture"), containsString("Main")))).perform(click())
+                awaitView("删除此 iCloud 日程")
+                onView(withText("删除此 iCloud 日程")).perform(click())
+                onView(withText("删除此日程")).perform(click())
+                await(scenario) { it.cloudCalendar.writes.any { write ->
+                    write.kind == CalendarWriteKind.DELETE && write.state == CalendarWriteState.CONFIRMED
+                } && it.cloudCalendar.eventsOn(day, zone).none { event -> event.event.title == "Local edit fixture" } }
+                assertEquals(3, fixture.mutations.get())
+            }
+        } finally {
+            CloudCalendarService.overrideFactory = null
+            fixture.close()
+            store.disconnect()
+            File(context.noBackupFilesDir, namespace).resolve("pending-writes.json").delete()
+            File(context.noBackupFilesDir, namespace).resolve("account.json").delete()
+            File(context.noBackupFilesDir, namespace).delete()
+            mode.write(priorMode)
+        }
+    }
+
+    private fun awaitView(label: String) {
+        val deadline = SystemClock.uptimeMillis() + 8_000
+        while (true) {
+            try {
+                onView(withText(label)).check(matches(isDisplayed()))
+                return
+            } catch (e: androidx.test.espresso.NoMatchingViewException) {
+                if (SystemClock.uptimeMillis() >= deadline) throw e
+                Thread.sleep(40)
+            }
+        }
+    }
+
     private fun model(activity: MainActivity) = ViewModelProvider(activity)[DashboardViewModel::class.java]
     private fun cardSelection(model: DashboardViewModel) =
         model.stateHolder.state.cards.firstOrNull()?.let { CardCalendars.decode(it.configurationJson).selected }
@@ -298,13 +426,16 @@ class CloudCalendarAndroidTest {
         @Volatile var reportStarted: java.util.concurrent.CountDownLatch? = null
         @Volatile var stallReport = false
         val requestCount = java.util.concurrent.atomic.AtomicInteger()
+        val mutations = java.util.concurrent.atomic.AtomicInteger()
+        @Volatile var dropNextWrite = false
+        private val resources = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
         private val fmt = DateTimeFormatter.BASIC_ISO_DATE
         private val utc = DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(java.time.ZoneOffset.UTC)
         private val home = "/fixture/"
         private val collection = "<D:resourcetype><D:collection/></D:resourcetype>"
         private val calendar = "<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>"
         private val access = "<D:current-user-privilege-set><D:privilege><D:read/></D:privilege>"
-        private val tag = "<D:getetag>\"one\"</D:getetag>"
+        private val writable = "$access<D:privilege><D:write/></D:privilege></D:current-user-privilege-set>"
 
         init {
             val cert = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("127.0.0.1").build()
@@ -313,6 +444,13 @@ class CloudCalendarAndroidTest {
             transport = OkHttpClient.Builder().sslSocketFactory(clientTls.sslSocketFactory(), clientTls.trustManager)
                 .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(false).build()
             server.useHttps(serverTls.sslSocketFactory(), false)
+            val shared = event("UID:shared\nDTSTART;VALUE=DATE:${fmt.format(day)}\n" +
+                "DTEND;VALUE=DATE:${fmt.format(day.plusDays(2))}\nSUMMARY:Shared fixture\nDESCRIPTION:Remote description")
+            resources["${home}main/shared.ics"] = "\"one\"" to shared
+            resources["${home}family/shared.ics"] = "\"one\"" to shared
+            val start = utc.format(day.atTime(23, 0).atZone(zone).toInstant())
+            val end = utc.format(day.plusDays(1).atTime(2, 0).atZone(zone).toInstant())
+            resources["${home}main/night.ics"] = "\"one\"" to event("UID:night\nDTSTART:$start\nDTEND:$end\nSUMMARY:Cross-night fixture")
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     requestCount.incrementAndGet()
@@ -324,28 +462,26 @@ class CloudCalendarAndroidTest {
                         "/.well-known/caldav" -> dav(item(path, "<C:calendar-home-set><D:href>$home</D:href></C:calendar-home-set>"))
                         home -> dav(item(home, collection) +
                             item("${home}main/", calendar + "<D:displayname>Main</D:displayname><A:calendar-color>#1976D2</A:calendar-color>" +
-                                "$access<D:privilege><D:write/></D:privilege></D:current-user-privilege-set>") +
+                                writable) +
                             item("${home}family/", calendar + "<D:displayname>Family</D:displayname><A:calendar-color>#FF9800</A:calendar-color>" +
                                 "$access</D:current-user-privilege-set>"))
                         "${home}main/", "${home}family/" -> if (request.method == "PROPFIND") {
-                            dav(item(path, "<D:sync-token/>", 404))
+                            if ("resourcetype" in xml) dav(item(path, calendar +
+                                if (path.endsWith("/main/")) writable else "$access</D:current-user-privilege-set>"))
+                            else dav(item(path, "<D:sync-token/>", 404))
                         } else {
-                            val events = linkedMapOf("shared.ics" to event("UID:shared\nDTSTART;VALUE=DATE:${fmt.format(day)}\n" +
-                                "DTEND;VALUE=DATE:${fmt.format(day.plusDays(2))}\nSUMMARY:Shared fixture\nDESCRIPTION:Remote description"))
-                            if (path.endsWith("main/")) {
-                                val start = utc.format(day.atTime(23, 0).atZone(zone).toInstant())
-                                val end = utc.format(day.plusDays(1).atTime(2, 0).atZone(zone).toInstant())
-                                events["night.ics"] = event("UID:night\nDTSTART:$start\nDTEND:$end\nSUMMARY:Cross-night fixture")
-                            }
-                            val payload = events.filter { (file, _) -> "calendar-query" in xml || "$path$file</D:href>" in xml }
-                                .entries.joinToString("") { (file, ics) ->
-                                    item(path + file, tag + if ("calendar-multiget" in xml) "<C:calendar-data><![CDATA[$ics]]></C:calendar-data>" else "")
+                            val payload = resources.filter { (file, _) ->
+                                file.startsWith(path) && ("calendar-query" in xml || "$file</D:href>" in xml)
+                            }.entries.joinToString("") { (file, data) ->
+                                    item(file, "<D:getetag>${data.first}</D:getetag>" +
+                                        if ("calendar-multiget" in xml) "<C:calendar-data><![CDATA[${data.second}]]></C:calendar-data>" else "")
                                 }
                             reportStarted?.countDown()
                             if (stallReport) MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE)
                             else dav(payload)
                         }
-                        else -> MockResponse().setResponseCode(404)
+                        else -> if (path.startsWith(home) && path.endsWith(".ics")) objectResponse(request, path, xml)
+                        else MockResponse().setResponseCode(404)
                     }
                 }
             }
@@ -354,6 +490,34 @@ class CloudCalendarAndroidTest {
 
         fun open(email: String, password: String): CalDavClient = CalDavClient(email, password,
             server.url("/").newBuilder().host("127.0.0.1").build(), { it == "127.0.0.1" }, transport)
+
+        fun changeTitle(old: String, next: String) {
+            val (path, value) = resources.entries.single { "SUMMARY:$old" in it.value.second }
+            resources[path] = "\"external\"" to value.second.replace("SUMMARY:$old", "SUMMARY:$next")
+        }
+
+        private fun objectResponse(request: RecordedRequest, path: String, body: String): MockResponse {
+            val existing = resources[path]
+            fun response(code: Int) = MockResponse().setResponseCode(code)
+            return when (request.method) {
+                "GET" -> if (existing == null) response(404) else response(200).setHeader("ETag", existing.first).setBody(existing.second)
+                "PROPFIND" -> if (existing == null) response(404) else dav(item(path,
+                    if (path.startsWith("${home}main/")) writable else "$access</D:current-user-privilege-set>"))
+                "PUT", "DELETE" -> {
+                    if (!path.startsWith("${home}main/")) return response(403)
+                    val creating = request.getHeader("If-None-Match") == "*"
+                    if (creating && existing != null || !creating &&
+                        (existing == null || existing.first != request.getHeader("If-Match"))) return response(412)
+                    val version = mutations.incrementAndGet()
+                    if (request.method == "DELETE") resources.remove(path) else resources[path] = "\"write-$version\"" to body
+                    if (dropNextWrite) {
+                        dropNextWrite = false
+                        response(503).setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST)
+                    } else response(if (creating) 201 else 204)
+                }
+                else -> response(405)
+            }
+        }
 
         private fun item(path: String, props: String, status: Int = 200) = "<D:response><D:href>$path</D:href>" +
             "<D:propstat><D:prop>$props</D:prop><D:status>HTTP/1.1 $status Fixture</D:status></D:propstat></D:response>"

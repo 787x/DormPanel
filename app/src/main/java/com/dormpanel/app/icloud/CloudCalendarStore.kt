@@ -12,6 +12,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.security.KeyStore
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.YearMonth
 import java.time.ZoneId
 import java.util.UUID
@@ -60,6 +61,7 @@ internal class CloudCalendarStore(context: Context, namespace: String = "icloud-
     private val directory = File(context.noBackupFilesDir, namespace)
     private val keyAlias = "DormPanel.iCloud.Calendar.$namespace"
     private val meta = AtomicFile(File(directory, "account.json"))
+    private val mutations = AtomicFile(File(directory, "pending-writes.json"))
     private val cipher = TokenCipher {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(keyAlias, null) as? SecretKey) ?: KeyGenerator.getInstance("AES", "AndroidKeyStore").run {
@@ -90,11 +92,52 @@ internal class CloudCalendarStore(context: Context, namespace: String = "icloud-
     private fun decodeCalendar(json: JSONObject) = CloudCalendar(
         json.getString("id"), json.getString("url").toHttpUrl(), json.getString("name"), json.optIntOrNull("color"),
         CalendarAccess.valueOf(json.getString("access")), json.optionalString("resourceId"),
+        CalendarPrivileges(json.optBoolean("bind"), json.optBoolean("content"), json.optBoolean("unbind")),
     )
 
     private fun encodeCalendar(calendar: CloudCalendar) = JSONObject()
         .put("id", calendar.id).put("url", calendar.url.toString()).put("name", calendar.name)
         .put("color", calendar.color).put("access", calendar.access.name).put("resourceId", calendar.resourceId)
+        .put("bind", calendar.privileges.bind).put("content", calendar.privileges.content).put("unbind", calendar.privileges.unbind)
+
+    fun writes(): List<CalendarWrite> = read(mutations, MAX_PENDING_BYTES)?.let { data ->
+        check(data.getInt("format") == 1)
+        data.getJSONArray("entries").objects().map(::decodeWrite).also { entries ->
+            check(entries.size <= MAX_PENDING_WRITES + MAX_WRITE_RECEIPTS)
+            check(entries.map { it.id }.toSet().size == entries.size)
+        }
+    }.orEmpty()
+
+    fun saveWrites(entries: List<CalendarWrite>) {
+        val active = entries.filter { it.state != CalendarWriteState.CONFIRMED }
+        checkCalendarCapacity(active.size <= MAX_PENDING_WRITES)
+        val receipts = entries.filter { it.state == CalendarWriteState.CONFIRMED }.takeLast(MAX_WRITE_RECEIPTS)
+        val json = JSONObject().put("format", 1).put("entries", JSONArray((active + receipts).map(::encodeWrite)))
+        write(mutations, json, MAX_PENDING_BYTES)
+        // AtomicFile may log a rename failure instead of throwing it.
+        check(read(mutations, MAX_PENDING_BYTES)?.toString() == json.toString())
+    }
+
+    fun invalidateObject(ref: CloudObjectRef) {
+        check(UUID.fromString(ref.account).toString() == ref.account && validCalendarId(ref.calendarId))
+        val folder = File(directory, ref.account)
+        val names = folder.listFiles().orEmpty().map { it.name.removeSuffix(".new").removeSuffix(".bak") }
+            .filter { it.startsWith("${ref.calendarId}_") && it.endsWith(".json") }.toSet()
+        for (name in names) {
+            val file = AtomicFile(File(folder, name))
+            val snapshot = runCatching { read(file, MAX_SNAPSHOT_BYTES) }.getOrElse {
+                file.delete()
+                check(!file.baseFile.exists() && !File(folder, "$name.bak").exists() && !File(folder, "$name.new").exists())
+                null
+            } ?: continue
+            val retained = snapshot.getJSONArray("objects").objects().filterNot { it.getString("href") == ref.href.toString() }
+            snapshot.put("objects", JSONArray(retained)).put("checkedAt", 0).remove("token")
+            write(file, snapshot, MAX_SNAPSHOT_BYTES)
+            val persisted = read(file, MAX_SNAPSHOT_BYTES)
+            check(persisted?.has("token") == false && persisted.getLong("checkedAt") == 0L &&
+                persisted.getJSONArray("objects").objects().none { it.getString("href") == ref.href.toString() })
+        }
+    }
 
     fun encrypt(email: String, password: String): String =
         cipher.encrypt(JSONObject().put("email", email).put("password", password).toString())
@@ -195,6 +238,34 @@ internal class CloudCalendarStore(context: Context, namespace: String = "icloud-
 
 }
 
+private fun encodeWrite(value: CalendarWrite): JSONObject {
+    val ref = value.ref
+    val draft = value.draft
+    return JSONObject().put("id", value.id).put("account", ref.account).put("calendar", ref.calendarId)
+        .put("collection", ref.collection.toString()).put("href", ref.href.toString()).put("uid", ref.uid)
+        .put("etag", ref.etag).put("resourceId", ref.resourceId).put("name", value.calendarName)
+        .put("kind", value.kind.name).put("state", value.state.name).put("detail", value.detail)
+        .put("attempted", value.attempted).put("acknowledged", value.acknowledged).put("retryAt", value.retryAt)
+        .put("verifiedEtag", value.verifiedEtag)
+        .put("ics", value.ics).put("title", draft.title).put("location", draft.location).put("description", draft.description)
+        .put("start", draft.start.toString()).put("end", draft.end.toString()).put("allDay", draft.allDay).put("zone", draft.zone.id)
+}
+
+private fun decodeWrite(json: JSONObject): CalendarWrite {
+    val account = json.getString("account")
+    val calendarId = json.getString("calendar")
+    val id = json.getString("id")
+    check(UUID.fromString(account).toString() == account && validCalendarId(calendarId) && UUID.fromString(id).toString() == id)
+    val ref = CloudObjectRef(account, calendarId, json.getString("collection").toHttpUrl(), json.getString("href").toHttpUrl(),
+        json.getString("uid"), null, json.optionalString("etag"), json.optionalString("resourceId"))
+    val draft = CloudEventDraft(json.getString("title"), json.getString("location"), json.getString("description"),
+        LocalDateTime.parse(json.getString("start")), LocalDateTime.parse(json.getString("end")), json.getBoolean("allDay"),
+        ZoneId.of(json.getString("zone")))
+    return CalendarWrite(id, ref, json.getString("name"), CalendarWriteKind.valueOf(json.getString("kind")),
+        draft, json.optionalString("ics"), CalendarWriteState.valueOf(json.getString("state")), json.optionalString("detail"),
+        json.getBoolean("attempted"), json.getBoolean("acknowledged"), json.getLong("retryAt"), json.optionalString("verifiedEtag"))
+}
+
 /** Repeated instances share event text. Old snapshots remain readable until replaced atomically. */
 internal fun encodeSnapshot(snapshot: CalendarSnapshot): JSONObject {
     checkCalendarCapacity(snapshot.objects.size <= MAX_OBJECTS &&
@@ -258,6 +329,9 @@ private fun JSONArray.optionalString(index: Int) = if (isNull(index)) null else 
 
 private const val SETTINGS_BYTES = 512 * 1024
 private const val MAX_MISSING_CALENDARS = 96
+private const val MAX_PENDING_WRITES = 16
+private const val MAX_WRITE_RECEIPTS = 8
+private const val MAX_PENDING_BYTES = 6 * 1024 * 1024
 
 internal val refreshChoices = listOf(15, 30, 60, 120)
 internal fun validCalendarId(id: String) = id.length == 64 && id.all { it in '0'..'9' || it in 'a'..'f' }

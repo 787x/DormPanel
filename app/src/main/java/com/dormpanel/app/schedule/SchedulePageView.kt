@@ -240,12 +240,21 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
         val agenda = context.scheduleColumn().apply { setPadding(context.dp(20), 0, 0, 0) }
         agenda.addView(context.scheduleLabel(scheduleDate(session.selectedDate), 24f))
         val actions = LinearLayout(context)
-        actions.addView(button(tr("+ 添加日程", "+ Add event")) { editors.event(session.selectedDate) }.apply { isEnabled = source.editable })
+        actions.addView(button(tr("+ 添加日程", "+ Add event")) {
+            if (cloudCalendar == null) editors.event(session.selectedDate)
+            else cloudDialogs.create(cloudCalendar, session.selectedDate, source.clock.zone(), source.editable) {
+                editors.event(session.selectedDate)
+            }
+        }.apply { isEnabled = source.editable || cloudCalendar?.createCalendars?.isNotEmpty() == true })
         if (cloudCalendar != null) actions.addView(button("iCloud 日历") { cloudDialogs.settings(cloudCalendar, cloudRange) })
         agenda.addView(actions)
         if (cloudCalendar != null) agenda.addView(context.scheduleLabel(cloudCalendar.connectionLabel(cloudRange), 15f).apply {
             maxLines = 2
         })
+        cloudCalendar?.writes?.firstOrNull()?.let { latest ->
+            agenda.addView(button("iCloud 写入记录 · ${latest.label(cloudCalendar.isOffline)}") { cloudDialogs.writes(cloudCalendar) }
+                .apply { maxLines = 2 })
+        }
         val events = context.scheduleColumn()
         val selected = calendarAgenda(source, cloudCalendar, session.selectedDate)
         val pageSize = 40
@@ -257,7 +266,9 @@ class SchedulePageView(context: Context, private val source: ScheduleSource, pri
             val range = event.label(context, session.selectedDate, source.clock.zone())
             val note = event.note.takeUnless(String::isBlank)?.let { "\n$it" }.orEmpty()
             events.addView(button("$range · ${event.source}\n${event.title}$note") {
-                event.remote?.let { cloudDialogs.details(it, range) } ?: event.local?.let { editors.event(session.selectedDate, it) }
+                val remote = event.remote
+                if (remote != null && cloudCalendar != null) cloudDialogs.details(cloudCalendar, remote, range, source.clock.zone())
+                else event.local?.let { editors.event(session.selectedDate, it) }
             }.apply {
                 gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL; maxLines = 4; textSize = 18f
                 ellipsize = android.text.TextUtils.TruncateAt.END

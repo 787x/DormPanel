@@ -48,7 +48,8 @@ class CloudCalendarRestartAndroidTest {
         val date = LocalDate.now(zone)
         val window = CalendarWindow(YearMonth.from(date), zone)
         val calendar = CloudCalendar("a".repeat(64), "https://caldav.icloud.com/fixture/".toHttpUrl(),
-            "Cached fixture", color = null, CalendarAccess.READ_ONLY)
+            "Cached fixture", color = null, CalendarAccess.WRITABLE, privileges = CalendarPrivileges(bind = true))
+        val uid = "$run@dormpanel"
         val settings = if (phase == "seed") {
             CloudSettings(run, store.encrypt("seed@example.invalid", "local-test-value"), listOf(calendar), setOf(calendar.id), 60).also {
                 store.save(it)
@@ -101,6 +102,20 @@ class CloudCalendarRestartAndroidTest {
                     model.stateHolder.state.cards.forEach { card -> model.stateHolder.delete(card.id) }
                     model.stateHolder.add(model.catalog.candidates.single { card -> card.providerType == "calendar" }, run)
                     model.stateHolder.updateConfiguration(run, CardCalendars(setOf(calendar.id)).encode())
+                    model.cloudCalendar.saveCreate(run, calendar, CloudEventDraft(uid, "测试", "等待写回",
+                        date.atStartOfDay(), date.plusDays(1).atStartOfDay(), true, zone)) { error -> assertNull(error) }
+                }
+                waitFor { it.cloudCalendar.writes.singleOrNull()?.let { write ->
+                    write.state == CalendarWriteState.QUEUED && write.draft.title == uid && write.ref.href.encodedPath.endsWith(".ics")
+                } == true }
+                val pending = store.writes().single()
+                val accountFolder = File(context.noBackupFilesDir, namespace)
+                if (phase == "seed") {
+                    File(accountFolder, "pending-writes.json").copyTo(File(accountFolder, "pending-writes.json.bak"))
+                    File(accountFolder, "pending-writes.json").writeText("{unfinished")
+                    File(accountFolder, "expected-resource").writeText(pending.ref.href.toString())
+                } else {
+                    assertEquals(File(accountFolder, "expected-resource").readText(), pending.ref.href.toString())
                 }
                 waitFor {
                     val card = it.stateHolder.state.cards.singleOrNull()
@@ -117,6 +132,8 @@ class CloudCalendarRestartAndroidTest {
             if (phase == "verify") {
                 context.deleteDatabase(dbName)
                 store.disconnect()
+                File(context.noBackupFilesDir, namespace).resolve("pending-writes.json").delete()
+                File(context.noBackupFilesDir, namespace).resolve("expected-resource").delete()
                 File(context.noBackupFilesDir, namespace).resolve("account.json").delete()
                 File(context.noBackupFilesDir, namespace).delete()
             }

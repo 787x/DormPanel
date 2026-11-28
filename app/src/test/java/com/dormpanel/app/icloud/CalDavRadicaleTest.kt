@@ -14,6 +14,8 @@ import java.io.File
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.time.YearMonth
+import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneOffset
 import java.util.UUID
 
@@ -81,5 +83,40 @@ class CalDavRadicaleTest {
         assertEquals(initial.copy(checkedAt = 2), client.synchronize(first, window, initial, 2))
         assertTrue(seed("DELETE", objectPath) in 200..299)
         assertTrue(client.synchronize(first, window, initial, 3).objects.isEmpty())
+
+        assertTrue(first.privileges.bind)
+        val date = LocalDate.of(2026, 3, 31)
+        val timed = CloudEventDraft("跨月日程", "会议室", "第一行\n第二行", date.atTime(23, 0),
+            date.plusDays(1).atTime(1, 0), false, ZoneOffset.UTC)
+        val uid = "$run@dormpanel"
+        val href = first.url.newBuilder().addPathSegment("writer.ics").build()
+        val ref = CloudObjectRef("fixture", first.id, first.url, href, uid, null, null, first.resourceId)
+        val create = CalendarWrite(run, ref, first.name, CalendarWriteKind.CREATE, timed,
+            EditableCalendarObject.create(uid, timed, Instant.now()))
+        fun applyWrite(write: CalendarWrite) = processCalendarWrite(client, first, write, CalDavRound()) {}
+        val created = applyWrite(create)
+        assertEquals(created.detail, CalendarWriteState.CONFIRMED, created.state)
+        val remote = requireNotNull(client.readObject(first.url, href, CalDavRound()))
+        val original = EditableCalendarObject.parse(remote.ics, uid, ZoneOffset.UTC)
+        assertEquals(timed, original.draft)
+        val april = CalendarWindow(YearMonth.of(2026, 4), ZoneOffset.UTC)
+        assertEquals(uid, client.synchronize(first, window, null, 4).objects.values.single().events.single().uid)
+        val before = client.synchronize(first, april, null, 5)
+        assertEquals(uid, before.objects.values.single().events.single().uid)
+        val allDay = timed.copy(title = "已改为全天", location = "", description = "描述", allDay = true,
+            start = date.atStartOfDay(), end = date.plusDays(2).atStartOfDay())
+        val update = create.copy(ref = ref.copy(etag = remote.etag), kind = CalendarWriteKind.UPDATE, draft = allDay,
+            ics = original.edit(allDay, Instant.now()))
+        val updated = applyWrite(update)
+        assertEquals(updated.detail, CalendarWriteState.CONFIRMED, updated.state)
+        assertEquals(CalendarWriteState.CONFLICT, applyWrite(update).state)
+        val current = requireNotNull(client.readObject(first.url, href, CalDavRound()))
+        assertEquals(allDay, EditableCalendarObject.parse(current.ics, uid, ZoneOffset.UTC).draft)
+        val after = client.synchronize(first, april, before, 6)
+        assertEquals("已改为全天", after.objects.values.single().events.single().title)
+        val deleted = applyWrite(update.copy(ref = ref.copy(etag = current.etag), kind = CalendarWriteKind.DELETE, ics = null))
+        assertEquals(deleted.detail, CalendarWriteState.CONFIRMED, deleted.state)
+        assertNull(client.readObject(first.url, href, CalDavRound()))
+        assertTrue(client.synchronize(first, april, after, 7).objects.isEmpty())
     }
 }
