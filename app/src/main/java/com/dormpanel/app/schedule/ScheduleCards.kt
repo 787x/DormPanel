@@ -139,7 +139,8 @@ class ScheduleCardView(context: Context, appearance: AppearanceController, priva
             val day = source.clock.today()
             val event = recentAgenda(source, cloudCalendar, settings.selected, 1).firstOrNull()
             val remote = event?.remote
-            if (remote != null) cloudDialogs.details(remote, event.label(context, day, source.clock.zone()))
+            if (remote != null && cloudCalendar != null)
+                cloudDialogs.details(cloudCalendar, remote, event.label(context, day, source.clock.zone()), source.clock.zone())
             else if (source.ready) editors.event(day, event?.local)
         } else if (source.ready) {
             val occurrence = ScheduleProjection.occurrences(source.state, source.clock).firstOrNull()

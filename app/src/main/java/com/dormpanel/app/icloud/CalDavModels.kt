@@ -8,9 +8,19 @@ import java.time.ZoneId
 
 internal enum class CalendarAccess { READ_ONLY, WRITABLE, UNKNOWN }
 
+internal data class CalendarPrivileges(val bind: Boolean = false, val content: Boolean = false, val unbind: Boolean = false) {
+    companion object {
+        fun from(names: List<String>): CalendarPrivileges {
+            val write = "all" in names || "write" in names
+            return CalendarPrivileges(write || "bind" in names, write || "write-content" in names, write || "unbind" in names)
+        }
+    }
+}
+
 internal data class CloudCalendar(
     val id: String, val url: HttpUrl, val name: String, val color: Int?, val access: CalendarAccess,
     val resourceId: String? = null,
+    val privileges: CalendarPrivileges = CalendarPrivileges(),
 )
 
 internal data class CloudEvent(

@@ -21,6 +21,24 @@ import java.time.ZoneOffset
 import java.util.Locale
 import java.util.TimeZone
 
+internal fun readEditableEvent(text: String, zone: ZoneId): CloudEvent {
+    val input = text.removePrefix("\uFEFF")
+    checkCalendar(validateCalendar(input) == 1)
+    val calendar = ICalReader(input).use { reader ->
+        reader.defaultTimezone = TimeZone.getTimeZone(zone)
+        val value = reader.readNext() ?: invalidCalendar()
+        checkCalendar(reader.warnings.all { it.code == 37 } && reader.readNext() == null)
+        value
+    }
+    val event = calendar.events.single()
+    val start = calendar.start(event, zone)
+    val length = calendar.length(event, start, zone)
+    fun String?.calendarText() = orEmpty().replace("\r\n", "\n").replace('\r', '\n')
+    return CloudEvent(event.uid?.value ?: invalidCalendar(), null, event.summary?.value.calendarText(),
+        event.location?.value.calendarText(), event.description?.value.calendarText(),
+        start.instant.toEpochMilli(), length.end(start).toEpochMilli(), start.day, start.day?.plusDays(length.days))
+}
+
 internal fun readCloudEvents(text: String, window: CalendarWindow, budget: ExpansionBudget = ExpansionBudget()): List<CloudEvent> {
     try {
         checkCalendar(text.isNotEmpty())
