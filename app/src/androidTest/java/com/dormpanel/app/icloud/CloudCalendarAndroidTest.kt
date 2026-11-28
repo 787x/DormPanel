@@ -458,6 +458,10 @@ class CloudCalendarAndroidTest {
                 val draft = base.event.draft.copy(start = moved.atTime(23, 0), end = moved.plusDays(1).atTime(1, 0))
                 fixture.delayNextUpdateReadback = true
                 scenario.onActivity { model(it).cloudCalendar.saveEdit(base, draft) { assertNull(it) } }
+                await(scenario) { it.cloudCalendar.writes.any { write ->
+                    write.kind == CalendarWriteKind.UPDATE && write.state == CalendarWriteState.CHECKING &&
+                        write.detail == CalDavProblem.AUTH.label && write.attempted && write.acknowledged && write.ref == base.ref
+                } && it.cloudCalendar.eventsOn(day, zone).any { event -> event.event.title == title } }
                 await(scenario) { it.cloudCalendar.writes.any { write -> write.kind == CalendarWriteKind.UPDATE &&
                     write.state == CalendarWriteState.CONFIRMED } &&
                     it.cloudCalendar.eventsOn(day, zone).none { event -> event.event.title == title } &&
@@ -479,21 +483,39 @@ class CloudCalendarAndroidTest {
                 scenario.onActivity { model(it).cloudCalendar.watch(owner, range) }
                 await(scenario) { it.cloudCalendar.eventsOn(moved, zone).any { event -> event.event.title == title } }
                 val base = inspect(scenario, moved)
+                fixture.blockDeleteReadback = true
                 scenario.onActivity { model(it).cloudCalendar.saveEdit(base, base.event.draft, delete = true) { assertNull(it) } }
-                await(scenario) { it.cloudCalendar.writes.any { write -> write.kind == CalendarWriteKind.DELETE &&
-                    write.state == CalendarWriteState.CONFIRMED } &&
-                    it.cloudCalendar.eventsOn(moved, zone).none { event -> event.event.title == title } }
+                await(scenario) { it.cloudCalendar.writes.any { write ->
+                    write.kind == CalendarWriteKind.DELETE && write.state == CalendarWriteState.CHECKING &&
+                        write.detail == CalDavProblem.ACCESS.label && write.attempted && write.acknowledged
+                } }
                 assertEquals(1, fixture.deleteAttempts.get())
             }
+            val durableDelete = store.writes().single { it.kind == CalendarWriteKind.DELETE }
+            // Simulate the terminal label written by an earlier build with the same receipt.
+            store.saveWrites(store.writes().map {
+                if (it.id == durableDelete.id) it.copy(state = CalendarWriteState.FAILED) else it
+            })
             fixture.online = false
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                await(scenario) { it.cloudCalendar.writes.any { write -> write.kind == CalendarWriteKind.DELETE && write.state == CalendarWriteState.CONFIRMED } }
                 scenario.onActivity { model(it).cloudCalendar.watch(owner, range) }
-                await(scenario) { it.cloudCalendar.eventsOn(day, zone).isNotEmpty() }
-                scenario.onActivity { assertFalse(model(it).cloudCalendar.events(range).any { event -> event.event.title == title }) }
+                await(scenario) { it.cloudCalendar.writes.any { write ->
+                    write.id == durableDelete.id && write.ref == durableDelete.ref && write.state == CalendarWriteState.CHECKING &&
+                        write.attempted && write.acknowledged
+                } && it.cloudCalendar.eventsOn(moved, zone).any { event -> event.event.title == title } }
+                assertEquals(1, fixture.deleteAttempts.get())
+            }
+            fixture.blockDeleteReadback = false
+            fixture.online = true
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { !it.cloudCalendar.isBusy }
+                scenario.onActivity { model(it).cloudCalendar.watch(owner, range) }
+                await(scenario) { it.cloudCalendar.writes.any { write ->
+                    write.id == durableDelete.id && write.state == CalendarWriteState.CONFIRMED
+                } && it.cloudCalendar.eventsOn(moved, zone).none { event -> event.event.title == title } }
+                assertEquals(1, fixture.deleteAttempts.get())
             }
             fixture.reportError = false
-            fixture.online = true
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 await(scenario) { !it.cloudCalendar.isBusy }
                 scenario.onActivity { model(it).cloudCalendar.watch(owner, range) }
@@ -621,6 +643,8 @@ class CloudCalendarAndroidTest {
         @Volatile var failGetOnce: String? = null
         @Volatile var failPutOnce: String? = null
         @Volatile var delayNextUpdateReadback = false
+        @Volatile var blockDeleteReadback = false
+        @Volatile private var deletedPath: String? = null
         val putAttempts = java.util.concurrent.atomic.AtomicInteger()
         val deleteAttempts = java.util.concurrent.atomic.AtomicInteger()
         val failedReports = java.util.concurrent.atomic.AtomicInteger()
@@ -709,7 +733,8 @@ class CloudCalendarAndroidTest {
                 } else {
                     val stale = delayed[path]
                     when {
-                        stale != null && delayedReadbacks.incrementAndGet() == 1 -> response(503)
+                        path == deletedPath && blockDeleteReadback -> response(403).setHeader("Retry-After", "2")
+                        stale != null && delayedReadbacks.incrementAndGet() == 1 -> response(401)
                         stale != null -> {
                             delayed.remove(path)
                             response(200).setHeader("ETag", stale.first).setBody(stale.second)
@@ -734,7 +759,10 @@ class CloudCalendarAndroidTest {
                     if (creating && existing != null || !creating &&
                         (existing == null || existing.first != request.getHeader("If-Match"))) return response(412)
                     val version = mutations.incrementAndGet()
-                    if (request.method == "DELETE") resources.remove(path) else resources[path] = "\"write-$version\"" to body
+                    if (request.method == "DELETE") {
+                        deletedPath = path
+                        resources.remove(path)
+                    } else resources[path] = "\"write-$version\"" to body
                     if (request.method == "PUT" && existing != null && delayNextUpdateReadback) {
                         delayNextUpdateReadback = false
                         delayed[path] = existing

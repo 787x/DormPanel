@@ -68,6 +68,9 @@ internal fun processCalendarWrite(
     var op = entry
     fun state(value: CalendarWriteState, detail: String? = null, retryAt: Long = 0) =
         op.copy(state = value, detail = detail, retryAt = retryAt)
+    fun blocked(detail: String, retryAt: Long = 0) =
+        state(if (op.attempted || op.acknowledged) CalendarWriteState.CHECKING else CalendarWriteState.FAILED,
+            detail, retryAt)
     fun conflict(message: String = "服务器版本已变化") = state(CalendarWriteState.CONFLICT, message)
     fun confirm(etag: String? = null) = state(CalendarWriteState.CONFIRMED).copy(verifiedEtag = etag)
     fun checkRemote(remote: DavCalendarObject?): CalendarWrite? {
@@ -113,7 +116,7 @@ internal fun processCalendarWrite(
             CalendarWriteKind.UPDATE -> client.objectPrivileges(ref.collection, ref.href, round).content
             CalendarWriteKind.DELETE -> privileges.unbind
         }
-        if (!permitted) return state(CalendarWriteState.FAILED, "权限不足或服务器未提供权限")
+        if (!permitted) return blocked("权限不足或服务器未提供权限")
         val sending = state(CalendarWriteState.CHECKING).copy(attempted = true)
         val attemptedBefore = op.attempted
         persist(sending)
@@ -132,25 +135,22 @@ internal fun processCalendarWrite(
             404, 409, 412 -> return conflict("服务器拒绝资源版本或写入前提（HTTP ${reply.code}）")
             429 -> return state(if (attemptedBefore) CalendarWriteState.CHECKING else CalendarWriteState.QUEUED,
                 "服务器限流（HTTP 429）", reply.retryAt).copy(attempted = attemptedBefore)
-            401, 403, 405, 413, 415, 422, 507, in 300..399 ->
-                return state(CalendarWriteState.FAILED, "服务器拒绝写入（HTTP ${reply.code}）", reply.retryAt)
-                    .copy(attempted = attemptedBefore)
+            401, 403, 405, 413, 415, 422, 507, in 300..399 -> {
+                op = op.copy(attempted = attemptedBefore)
+                return blocked("服务器拒绝写入（HTTP ${reply.code}）", reply.retryAt)
+            }
             else -> return state(CalendarWriteState.CHECKING, "服务器响应 HTTP ${reply.code}，需重新核对", reply.retryAt)
         }
         val verified = client.readObject(ref.collection, ref.href, round)
         if (op.kind == CalendarWriteKind.CREATE && verified == null) return state(CalendarWriteState.CHECKING, "服务器回读尚未找到新日程")
         return checkRemote(verified) ?: state(CalendarWriteState.CHECKING, "服务器回读尚未呈现已接收的修改")
     } catch (e: CalDavFailure) {
-        val next = when (e.problem) {
-            CalDavProblem.AUTH, CalDavProblem.ACCESS, CalDavProblem.TLS -> CalendarWriteState.FAILED
-            else -> when {
-                op.attempted -> CalendarWriteState.CHECKING
-                e.problem in setOf(CalDavProblem.CANCELLED, CalDavProblem.NETWORK, CalDavProblem.SERVER,
-                    CalDavProblem.BUDGET, CalDavProblem.LIMITED) -> CalendarWriteState.QUEUED
-                else -> CalendarWriteState.FAILED
-            }
+        if (!op.attempted && !op.acknowledged && e.problem in setOf(CalDavProblem.CANCELLED,
+                CalDavProblem.NETWORK, CalDavProblem.SERVER, CalDavProblem.BUDGET, CalDavProblem.LIMITED)) {
+            return state(CalendarWriteState.QUEUED, e.problem.label, e.retryAt)
         }
-        return state(next, e.problem.label, e.retryAt)
+        // Failure to read supplies no evidence about a previously sent mutation.
+        return blocked(e.problem.label, e.retryAt)
     }
 }
 

@@ -19,6 +19,7 @@ class CalDavWriteTest {
     private val server = MockWebServer()
     private lateinit var client: CalDavClient
     private var interruptPutBeforeSend = false
+    private var failGetTls = false
     private fun url(path: String) = server.url(path).newBuilder().host("localhost").build()
     private val calendar get() = CloudCalendar("calendar", url(PATH), "Fixture", null, CalendarAccess.UNKNOWN, "urn:uuid:fixture")
     private val href get() = url("${PATH}fixed.ics")
@@ -37,7 +38,12 @@ class CalDavWriteTest {
         val transport = OkHttpClient.Builder().sslSocketFactory(tls.sslSocketFactory(), tls.trustManager)
             .addInterceptor {
                 if (it.request().method == "PUT" && interruptPutBeforeSend) throw java.io.IOException()
-                it.proceed(it.request())
+                val reply = it.proceed(it.request())
+                if (it.request().method == "GET" && failGetTls && reply.code == 503) {
+                    reply.close()
+                    throw javax.net.ssl.SSLHandshakeException("Fixture TLS verification failed")
+                }
+                reply
             }
             .callTimeout(3, TimeUnit.SECONDS).readTimeout(500, TimeUnit.MILLISECONDS).build()
         client = CalDavClient("fixture@example.invalid", "secret", url("/"), { it == "localhost" }, transport)
@@ -166,6 +172,61 @@ class CalDavWriteTest {
         enqueue(collection("bind", id = "urn:uuid:different"))
         assertEquals(CalendarWriteState.FAILED, process(entry(CalendarWriteKind.CREATE)).state)
         assertRequests("PROPFIND")
+    }
+
+    @Test fun acceptedMutationsKeepTheirReceiptWhenReadbackLosesAccess() {
+        for ((kind, error, problem) in listOf(
+            Triple(CalendarWriteKind.UPDATE, 401, CalDavProblem.AUTH),
+            Triple(CalendarWriteKind.CREATE, 403, CalDavProblem.ACCESS),
+            Triple(CalendarWriteKind.DELETE, 503, CalDavProblem.TLS),
+        )) {
+            val initial = entry(kind)
+            failGetTls = problem == CalDavProblem.TLS
+            val preflight = if (kind == CalendarWriteKind.CREATE) response(404) else remote()
+            enqueue(collection("all"), preflight)
+            if (kind == CalendarWriteKind.UPDATE) enqueue(permissions("write-content"))
+            enqueue(response(204), response(error))
+            var receipt: CalendarWrite? = null
+            val waiting = process(initial) { receipt = it }
+            assertEquals(CalendarWriteState.CHECKING, waiting.state)
+            assertEquals(problem.label, waiting.detail)
+            assertTrue(waiting.canResumeAutomatically())
+            assertTrue(waiting.attempted && waiting.acknowledged)
+            assertEquals(initial.ref, waiting.ref)
+            assertEquals(initial.ics, waiting.ics)
+            assertEquals(receipt, waiting.copy(detail = null))
+            val mutation = if (kind == CalendarWriteKind.DELETE) "DELETE" else "PUT"
+            val methods = if (kind == CalendarWriteKind.UPDATE) arrayOf("PROPFIND", "GET", "PROPFIND", mutation, "GET")
+                else arrayOf("PROPFIND", "GET", mutation, "GET")
+            assertRequests(*methods)
+
+            failGetTls = false
+            enqueue(collection("all"), if (kind == CalendarWriteKind.DELETE) response(404) else remote(initial.ics!!, NEW))
+            assertEquals(CalendarWriteState.CONFIRMED, process(waiting).state)
+            assertRequests("PROPFIND", "GET") { method, request ->
+                if (method == "GET") assertEquals(initial.ref.href.encodedPath, request.path)
+            }
+        }
+    }
+
+    @Test fun rejectionOfPutDoesNotResolveAnEarlierUncertainAttempt() {
+        for (previouslySent in listOf(false, true)) {
+            for (status in listOf(401, 403)) {
+                val update = entry(CalendarWriteKind.UPDATE).copy(attempted = previouslySent)
+                enqueue(collection("all"), remote(), permissions("write-content"), response(status))
+                val result = process(update)
+                assertEquals(if (previouslySent) CalendarWriteState.CHECKING else CalendarWriteState.FAILED, result.state)
+                assertEquals(previouslySent, result.attempted)
+                assertFalse(result.acknowledged)
+                assertRequests("PROPFIND", "GET", "PROPFIND", "PUT") { method, request ->
+                    if (method == "PUT") assertEquals(OLD, request.getHeader("If-Match"))
+                }
+            }
+        }
+        val attempted = entry(CalendarWriteKind.UPDATE).copy(attempted = true)
+        enqueue(collection("all"), response(403))
+        assertEquals(CalendarWriteState.CHECKING, process(attempted).state)
+        assertRequests("PROPFIND", "GET")
     }
 
     @Test fun rejectionRedirectAndServerErrorsNeverFallBackToUnconditionalWrites() {

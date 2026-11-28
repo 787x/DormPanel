@@ -339,9 +339,14 @@ private fun decodeWrite(json: JSONObject): CalendarWrite {
     val draft = CloudEventDraft(json.getString("title"), json.getString("location"), json.getString("description"),
         LocalDateTime.parse(json.getString("start")), LocalDateTime.parse(json.getString("end")), json.getBoolean("allDay"),
         ZoneId.of(json.getString("zone")))
+    val attempted = json.getBoolean("attempted")
+    val acknowledged = json.getBoolean("acknowledged")
+    val storedState = CalendarWriteState.valueOf(json.getString("state"))
+    // Earlier builds could persist a verification failure as a terminal write failure.
+    val state = if (storedState == CalendarWriteState.FAILED && (attempted || acknowledged)) CalendarWriteState.CHECKING else storedState
     return CalendarWrite(id, ref, json.getString("name"), CalendarWriteKind.valueOf(json.getString("kind")),
-        draft, json.optionalString("ics"), CalendarWriteState.valueOf(json.getString("state")), json.optionalString("detail"),
-        json.getBoolean("attempted"), json.getBoolean("acknowledged"), json.getLong("retryAt"), json.optionalString("verifiedEtag"),
+        draft, json.optionalString("ics"), state, json.optionalString("detail"),
+        attempted, acknowledged, json.getLong("retryAt"), json.optionalString("verifiedEtag"),
         json.optBoolean("cachePending"), json.optInt("retryCount"))
 }
 
