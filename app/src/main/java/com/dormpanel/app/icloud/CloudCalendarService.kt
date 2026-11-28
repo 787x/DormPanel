@@ -53,6 +53,8 @@ class CloudCalendarService internal constructor(
     private var configured = CloudSettings()
     private var settingsBusy = true
     private var syncing = false
+    private var activeRound: CalDavRound? = null
+    @Volatile private var syncingKey: CalendarCacheKey? = null
     @Volatile private var wanted = emptySet<CalendarCacheKey>()
     @Volatile private var working = false
     private val refreshMillis get() = configured.refreshMinutes * 60_000L
@@ -65,7 +67,13 @@ class CloudCalendarService internal constructor(
     private data class WindowView(
         val checkedAt: Long, val events: List<CloudEvent>, val issue: CalDavProblem? = null, val retryAt: Long = 0,
     ) {
-        fun due(now: Long, refreshMillis: Long) = max(retryAt, if (checkedAt > now) now else checkedAt + refreshMillis)
+        val bytes: Long = run {
+            val strings = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<String, Boolean>())
+            events.forEach { strings.addAll(listOfNotNull(it.uid, it.recurrence, it.title, it.location, it.description)) }
+            events.size * 168L + strings.sumOf { 40L + it.length * 2L }
+        }
+        fun due(now: Long, refreshMillis: Long) = max(retryAt,
+            if (checkedAt > now || issue != null) now else checkedAt + refreshMillis)
     }
 
     private val network = object : ConnectivityManager.NetworkCallback() {
@@ -107,6 +115,7 @@ class CloudCalendarService internal constructor(
         registered = false
         started = false
         working = false
+        activeRound?.cancel()
         demandChanged()
     }
 
@@ -117,6 +126,7 @@ class CloudCalendarService internal constructor(
         working = !settingsBusy && !down
         if (offline != down) {
             offline = down
+            if (down) activeRound?.cancel()
             if (!down) {
                 force = true
                 if (issue == CalDavProblem.NETWORK) retryAt = 0
@@ -162,12 +172,15 @@ class CloudCalendarService internal constructor(
         return events(CloudRange.between(date, date, zone, selection)).filter { it.event.overlaps(start, end, zone) }
     }
 
+    internal fun selectionNeedsReview(selection: Set<String>? = null): Boolean =
+        connected && (selection ?: selected).any { id -> calendars.none { it.id == id } }
+
     internal fun connectionLabel(range: CloudRange? = null): String {
-        val keys = range?.let(::keys).orEmpty()
+        val keys = range?.let(::keys) ?: wanted
         val error = issue ?: keys.firstNotNullOfOrNull { visible[it]?.issue }
         val now = now()
         val stale = keys.any { (visible[it]?.checkedAt ?: 0) !in (now - refreshMillis * 2)..now }
-        return when {
+        val label = when {
             settingsBusy -> "iCloud · 正在处理"
             error != null -> "iCloud · ${error.label}${if (connected) " · 缓存可能过期" else ""}"
             !connected -> "iCloud · 未连接"
@@ -176,6 +189,7 @@ class CloudCalendarService internal constructor(
             stale -> "iCloud · 缓存可能过期"
             else -> "iCloud · 已连接"
         }
+        return if (selectionNeedsReview(range?.selection)) "$label · 请重新选择日历" else label
     }
 
     internal fun hasStaleData(range: CloudRange): Boolean {
@@ -186,16 +200,21 @@ class CloudCalendarService internal constructor(
         }
     }
 
-    internal fun connect(email: String, password: String) = changeSettings { old ->
-        val found = openClient(email, password).discover()
-        // A replacement password for the same account leaves its cache and preferences usable.
-        val same = old.connected && store.login(old)?.first.equals(email, true)
-        val updated = old.copy(account = if (same) old.account else UUID.randomUUID().toString(),
-            encryptedLogin = store.encrypt(email, password), calendars = found,
-            selected = if (same) old.selected else found.mapTo(linkedSetOf()) { it.id })
-        store.save(updated)
-        runCatching { store.pruneAccounts(updated.account) }
-        updated
+    internal fun connect(email: String, password: String) {
+        val round = CalDavRound()
+        changeSettings(round = round) { old ->
+            val found = openClient(email, password).discover(round)
+            val same = old.connected && store.login(old)?.first.equals(email, true)
+            val binding = if (same) old.rediscovered(found) else CloudSettings(
+                calendars = found, selected = found.mapTo(linkedSetOf()) { it.id }, refreshMinutes = old.refreshMinutes,
+            )
+            val updated = binding.copy(account = if (same) old.account else UUID.randomUUID().toString(),
+                encryptedLogin = store.encrypt(email, password))
+            round.check()
+            store.save(updated)
+            runCatching { store.pruneAccounts(updated.account) }
+            updated
+        }
     }
 
     internal fun setSelection(selected: Set<String>) = changeSettings(forceRefresh = false) { old ->
@@ -216,10 +235,15 @@ class CloudCalendarService internal constructor(
         CloudSettings()
     }
 
-    private fun changeSettings(resetWindows: Boolean = false, forceRefresh: Boolean = true, change: (CloudSettings) -> CloudSettings) {
+    private fun changeSettings(
+        resetWindows: Boolean = false, forceRefresh: Boolean = true, round: CalDavRound? = null,
+        change: (CloudSettings) -> CloudSettings,
+    ) {
         if (closed || settingsBusy) return
         settingsBusy = true
         working = false
+        activeRound?.cancel()
+        activeRound = round
         val old = configured
         publish()
         worker.execute {
@@ -228,6 +252,7 @@ class CloudCalendarService internal constructor(
             val recovered = if (updated.isFailure) runCatching { store.settings() }.getOrNull() else null
             main.post {
                 if (closed) return@post
+                if (activeRound === round) activeRound = null
                 settingsBusy = false
                 working = started && !offline
                 updated.onSuccess {
@@ -245,8 +270,10 @@ class CloudCalendarService internal constructor(
                         configured = recovered
                         visible.clear()
                     }
-                    issue = problem(it)
-                    retryAt = retryTime(it)
+                    if (problem(it) != CalDavProblem.CANCELLED) {
+                        issue = problem(it)
+                        retryAt = retryTime(it)
+                    }
                 }
                 demandChanged()
                 publish()
@@ -265,6 +292,12 @@ class CloudCalendarService internal constructor(
 
     private fun demandChanged() {
         val next = activeRanges().flatMapTo(linkedSetOf()) { keys(it) }
+        if (next != wanted) {
+            visible.entries.removeAll { it.value.retryAt == MEMORY_DEFERRED }
+            // A navigation can add an urgent window even when the current one still
+            // belongs to the foreground refresh set.
+            if (syncingKey?.let { it !in next || next.any { key -> key !in wanted } } == true) activeRound?.cancel()
+        }
         wanted = next
         visible.keys.retainAll(next)
         main.removeCallbacks(timer)
@@ -297,20 +330,22 @@ class CloudCalendarService internal constructor(
         if (!discover && requested.isEmpty()) { scheduleNext(); return }
         val settings = configured
         val coolingDown = visible.filterValues { it.retryAt > now }.keys.toSet()
+        val round = CalDavRound()
+        if (canSync) activeRound = round
         syncing = true
         if (canSync) force = false
         publish()
         worker.execute {
-            val results = mutableMapOf<CalendarCacheKey, WindowView>()
             val memory = requested.toSet()
             var effective = settings
             var failure: Throwable? = null
             var discovered = false
             fun dispatch(key: CalendarCacheKey, view: WindowView) {
-                results[key] = view
                 main.post {
                     if (!closed && configured.account == settings.account && key in wanted) {
-                        visible[key] = view
+                        val occupied = visible.entries.sumOf { (other, current) -> if (key == other) 0L else current.bytes }
+                        visible[key] = if (occupied + view.bytes <= MAX_VIEW_BYTES) view else
+                            (visible[key] ?: WindowView(0, emptyList())).copy(issue = CalDavProblem.CAPACITY, retryAt = MEMORY_DEFERRED)
                         publish()
                     }
                 }
@@ -327,7 +362,8 @@ class CloudCalendarService internal constructor(
                     val (email, password) = store.login(settings) ?: throw CalDavFailure(CalDavProblem.STORAGE)
                     val client = openClient(email, password)
                     if (discover) {
-                        val updated = settings.copy(calendars = client.discover())
+                        val updated = settings.rediscovered(client.discover(round))
+                        round.check()
                         if (updated != settings) {
                             store.save(updated)
                             effective = updated
@@ -337,19 +373,24 @@ class CloudCalendarService internal constructor(
                     val scopes = if (discover) active.flatMapTo(linkedSetOf()) { keys(it, effective) } else memory
                     for (key in scopes) {
                         if (!working) break
+                        syncingKey = key
                         if (key !in wanted) continue
                         if (!refresh && key in coolingDown) continue
                         val old = read(key)
                         val previous = old.getOrNull()
-                        if (!refresh && previous != null && now - previous.checkedAt in 0 until settings.refreshMinutes * 60_000L) continue
                         val calendar = effective.calendars.firstOrNull { it.id == key.calendarId } ?: continue
+                        if (!refresh && previous?.problem == null && previous?.collectionUrl == calendar.url.toString() &&
+                            now - previous.checkedAt in 0 until settings.refreshMinutes * 60_000L) continue
                         try {
-                            val next = client.synchronize(calendar, key.window, previous, now())
-                            store.saveSnapshot(effective.account, key, next)
-                            dispatch(key, next.toView())
+                            val next = client.synchronize(calendar, key.window, previous, now(), round)
+                            round.check()
+                            store.saveSnapshot(effective.account, key, next, wanted)
+                            val retry = next.problem?.let { retryTime(CalDavFailure(it)) } ?: 0
+                            dispatch(key, next.toView(retryAt = retry))
                         } catch (e: Exception) {
-                            dispatch(key, previous.toView(problem(e), retryTime(e)))
-                            if (problem(e) in GLOBAL_FAILURES || (e is CalDavFailure && e.retryAt > now())) {
+                            if (problem(e) != CalDavProblem.CANCELLED) dispatch(key, previous.toView(problem(e), retryTime(e)))
+                            if (problem(e) in GLOBAL_FAILURES || problem(e) in setOf(CalDavProblem.BUDGET, CalDavProblem.CANCELLED) ||
+                                (e is CalDavFailure && e.retryAt > now())) {
                                 failure = e
                                 break
                             }
@@ -357,20 +398,21 @@ class CloudCalendarService internal constructor(
                     }
                 }
             } catch (e: Exception) { failure = e }
+            finally { syncingKey = null }
             main.post {
                 if (closed) return@post
                 syncing = false
+                if (activeRound === round) activeRound = null
                 if (configured.account == settings.account && !settingsBusy) {
                     configured = effective
                     val next = activeRanges().flatMapTo(linkedSetOf()) { keys(it) }
                     wanted = next
                     visible.keys.retainAll(next)
-                    results.forEach { (key, view) -> if (key in next) visible[key] = view }
-                    if (canSync) {
+                    if (discovered) discoveryAt = now()
+                    if (canSync && failure?.let(::problem) != CalDavProblem.CANCELLED) {
                         issue = failure?.let(::problem)
                         retryAt = failure?.let(::retryTime) ?: 0
                         serverRetryAt = (failure as? CalDavFailure)?.retryAt ?: 0
-                        if (discovered) discoveryAt = now()
                     }
                 }
                 publish()
@@ -380,7 +422,7 @@ class CloudCalendarService internal constructor(
     }
 
     private fun CalendarSnapshot?.toView(issue: CalDavProblem? = null, retryAt: Long = 0) = WindowView(
-        this?.checkedAt ?: 0, this?.objects?.values?.flatMap { it.events }.orEmpty(), issue, retryAt,
+        this?.checkedAt ?: 0, this?.objects?.values?.flatMap { it.events }.orEmpty(), issue ?: this?.problem, retryAt,
     )
 
     private fun scheduleNext() {
@@ -392,7 +434,11 @@ class CloudCalendarService internal constructor(
     }
 
     private fun retryTime(failure: Throwable): Long {
-        val delay = if (problem(failure) in setOf(CalDavProblem.AUTH, CalDavProblem.ACCESS)) refreshMillis else 5 * 60_000L
+        val delay = when (problem(failure)) {
+            CalDavProblem.AUTH, CalDavProblem.ACCESS -> refreshMillis
+            CalDavProblem.BUDGET -> 60_000L
+            else -> 5 * 60_000L
+        }
         return max(now() + delay, (failure as? CalDavFailure)?.retryAt ?: 0L)
     }
 
@@ -410,6 +456,8 @@ class CloudCalendarService internal constructor(
     }
 
     internal companion object {
+        private const val MAX_VIEW_BYTES = 32L * 1024 * 1024
+        private const val MEMORY_DEFERRED = Long.MAX_VALUE
         private val GLOBAL_FAILURES = setOf(CalDavProblem.AUTH, CalDavProblem.NETWORK, CalDavProblem.TLS, CalDavProblem.LIMITED, CalDavProblem.SERVER)
         internal var overrideFactory: ((Context) -> CloudCalendarService)? = null
         fun create(context: Context) = overrideFactory?.invoke(context) ?: CloudCalendarService(context)

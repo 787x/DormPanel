@@ -103,9 +103,11 @@ class ScheduleCardView(context: Context, appearance: AppearanceController, priva
                 if (events.isEmpty()) context.scheduleText("近期没有日程", "No upcoming events") else context.scheduleText("近期日程", "Upcoming events")
             } else if (events.isEmpty()) "No upcoming events" else "Upcoming events"
             val staleLabel = "iCloud 缓存可能过期"
-            if (stale) {
-                if (large) status.append(" · $staleLabel")
-                else heading.text = "$calendarTitle · $staleLabel"
+            val notice = if (cloudCalendar?.selectionNeedsReview(settings.selected) == true) "iCloud 请重新选择日历"
+                else if (stale) staleLabel else null
+            if (notice != null) {
+                if (large) status.append(" · $notice")
+                else heading.text = "$calendarTitle · $notice"
             }
             events.forEach { event ->
                 val time = event.label(context, clock.today(), clock.zone(), compact = true)

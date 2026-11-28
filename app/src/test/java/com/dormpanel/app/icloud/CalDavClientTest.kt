@@ -18,6 +18,10 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import org.json.JSONObject
 
 class CalDavClientTest {
     private val server = MockWebServer()
@@ -35,6 +39,11 @@ class CalDavClientTest {
     private var externalRedirect: String? = null
     private var manifestOverride: String? = null
     private var alteredTag = false
+    @Volatile private var manifestDelay = 0L
+    @Volatile private var manifestStarted: CountDownLatch? = null
+    private var workPath = "/account/calendars/work/"
+    private var familyPath = "/account/calendars/family/"
+    private var workResource: String? = null
     private val records = linkedMapOf("a.ics" to ("one" to basic("Shared name")), "b.ics" to ("one" to basic("Retained")))
 
     @Before fun start() {
@@ -55,11 +64,11 @@ class CalDavClientTest {
                     "/" -> dav(item("/", "<D:current-user-principal><D:href>/account/</D:href></D:current-user-principal>"))
                     "/account/" -> dav(item("/account/", "<C:calendar-home-set><D:href>/account/calendars/</D:href></C:calendar-home-set>"))
                     "/account/calendars/" -> dav(item("/account/calendars/", type) +
-                        calendar("/account/calendars/work/", "Work", "#123456FF", "<D:write-content/>") +
-                        calendar("/account/calendars/family/", "Family", "#ff7200", "") +
+                        calendar(workPath, "Work", "#123456FF", "<D:write-content/>", workResource) +
+                        calendar(familyPath, if (workResource == null) "Family" else "Work", "#ff7200", "") +
                         item("/account/calendars/tasks/", "<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>" +
                             "<C:supported-calendar-component-set><C:comp name=\"VTODO\"/></C:supported-calendar-component-set>"))
-                    "/account/calendars/work/", "/account/calendars/family/" -> {
+                    workPath, familyPath -> {
                         val path = request.path!!
                         when {
                             tokenTag in xml -> {
@@ -71,7 +80,9 @@ class CalDavClientTest {
                                 val body = dav(manifestOverride ?: records.entries.joinToString("") { (file, pair) ->
                                     item(path + file, etag(pair.first))
                                 })
-                                if (truncate) body.setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY) else body
+                                manifestStarted?.countDown()
+                                if (truncate) body.setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY)
+                                else body.setHeadersDelay(manifestDelay, TimeUnit.MILLISECONDS)
                             }
                             "<C:calendar-multiget" in xml -> {
                                 val matching = records.entries.filter { (file, _) -> "<D:href>$path$file</D:href>" in xml }
@@ -150,7 +161,7 @@ class CalDavClientTest {
         expect(CalDavProblem.DATA) { client.synchronize(calendar, window, original, 20) }
         afterToken = null
         records["a.ics"] = "three" to basic("Unsupported").replace("END:VEVENT", "RRULE:FREQ=SECONDLY\r\nEND:VEVENT")
-        expect(CalDavProblem.DATA) { client.synchronize(calendar, window, original, 20) }
+        assertEquals(CalDavProblem.DATA, client.synchronize(calendar, window, original, 20).problem)
         assertEquals(setOf("Shared name", "Retained"), original.titles())
         records["a.ics"] = "four" to basic("Restored")
         assertEquals(setOf("Restored", "Retained"), client.synchronize(calendar, window, original, 30).titles())
@@ -243,12 +254,148 @@ class CalDavClientTest {
             ics("UID:x\nDTSTART:20260301T090000Z\nRRULE:FREQ=WEEKLY;FREQ=DAILY"),
             ics("UID:x\nDTSTART:20260301T090000Z\nDTSTART:20260302T090000Z"),
             ics("UID:x\nDTSTART:20260301T090000Z\nRRULE:FREQ=WEEKLY;BYHOUR=1,2"),
-            ics("UID:x\nDTSTART:20260301T090000Z", "UID:x\nRECURRENCE-ID;RANGE=THISANDFUTURE:20260301T090000Z\nDTSTART:20260301T080000Z"),
+            ics("UID:x\nDTSTART:20260301T090000Z", "UID:x\nRECURRENCE-ID;RANGE=THISANDPRIOR:20260301T090000Z\nDTSTART:20260301T080000Z"),
             ics("UID:x\nDTSTART:20260301T090000Z").replace("END:VEVENT", ""),
         )) expect(CalDavProblem.DATA) { readCloudEvents(input, window) }
         val budget = ExpansionBudget().apply { scan(180_000) }
-        expect(CalDavProblem.DATA) {
+        expect(CalDavProblem.CAPACITY) {
             readCloudEvents(ics("UID:x\nDTSTART:20260301T090000Z\nRRULE:FREQ=DAILY"), window, budget)
+        }
+    }
+
+    @Test fun appliesFutureEditByOriginalIdThroughDstAndHonorsDetachedAndExcludedInstances() {
+        val tz = "America/New_York"
+        val raw = ics(
+            "UID:future\nDTSTART;TZID=$tz:20260222T090000\nDURATION:PT1H\nSUMMARY:Before\n" +
+                "RRULE:FREQ=WEEKLY;COUNT=8\nEXDATE;TZID=$tz:20260322T090000\nRDATE;TZID=$tz:20260317T090000",
+            "UID:future\nRECURRENCE-ID;RANGE=thisandfuture:20260301T140000Z\n" +
+                "DTSTART;TZID=$tz:20260302T100000\nDURATION:PT2H\nSUMMARY:After",
+            "UID:future\nRECURRENCE-ID;TZID=$tz:20260315T090000\nDTSTART;TZID=America/Los_Angeles:20260315T120000\n" +
+                "DURATION:PT30M\nSUMMARY:Single",
+            "UID:future\nRECURRENCE-ID;TZID=$tz:20260329T090000\nSTATUS:CANCELLED",
+        )
+        val before = readCloudEvents(raw, window.copy(month = YearMonth.of(2026, 2))).single()
+        assertEquals("Before", before.title)
+        val march = readCloudEvents(raw, window).sortedBy { it.start }
+        assertEquals(listOf("After", "After", "Single", "After"), march.map { it.title })
+        assertEquals(listOf("2026-03-02T15:00:00Z", "2026-03-09T14:00:00Z", "2026-03-15T19:00:00Z", "2026-03-18T14:00:00Z"),
+            march.map { Instant.ofEpochMilli(it.start).toString() })
+        assertEquals(listOf("2026-03-01T14:00:00Z", "2026-03-08T13:00:00Z", "2026-03-15T13:00:00Z", "2026-03-17T13:00:00Z"),
+            march.map { it.recurrence })
+        assertEquals(listOf(120, 120, 30, 120), march.map { ((it.end - it.start) / 60000).toInt() })
+        val april = readCloudEvents(raw, window.copy(month = YearMonth.of(2026, 4)))
+        assertEquals(listOf("2026-04-06T14:00:00Z", "2026-04-13T14:00:00Z"), april.map { Instant.ofEpochMilli(it.start).toString() })
+    }
+
+    @Test fun futureAllDayEditsCanMoveInstancesIntoAnotherMonthAndLaterEditsReplaceTheRange() {
+        val dates = readCloudEvents(ics(
+            "UID:day\nDTSTART;VALUE=DATE:20260220\nRRULE:FREQ=WEEKLY;COUNT=5\nSUMMARY:Original",
+            "UID:day\nRECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20260227\nDTSTART;VALUE=DATE:20260228\n" +
+                "DTEND;VALUE=DATE:20260303\nSUMMARY:Three days",
+            "UID:day\nRECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20260313\nSTATUS:CANCELLED",
+        ), window).sortedBy { it.start }
+        assertEquals(listOf("2026-02-27", "2026-03-06"), dates.map { it.recurrence })
+        assertEquals(listOf(LocalDate.of(2026, 2, 28), LocalDate.of(2026, 3, 7)), dates.map { it.firstDay })
+        assertEquals(listOf(LocalDate.of(2026, 3, 3), LocalDate.of(2026, 3, 10)), dates.map { it.endDay })
+    }
+
+    @Test fun unsupportedResourceKeepsOldObjectAndUnconfirmedAbsenceWithoutBlockingValidEdits() {
+        val calendar = client.discover().first()
+        records["error.ics"] = "v1" to basic("Old rule")
+        val previous = client.synchronize(calendar, window, null, 1)
+        records["a.ics"] = "v2" to basic("Updated")
+        records.remove("b.ics")
+        records["new.ics"] = "v1" to basic("Added")
+        records["error.ics"] = "v2" to basic("Old rule").replace("END:VEVENT", "EXRULE:FREQ=DAILY\r\nEND:VEVENT")
+        token = "dirty"
+        val mixed = client.synchronize(calendar, window, previous, 2)
+        assertEquals(setOf("Updated", "Added", "Old rule", "Retained"), mixed.titles())
+        assertEquals(CalDavProblem.DATA, mixed.problem)
+        assertEquals(1, mixed.checkedAt)
+        assertNull(mixed.collectionToken)
+        assertEquals(mixed, decodeSnapshot(JSONObject(encodeSnapshot(mixed).toString())))
+        records["error.ics"] = "v3" to basic("Resolved")
+        val resolved = client.synchronize(calendar, window, mixed, 3)
+        assertNull(resolved.problem)
+        assertEquals("dirty", resolved.collectionToken)
+        assertEquals(setOf("Updated", "Added", "Resolved"), resolved.titles())
+    }
+
+    @Test fun rediscoveryRetainsLegacyAndStableBindingsAndDoesNotGuessFromSameName() {
+        val old = client.discover()
+        val work = old.first()
+        val family = old.last()
+        val settings = CloudSettings(calendars = old, selected = setOf(work.id, family.id))
+        workResource = "urn:uuid:4754216c-f21c-4fd5-a022-c8edfce188a2"
+        val upgraded = settings.rediscovered(client.discover())
+        assertEquals(work.id, upgraded.calendars.first().id)
+        val previous = client.synchronize(upgraded.calendars.first(), window, null, 1)
+        workPath = "/account/calendars/work-moved/"
+        familyPath = "/account/calendars/family-moved/"
+        val moved = upgraded.rediscovered(client.discover())
+        assertEquals(listOf("Work", "Work"), moved.calendars.map { it.name })
+        assertEquals(work.id, moved.calendars.first().id)
+        assertEquals(work.id, CardCalendars.decode(CardCalendars(setOf(work.id)).encode()).selected!!.single())
+        assertNotEquals(family.id, moved.calendars.last().id)
+        assertEquals(settings.selected, moved.selected)
+        assertEquals(family.id, moved.missingCalendars.single().id)
+        requests.clear()
+        val newAddress = client.synchronize(moved.calendars.first(), window, previous, 2)
+        assertTrue(requests.any { "calendar-query" in it.second })
+        assertEquals(moved.calendars.first().url.toString(), newAddress.collectionUrl)
+        assertEquals(previous.titles(), newAddress.titles())
+        familyPath = "/account/calendars/family/"
+        assertEquals(family.id, moved.rediscovered(client.discover()).calendars.last().id)
+    }
+
+    @Test fun deadlineRequestAndByteBudgetsApplyToTheWholeRoundAndCancelledCallCanRecover() {
+        val calendar = client.discover().first()
+        val old = client.synchronize(calendar, window, null, 1)
+        token = "dirty"
+        expect(CalDavProblem.BUDGET) { client.synchronize(calendar, window, old, 2, CalDavRound(maxRequests = 1)) }
+        val shared = CalDavRound(maxRequests = 4)
+        assertEquals(old.titles(), client.synchronize(calendar, window, old, 2, shared).titles())
+        expect(CalDavProblem.BUDGET) { client.discover(shared) }
+        expect(CalDavProblem.BUDGET) { client.synchronize(calendar, window, old, 2, CalDavRound(maxBytes = 550)) }
+        manifestDelay = 4_000
+        expect(CalDavProblem.BUDGET) { client.synchronize(calendar, window, old, 2, CalDavRound(timeoutMillis = 450)) }
+
+        val worker = Executors.newSingleThreadExecutor()
+        try {
+            val entered = CountDownLatch(1)
+            manifestStarted = entered
+            val round = CalDavRound()
+            val task = worker.submit<CalDavFailure> {
+                expect(CalDavProblem.CANCELLED) { client.synchronize(calendar, window, old, 2, round) }
+            }
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            round.cancel()
+            assertEquals(CalDavProblem.CANCELLED, task.get(2, TimeUnit.SECONDS).problem)
+        } finally {
+            worker.shutdownNow()
+        }
+        manifestDelay = 0
+        assertEquals(old.titles(), client.synchronize(calendar, window, old, 3).titles())
+    }
+
+    @Test fun deduplicatedSnapshotRoundTripsLongRecurringDescriptionsAndReadsLegacyFormat() {
+        val description = "说明 long description ".repeat(180)
+        val events = (0 until 400).map {
+            CloudEvent("uid", "id-$it", "Title", "Location", description, it.toLong(), it + 60L)
+        }
+        val snapshot = CalendarSnapshot(5, "token", mapOf("event.ics" to CachedObject("tag", events)))
+        assertTrue(events.sumOf { it.description.toByteArray().size } > 512 * 1024)
+        val compact = encodeSnapshot(snapshot).toString()
+        assertTrue(compact.toByteArray().size < 45 * 1024)
+        assertEquals(snapshot, decodeSnapshot(JSONObject(compact)))
+        val decoded = decodeSnapshot(JSONObject("""{
+            "checkedAt":5,"token":"legacy","objects":[{"href":"fixture","etag":"tag","events":[
+            {"uid":"uid","title":"legacy title","location":"","description":"description","start":1,"end":2}]}]
+        }"""))
+        assertEquals("legacy title", decoded.objects.getValue("fixture").events.single().title)
+        assertNull(decoded.collectionUrl)
+        expect(CalDavProblem.CAPACITY) {
+            encodeSnapshot(snapshot.copy(objects = mapOf("large" to CachedObject("tag", List(MAX_INSTANCES + 1) { events.first() }))))
         }
     }
 
@@ -258,9 +405,11 @@ class CalDavClientTest {
     private fun CalendarSnapshot.titles() = objects.values.flatMap { it.events }.map { it.title }.toSet()
     private val tokenTag = "<D:sync-token/>"
     private val type = "<D:resourcetype><D:collection/></D:resourcetype>"
-    private fun calendar(path: String, name: String, color: String, access: String) =
+    private fun calendar(path: String, name: String, color: String, access: String, resource: String? = null) =
         item(path, "<D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:displayname>$name</D:displayname>" +
-            "<A:calendar-color>$color</A:calendar-color><D:current-user-privilege-set><D:privilege><D:read/></D:privilege>" +
+            "<A:calendar-color>$color</A:calendar-color>" +
+            (resource?.let { "<D:resource-id><D:href>$it</D:href></D:resource-id>" } ?: "") +
+            "<D:current-user-privilege-set><D:privilege><D:read/></D:privilege>" +
             "${if (access.isBlank()) "" else "<D:privilege>$access</D:privilege>"}</D:current-user-privilege-set>")
     private fun item(path: String, props: String, status: Int = 200) = "<D:response><D:href>$path</D:href>" +
         "<D:propstat><D:prop>$props</D:prop><D:status>HTTP/1.1 $status Test</D:status></D:propstat></D:response>"

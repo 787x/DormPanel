@@ -67,7 +67,10 @@ internal class CloudCalendarDialogs(private val context: Context, private val ap
         if (dialog.isShowing) service.addListener(update)
     }
 
-    fun choose(calendars: List<CloudCalendar>, selected: Set<String>?, card: Boolean = false, save: (Set<String>?) -> Unit) {
+    fun choose(
+        calendars: List<CloudCalendar>, selected: Set<String>?, card: Boolean = false,
+        inherited: Set<String> = emptySet(), save: (Set<String>?) -> Unit,
+    ) {
         val content = column()
         val radio = if (card) RadioGroup(context).apply {
             orientation = RadioGroup.VERTICAL
@@ -76,11 +79,15 @@ internal class CloudCalendarDialogs(private val context: Context, private val ap
             check(getChildAt(if (selected == null) 0 else 1).id)
             content.addView(this)
         } else null
+        val initial = selected ?: inherited
+        if (initial.any { id -> calendars.none { it.id == id } }) {
+            content.addView(context.scheduleLabel("部分已选日历无法确认，请核对后重新选择。", 16f))
+        }
         val choices = calendars.map { calendar ->
             calendar.id to CheckBox(context).apply {
                 text = "${calendar.name} · ${calendar.access.label()}"
                 minHeight = context.dp(48)
-                isChecked = calendar.id in selected.orEmpty()
+                isChecked = calendar.id in initial
                 calendar.color?.let { color -> background = stripe(color, context.dp(3)) }
                 content.addView(this)
             }

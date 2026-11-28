@@ -32,20 +32,20 @@ internal class CalDavClient(
     private val http = transport.newBuilder().followRedirects(false).followSslRedirects(false)
         .authenticator(okhttp3.Authenticator.NONE).cookieJar(okhttp3.CookieJar.NO_COOKIES).cache(null).build()
 
-    fun discover(): List<CloudCalendar> {
+    fun discover(round: CalDavRound = CalDavRound()): List<CloudCalendar> {
         val properties = "<D:current-user-principal/><C:calendar-home-set/>"
         val bootstrap = try {
-            properties(at(root, "/.well-known/caldav"), "0", properties)
+            properties(round, at(root, "/.well-known/caldav"), "0", properties)
         } catch (e: DavHttpStatus) {
             if (e.code !in setOf(404, 405, 501)) throw e.failure()
-            try { properties(root, "0", properties) } catch (status: DavHttpStatus) { throw status.failure() }
+            try { properties(round, root, "0", properties) } catch (status: DavHttpStatus) { throw status.failure() }
         }
         val response = bootstrap.requiredCollection()
         val homeDocument = if (response.property(CAL, "calendar-home-set") != null) bootstrap else {
             val principal = response.property(DAV, "current-user-principal") ?: invalidCalendar()
             if (principal.child(DAV, "unauthenticated") != null) throw CalDavFailure(CalDavProblem.AUTH)
             val target = at(bootstrap.url, principal.child(DAV, "href")?.text() ?: invalidCalendar())
-            try { properties(target, "0", "<C:calendar-home-set/>") } catch (e: DavHttpStatus) { throw e.failure() }
+            try { properties(round, target, "0", "<C:calendar-home-set/>") } catch (e: DavHttpStatus) { throw e.failure() }
         }
         val homes = homeDocument.requiredCollection().property(CAL, "calendar-home-set")
             ?.children(DAV, "href")?.map { at(homeDocument.url, it.text()) }?.distinct().orEmpty()
@@ -53,8 +53,8 @@ internal class CalDavClient(
         val found = linkedMapOf<String, CloudCalendar>()
         for (home in homes) {
             val listing = try {
-                properties(home, "1", "<D:resourcetype/><D:displayname/>" +
-                    "<A:calendar-color/><D:current-user-privilege-set/><C:supported-calendar-component-set/>")
+                properties(round, home, "1", "<D:resourcetype/><D:displayname/>" +
+                    "<A:calendar-color/><D:current-user-privilege-set/><C:supported-calendar-component-set/><D:resource-id/>")
             } catch (e: DavHttpStatus) { throw e.failure() }
             listing.requiredCollection()
             for (item in listing.items.values) {
@@ -71,24 +71,34 @@ internal class CalDavClient(
                 }
                 val url = item.url
                 checkCalendar(url.encodedQuery == null)
-                val id = digest(url.toString())
+                val stable = item.property(DAV, "resource-id")?.child(DAV, "href")?.text()?.takeIf {
+                    it.length <= 1024 && runCatching { java.net.URI(it).isAbsolute }.getOrDefault(false)
+                }
+                val id = calendarDigest(if (stable == null) url.toString() else "resource-id:$stable")
                 val name = item.property(DAV, "displayname")?.text()?.take(160)?.ifBlank { null } ?: "iCloud"
                 val color = item.property(APPLE, "calendar-color")?.text()?.let(::parseColor)
-                found[id] = CloudCalendar(id, url, name, color, access)
-                checkCalendar(found.size <= MAX_CALENDARS)
+                val calendar = CloudCalendar(id, url, name, color, access, stable)
+                val prior = found.putIfAbsent(id, calendar)
+                // A multi-home listing may return the same binding twice. Ambiguous aliases
+                // are kept out of selection reconciliation until discovery can be verified.
+                checkCalendar(prior == null || prior.url == url)
+                checkCalendarCapacity(found.size <= MAX_CALENDARS)
             }
         }
         return found.values.toList()
     }
 
-    fun synchronize(calendar: CloudCalendar, window: CalendarWindow, previous: CalendarSnapshot?, now: Long): CalendarSnapshot {
-        val before = token(calendar.url)
-        if (before != null && before == previous?.collectionToken) return previous.copy(checkedAt = now)
+    fun synchronize(calendar: CloudCalendar, window: CalendarWindow, previous: CalendarSnapshot?, now: Long,
+        round: CalDavRound = CalDavRound(),
+    ): CalendarSnapshot {
+        val address = calendar.url.toString()
+        val before = token(round, calendar.url)
+        if (before != null && previous?.collectionUrl == address && previous.problem == null && before == previous.collectionToken) return previous.copy(checkedAt = now)
 
         val range = "start=\"${WIRE_TIME.format(window.queryStart)}\" end=\"${WIRE_TIME.format(window.queryEnd)}\""
         val filter = "<C:filter><C:comp-filter name=\"VCALENDAR\"><C:comp-filter name=\"VEVENT\">" +
             "<C:time-range $range/></C:comp-filter></C:comp-filter></C:filter>"
-        val manifest = report(calendar.url, "1", "<C:calendar-query $NS><D:prop><D:getetag/></D:prop>$filter</C:calendar-query>")
+        val manifest = report(round, calendar.url, "1", "<C:calendar-query $NS><D:prop><D:getetag/></D:prop>$filter</C:calendar-query>")
             .eventObjects()
         val result = linkedMapOf<String, CachedObject>()
         val changed = manifest.filter { (href, etag) ->
@@ -100,34 +110,64 @@ internal class CalDavClient(
         }
         val data = "<D:prop><D:getetag/><C:calendar-data/></D:prop>"
         var count = result.values.sumOf { it.events.size }
-        val budget = ExpansionBudget()
-        for (batch in changed.keys.chunked(12)) {
+        val budget = ExpansionBudget(round::check)
+        var problem: CalDavProblem? = null
+        fun fetch(batch: List<String>): DavDocument? {
             val hrefs = batch.joinToString("") { "<D:href>${escapeXml(it.toHttpUrl().encodedPath)}</D:href>" }
-            val document = report(calendar.url, "1", "<C:calendar-multiget $NS>$data$hrefs</C:calendar-multiget>")
+            return try {
+                report(round, calendar.url, "1", "<C:calendar-multiget $NS>$data$hrefs</C:calendar-multiget>")
+            } catch (e: CalDavFailure) {
+                if (e.problem != CalDavProblem.CAPACITY || batch.size < 2) throw e
+                return null
+            }
+        }
+        fun collect(batch: List<String>) {
+            val document = fetch(batch)
+            if (document == null) {
+                val middle = batch.size / 2
+                collect(batch.subList(0, middle))
+                collect(batch.subList(middle, batch.size))
+                return
+            }
             val returned = document.eventObjects()
             checkCalendar(returned.keys == batch.toSet())
             for ((href, etag) in returned) {
+                round.check()
                 checkCalendar(etag == manifest[href])
                 val dataElement = document.items.getValue(href).property(CAL, "calendar-data") ?: invalidCalendar()
                 checkCalendar(dataElement.children().isEmpty())
-                val ics = dataElement.textContent
-                val events = readCloudEvents(ics, window, budget)
+                val events = try {
+                    readCloudEvents(dataElement.textContent, window, budget)
+                } catch (e: CalDavFailure) {
+                    if (e.problem !in setOf(CalDavProblem.DATA, CalDavProblem.CAPACITY)) throw e
+                    if (problem != CalDavProblem.CAPACITY) problem = e.problem
+                    continue
+                }
                 count += events.size
-                checkCalendar(count <= MAX_INSTANCES)
+                checkCalendarCapacity(count <= MAX_INSTANCES)
                 result[href] = CachedObject(etag, events)
             }
         }
+        changed.keys.chunked(24).forEach(::collect)
         // The token validates this range snapshot only. It cannot seed a sync-collection REPORT.
-        val after = if (before == null) null else token(calendar.url)
+        val after = if (before == null) null else token(round, calendar.url)
         checkCalendar(before == null || before == after)
+        round.check()
+        if (problem != null) {
+            // A complete manifest is insufficient to establish absence when some resources
+            // could not be interpreted. Keep everything previously known until a full check.
+            previous?.objects?.forEach { (href, obj) -> result.putIfAbsent(href, obj) }
+        }
+        checkCalendarCapacity(result.size <= MAX_OBJECTS && result.values.sumOf { it.events.size } <= MAX_INSTANCES)
         val keys = hashSetOf<Pair<String, String?>>()
         checkCalendar(result.values.all { obj -> obj.events.all { keys.add(it.uid to it.recurrence) } })
-        return CalendarSnapshot(now, after, result)
+        return CalendarSnapshot(if (problem == null) now else previous?.checkedAt ?: 0,
+            after.takeIf { problem == null }, result, problem, address)
     }
 
-    private fun token(url: HttpUrl): String? {
+    private fun token(round: CalDavRound, url: HttpUrl): String? {
         val document = try {
-            properties(url, "0", "<D:sync-token/>")
+            properties(round, url, "0", "<D:sync-token/>")
         } catch (e: DavHttpStatus) {
             if (e.code in setOf(405, 501)) return null
             throw e.failure()
@@ -137,37 +177,48 @@ internal class CalDavClient(
         }?.takeUnless(String::isEmpty)
     }
 
-    private fun properties(url: HttpUrl, depth: String, props: String) =
-        request(url, "PROPFIND", depth, "<D:propfind $NS><D:prop>$props</D:prop></D:propfind>")
+    private fun properties(round: CalDavRound, url: HttpUrl, depth: String, props: String) =
+        request(round, url, "PROPFIND", depth, "<D:propfind $NS><D:prop>$props</D:prop></D:propfind>")
 
-    private fun report(url: HttpUrl, depth: String, xml: String) =
-        try { request(url, "REPORT", depth, xml) } catch (e: DavHttpStatus) { throw e.failure() }
+    private fun report(round: CalDavRound, url: HttpUrl, depth: String, xml: String) =
+        try { request(round, url, "REPORT", depth, xml) } catch (e: DavHttpStatus) { throw e.failure() }
 
-    private fun request(initial: HttpUrl, method: String, depth: String, xml: String): DavDocument {
+    private fun request(round: CalDavRound, initial: HttpUrl, method: String, depth: String, xml: String): DavDocument {
         var url = trusted(initial)
         try {
             repeat(5) {
                 val request = Request.Builder().url(url).header("Depth", depth).header("Authorization", authorization)
                     .method(method, xml.toRequestBody(XML)).build()
-                http.newCall(request).execute().use { response ->
-                    if (response.code in REDIRECTS) {
-                        url = at(url, response.header("Location") ?: throw CalDavFailure(CalDavProblem.TLS))
-                    } else {
-                        if (response.code != 207) throw DavHttpStatus(response.code, retryAfter(response.header("Retry-After")))
-                        val body = response.body ?: invalidCalendar()
-                        checkCalendar(body.contentLength() <= MAX_XML_BYTES)
-                        val source = body.source()
-                        checkCalendar(!source.request(MAX_XML_BYTES + 1))
-                        val utf8 = Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(source.readByteArray())).toString()
-                        return parseDocument(url, utf8.removePrefix("\uFEFF"), method == "REPORT")
+                val call = http.newCall(request)
+                round.begin(call)
+                try {
+                    call.execute().use { response ->
+                        if (response.code in REDIRECTS) {
+                            url = at(url, response.header("Location") ?: throw CalDavFailure(CalDavProblem.TLS))
+                        } else {
+                            if (response.code != 207) throw DavHttpStatus(response.code, retryAfter(response.header("Retry-After")))
+                            val body = response.body ?: invalidCalendar()
+                            val limit = round.bodyLimit(MAX_XML_BYTES)
+                            val source = body.source()
+                            if (body.contentLength() > limit || source.request(limit + 1)) {
+                                round.received(source.buffer.size)
+                                round.oversized(limit, MAX_XML_BYTES)
+                            }
+                            val bytes = source.readByteArray()
+                            round.received(bytes.size.toLong())
+                            val utf8 = Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString()
+                            return parseDocument(url, utf8.removePrefix("\uFEFF"), method == "REPORT")
+                        }
                     }
-                }
+                } finally { round.end() }
             }
         } catch (_: SSLException) {
+            round.check()
             throw CalDavFailure(CalDavProblem.TLS)
         } catch (_: java.nio.charset.CharacterCodingException) {
             invalidCalendar()
         } catch (_: IOException) {
+            round.check()
             throw CalDavFailure(CalDavProblem.NETWORK)
         }
         throw CalDavFailure(CalDavProblem.TLS)
@@ -195,7 +246,7 @@ internal class CalDavClient(
         checkDavTree(root, 0)
         checkCalendar(root.children().all { it.namespaceURI == DAV && it.localName in MULTISTATUS_CHILDREN })
         val nodes = root.children(DAV, "response")
-        checkCalendar(nodes.size <= MAX_OBJECTS + 1)
+        checkCalendarCapacity(nodes.size <= MAX_OBJECTS + 1)
         val items = linkedMapOf<String, DavItem>()
         for (node in nodes) {
             val resolved = at(url, node.child(DAV, "href")?.text() ?: invalidCalendar())
@@ -249,7 +300,7 @@ private const val CAL = "urn:ietf:params:xml:ns:caldav"
 private const val APPLE = "http://apple.com/ns/ical/"
 private const val NS = "xmlns:D=\"$DAV\" xmlns:C=\"$CAL\" xmlns:A=\"$APPLE\""
 private val MULTISTATUS_CHILDREN = setOf("response", "responsedescription", "sync-token")
-private val OPTIONAL_PROPERTIES = setOf(DAV to "displayname", DAV to "current-user-privilege-set", DAV to "sync-token",
+private val OPTIONAL_PROPERTIES = setOf(DAV to "displayname", DAV to "current-user-privilege-set", DAV to "sync-token", DAV to "resource-id",
     CAL to "supported-calendar-component-set", APPLE to "calendar-color")
 
 private class DavHttpStatus(val code: Int, val retry: Long = 0) : Exception() {
@@ -279,7 +330,7 @@ private data class DavDocument(val url: HttpUrl, val items: Map<String, DavItem>
         val etag = item.property(DAV, "getetag")?.text() ?: invalidCalendar()
         checkCalendar(etag.length in 2..512 && (etag.startsWith('"') || etag.startsWith("W/\"")) && etag.endsWith('"'))
         etag
-    }.also { checkCalendar(it.size <= MAX_OBJECTS) }
+    }.also { checkCalendarCapacity(it.size <= MAX_OBJECTS) }
 }
 
 private fun Element.children(ns: String? = null, name: String? = null): List<Element> = buildList {
@@ -325,7 +376,7 @@ private fun checkDavTree(element: Element, depth: Int) {
 private val httpStatus = Regex("HTTP/\\d(?:\\.\\d)? (\\d{3})(?: .*|)$")
 private fun statusCode(raw: String) = httpStatus.matchEntire(raw)?.groupValues?.get(1)?.toInt() ?: invalidCalendar()
 private fun escapeXml(text: String) = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-private fun digest(text: String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+internal fun calendarDigest(text: String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 private fun parseColor(text: String): Int? {
     if (!text.matches(Regex("#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?"))) return null
     return 0xff000000.toInt() or text.substring(1, 7).toInt(16)

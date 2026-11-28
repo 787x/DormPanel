@@ -52,9 +52,30 @@ class CloudCalendarRestartAndroidTest {
         val settings = if (phase == "seed") {
             CloudSettings(run, store.encrypt("seed@example.invalid", "local-test-value"), listOf(calendar), setOf(calendar.id), 60).also {
                 store.save(it)
-                store.saveSnapshot(run, CalendarCacheKey(calendar.id, window), CalendarSnapshot(System.currentTimeMillis(), null,
-                    mapOf("test" to CachedObject("\"test\"", listOf(CloudEvent("uid", null, "Persistent cloud event", "", "",
-                        0, 0, date, date.plusDays(1)))))))
+                val key = CalendarCacheKey(calendar.id, window)
+                val description = "Long fixture description for daily recurring events. ".repeat(75)
+                val repeated = (0 until 400).map { index ->
+                    val day = if (index == 0) date else date.plusDays(1)
+                    CloudEvent("uid", "fixture-$index", "Persistent cloud event", "", description, 0, 0, day, day.plusDays(1))
+                }
+                val snapshot = CalendarSnapshot(System.currentTimeMillis(), null, mapOf("test" to CachedObject("\"test\"", repeated)))
+                assertTrue(repeated.sumOf { event -> event.description.length } > 512 * 1024)
+                store.saveSnapshot(run, key, snapshot)
+                try {
+                    store.saveSnapshot(run, key, snapshot.copy(objects = mapOf("test" to CachedObject("\"larger\"", repeated.mapIndexed { i, event ->
+                        event.copy(description = "$i " + "界".repeat(3100))
+                    }))))
+                    fail("oversized snapshot unexpectedly saved")
+                } catch (e: CalDavFailure) {
+                    assertEquals(CalDavProblem.CAPACITY, e.problem)
+                }
+                assertEquals(snapshot, store.snapshot(run, key))
+                // An interrupted atomic replacement leaves the old complete file in its backup slot.
+                val directory = File(File(context.noBackupFilesDir, namespace), run)
+                val base = directory.listFiles().orEmpty().single { file -> file.name.endsWith(".json") }
+                base.copyTo(File(directory, base.name + ".bak"))
+                base.writeText("{unfinished")
+                assertEquals(snapshot, store.snapshot(run, key))
             }
         } else store.settings()
         try {
@@ -62,6 +83,7 @@ class CloudCalendarRestartAndroidTest {
             assertEquals(setOf(calendar.id), settings.selected)
             assertEquals(60, settings.refreshMinutes)
             assertEquals("seed@example.invalid" to "local-test-value", store.login(settings))
+            assertEquals(400, store.snapshot(run, CalendarCacheKey(calendar.id, window))?.objects?.values?.single()?.events?.size)
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 fun waitFor(check: (DashboardViewModel) -> Boolean) {
                     val deadline = SystemClock.uptimeMillis() + 10_000

@@ -7,11 +7,12 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 
-internal class ExpansionBudget {
+internal class ExpansionBudget(private val checkRound: () -> Unit = {}) {
     private var dateChecks = 0L
     fun scan(days: Long) {
         dateChecks += days
-        checkCalendar(dateChecks <= 180_000)
+        checkRound()
+        checkCalendarCapacity(dateChecks <= 180_000)
     }
 }
 

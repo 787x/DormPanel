@@ -10,6 +10,7 @@ internal enum class CalendarAccess { READ_ONLY, WRITABLE, UNKNOWN }
 
 internal data class CloudCalendar(
     val id: String, val url: HttpUrl, val name: String, val color: Int?, val access: CalendarAccess,
+    val resourceId: String? = null,
 )
 
 internal data class CloudEvent(
@@ -39,6 +40,8 @@ internal data class CachedObject(val etag: String, val events: List<CloudEvent>)
 
 internal data class CalendarSnapshot(
     val checkedAt: Long, val collectionToken: String?, val objects: Map<String, CachedObject>,
+    val problem: CalDavProblem? = null,
+    val collectionUrl: String? = null,
 )
 
 internal enum class CalDavProblem(val label: String) {
@@ -50,6 +53,9 @@ internal enum class CalDavProblem(val label: String) {
     DATA("日历响应不完整或无法解析"),
     SERVER("日历服务器暂不可用"),
     STORAGE("本机日历缓存或凭据不可用"),
+    CAPACITY("日历超出缓存或事件容量"),
+    BUDGET("本轮日历刷新超过资源预算"),
+    CANCELLED("日历刷新已取消"),
 }
 
 internal class CalDavFailure(val problem: CalDavProblem, val retryAt: Long = 0) : Exception(problem.name)
@@ -58,6 +64,10 @@ internal fun invalidCalendar(): Nothing = throw CalDavFailure(CalDavProblem.DATA
 
 internal fun checkCalendar(condition: Boolean) {
     if (!condition) invalidCalendar()
+}
+
+internal fun checkCalendarCapacity(condition: Boolean) {
+    if (!condition) throw CalDavFailure(CalDavProblem.CAPACITY)
 }
 
 internal const val MAX_CALENDARS = 24

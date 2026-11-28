@@ -298,7 +298,7 @@ class DashboardPageView @JvmOverloads constructor(
         }
         val service = cloudCalendar ?: return
         val current = CardCalendars.decode(card.configurationJson)
-        cloudCalendarDialogs?.choose(service.calendars, current.selected, card = true) { selected ->
+        cloudCalendarDialogs?.choose(service.calendars, current.selected, card = true, inherited = service.selected) { selected ->
             if (editing && stateHolder.state.cards.any { it.id == cardId && it.configurationJson == card.configurationJson }) {
                 if (stateHolder.updateConfiguration(cardId, CardCalendars(selected).encode()) is LayoutMutationResult.Failure)
                     Toast.makeText(context, R.string.dashboard_operation_rejected, Toast.LENGTH_SHORT).show()

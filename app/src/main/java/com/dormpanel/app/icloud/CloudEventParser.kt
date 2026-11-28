@@ -12,6 +12,7 @@ import com.github.mangstadt.vinnie.io.VObjectDataListener
 import com.github.mangstadt.vinnie.io.VObjectReader
 import com.github.mangstadt.vinnie.io.Warning
 import java.io.StringReader
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -22,7 +23,8 @@ import java.util.TimeZone
 
 internal fun readCloudEvents(text: String, window: CalendarWindow, budget: ExpansionBudget = ExpansionBudget()): List<CloudEvent> {
     try {
-        checkCalendar(text.length in 1..262144)
+        checkCalendar(text.isNotEmpty())
+        checkCalendarCapacity(text.length <= 262144)
         val input = text.removePrefix("\uFEFF")
         val count = validateCalendar(input)
         val calendar = ICalReader(input).use { reader ->
@@ -49,8 +51,12 @@ private data class EventTime(val local: LocalDateTime, val zone: ZoneId, val dat
     val key: String get() = day?.toString() ?: instant.toString()
 
     fun at(day: LocalDate) = copy(local = day.atTime(local.toLocalTime()))
-    fun localDate(instant: Instant): LocalDate = if (embedded == null) instant.atZone(zone).toLocalDate() else
-        instant.plusMillis(embedded.getOffset(instant.toEpochMilli()).toLong()).atOffset(ZoneOffset.UTC).toLocalDate()
+    fun localAt(instant: Instant): LocalDateTime = if (embedded == null) instant.atZone(zone).toLocalDateTime() else
+        instant.plusMillis(embedded.getOffset(instant.toEpochMilli()).toLong()).atOffset(ZoneOffset.UTC).toLocalDateTime()
+
+    fun localDate(instant: Instant) = localAt(instant).toLocalDate()
+    fun originalLocal(reference: EventTime) =
+        if (reference.dateOnly) reference.local else localAt(reference.instant)
 
     fun validLocalTime(): Boolean = dateOnly || if (embedded == null) zone.rules.getValidOffsets(local).isNotEmpty() else
         local.toInstant(ZoneOffset.UTC).toEpochMilli() == instant.toEpochMilli() + embedded.getOffset(instant.toEpochMilli())
@@ -123,10 +129,17 @@ private fun ICalendar.start(event: VEvent, zone: ZoneId): EventTime {
     return timestamp(property, property.value ?: invalidCalendar(), zone)
 }
 
+private data class EventOverride(val id: EventTime, val event: VEvent)
+private data class FutureEdit(val original: EventTime, val event: VEvent, val start: EventTime?, val length: EventLength?) {
+    fun shifted(time: EventTime, master: EventTime): EventTime? = start?.let {
+        it.copy(local = it.local.plus(Duration.between(master.originalLocal(original), master.originalLocal(time))))
+    }
+}
+
 private fun ICalendar.expand(uid: String, events: List<VEvent>, window: CalendarWindow, budget: ExpansionBudget): List<CloudEvent> {
     val zone = window.zone
     var master: VEvent? = null
-    val overrides = linkedMapOf<String, VEvent>()
+    val overrides = linkedMapOf<String, EventOverride>()
     for (event in events) {
         checkCalendar(event.exceptionRules.isEmpty())
         val id = event.recurrenceId
@@ -134,27 +147,36 @@ private fun ICalendar.expand(uid: String, events: List<VEvent>, window: Calendar
             checkCalendar(master == null)
             master = event
         } else {
-            checkCalendar(id.range == null && event.recurrenceRule == null && event.recurrenceDates.isEmpty() && event.exceptionDates.isEmpty())
+            checkCalendar(event.recurrenceRule == null && event.recurrenceDates.isEmpty() && event.exceptionDates.isEmpty())
             val time = timestamp(id, id.value ?: invalidCalendar(), zone)
-            checkCalendar(overrides.put(time.key, event) == null)
+            checkCalendar(overrides.put(time.key, EventOverride(time, event)) == null)
         }
     }
+    val rangeEdits = overrides.values.filter { it.event.recurrenceId.range != null }.map { (id, event) ->
+        val start = if (event.cancelled()) null else start(event, zone).also { checkCalendar(it.dateOnly == id.dateOnly) }
+        FutureEdit(id, event, start, start?.let { length(event, it, zone) })
+    }.sortedBy { it.original.instant }
+    checkCalendar(rangeEdits.isEmpty() || master != null)
+    val masterStart = master?.takeUnless { it.cancelled() }?.let { start(it, zone) }
     val result = ArrayList<CloudEvent>()
+    val text = java.util.IdentityHashMap<VEvent, Triple<String, String, String>>()
     fun add(event: VEvent, time: EventTime, length: EventLength, id: String?) {
         val start = time.instant
         val end = length.end(time)
         checkCalendar(end >= start)
-        val instance = CloudEvent(uid, id, event.summary?.value.clean(512), event.location?.value.clean(512),
-            event.description?.value.clean(4096), start.toEpochMilli(), end.toEpochMilli(),
+        val (title, location, description) = text.getOrPut(event) {
+            Triple(event.summary?.value.clean(512), event.location?.value.clean(512), event.description?.value.clean(4096))
+        }
+        val instance = CloudEvent(uid, id, title, location, description, start.toEpochMilli(), end.toEpochMilli(),
             time.day, time.day?.plusDays(length.days))
         if (instance.overlaps(window.start, window.end, zone)) {
             result.add(instance)
-            checkCalendar(result.size <= MAX_INSTANCES)
+            checkCalendarCapacity(result.size <= MAX_INSTANCES)
         }
     }
-    if (master != null && !master.cancelled()) {
-        val first = start(master, zone)
-        checkCalendar(overrides.values.all { it.recurrenceId.value.hasTime() != first.dateOnly })
+    if (master != null && masterStart != null) {
+        val first = masterStart
+        checkCalendar(overrides.values.all { it.id.dateOnly == first.dateOnly })
         val length = length(master, first, zone)
         val excluded = master.exceptionDates.flatMap { property ->
             property.values.map { timestamp(property, it, zone).also { date -> checkCalendar(date.dateOnly == first.dateOnly) }.key }
@@ -168,7 +190,7 @@ private fun ICalendar.expand(uid: String, events: List<VEvent>, window: Calendar
                 included[time.key] = time
             }
         }
-        checkCalendar(excluded.size + included.size <= MAX_INSTANCES)
+        checkCalendarCapacity(excluded.size + included.size <= MAX_INSTANCES)
         val rule = master.recurrenceRule?.value
         if (rule != null) {
             val until = rule.until?.let { value ->
@@ -181,25 +203,42 @@ private fun ICalendar.expand(uid: String, events: List<VEvent>, window: Calendar
             if (until != null) checkCalendar(until.instant >= first.instant)
             val recurrence = CalendarRecurrence(rule, first.local.toLocalDate())
             val lookback = length.days + length.seconds / 86400 + (length.exactMillis ?: 0) / 86_400_000 + 2
-            val from = first.localDate(window.start).minusDays(lookback)
-            val through = minOf(first.localDate(window.end).plusDays(1), until?.let { first.localDate(it.instant).plusDays(1) } ?: LocalDate.MAX)
+            var from = first.localDate(window.start).minusDays(lookback)
+            var last = first.localDate(window.end).plusDays(1)
+            // Map the display window back through each edit. Original recurrence IDs remain
+            // in the master's time scale, including when the edited event uses another zone.
+            for (edit in rangeEdits) {
+                val target = edit.start ?: continue
+                val editedLength = checkNotNull(edit.length)
+                val lead = editedLength.days + editedLength.seconds / 86400 + (editedLength.exactMillis ?: 0) / 86_400_000 + 2
+                val shift = Duration.between(first.originalLocal(edit.original), target.local)
+                from = minOf(from, target.localAt(window.start).minus(shift).toLocalDate().minusDays(lead))
+                last = maxOf(last, target.localAt(window.end).minus(shift).toLocalDate().plusDays(1))
+            }
+            val through = minOf(last, until?.let { first.localDate(it.instant).plusDays(1) } ?: LocalDate.MAX)
             for (date in recurrence.dates(from, through, budget) { first.at(it).validLocalTime() }) {
                 val time = first.at(date)
                 if (until != null && time.instant > until.instant) break
                 included[time.key] = time
-                checkCalendar(included.size <= MAX_INSTANCES)
+                checkCalendarCapacity(included.size <= MAX_INSTANCES)
             }
         }
         for ((key, time) in included) {
-            if (key !in excluded && key !in overrides) add(master, time, length, key.takeUnless { it == first.key })
+            if (key in excluded || key in overrides) continue
+            val id = key.takeUnless { it == first.key }
+            val editIndex = rangeEdits.binarySearchBy(time.instant) { it.original.instant }
+            val edit = rangeEdits.getOrNull(if (editIndex >= 0) editIndex else -editIndex - 2)
+            if (edit == null) add(master, time, length, id)
+            else edit.shifted(time, first)?.let { add(edit.event, it, checkNotNull(edit.length), id) }
         }
     }
-    if (master?.cancelled() != true) for ((id, event) in overrides) {
+    if (master?.cancelled() != true) for ((id, override) in overrides) {
+        val event = override.event
         if (!event.cancelled()) {
             val time = start(event, zone)
             val recurring = event.recurrenceId.value
             checkCalendar(recurring.hasTime() != time.dateOnly)
-            add(event, time, length(event, time, zone), id)
+            add(event, time, length(event, time, zone), id.takeUnless { it == masterStart?.key })
         }
     }
     return result
@@ -245,7 +284,10 @@ private fun validateCalendar(text: String): Int {
                 when (stack.last()) {
                     "VEVENT" -> {
                         if (name in singletonProperties) checkCalendar(componentProperties.add(name))
-                        if (name == "RECURRENCE-ID") checkCalendar(property.parameters.get("RANGE").isNullOrEmpty())
+                        if (name == "RECURRENCE-ID") {
+                            val range = property.parameters.get("RANGE").orEmpty()
+                            checkCalendar(range.isEmpty() || range.size == 1 && range.single().equals("THISANDFUTURE", true))
+                        }
                         if (name == "RRULE") validateRule(property.value, false)
                         if (name == "STATUS") checkCalendar(property.value.uppercase(Locale.ROOT) in eventStatuses)
                     }

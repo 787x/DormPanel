@@ -113,7 +113,10 @@ class CloudCalendarAndroidTest {
                 onView(withId(R.id.dashboard_edit)).perform(click())
                 onView(withContentDescription("配置卡片显示的日历")).perform(click())
                 onView(withText("为此卡片选择日历")).perform(click())
-                onView(withText("Family · 账户只读")).perform(click())
+                onView(withText("Main · 账户可写")).check(matches(isChecked()))
+                screenshot("calendar-picker")
+                onView(withText("Main · 账户可写")).perform(click())
+                onView(withText("Family · 账户只读")).check(matches(isNotChecked())).perform(click())
                 onView(withText("保存")).perform(click())
                 await(scenario) { model ->
                     val expected = model.cloudCalendar.calendars.single { it.name == "Family" }.id
@@ -134,7 +137,17 @@ class CloudCalendarAndroidTest {
                 scenario.onActivity { model(it).cloudCalendar.refresh() }
                 await(scenario) { it.cloudCalendar.connectionLabel().contains("认证失败") }
                 onView(withText(allOf(containsString("Shared fixture"), containsString("Family")))).check(matches(isDisplayed()))
-                onView(withText(containsString("缓存可能过期"))).check(matches(isDisplayed()))
+                // The service publishes before the card paints on the next animation frame.
+                val redrawDeadline = SystemClock.uptimeMillis() + 2_000
+                while (true) {
+                    try {
+                        onView(withText(containsString("缓存可能过期"))).check(matches(isDisplayed()))
+                        break
+                    } catch (e: androidx.test.espresso.NoMatchingViewException) {
+                        if (SystemClock.uptimeMillis() >= redrawDeadline) throw e
+                        Thread.sleep(25)
+                    }
+                }
                 fixture.online = false
                 scenario.recreate()
                 await(scenario) { it.stateHolder.state.loaded && it.cloudCalendar.eventsOn(day, zone, cardSelection(it)).isNotEmpty() }
@@ -174,6 +187,26 @@ class CloudCalendarAndroidTest {
                 }
                 screenshot("offline")
             }
+            // An explicit empty override survives a new ViewModel, unlike the default inheritance mode.
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { it.stateHolder.state.loaded && it.cloudCalendar.calendars.size == 2 }
+                onView(withId(R.id.dashboard_edit)).perform(click())
+                onView(withContentDescription("配置卡片显示的日历")).perform(click())
+                onView(withText("Family · 账户只读")).check(matches(isChecked())).perform(click())
+                onView(withText("保存")).perform(click())
+                await(scenario) { cardSelection(it) == emptySet<String>() && it.stateHolder.state.configurationSaves.isEmpty() }
+                scenario.recreate()
+                await(scenario) { cardSelection(it) == emptySet<String>() }
+            }
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { it.stateHolder.state.loaded && cardSelection(it) == emptySet<String>() }
+                onView(withId(R.id.dashboard_edit)).perform(click())
+                onView(withContentDescription("配置卡片显示的日历")).perform(click())
+                onView(withText("Main · 账户可写")).check(matches(isNotChecked()))
+                onView(withText("继承全局日历选择")).perform(click())
+                onView(withText("保存")).perform(click())
+                await(scenario) { cardSelection(it) == null && it.stateHolder.state.configurationSaves.isEmpty() }
+            }
             store.clearCache(restored.account)
             assertEquals(restored, store.settings())
             assertNull(store.snapshot(restored.account, CalendarCacheKey(restored.calendars.first().id, CalendarWindow(java.time.YearMonth.from(day), zone))))
@@ -187,6 +220,44 @@ class CloudCalendarAndroidTest {
             File(context.noBackupFilesDir, namespace).resolve("account.json").delete()
             File(context.noBackupFilesDir, namespace).delete()
             mode.write(priorMode)
+        }
+    }
+
+    @Test fun stoppingActivityCancelsLongReportAndResumeRecoversInTheSameViewModel() {
+        val namespace = "test-caldav-cancel-${UUID.randomUUID()}"
+        val store = CloudCalendarStore(context, namespace)
+        val fixture = Fixture(day, zone)
+        val reportStarted = java.util.concurrent.CountDownLatch(1)
+        fixture.reportStarted = reportStarted
+        fixture.stallReport = true
+        CloudCalendarService.overrideFactory = {
+            CloudCalendarService(it, fixture::open, { fixture.online }, store)
+        }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                await(scenario) { !it.cloudCalendar.isBusy }
+                scenario.onActivity { model(it).cloudCalendar.connect(FIXTURE_EMAIL, FIXTURE_PASSWORD) }
+                assertTrue(reportStarted.await(12, java.util.concurrent.TimeUnit.SECONDS))
+                scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+                fixture.stallReport = false
+                val resumed = SystemClock.uptimeMillis()
+                scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+                await(scenario) { it.cloudCalendar.eventsOn(day, zone).isNotEmpty() }
+                assertTrue("resume waited for the cancelled REPORT", SystemClock.uptimeMillis() - resumed < 10_000)
+                fixture.code = 429
+                scenario.onActivity { model(it).cloudCalendar.refresh() }
+                await(scenario) { it.cloudCalendar.connectionLabel().contains("服务器限流") }
+                val afterLimit = fixture.requestCount.get()
+                scenario.onActivity { activity -> repeat(3) { model(activity).cloudCalendar.refresh() } }
+                Thread.sleep(1200)
+                assertEquals(afterLimit, fixture.requestCount.get())
+            }
+        } finally {
+            CloudCalendarService.overrideFactory = null
+            fixture.close()
+            store.disconnect()
+            File(context.noBackupFilesDir, namespace).resolve("account.json").delete()
+            File(context.noBackupFilesDir, namespace).delete()
         }
     }
 
@@ -224,6 +295,9 @@ class CloudCalendarAndroidTest {
         private val transport: OkHttpClient
         @Volatile var online = true
         @Volatile var code = 0
+        @Volatile var reportStarted: java.util.concurrent.CountDownLatch? = null
+        @Volatile var stallReport = false
+        val requestCount = java.util.concurrent.atomic.AtomicInteger()
         private val fmt = DateTimeFormatter.BASIC_ISO_DATE
         private val utc = DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(java.time.ZoneOffset.UTC)
         private val home = "/fixture/"
@@ -237,12 +311,13 @@ class CloudCalendarAndroidTest {
             val serverTls = HandshakeCertificates.Builder().heldCertificate(cert).build()
             val clientTls = HandshakeCertificates.Builder().addTrustedCertificate(cert.certificate).build()
             transport = OkHttpClient.Builder().sslSocketFactory(clientTls.sslSocketFactory(), clientTls.trustManager)
-                .retryOnConnectionFailure(false).build()
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(false).build()
             server.useHttps(serverTls.sslSocketFactory(), false)
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
+                    requestCount.incrementAndGet()
                     if (!online) return MockResponse().setResponseCode(503)
-                    if (code != 0) return MockResponse().setResponseCode(code)
+                    if (code != 0) return MockResponse().setResponseCode(code).setHeader("Retry-After", "60")
                     val path = request.path.orEmpty()
                     val xml = request.body.readUtf8()
                     return when (path) {
@@ -266,7 +341,9 @@ class CloudCalendarAndroidTest {
                                 .entries.joinToString("") { (file, ics) ->
                                     item(path + file, tag + if ("calendar-multiget" in xml) "<C:calendar-data><![CDATA[$ics]]></C:calendar-data>" else "")
                                 }
-                            dav(payload)
+                            reportStarted?.countDown()
+                            if (stallReport) MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE)
+                            else dav(payload)
                         }
                         else -> MockResponse().setResponseCode(404)
                     }
