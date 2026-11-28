@@ -15,6 +15,7 @@ import com.dormpanel.app.schedule.*
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     val appearance = AppearanceController(PreferencesAppearanceStore(application))
+    internal val airPlay = com.dormpanel.app.airplay.AirPlayController.get(application)
     val startupPolicy = com.dormpanel.app.startup.StartupPolicy(
         com.dormpanel.app.startup.PreferencesStartupStore(application))
     val deviceControls = com.dormpanel.app.device.DeviceControlController(
@@ -59,8 +60,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         CONTROL_CARD_KINDS.map { DeviceControlCardProvider(it, dataSource, appearance) } +
         com.dormpanel.app.apps.AppCardProvider(apps, apps.icons, appearance) + listOf("todo", "memo", "timer").map { ProductivityCardProvider(it, productivity, appearance, productivityData, productivityBindings) } +
         ScheduleCardProvider("calendar", schedule, appearance, cloudCalendar) + ScheduleCardProvider("timetable", schedule, appearance) +
-        listOf(false, true).map { CourseListCardProvider(it, schedule, appearance) })
-    val catalog: CardCatalog = CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps), ProductivityCatalog(application), ScheduleCatalog(application))
+        listOf(false, true).map { CourseListCardProvider(it, schedule, appearance) } +
+        com.dormpanel.app.airplay.AirPlayCardProvider(appearance, airPlay))
+    val catalog: CardCatalog = CombinedCardCatalog(dataSource.catalog, com.dormpanel.app.apps.AppCardCatalog(apps),
+        ProductivityCatalog(application), ScheduleCatalog(application), com.dormpanel.app.airplay.AirPlayCatalog(application))
     val stateHolder = DashboardStateHolder(
         registry = registry,
         store = DashboardStores.create(application),
