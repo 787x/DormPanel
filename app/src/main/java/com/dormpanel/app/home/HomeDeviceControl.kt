@@ -16,6 +16,8 @@ data class NumericLimits(val min: Double, val max: Double, val step: Double? = n
 
 data class DeviceChoice(val current: String?, val supported: List<String> = emptyList())
 
+private enum class TemperatureTarget { SINGLE, RANGE }
+
 sealed interface HomeDeviceState {
     data class Climate(
         val hvac: DeviceChoice, val action: String?, val current: Double?, val target: Double?,
@@ -25,10 +27,28 @@ sealed interface HomeDeviceState {
     ) : HomeDeviceState {
         val active get() = hvac.current != null && hvac.current != "off"
         val recoveryMode get() = hvac.supported.filter { it != "off" }.singleOrNull()
-        val showsRange get() = hvac.current == "heat_cool" ||
-            (hvac.current == "auto" && rangeTarget && low != null && high != null && low <= high)
-        val canUseRange get() = showsRange && rangeTarget && limits != null
-        val canUseTarget get() = hvac.current in listOf("heat", "cool", "dry") && singleTarget && limits != null
+        private val targetForm = when (hvac.current) {
+            "heat_cool" -> TemperatureTarget.RANGE.takeIf { rangeTarget }
+            "heat", "cool", "dry" -> TemperatureTarget.SINGLE.takeIf { singleTarget }
+            "auto" -> autoTargetForm()
+            else -> null
+        }
+        val showsRange get() = hvac.current == "heat_cool" || targetForm == TemperatureTarget.RANGE
+        val canUseRange get() = targetForm == TemperatureTarget.RANGE && limits != null
+        val canUseTarget get() = targetForm == TemperatureTarget.SINGLE && limits != null
+
+        private fun autoTargetForm(): TemperatureTarget? {
+            if (singleTarget != rangeTarget) return if (singleTarget) TemperatureTarget.SINGLE else TemperatureTarget.RANGE
+            if (!singleTarget) return null
+            val bounds = limits?.let { it.min..it.max } ?: return null
+            // With both features, prefer a complete range as before. HA can round readbacks,
+            // so apply the step check to outgoing edits only.
+            return when {
+                low != null && high != null && low in bounds && high in bounds && low <= high -> TemperatureTarget.RANGE
+                target != null && target in bounds -> TemperatureTarget.SINGLE
+                else -> null
+            }
+        }
     }
     data class Fan(
         val on: Boolean?, val percentage: Int?, val percentageStep: Double?, val preset: DeviceChoice,

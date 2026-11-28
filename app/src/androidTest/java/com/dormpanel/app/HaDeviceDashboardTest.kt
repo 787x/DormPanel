@@ -19,7 +19,15 @@ import com.dormpanel.app.dashboard.DashboardViewModel
 import com.dormpanel.app.dashboard.model.DashboardGridPolicy
 import com.dormpanel.app.dashboard.model.CardSize
 import com.dormpanel.app.ha.BackendMode
+import com.dormpanel.app.ha.HaEntity
+import com.dormpanel.app.ha.HaEntityStore
 import com.dormpanel.app.ha.HaSettingsStore
+import com.dormpanel.app.home.HomeCommand
+import com.dormpanel.app.home.HomeControlSource
+import com.dormpanel.app.home.HomeControlState
+import com.dormpanel.app.home.HomeDeviceDetails
+import com.dormpanel.app.home.HomeTarget
+import org.json.JSONObject
 import com.dormpanel.app.home.HomeDeviceState
 import com.dormpanel.app.home.HomeKind
 import org.hamcrest.Matchers.*
@@ -43,6 +51,51 @@ class HaDeviceDashboardTest {
             Thread.sleep(25)
         } while (SystemClock.uptimeMillis() < deadline)
         fail("Dashboard did not reach the expected state")
+    }
+
+    @Test fun autoClimateDetailsOffersOnlyTheSupportedTargetEditor() {
+        val settings = HaSettingsStore(context)
+        val previous = settings.read()
+        settings.write(previous.copy(mode = BackendMode.DEMO))
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val commands = mutableListOf<HomeCommand>()
+                fun showDetails(features: Int) = scenario.onActivity { activity ->
+                    val attributes = JSONObject("""{"supported_features":$features,"min_temp":16,"max_temp":32,
+                        "target_temp_step":0.5,"temperature":null,"target_temp_low":null,"target_temp_high":null}""")
+                    val entity = checkNotNull(HaEntityStore().homeDevice(HaEntity("climate.test", "auto", attributes), true))
+                    val target = checkNotNull(entity.target)
+                    val source = object : HomeControlSource {
+                        override val homeState = HomeControlState(entities = listOf(entity), connected = true)
+                        override fun addHomeListener(listener: (HomeControlState) -> Unit) = listener(homeState)
+                        override fun removeHomeListener(listener: (HomeControlState) -> Unit) = Unit
+                        override fun activateEntity(id: String) = false
+                        override fun command(target: HomeTarget, command: HomeCommand) =
+                            target == entity.target && commands.add(command)
+                    }
+                    HomeDeviceDetails(activity, source, vm(activity).appearance, target, HomeKind.CLIMATE) {}.show()
+                }
+
+                showDetails(features = 1)
+                onView(withText(R.string.device_temperature_range)).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                onView(withText(R.string.device_temperature)).perform(click())
+                onView(withContentDescription(R.string.device_temperature)).perform(replaceText("23.5"), closeSoftKeyboard())
+                onView(withText(R.string.device_apply)).perform(click())
+                onView(withText(android.R.string.cancel)).perform(click())
+
+                showDetails(features = 2)
+                onView(withText(R.string.device_temperature)).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                onView(withText(R.string.device_temperature_range)).perform(click())
+                onView(withContentDescription(R.string.device_low)).perform(replaceText("20"))
+                onView(withContentDescription(R.string.device_high)).perform(replaceText("25.5"), closeSoftKeyboard())
+                onView(withText(R.string.device_apply)).perform(click())
+                onView(withText(android.R.string.cancel)).perform(click())
+
+                scenario.onActivity {
+                    assertEquals(listOf(HomeCommand.Temperature(23.5), HomeCommand.TemperatureRange(20.0, 25.5)), commands)
+                }
+            }
+        } finally { settings.write(previous) }
     }
 
     @Test fun pickerControlsResizeAndRestoresBindingsOnActivityRestart() {

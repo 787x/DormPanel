@@ -166,6 +166,27 @@ class HaProtocolTest {
         override fun close() { source.stop(); http.dispatcher.cancelAll(); http.connectionPool.evictAll(); server.close(); http.dispatcher.executorService.shutdown() }
     }
 
+    @Test fun fanZeroSpeedUsesTurnOffAndWaitsForTheStateEvent() {
+        Fixture().use { f ->
+            f.start()
+            f.until { f.source.connected }
+            val id = "fan.test"
+            val attrs = JSONObject("""{"supported_features":17,"percentage":50,"percentage_step":25}""")
+            f.entity(id, "on", attrs)
+            fun fan() = f.source.homeState.entities.single { it.id == "ha:$id" }
+            assertTrue(f.source.command(checkNotNull(fan().target), HomeCommand.Speed(0)))
+            f.until { fan().request == DeviceRequestState.ACCEPTED }
+            val call = f.services("turn_off").single()
+            assertEquals("fan", call.getString("domain"))
+            assertEquals(id, call.getJSONObject("target").getString("entity_id"))
+            assertEquals(0, call.getJSONObject("service_data").length())
+            assertTrue(f.services("set_percentage").isEmpty())
+            assertEquals(true, (fan().controls as HomeDeviceState.Fan).on)
+            f.entity(id, "off", attrs.put("percentage", 0))
+            assertEquals(false, (fan().controls as HomeDeviceState.Fan).on)
+        }
+    }
+
     @Test fun typedCommandsRespectWireErrorsStateEventsAndReconnect() {
         Fixture().use { f ->
             f.start()

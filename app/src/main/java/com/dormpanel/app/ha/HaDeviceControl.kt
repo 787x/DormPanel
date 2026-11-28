@@ -120,7 +120,10 @@ internal fun HomeEntity.deviceService(command: HomeCommand): DeviceService? {
         }?.let { call("set_temperature", "target_temp_low" to command.low, "target_temp_high" to command.high) }
         is HomeCommand.Speed -> (device as? Fan)?.takeIf {
             command.percent in it.speeds || command.percent == 0 && it.speeds.isNotEmpty()
-        }?.let { call("set_percentage", "percentage" to command.percent) }
+        }?.let { fan ->
+            if (command.percent == 0 && fan.turnOff) power(false)
+            else call("set_percentage", "percentage" to command.percent)
+        }
         is HomeCommand.Humidity -> (device as? Humidifier)?.limits?.takeIf {
             command.percent in it
         }?.let { call("set_humidity", "humidity" to command.percent) }

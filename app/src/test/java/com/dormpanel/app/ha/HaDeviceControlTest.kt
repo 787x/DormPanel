@@ -55,12 +55,66 @@ class HaDeviceControlTest {
         assertNull(auto.deviceService(HomeCommand.Temperature(70.0)))
         auto.expect(HomeCommand.TemperatureRange(66.0, 75.5), "set_temperature",
             "target_temp_low" to 66.0, "target_temp_high" to 75.5)
-        assertNull(entity("climate", "auto", """{"supported_features":2,"min_temp":60,"max_temp":80}""")
-            .deviceService(HomeCommand.TemperatureRange(66.0, 75.5)))
+        entity("climate", "cool", attrs).expect(HomeCommand.Temperature(71.5), "set_temperature", "temperature" to 71.5)
         assertNull(entity("climate", "off", attrs).deviceService(HomeCommand.Power(true)))
         entity("climate", "off", """{"hvac_modes":["off","heat"]}""")
             .expect(HomeCommand.Power(true), "set_hvac_mode", "hvac_mode" to "heat")
         entity("climate", "off", """{"supported_features":256}""").expect(HomeCommand.Power(true), "turn_on")
+    }
+
+    @Test fun autoUsesTheOnlyAdvertisedTargetFormEvenWithoutAReading() {
+        val single = HomeCommand.Temperature(71.5)
+        val range = HomeCommand.TemperatureRange(66.0, 75.5)
+        val limits = """"min_temp":60,"max_temp":80,"target_temp_step":0.5"""
+        listOf(""" "temperature":70 """, """ "temperature":null """).forEach { reading ->
+            val auto = entity("climate", "auto", """{"supported_features":1,$limits,$reading}""")
+            auto.expect(single, "set_temperature", "temperature" to 71.5)
+            assertNull(auto.deviceService(range))
+        }
+        listOf(
+            """ "target_temp_low":66,"target_temp_high":75 """,
+            """ "target_temp_low":null,"target_temp_high":null """,
+        ).forEach { readings ->
+            val auto = entity("climate", "auto", """{"supported_features":2,$limits,$readings}""")
+            auto.expect(range, "set_temperature", "target_temp_low" to 66.0, "target_temp_high" to 75.5)
+            assertNull(auto.deviceService(single))
+            assertNull(auto.deviceService(HomeCommand.TemperatureRange(71.25, 75.5)))
+            assertNull(auto.deviceService(HomeCommand.TemperatureRange(66.0, 81.0)))
+            assertNull(auto.deviceService(HomeCommand.TemperatureRange(75.5, 66.0)))
+        }
+    }
+
+    @Test fun autoWithBothCapabilitiesUsesValidReadingsToSelectOneTargetForm() {
+        fun auto(readings: String) = entity("climate", "auto",
+            """{"supported_features":3,"min_temp":60,"max_temp":80,$readings}""")
+        val single = HomeCommand.Temperature(71.0)
+        val range = HomeCommand.TemperatureRange(66.0, 75.0)
+        val withSingle = auto(""" "temperature":70,"target_temp_low":null,"target_temp_high":null """)
+        withSingle.expect(single, "set_temperature", "temperature" to 71.0)
+        assertNull(withSingle.deviceService(range))
+        val withRange = auto(""" "temperature":null,"target_temp_low":66,"target_temp_high":74 """)
+        withRange.expect(range, "set_temperature", "target_temp_low" to 66.0, "target_temp_high" to 75.0)
+        assertNull(withRange.deviceService(single))
+        val invalidRange = auto(""" "temperature":70,"target_temp_low":58,"target_temp_high":74 """)
+        invalidRange.expect(single, "set_temperature", "temperature" to 71.0)
+        val ambiguous = auto(""" "temperature":null,"target_temp_low":null,"target_temp_high":null """)
+        assertNull(ambiguous.deviceService(single))
+        assertNull(ambiguous.deviceService(range))
+    }
+
+    @Test fun autoRejectsUnsupportedTemperatureAndMalformedLimits() {
+        val single = HomeCommand.Temperature(71.0)
+        val range = HomeCommand.TemperatureRange(66.0, 75.0)
+        for (attrs in listOf(
+            """{"min_temp":60,"max_temp":80,"temperature":70}""",
+            """{"supported_features":1,"min_temp":"60","max_temp":80}""",
+            """{"supported_features":1,"min_temp":80,"max_temp":60}""",
+            """{"supported_features":2,"min_temp":60,"max_temp":80,"target_temp_step":0}""",
+        )) {
+            val auto = entity("climate", "auto", attrs)
+            assertNull(auto.deviceService(single))
+            assertNull(auto.deviceService(range))
+        }
     }
 
     @Test fun fanSeparatesSpeedPresetAndPowerCapabilities() {
@@ -71,7 +125,7 @@ class HaDeviceControlTest {
         assertEquals("sleep", controls.preset.current)
         assertEquals(listOf(33, 66, 100), controls.speeds)
         fan.expect(HomeCommand.Speed(33), "set_percentage", "percentage" to 33)
-        fan.expect(HomeCommand.Speed(0), "set_percentage", "percentage" to 0)
+        fan.expect(HomeCommand.Speed(0), "turn_off")
         fan.expect(HomeCommand.Power(false), "turn_off")
         fan.expect(HomeCommand.Select(DeviceOption.PRESET, "normal"), "set_preset_mode", "preset_mode" to "normal")
         listOf(-1, 101, 50).forEach { assertNull(fan.deviceService(HomeCommand.Speed(it))) }
@@ -80,6 +134,16 @@ class HaDeviceControlTest {
         assertNull(minimal.deviceService(HomeCommand.Power(false)))
         assertNull(minimal.deviceService(HomeCommand.Speed(25)))
         assertNull(minimal.deviceService(HomeCommand.Select(DeviceOption.PRESET, "sleep")))
+    }
+
+    @Test fun zeroSpeedRequiresSpeedControlAndFallsBackWithoutTurnOff() {
+        val zero = HomeCommand.Speed(0)
+        val speedOnly = """{"supported_features":1,"percentage_step":25}"""
+        entity("fan", "on", speedOnly).expect(zero, "set_percentage", "percentage" to 0)
+        assertNull(entity("fan", "on", """{"supported_features":16,"percentage_step":25}""").deviceService(zero))
+        assertNull(entity("fan", "on", """{"supported_features":17,"percentage_step":0}""").deviceService(zero))
+        assertNull(entity("fan", "unavailable", speedOnly).deviceService(zero))
+        assertNull(entity("fan", "on", speedOnly, connected = false).deviceService(zero))
     }
 
     @Test fun humidifierCoverAndVirtualSwitchRejectUnsupportedOrUnknownValues() {
