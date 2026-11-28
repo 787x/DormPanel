@@ -380,7 +380,7 @@ class CloudCalendarService internal constructor(
                         val previous = old.getOrNull()
                         val calendar = effective.calendars.firstOrNull { it.id == key.calendarId } ?: continue
                         if (!refresh && previous?.problem == null && previous?.collectionUrl == calendar.url.toString() &&
-                            now - previous.checkedAt in 0 until settings.refreshMinutes * 60_000L) continue
+                            previous.hasCurrentProjection && now - previous.checkedAt in 0 until settings.refreshMinutes * 60_000L) continue
                         try {
                             val next = client.synchronize(calendar, key.window, previous, now(), round)
                             round.check()
@@ -422,7 +422,9 @@ class CloudCalendarService internal constructor(
     }
 
     private fun CalendarSnapshot?.toView(issue: CalDavProblem? = null, retryAt: Long = 0) = WindowView(
-        this?.checkedAt ?: 0, this?.objects?.values?.flatMap { it.events }.orEmpty(), issue ?: this?.problem, retryAt,
+        // Legacy derived events remain viewable offline and are revalidated on refresh.
+        this?.takeIf { it.hasCurrentProjection }?.checkedAt ?: 0,
+        this?.objects?.values?.flatMap { it.events }.orEmpty(), issue ?: this?.problem, retryAt,
     )
 
     private fun scheduleNext() {

@@ -36,13 +36,19 @@ internal data class CalendarWindow(val month: YearMonth, val zone: ZoneId) {
     val queryEnd: Instant get() = end.plusSeconds(2 * 86400)
 }
 
-internal data class CachedObject(val etag: String, val events: List<CloudEvent>)
+internal const val CURRENT_PROJECTION_VERSION = 1
+
+internal data class CachedObject(val etag: String, val events: List<CloudEvent>, val projectionVersion: Int = 0) {
+    val hasCurrentProjection get() = projectionVersion == CURRENT_PROJECTION_VERSION
+}
 
 internal data class CalendarSnapshot(
     val checkedAt: Long, val collectionToken: String?, val objects: Map<String, CachedObject>,
     val problem: CalDavProblem? = null,
     val collectionUrl: String? = null,
-)
+) {
+    val hasCurrentProjection get() = objects.values.all { it.hasCurrentProjection }
+}
 
 internal enum class CalDavProblem(val label: String) {
     AUTH("认证失败，请检查专用 App 密码"),
@@ -58,7 +64,7 @@ internal enum class CalDavProblem(val label: String) {
     CANCELLED("日历刷新已取消"),
 }
 
-internal class CalDavFailure(val problem: CalDavProblem, val retryAt: Long = 0) : Exception(problem.name)
+internal open class CalDavFailure(val problem: CalDavProblem, val retryAt: Long = 0) : Exception(problem.name)
 
 internal fun invalidCalendar(): Nothing = throw CalDavFailure(CalDavProblem.DATA)
 

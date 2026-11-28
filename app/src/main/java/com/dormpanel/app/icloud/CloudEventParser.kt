@@ -132,7 +132,10 @@ private fun ICalendar.start(event: VEvent, zone: ZoneId): EventTime {
 private data class EventOverride(val id: EventTime, val event: VEvent)
 private data class FutureEdit(val original: EventTime, val event: VEvent, val start: EventTime?, val length: EventLength?) {
     fun shifted(time: EventTime, master: EventTime): EventTime? = start?.let {
+        // A shifted start is generated. The explicitly supplied anchor and detached
+        // overrides are evaluated separately with the DATE-TIME gap interpretation.
         it.copy(local = it.local.plus(Duration.between(master.originalLocal(original), master.originalLocal(time))))
+            .takeIf(EventTime::validLocalTime)
     }
 }
 

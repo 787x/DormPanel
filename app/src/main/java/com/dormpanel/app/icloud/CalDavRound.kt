@@ -3,6 +3,8 @@ package com.dormpanel.app.icloud
 import okhttp3.Call
 import java.util.concurrent.TimeUnit
 
+internal class CalDavResponseTooLarge : CalDavFailure(CalDavProblem.CAPACITY)
+
 /** Single worker owns the counters. The main thread can cancel the registered call. */
 internal class CalDavRound(
     timeoutMillis: Long = 45_000,
@@ -52,7 +54,7 @@ internal class CalDavRound(
 
     fun oversized(limit: Long, perResponse: Long): Nothing {
         if (limit < perResponse) exhausted()
-        throw CalDavFailure(CalDavProblem.CAPACITY)
+        throw CalDavResponseTooLarge()
     }
 
     private fun exhausted(): Nothing = throw CalDavFailure(CalDavProblem.BUDGET)

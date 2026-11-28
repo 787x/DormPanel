@@ -38,6 +38,7 @@ class CalDavClientTest {
     private var truncate = false
     private var externalRedirect: String? = null
     private var manifestOverride: String? = null
+    private var multigetOverride: String? = null
     private var alteredTag = false
     @Volatile private var manifestDelay = 0L
     @Volatile private var manifestStarted: CountDownLatch? = null
@@ -86,7 +87,7 @@ class CalDavClientTest {
                             }
                             "<C:calendar-multiget" in xml -> {
                                 val matching = records.entries.filter { (file, _) -> "<D:href>$path$file</D:href>" in xml }
-                                dav((if (partial) matching.dropLast(1) else matching).joinToString("") { (file, pair) ->
+                                dav(multigetOverride ?: (if (partial) matching.dropLast(1) else matching).joinToString("") { (file, pair) ->
                                     item(path + file, etag(if (alteredTag) "race" else pair.first) + "<C:calendar-data><![CDATA[${pair.second}]]></C:calendar-data>")
                                 })
                             }
@@ -287,6 +288,33 @@ class CalDavClientTest {
         assertEquals(listOf("2026-04-06T14:00:00Z", "2026-04-13T14:00:00Z"), april.map { Instant.ofEpochMilli(it.start).toString() })
     }
 
+    @Test fun futureEditSkipsGeneratedLosAngelesGapAndRetainsOriginalIdsAndRuleBounds() {
+        val anchor = "UID:gap-edit\nRECURRENCE-ID;RANGE=THISANDFUTURE:20260301T140000Z\n" +
+            "DTSTART;TZID=America/Los_Angeles:20260301T023000\nDURATION:PT1H\nSUMMARY:Moved"
+        for (bound in listOf("COUNT=4", "UNTIL=20260315T130000Z")) {
+            val master = "UID:gap-edit\nDTSTART;TZID=America/New_York:20260222T090000\nDURATION:PT1H\n" +
+                "RRULE:FREQ=WEEKLY;$bound\nSUMMARY:Original"
+            val before = readCloudEvents(ics(master, anchor), window.copy(month = YearMonth.of(2026, 2))).single()
+            assertEquals(Instant.parse("2026-02-22T14:00:00Z"), before.start(window.zone))
+            val march = readCloudEvents(ics(master, anchor), window).sortedBy { it.start }
+            assertEquals(listOf("2026-03-01T10:30:00Z", "2026-03-15T09:30:00Z"), march.map { it.start(window.zone).toString() })
+            assertEquals(listOf("2026-03-01T14:00:00Z", "2026-03-15T13:00:00Z"), march.map { it.recurrence })
+        }
+    }
+
+    @Test fun explicitRangeAnchorAndDetachedOverrideKeepGapDateTimeInterpretation() {
+        val master = "UID:explicit\nDTSTART;TZID=America/New_York:20260301T090000\nRRULE:FREQ=WEEKLY;COUNT=3"
+        val explicitGap = "DTSTART;TZID=America/Los_Angeles:20260308T023000"
+        val range = "UID:explicit\nRECURRENCE-ID;RANGE=THISANDFUTURE:20260308T130000Z\n$explicitGap"
+        val events = readCloudEvents(ics(master, range), window).sortedBy { it.start }
+        assertEquals(listOf("2026-03-01T14:00:00Z", "2026-03-08T10:30:00Z", "2026-03-15T09:30:00Z"),
+            events.map { it.start(window.zone).toString() })
+        val detached = readCloudEvents(ics(master, range.replace(";RANGE=THISANDFUTURE", "")), window).single {
+            it.recurrence == "2026-03-08T13:00:00Z"
+        }
+        assertEquals(Instant.parse("2026-03-08T10:30:00Z"), detached.start(window.zone))
+    }
+
     @Test fun futureAllDayEditsCanMoveInstancesIntoAnotherMonthAndLaterEditsReplaceTheRange() {
         val dates = readCloudEvents(ics(
             "UID:day\nDTSTART;VALUE=DATE:20260220\nRRULE:FREQ=WEEKLY;COUNT=5\nSUMMARY:Original",
@@ -319,6 +347,84 @@ class CalDavClientTest {
         assertNull(resolved.problem)
         assertEquals("dirty", resolved.collectionToken)
         assertEquals(setOf("Updated", "Added", "Resolved"), resolved.titles())
+    }
+
+    @Test fun oversizedSingletonPreservesOldResourcesAndAllowsVerifiedEditsUntilFullRecovery() {
+        val calendar = client.discover().first()
+        val oversizedPath = endpoint.resolve(workPath + "large.ics").toString()
+        records["large.ics"] = "large-v1" to basic("Cached large event")
+        val previous = client.synchronize(calendar, window, null, 10)
+
+        token = "changed"
+        records.remove("b.ics")
+        records["a.ics"] = "two" to basic("Updated")
+        records["new.ics"] = "one" to basic("Added")
+        records["large.ics"] = "large-v2" to ("X".repeat(1_048_577) + basic("Unverified"))
+        expect(CalDavProblem.BUDGET) {
+            client.synchronize(calendar, window, previous, 20, CalDavRound(maxRequests = 3))
+        }
+        requests.clear()
+        val mixed = client.synchronize(calendar, window, previous, 20)
+        assertTrue(requests.any { (_, xml) ->
+            "calendar-multiget" in xml && Regex("<D:href>").findAll(xml).count() == 1 && "large.ics" in xml
+        })
+        assertEquals(CalDavProblem.CAPACITY, mixed.problem)
+        assertEquals(previous.checkedAt, mixed.checkedAt)
+        assertNull(mixed.collectionToken)
+        assertEquals(previous.objects[oversizedPath], mixed.objects[oversizedPath])
+        assertEquals(setOf("Updated", "Added", "Cached large event", "Retained"), mixed.titles())
+        val persisted = decodeSnapshot(JSONObject(encodeSnapshot(mixed).toString()))
+        assertEquals(mixed, persisted)
+
+        records["a.ics"] = "three" to basic("Updated again")
+        val second = client.synchronize(calendar, window, persisted, 30)
+        assertEquals(CalDavProblem.CAPACITY, second.problem)
+        assertEquals(previous.checkedAt, second.checkedAt)
+        assertEquals(setOf("Updated again", "Added", "Cached large event", "Retained"), second.titles())
+
+        val firstRead = client.synchronize(calendar, window, null, 30)
+        assertEquals(CalDavProblem.CAPACITY, firstRead.problem)
+        assertEquals(0L, firstRead.checkedAt)
+        assertNull(firstRead.collectionToken)
+        assertFalse(oversizedPath in firstRead.objects)
+        assertEquals(setOf("Updated again", "Added"), firstRead.titles())
+
+        records["large.ics"] = "large-v3" to basic("Recovered")
+        val recovered = client.synchronize(calendar, window, second, 40)
+        assertNull(recovered.problem)
+        assertEquals(40L, recovered.checkedAt)
+        assertEquals("changed", recovered.collectionToken)
+        assertEquals(setOf("Updated again", "Added", "Recovered"), recovered.titles())
+    }
+
+    @Test fun excessiveResourceCountInSingletonResponseStillFailsTheRange() {
+        val calendar = client.discover().first()
+        records.remove("b.ics")
+        multigetOverride = (0..MAX_OBJECTS + 1).joinToString("") { item(workPath + "$it.ics", etag("one")) }
+        expect(CalDavProblem.CAPACITY) { client.synchronize(calendar, window, null, 10) }
+    }
+
+    @Test fun legacyProjectionsAreReparsedEvenWhenTokenAndEtagsMatch() {
+        val calendar = client.discover().first()
+        records["a.ics"] = "same-etag" to ics(
+            "UID:future\nDTSTART;TZID=America/New_York:20260301T090000\nRRULE:FREQ=WEEKLY;COUNT=3",
+            "UID:future\nRECURRENCE-ID;RANGE=THISANDFUTURE:20260301T140000Z\nDTSTART;TZID=America/Los_Angeles:20260301T023000",
+        )
+        val current = client.synchronize(calendar, window, null, 10)
+        val encoded = encodeSnapshot(current)
+        val stored = encoded.getJSONArray("objects")
+        for (i in 0 until stored.length()) stored.getJSONObject(i).remove("projectionVersion")
+        val decoded = decodeSnapshot(encoded)
+        val legacy = decoded.copy(objects = decoded.objects.mapValues { (href, obj) ->
+            if (!href.endsWith("/a.ics")) obj else {
+                val phantom = Instant.parse("2026-03-08T10:30:00Z").toEpochMilli()
+                obj.copy(events = obj.events + obj.events.first().copy(recurrence = "2026-03-08T13:00:00Z", start = phantom, end = phantom))
+            }
+        })
+        requests.clear()
+        val refreshed = client.synchronize(calendar, window, legacy, 20)
+        assertTrue(requests.any { (_, xml) -> "calendar-multiget" in xml && "a.ics" in xml })
+        assertEquals(current.copy(checkedAt = 20), refreshed)
     }
 
     @Test fun rediscoveryRetainsLegacyAndStableBindingsAndDoesNotGuessFromSameName() {

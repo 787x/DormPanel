@@ -202,7 +202,7 @@ internal fun encodeSnapshot(snapshot: CalendarSnapshot): JSONObject {
     val texts = linkedMapOf<List<String>, Int>()
     var textChars = 0L
     val objects = snapshot.objects.map { (href, obj) ->
-        JSONObject().put("href", href).put("etag", obj.etag)
+        JSONObject().put("href", href).put("etag", obj.etag).put("projectionVersion", obj.projectionVersion)
             .put("events", JSONArray(obj.events.map { event ->
                 val text = listOf(event.uid, event.title, event.location, event.description)
                 val index = texts.getOrPut(text) {
@@ -244,7 +244,7 @@ internal fun decodeSnapshot(json: JSONObject): CalendarSnapshot {
                     event.getLong(2), event.getLong(3), event.optionalString(4)?.let(LocalDate::parse),
                     event.optionalString(5)?.let(LocalDate::parse))
             }
-        })
+        }, obj.optInt("projectionVersion", 0))
     }
     check(objects.size == entries.length())
     return CalendarSnapshot(json.getLong("checkedAt"), json.optionalString("token"), objects,

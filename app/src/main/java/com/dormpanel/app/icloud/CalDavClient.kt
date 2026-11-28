@@ -93,7 +93,8 @@ internal class CalDavClient(
     ): CalendarSnapshot {
         val address = calendar.url.toString()
         val before = token(round, calendar.url)
-        if (before != null && previous?.collectionUrl == address && previous.problem == null && before == previous.collectionToken) return previous.copy(checkedAt = now)
+        if (before != null && previous?.collectionUrl == address && previous.problem == null &&
+            previous.hasCurrentProjection && before == previous.collectionToken) return previous.copy(checkedAt = now)
 
         val range = "start=\"${WIRE_TIME.format(window.queryStart)}\" end=\"${WIRE_TIME.format(window.queryEnd)}\""
         val filter = "<C:filter><C:comp-filter name=\"VCALENDAR\"><C:comp-filter name=\"VEVENT\">" +
@@ -103,7 +104,7 @@ internal class CalDavClient(
         val result = linkedMapOf<String, CachedObject>()
         val changed = manifest.filter { (href, etag) ->
             val cached = previous?.objects?.get(href)
-            if (!etag.startsWith("W/") && cached?.etag == etag) {
+            if (!etag.startsWith("W/") && cached?.etag == etag && cached.hasCurrentProjection) {
                 result[href] = cached
                 false
             } else true
@@ -112,21 +113,20 @@ internal class CalDavClient(
         var count = result.values.sumOf { it.events.size }
         val budget = ExpansionBudget(round::check)
         var problem: CalDavProblem? = null
-        fun fetch(batch: List<String>): DavDocument? {
-            val hrefs = batch.joinToString("") { "<D:href>${escapeXml(it.toHttpUrl().encodedPath)}</D:href>" }
-            return try {
-                report(round, calendar.url, "1", "<C:calendar-multiget $NS>$data$hrefs</C:calendar-multiget>")
-            } catch (e: CalDavFailure) {
-                if (e.problem != CalDavProblem.CAPACITY || batch.size < 2) throw e
-                return null
-            }
-        }
         fun collect(batch: List<String>) {
-            val document = fetch(batch)
-            if (document == null) {
-                val middle = batch.size / 2
-                collect(batch.subList(0, middle))
-                collect(batch.subList(middle, batch.size))
+            val hrefs = batch.joinToString("") { "<D:href>${escapeXml(it.toHttpUrl().encodedPath)}</D:href>" }
+            val document = try {
+                report(round, calendar.url, "1", "<C:calendar-multiget $NS>$data$hrefs</C:calendar-multiget>")
+            } catch (_: CalDavResponseTooLarge) {
+                if (batch.size == 1) {
+                    // This request addresses one manifest member. Keep its old cache and
+                    // record the incomplete month without accepting any data from the response.
+                    problem = CalDavProblem.CAPACITY
+                } else {
+                    val middle = batch.size / 2
+                    collect(batch.subList(0, middle))
+                    collect(batch.subList(middle, batch.size))
+                }
                 return
             }
             val returned = document.eventObjects()
@@ -145,7 +145,7 @@ internal class CalDavClient(
                 }
                 count += events.size
                 checkCalendarCapacity(count <= MAX_INSTANCES)
-                result[href] = CachedObject(etag, events)
+                result[href] = CachedObject(etag, events, CURRENT_PROJECTION_VERSION)
             }
         }
         changed.keys.chunked(24).forEach(::collect)
