@@ -9,6 +9,7 @@ import com.dormpanel.app.MainActivity
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
+        com.dormpanel.app.airplay.AirPlayController.get(context).boot()
         if (!StartupPolicy(PreferencesStartupStore(context)).startAfterBoot) return
         try {
             context.startActivity(mainActivityIntent(context))

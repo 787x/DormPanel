@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="airplay_off">Off</string>
+    <string name="airplay_starting">Starting</string>
+    <string name="airplay_waiting">Waiting for connection</string>
+    <string name="airplay_connected">Connected</string>
+    <string name="airplay_playing">Playing</string>
+    <string name="airplay_paused">Paused</string>
+    <string name="airplay_offline">Network unavailable</string>
+    <string name="airplay_failed">Receiver error</string>
+    <string name="airplay_name">Receiver name</string>
+    <string name="airplay_boot">Start AirPlay after boot</string>
+    <string name="airplay_settings">AirPlay settings</string>
+    <string name="airplay_connect_help">Connect both devices to the same local network. On iPhone or iPad, open Control Center and tap the AirPlay audio output icon. On Mac, choose the receiver under Sound Output. Any device on the local network can connect.</string>
+    <string name="airplay_invalid_name">Use a name of up to 48 UTF-8 bytes with no control characters or emoji.</string>
+    <string name="airplay_save_failed">Could not save AirPlay settings</string>
+    <string name="airplay_card">AirPlay Music</string>
+    <string name="airplay_card_description">Receiver status, track details and supported playback controls</string>
+    <string name="airplay_previous">Previous</string>
+    <string name="airplay_play">Play</string>
+    <string name="airplay_pause">Pause</string>
+    <string name="airplay_next">Next</string>
+    <string name="airplay_progress">%1$s of %2$s</string>
+    <string name="airplay_enable">Enable AirPlay</string>
+    <string name="airplay_disable">Disable AirPlay</string>
+    <string name="airplay_lan_permission">Allow local network access to discover and receive AirPlay audio.</string>
+</resources>

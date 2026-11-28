@@ -1,0 +1,50 @@
+[
+  {
+    "name": "airplay",
+    "project": "https://github.com/jqssun/android-airplay-server",
+    "revision": "a46cca0a6a1274e9e33c0e750f0f1c1eb1d881ea",
+    "archive": "airplay.tar.gz",
+    "url": "https://codeload.github.com/jqssun/android-airplay-server/tar.gz/a46cca0a6a1274e9e33c0e750f0f1c1eb1d881ea",
+    "sha256": "413372e8d7681955b28bb1a1bc29a1631aef4bf1ef94f66cc878b7b03e5b7e44"
+  },
+  {
+    "name": "UxPlay",
+    "project": "https://github.com/FDH2/UxPlay",
+    "revision": "df67c212a433cf6dda3676dd40c097900d24e645",
+    "archive": "UxPlay.tar.gz",
+    "url": "https://codeload.github.com/FDH2/UxPlay/tar.gz/df67c212a433cf6dda3676dd40c097900d24e645",
+    "sha256": "168de53ed688f87c4022d79357ce91f9608ad5c53236bff95134d19b88efeb3f"
+  },
+  {
+    "name": "ffmpeg",
+    "project": "https://github.com/FFmpeg/FFmpeg",
+    "revision": "38b88335f99e76ed89ff3c93f877fdefce736c13",
+    "archive": "ffmpeg.tar.gz",
+    "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/38b88335f99e76ed89ff3c93f877fdefce736c13",
+    "sha256": "2ae7e42343cfffb811d15cfe98b6d005f082595fcdf034d30a4ff90cfed9f9c6"
+  },
+  {
+    "name": "libplist",
+    "project": "https://github.com/libimobiledevice/libplist",
+    "revision": "f41b1ea67045e0c09339974d83e389972d84f166",
+    "archive": "libplist.tar.gz",
+    "url": "https://codeload.github.com/libimobiledevice/libplist/tar.gz/f41b1ea67045e0c09339974d83e389972d84f166",
+    "sha256": "78babb3267616444233aca10360cd7ac66f60b07aa133e1589edbda4c8e81465"
+  },
+  {
+    "name": "openssl",
+    "project": "https://github.com/openssl/openssl",
+    "revision": "openssl-3.4.4",
+    "archive": "openssl.tar.gz",
+    "url": "https://codeload.github.com/openssl/openssl/tar.gz/openssl-3.4.4",
+    "sha256": "296e2c7d524e7e09850eb5a8901b5dfdbaf0ed3e48f886e12460bb46bb69f5ef"
+  },
+  {
+    "name": "oboe",
+    "project": "https://github.com/google/oboe",
+    "revision": "1.9.3",
+    "archive": "oboe.tar.gz",
+    "url": "https://codeload.github.com/google/oboe/tar.gz/1.9.3",
+    "sha256": "9d2486b74bd396d9d9112625077d5eb656fd6942392dc25ebf222b184ff4eb61"
+  }
+]

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="airplay_off">已关闭</string>
+    <string name="airplay_starting">启动中</string>
+    <string name="airplay_waiting">等待连接</string>
+    <string name="airplay_connected">已连接</string>
+    <string name="airplay_playing">播放中</string>
+    <string name="airplay_paused">已暂停</string>
+    <string name="airplay_offline">局域网不可用</string>
+    <string name="airplay_failed">接收器异常</string>
+    <string name="airplay_name">接收器名称</string>
+    <string name="airplay_boot">开机自动启动 AirPlay</string>
+    <string name="airplay_settings">AirPlay 设置</string>
+    <string name="airplay_connect_help">将两台设备连接到同一局域网。在 iPhone 或 iPad 的控制中心选择 AirPlay 音频输出，或在 Mac 的声音输出设置中选择接收器。局域网内的设备均可连接。</string>
+    <string name="airplay_invalid_name">请输入最多 48 个 UTF-8 字节的名称，避免控制字符和表情。</string>
+    <string name="airplay_save_failed">无法保存 AirPlay 设置</string>
+    <string name="airplay_card">AirPlay 音乐</string>
+    <string name="airplay_card_description">接收状态、曲目信息和发送端支持的播放控制</string>
+    <string name="airplay_previous">上一首</string>
+    <string name="airplay_play">播放</string>
+    <string name="airplay_pause">暂停</string>
+    <string name="airplay_next">下一首</string>
+    <string name="airplay_progress">%1$s / %2$s</string>
+    <string name="airplay_enable">开启 AirPlay</string>
+    <string name="airplay_disable">关闭 AirPlay</string>
+    <string name="airplay_lan_permission">请允许访问局域网，以便发现接收器并播放 AirPlay 音频。</string>
+</resources>

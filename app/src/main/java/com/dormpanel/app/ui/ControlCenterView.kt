@@ -23,6 +23,10 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.SwitchCompat
 import com.dormpanel.app.R
+import com.dormpanel.app.airplay.AirPlayController
+import com.dormpanel.app.airplay.AirPlayState
+import com.dormpanel.app.airplay.label
+import com.dormpanel.app.airplay.showAirPlaySettings
 import com.dormpanel.app.appearance.AppearanceAware
 import com.dormpanel.app.appearance.AppearanceController
 import com.dormpanel.app.appearance.AppearanceState
@@ -86,6 +90,22 @@ class ControlCenterView(
     private val opacityLabel = label(size = 18f)
     private val brightness = slider(context.getString(R.string.control_center_brightness)).apply { min = 1 }
     private val volume = slider(context.getString(R.string.control_center_volume))
+    private val airPlay = AirPlayController.get(context)
+    private val airPlayStatus = secondaryLabel().apply { maxLines = 3 }
+    private val airPlayToggle = action(context.getString(R.string.airplay_enable)) {
+        val saved = airPlay.settings
+        if (saved.enabled) {
+            airPlay.configure(saved.name, false, saved.autoStart)
+        } else {
+            val enable = { airPlay.configure(saved.name, true, saved.autoStart); Unit }
+            val activity = context as? com.dormpanel.app.MainActivity
+            if (activity != null) activity.withAirPlayNetworkPermission(enable) else enable()
+        }
+    }
+    private val airPlayListener: (AirPlayState) -> Unit = { state ->
+        airPlayStatus.text = listOfNotNull(state.name, state.phase.label(context), state.detail).joinToString(" · ")
+        airPlayToggle.setText(if (airPlay.settings.enabled) R.string.airplay_disable else R.string.airplay_enable)
+    }
     private val opacity = slider(context.getString(R.string.card_opacity))
     private val sliders = listOf(systemBrightness, brightness, volume, opacity)
     private val keepAwake = toggle(context.getString(R.string.control_center_awake))
@@ -295,6 +315,13 @@ class ControlCenterView(
         left.heading(context.getString(R.string.control_center_audio))
         left.addView(row(volumeLabel, mute, muteUnavailable))
         left.addView(volume)
+        left.addView(row(airPlayStatus, airPlayToggle,
+            action(context.getString(R.string.airplay_settings), null) {
+                showAirPlaySettings(context, appearance, airPlay)
+            }.apply {
+                minimumWidth = dp(96)
+                minWidth = dp(96)
+            }))
 
         right.heading(context.getString(R.string.control_center_appearance))
         right.addView(row(label(context.getString(R.string.control_center_theme), 18f), modes))
@@ -352,6 +379,7 @@ class ControlCenterView(
         device.refreshAudio()
         device.refreshSystemBrightness()
         device.addListener(deviceListener)
+        airPlay.addListener(airPlayListener)
         appearance.addListener(appearanceListener)
         startupPolicy.addListener(bootStateListener)
         backend?.ha?.addStatusListener(haListener)
@@ -363,6 +391,7 @@ class ControlCenterView(
         startupPolicy.removeListener(bootStateListener)
         appearance.removeListener(appearanceListener)
         device.removeListener(deviceListener)
+        airPlay.removeListener(airPlayListener)
         super.onDetachedFromWindow()
     }
     private fun contentOverflows(): Boolean =

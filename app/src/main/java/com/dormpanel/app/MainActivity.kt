@@ -35,6 +35,21 @@ class MainActivity : AppCompatActivity() {
     private val haLanPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) dashboardViewModel.dataSource.reconnect()
     }
+    private var pendingAirPlayEnable: (() -> Unit)? = null
+    private val airPlayLanPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        val enable = pendingAirPlayEnable
+        pendingAirPlayEnable = null
+        if (granted) enable?.invoke()
+        else android.widget.Toast.makeText(this, R.string.airplay_lan_permission, android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    internal fun withAirPlayNetworkPermission(enable: () -> Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 37 &&
+            checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            pendingAirPlayEnable = enable
+            airPlayLanPermission.launch("android.permission.ACCESS_LOCAL_NETWORK")
+        } else enable()
+    }
     internal fun needsHaLanPermission() = android.os.Build.VERSION.SDK_INT >= 37 &&
         checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") != android.content.pm.PackageManager.PERMISSION_GRANTED
 
@@ -88,6 +103,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        dashboardViewModel.airPlay.restoreInForeground()
         dashboardViewModel.cloudCalendar.start()
         val visible = blackoutView.visibility != View.VISIBLE
         dashboardViewModel.dataSource.weatherRepository.setForeground(visible)

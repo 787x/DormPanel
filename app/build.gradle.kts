@@ -3,6 +3,23 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val airPlaySource = layout.projectDirectory.dir("src/main/airplay")
+val airPlayAbis = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+val airPlayOutput = layout.buildDirectory.dir("generated/airplay")
+val airPlayBuilds = airPlayAbis.map { abi ->
+    tasks.register<Exec>("buildAirPlayNative" + abi.replace(Regex("[^a-zA-Z0-9]"), "_")) {
+        val output = airPlayOutput.map { it.dir(abi) }
+        workingDir(rootProject.projectDir)
+        inputs.dir(airPlaySource)
+        inputs.property("abi", abi)
+        outputs.dir(output)
+        val sourcePath = rootProject.relativePath(airPlaySource.file("build.sh").asFile).replace('\\', '/')
+        val outputPath = rootProject.relativePath(output.get().asFile).replace('\\', '/')
+        val shell = if (System.getProperty("os.name").startsWith("Windows")) listOf("wsl", "--exec", "bash") else listOf("bash")
+        commandLine(shell + listOf(sourcePath, outputPath, abi))
+    }
+}
+
 android {
     namespace = "com.dormpanel.app"
     compileSdk {
@@ -68,9 +85,19 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    packaging.jniLibs.keepDebugSymbols += "**/libairplay_native.so" // Stripped by the pinned NDK in build.sh.
     sourceSets.getByName("test").resources.srcDir("../schedule-core/src/test/resources")
+    sourceSets.getByName("main").apply {
+        jniLibs.srcDirs(airPlayAbis.map { airPlayOutput.get().dir("$it/jni").asFile })
+        assets.srcDir(airPlayOutput.get().dir("armeabi-v7a/assets").asFile)
+    }
     sourceSets.getByName("androidTest").assets.srcDir("../schedule-core/src/test/resources/schedule")
     sourceSets.getByName("androidTest").kotlin.srcDir("../schedule-core/src/uiTest/java")
+}
+
+tasks.configureEach {
+    if (name.startsWith("merge") && name.endsWith("JniLibFolders")) dependsOn(airPlayBuilds)
+    if (name.startsWith("merge") && name.endsWith("Assets")) dependsOn(airPlayBuilds.first())
 }
 
 dependencies {
